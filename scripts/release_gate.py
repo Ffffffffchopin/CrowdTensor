@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_FILES = [
     "README.md",
     "CHANGELOG.md",
+    "ROADMAP.md",
     "LICENSE",
     "pyproject.toml",
     "requirements.txt",
@@ -26,6 +27,9 @@ REQUIRED_FILES = [
     ".dockerignore",
     ".env.example",
     ".github/release.yml",
+    ".github/ISSUE_TEMPLATE/bug_report.md",
+    ".github/ISSUE_TEMPLATE/feature_request.md",
+    ".github/pull_request_template.md",
     ".github/workflows/ci.yml",
     "scripts/api_contract_check.py",
     "scripts/result_idempotency_check.py",
@@ -46,12 +50,15 @@ REQUIRED_FILES = [
     "scripts/delta_transport_negotiation_check.py",
     "scripts/model_bundle_smoke.py",
     "docs/api.md",
+    "docs/protocol.md",
+    "docs/use-cases.md",
     "docs/quickstart.md",
     "docs/remote-miner.md",
     "docs/architecture.md",
     "docs/security.md",
     "docs/operations.md",
     "docs/release.md",
+    "site/index.html",
 ]
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -443,6 +450,44 @@ def check_release_materials(root: Path) -> dict[str, Any]:
     return check_result("release_materials", not details, details)
 
 
+def check_open_source_entrypoints(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "ROADMAP.md",
+            "docs/protocol.md",
+            "docs/use-cases.md",
+            "docs/architecture.md",
+            "site/index.html",
+            ".github/ISSUE_TEMPLATE/bug_report.md",
+            ".github/ISSUE_TEMPLATE/feature_request.md",
+            ".github/pull_request_template.md",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "CrowdTensor",
+        "CrowdTensorD",
+        "home compute",
+        "5-minute local swarm demo",
+        "What Works Today",
+        "What Is Not Ready",
+        "ROADMAP.md",
+        "docs/protocol.md",
+        "docs/use-cases.md",
+        "site/index.html",
+        "runtime_contract_v1",
+        "Swarm Inference",
+        "Support Bundle",
+        "Protocol boundary changed",
+    ]:
+        if fragment not in combined:
+            details.append(f"open-source entrypoints must mention {fragment}")
+    return check_result("open_source_entrypoints", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -553,6 +598,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_doctor_docs(gate_root),
         check_support_bundle_docs(gate_root),
         check_release_materials(gate_root),
+        check_open_source_entrypoints(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

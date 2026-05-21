@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CrowdTensor - Home Compute AI Swarms</title>
+    <meta
+      name="description"
+      content="CrowdTensor is an open-source path toward fault-tolerant AI swarms built from ordinary home compute."
+    >
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23101716'/%3E%3Ccircle cx='18' cy='20' r='7' fill='%23dfe8df'/%3E%3Ccircle cx='46' cy='20' r='7' fill='%2318a27f'/%3E%3Ccircle cx='32' cy='45' r='8' fill='%23dfe8df'/%3E%3Cpath d='M23 23 38 40M42 23 35 38M22 24 30 39' stroke='%239ed4c4' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6f1;
+        --ink: #121513;
+        --muted: #55615c;
+        --panel: #ffffff;
+        --line: #d7ddd2;
+        --accent: #0f6f5d;
+        --accent-dark: #0a463c;
+        --code: #151b1a;
+        --warn: #8a4d14;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      a {
+        color: var(--accent-dark);
+        font-weight: 650;
+      }
+
+      header {
+        min-height: 78vh;
+        display: grid;
+        align-items: center;
+        background:
+          linear-gradient(rgba(13, 21, 19, 0.78), rgba(13, 21, 19, 0.55)),
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='760' viewBox='0 0 1200 760'%3E%3Crect width='1200' height='760' fill='%23101716'/%3E%3Cg stroke='%233c6f63' stroke-width='2' opacity='0.8'%3E%3Cpath d='M130 170 360 250 580 130 820 260 1030 170' fill='none'/%3E%3Cpath d='M170 520 390 430 610 560 840 420 1060 520' fill='none'/%3E%3Cpath d='M360 250 390 430M580 130 610 560M820 260 840 420M130 170 170 520M1030 170 1060 520'/%3E%3C/g%3E%3Cg fill='%23dfe8df'%3E%3Ccircle cx='130' cy='170' r='13'/%3E%3Ccircle cx='360' cy='250' r='18'/%3E%3Ccircle cx='580' cy='130' r='14'/%3E%3Ccircle cx='820' cy='260' r='19'/%3E%3Ccircle cx='1030' cy='170' r='12'/%3E%3Ccircle cx='170' cy='520' r='14'/%3E%3Ccircle cx='390' cy='430' r='19'/%3E%3Ccircle cx='610' cy='560' r='15'/%3E%3Ccircle cx='840' cy='420' r='18'/%3E%3Ccircle cx='1060' cy='520' r='13'/%3E%3C/g%3E%3Cg fill='%2318a27f'%3E%3Ccircle cx='360' cy='250' r='7'/%3E%3Ccircle cx='820' cy='260' r='7'/%3E%3Ccircle cx='390' cy='430' r='7'/%3E%3Ccircle cx='840' cy='420' r='7'/%3E%3C/g%3E%3C/svg%3E");
+        background-size: cover;
+        background-position: center;
+        color: #f7faf7;
+      }
+
+      nav,
+      .wrap {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      nav {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        min-height: 68px;
+        gap: 18px;
+      }
+
+      .brand {
+        font-weight: 800;
+        font-size: 18px;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .nav-links a {
+        color: #eef6ef;
+        text-decoration: none;
+        font-size: 14px;
+      }
+
+      .hero {
+        max-width: 780px;
+        padding-top: 72px;
+      }
+
+      .eyebrow {
+        color: #a8dac9;
+        font-weight: 750;
+        letter-spacing: 0;
+        text-transform: uppercase;
+        font-size: 13px;
+      }
+
+      h1 {
+        margin: 14px 0;
+        font-size: clamp(44px, 8vw, 86px);
+        line-height: 0.96;
+        letter-spacing: 0;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 680px;
+        color: #e3ebe5;
+        font-size: clamp(18px, 2.5vw, 23px);
+        line-height: 1.42;
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border-radius: 8px;
+        border: 1px solid #8ecbb9;
+        background: #f8fff9;
+        color: #0a463c;
+        text-decoration: none;
+      }
+
+      .button.secondary {
+        background: rgba(255, 255, 255, 0.08);
+        color: #f7faf7;
+      }
+
+      main {
+        padding: 42px 0 64px;
+      }
+
+      section {
+        margin-top: 44px;
+      }
+
+      h2 {
+        font-size: clamp(26px, 4vw, 40px);
+        margin: 0 0 16px;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        color: var(--muted);
+        max-width: 760px;
+        font-size: 17px;
+        line-height: 1.55;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .grid > *,
+      .diagram > * {
+        min-width: 0;
+      }
+
+      .two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px;
+      }
+
+      .card h3 {
+        margin: 0 0 8px;
+        font-size: 17px;
+        letter-spacing: 0;
+      }
+
+      .card p,
+      li {
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        min-height: 26px;
+        padding: 0 9px;
+        border-radius: 999px;
+        background: #e6f2ed;
+        color: #0a463c;
+        font-size: 12px;
+        font-weight: 750;
+        margin-bottom: 12px;
+      }
+
+      .status.warn {
+        background: #f4eadc;
+        color: var(--warn);
+      }
+
+      .diagram {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        align-items: stretch;
+      }
+
+      .node {
+        min-height: 118px;
+        display: grid;
+        align-content: center;
+        text-align: center;
+        background: #101716;
+        color: #edf5ef;
+        border-radius: 8px;
+        padding: 14px;
+      }
+
+      .node span {
+        display: block;
+        color: #9ed4c4;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+
+      pre {
+        max-width: 100%;
+        overflow: auto;
+        background: var(--code);
+        color: #e8f1ea;
+        border-radius: 8px;
+        padding: 16px;
+        line-height: 1.45;
+        font-size: 13px;
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 28px 0;
+        color: var(--muted);
+      }
+
+      @media (max-width: 780px) {
+        nav {
+          align-items: flex-start;
+          flex-direction: column;
+          justify-content: center;
+          gap: 6px;
+        }
+
+        .grid,
+        .two,
+        .diagram {
+          grid-template-columns: 1fr;
+        }
+
+        header {
+          min-height: 86vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <div class="brand">CrowdTensor</div>
+        <div class="nav-links" aria-label="Primary links">
+          <a href="https://github.com/Ffffffffchopin/CrowdTensor#readme">README</a>
+          <a href="https://github.com/Ffffffffchopin/CrowdTensor/blob/main/ROADMAP.md">Roadmap</a>
+          <a href="https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/protocol.md">Protocol</a>
+          <a href="https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/quickstart.md">Quickstart</a>
+        </div>
+      </nav>
+      <div class="wrap hero">
+        <div class="eyebrow">Open home-compute AI swarms</div>
+        <h1>CrowdTensor</h1>
+        <p>
+          Turn ordinary machines into a fault-tolerant AI workload swarm. The current Alpha validates the daemon,
+          protocol, and recovery mechanics before real GPU aggregation and LLM inference arrive.
+        </p>
+        <div class="actions">
+          <a class="button" href="https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/quickstart.md">Run local demo</a>
+          <a class="button secondary" href="https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/architecture.md">Read architecture</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section>
+        <h2>What Works Today</h2>
+        <p class="lead">
+          CrowdTensorD is a working Alpha control plane for controlled local and remote demos. It is intentionally
+          small, deterministic, and CPU-friendly so reliability can be tested anywhere.
+        </p>
+        <div class="grid">
+          <article class="card">
+            <span class="status">Alpha ready</span>
+            <h3>Coordinator / Miner Loop</h3>
+            <p>Task claim, heartbeat, result upload, timeout requeue, stale result rejection, and checkpoint replay.</p>
+          </article>
+          <article class="card">
+            <span class="status">Alpha ready</span>
+            <h3>Remote Miner Demo</h3>
+            <p>Token-backed admission, invite generation, `/ready` preflight, retries, and operator diagnostics.</p>
+          </article>
+          <article class="card">
+            <span class="status">Experimental</span>
+            <h3>Browser Experiments</h3>
+            <p>WebRTC tensor tunnel, browser Worker compute probe, and browser Miner bridge smoke tests.</p>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>What Is Not Ready</h2>
+        <div class="grid">
+          <article class="card">
+            <span class="status warn">Not yet</span>
+            <h3>Real LLM Inference</h3>
+            <p>The model bundle path is a contract rehearsal, not production Swarm Inference.</p>
+          </article>
+          <article class="card">
+            <span class="status warn">Not yet</span>
+            <h3>P2P Public Network</h3>
+            <p>Current demos use a Coordinator address; libp2p/NAT traversal is roadmap work.</p>
+          </article>
+          <article class="card">
+            <span class="status warn">Not yet</span>
+            <h3>GPU / WebGPU Runtime</h3>
+            <p>CPU-only acceptance remains the baseline while GPU and browser compute adapters are designed.</p>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Architecture Path</h2>
+        <div class="diagram" aria-label="CrowdTensor architecture path">
+          <div class="node">V1 Coordinator<span>leases, validation, checkpoint replay</span></div>
+          <div class="node">Python Miners<span>CPU contracts, retries, capability matching</span></div>
+          <div class="node">Browser Swarm<span>WebRTC now, WebGPU later</span></div>
+          <div class="node">Future P2P<span>discovery, routing, reputation</span></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Run A Local Demo</h2>
+        <div class="grid two">
+          <div>
+            <p class="lead">Install, run the First-run Doctor, start the Coordinator, and launch one local Miner.</p>
+            <pre><code>python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python3 scripts/doctor.py --json
+crowdtensord --host 127.0.0.1 --port 8787 --state-dir state</code></pre>
+          </div>
+          <div>
+            <p class="lead">In another shell:</p>
+            <pre><code>crowdtensor-miner \
+  --coordinator http://127.0.0.1:8787 \
+  --miner-id local-1 \
+  --once</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Roadmap</h2>
+        <div class="grid">
+          <article class="card">
+            <h3>Alpha</h3>
+            <p>Control-plane reliability, deterministic workload contracts, release evidence, and diagnostics.</p>
+          </article>
+          <article class="card">
+            <h3>Beta</h3>
+            <p>Useful home-compute demo, first Swarm Inference-shaped workload, and hardware matrix.</p>
+          </article>
+          <article class="card">
+            <h3>Network</h3>
+            <p>P2P discovery, NAT traversal, browser-native compute, GPU adapters, and reputation layers.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        CrowdTensorD Alpha is Apache-2.0 licensed. Start with the README, roadmap, protocol boundary, and quickstart.
+      </div>
+    </footer>
+  </body>
+</html>

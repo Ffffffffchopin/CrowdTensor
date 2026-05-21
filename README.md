@@ -1,14 +1,20 @@
-# CrowdTensorD
+# CrowdTensor
 
-CrowdTensorD is an experimental control plane for fault-tolerant distributed AI workloads across untrusted Miner processes.
+CrowdTensor is an open-source path toward fault-tolerant AI swarms built from ordinary home compute.
 
-It currently validates the V1 mechanics needed for a future CrowdTensor network: task leasing, heartbeat timeout recovery, checkpoint replay, result validation, replay audit, Miner admission, and CPU-only training contracts.
+`CrowdTensorD` is the current Alpha daemon/control plane. It validates the V1 mechanics needed before real home GPU aggregation, Swarm Inference, browser compute, and future P2P routing are added: task leasing, heartbeat recovery, checkpoint replay, result validation, replay audit, Miner admission, and CPU-only workload contracts.
 
-## Alpha Status
+## What Works Today
 
-This project is an **experimental alpha**. It is useful for developers who want to inspect or extend the control-plane mechanics behind distributed AI workers.
+- Run a local Coordinator and Miner loop on a normal CPU-only Linux machine.
+- Connect controlled remote Python Miners with token-backed admission and retry behavior.
+- Validate timeout recovery, stale result rejection, checkpoint replay, result ledger, and Support Bundle generation.
+- Run deterministic tiny workloads shaped like future model contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm`.
+- Try browser-native experiments for WebRTC tensor transport, browser Worker compute probes, and a browser Miner bridge.
 
-It is not yet:
+## What Is Not Ready
+
+This Alpha is not yet:
 
 - a production DePIN network
 - a real LLM training or inference platform
@@ -17,11 +23,11 @@ It is not yet:
 - a hardened public-internet security model
 - a GPU, WebGPU, PyTorch, or Transformers benchmark
 
-The current workloads are intentionally small and deterministic so the runtime can be tested without external model dependencies.
+The current workloads are intentionally small and deterministic so the runtime can be tested without GPU access or external model dependencies.
 
 ## Quickstart
 
-Use Python 3.11 or newer.
+Run a 5-minute local swarm demo with Python 3.11 or newer.
 
 ```bash
 python3 -m venv .venv
@@ -59,8 +65,11 @@ crowdtensor-miner \
 The Miner claims a task, runs a dependency-free local training loop, uploads a DiLoCo-style delta, and exits with a JSON summary.
 
 For the full walkthrough, see [docs/quickstart.md](docs/quickstart.md).
+For user scenarios and hardware status, see [docs/use-cases.md](docs/use-cases.md).
+For the current protocol boundary, see [docs/protocol.md](docs/protocol.md).
 For endpoint-level integration details, see [docs/api.md](docs/api.md).
 For controlled remote Miner setup, see [docs/remote-miner.md](docs/remote-miner.md).
+For the project roadmap, see [ROADMAP.md](ROADMAP.md).
 For release history and maintainer release flow, see [CHANGELOG.md](CHANGELOG.md) and [docs/release.md](docs/release.md).
 
 ## Docker Compose
@@ -273,12 +282,16 @@ See [docs/security.md](docs/security.md) before exposing a Coordinator beyond lo
 
 - [Quickstart](docs/quickstart.md)
 - [API Reference](docs/api.md)
+- [Protocol Boundary](docs/protocol.md)
 - [Remote Miner Onboarding](docs/remote-miner.md)
+- [Use Cases](docs/use-cases.md)
 - [Architecture](docs/architecture.md)
 - [Security](docs/security.md)
 - [Operations](docs/operations.md)
 - [Release Process](docs/release.md)
 - [Changelog](CHANGELOG.md)
+- [Roadmap](ROADMAP.md)
+- [Static Site](site/index.html)
 
 ## License
 

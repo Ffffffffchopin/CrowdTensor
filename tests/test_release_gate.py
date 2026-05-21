@@ -52,6 +52,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "doctor_docs",
                 "support_bundle_docs",
                 "release_materials",
+                "open_source_entrypoints",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -278,6 +279,28 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "release_materials")
         self.assertTrue(any("scripts/release_gate.py" in detail for detail in details))
         self.assertTrue(any("git tag" in detail for detail in details))
+
+    def test_open_source_entrypoints_must_describe_public_positioning(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "ROADMAP.md",
+            "docs/protocol.md",
+            "docs/use-cases.md",
+            "docs/architecture.md",
+            "site/index.html",
+            ".github/ISSUE_TEMPLATE/bug_report.md",
+            ".github/ISSUE_TEMPLATE/feature_request.md",
+            ".github/pull_request_template.md",
+        ]:
+            (tmp_root / relative).write_text("No open-source positioning here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "open_source_entrypoints")
+        self.assertTrue(any("home compute" in detail for detail in details))
+        self.assertTrue(any("runtime_contract_v1" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))
