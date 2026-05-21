@@ -54,6 +54,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "release_materials",
                 "open_source_entrypoints",
                 "project_memory",
+                "model_bundle_inference_docs",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -316,6 +317,31 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "project_memory")
         self.assertTrue(any("runtime_contract_v1" in detail for detail in details))
         self.assertTrue(any("P2P/NAT" in detail for detail in details))
+
+    def test_model_bundle_inference_docs_must_describe_probe_and_acceptance(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/api.md",
+            "docs/protocol.md",
+            "docs/architecture.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No model bundle inference docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "model_bundle_inference_docs")
+        self.assertTrue(any("model_bundle_infer" in detail for detail in details))
+        self.assertTrue(any("--skip-model-bundle-inference" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

@@ -19,8 +19,9 @@ from crowdtensor.diloco import run_inner_loop
 from crowdtensor.lora_mock import run_lora_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
+from crowdtensor.model_bundle import INFERENCE_WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_INFER
 from crowdtensor.model_bundle import WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_LM
-from crowdtensor.model_bundle import run_model_bundle_inner_loop
+from crowdtensor.model_bundle import run_model_bundle_inference, run_model_bundle_inner_loop
 from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED,
@@ -258,6 +259,7 @@ def miner_capabilities() -> dict:
             "cpu_lora_mock",
             WORKLOAD_MICRO_TRANSFORMER_LM,
             WORKLOAD_MODEL_BUNDLE_LM,
+            WORKLOAD_MODEL_BUNDLE_INFER,
         ],
         "supported_delta_formats": SUPPORTED_MINER_DELTA_FORMATS,
         "pid": os_safe_pid(),
@@ -287,7 +289,14 @@ def build_result_payload(
         "metrics": {
             key: value
             for key, value in inner_result.items()
-            if key not in {"local_delta", "pseudo_gradient", "compressed_delta", "adapter_delta", "bundle_delta"}
+            if key not in {
+                "local_delta",
+                "pseudo_gradient",
+                "compressed_delta",
+                "adapter_delta",
+                "bundle_delta",
+                "inference_result",
+            }
         },
     }
     payload["metrics"]["elapsed_ms"] = elapsed_ms
@@ -298,6 +307,8 @@ def build_result_payload(
         payload["local_delta"] = inner_result["local_delta"]
     elif workload_type == WORKLOAD_MODEL_BUNDLE_LM:
         payload["bundle_delta"] = inner_result["bundle_delta"]
+    elif workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
+        payload["inference_result"] = inner_result["inference_result"]
     elif delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
         payload["compressed_delta"], next_residual = compress_sign_delta_with_error_feedback(
             inner_result["local_delta"],
@@ -336,6 +347,7 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
         "cpu_lora_mock",
         WORKLOAD_MICRO_TRANSFORMER_LM,
         WORKLOAD_MODEL_BUNDLE_LM,
+        WORKLOAD_MODEL_BUNDLE_INFER,
     }:
         raise RuntimeError(f"python-cli miner does not support workload {workload_type}")
 
@@ -376,6 +388,8 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
                 inner_steps=int(claim["inner_steps"]),
                 compute_seconds=args.compute_seconds,
             )
+        elif workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
+            inner_result = run_model_bundle_inference(claim["workload_spec"])
         else:
             inner_result = run_inner_loop(
                 claim["weights"],
@@ -434,6 +448,16 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
                 f"bundle_version={result['bundle_version']} "
                 f"bundle_step={result['bundle_optimizer_step']} "
                 f"bundle_loss={inner_result['bundle_loss_start']:.6f}->{inner_result['bundle_loss_end']:.6f}",
+                flush=True,
+            )
+            return True
+        if workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
+            print(
+                f"accepted model-bundle-infer task={claim['task_id']} "
+                f"bundle_version={result['bundle_version']} "
+                f"prediction={result['predicted_token']} "
+                f"target={result['target_token']} "
+                f"correct={result['correct']}",
                 flush=True,
             )
             return True

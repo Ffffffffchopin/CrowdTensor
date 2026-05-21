@@ -7,7 +7,7 @@ CrowdTensor is aimed at open AI infrastructure for people with ordinary home har
 Status: current.
 
 - Fault-tolerant Coordinator/Miner loop with task leases, heartbeats, timeout requeue, stale result rejection, and checkpoint recovery.
-- Deterministic CPU-only workload contracts for dense, adapter, micro LM, model bundle, and browser probe tasks.
+- Deterministic CPU-only workload contracts for dense, adapter, micro LM, model bundle training, read-only model bundle inference, and browser probe tasks.
 - Admission controls, result validation, replay audit, trust quarantine, operator ledger, release gate, release evidence, and Support Bundle.
 - Controlled remote Miner demo and browser WebRTC/Worker experiments.
 
@@ -17,7 +17,7 @@ Success signal: a contributor can run the local demo, inspect the protocol bound
 
 Status: planned.
 
-- First user-facing Swarm Inference shaped workload, starting with small model artifacts and explicit capability matching.
+- Expand the current read-only `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts and explicit capability matching.
 - Clear hardware matrix for CPU, NVIDIA, AMD, Apple Silicon, and browser paths.
 - Remote Miner onboarding that works through common home-network setups with operator-provided TLS or VPN.
 - Better observability for throughput, latency, availability, and rejected work.

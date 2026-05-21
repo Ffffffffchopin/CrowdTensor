@@ -211,6 +211,12 @@ Model bundle LM smoke:
 python3 scripts/model_bundle_smoke.py --port 8902
 ```
 
+Model bundle inference smoke:
+
+```bash
+python3 scripts/model_bundle_inference_smoke.py --port 8903
+```
+
 Remote-style Miner readiness:
 
 ```bash
@@ -222,7 +228,7 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_remote_acceptance.json
 ```
 
-The remote readiness smoke verifies `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm` in one long-running Python Miner session.
+The remote readiness smoke verifies `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm` in one long-running Python Miner session. The default runtime acceptance pack separately verifies the read-only `model_bundle_infer` Swarm Inference shaped probe.
 
 `--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
 

@@ -42,6 +42,7 @@ Current workload types:
 - `cpu_lora_mock`: dependency-free adapter update mock
 - `micro_transformer_lm`: tiny character language-model workload with analytic CPU backprop
 - `model_bundle_lm`: CPU-only model bundle contract with artifact identity, versioning, and replayable deltas
+- `model_bundle_infer`: read-only model bundle inference-shaped probe with Coordinator recomputation
 - `browser_probe`: deterministic browser Worker compute probe that does not update model state
 
 These workloads validate protocol contracts and recovery behavior. They do not represent real model throughput.
@@ -55,6 +56,8 @@ This keeps the network layer physically separate from tensor math: Miners advert
 ## Model Bundle Contract
 
 `model_bundle_lm` is the first dependency-free boundary shaped like a real model artifact. The claim includes `bundle_id`, `bundle_version`, `artifact_hash`, weights, config, and token IDs inside `workload_spec`; the Miner returns `bundle_delta` with the same identity fields plus numeric delta values. Coordinator validates bundle identity, shape, finite values, delta norm, and loss spike before applying a nested bundle update. Dense `global_step` remains unchanged, while `model_bundle.version`, `model_bundle.optimizer_step`, and `model_bundle.artifact_hash` advance.
+
+`model_bundle_infer` reuses the same built-in bundle identity but is intentionally read-only. The claim includes a prompt, target token, top-k request, bundle config, and weights; the Miner returns an `inference_result`; Coordinator recomputes logits from current bundle state and accepts only matching predictions. It records result ledger evidence without changing dense `global_step` or `model_bundle.version`, making it the first Swarm Inference shaped CPU contract rather than a serving benchmark.
 
 ## Validation and Audit
 

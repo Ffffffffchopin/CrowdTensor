@@ -23,7 +23,7 @@ The project currently includes:
 
 - FastAPI Coordinator with task queues, task lanes, leases, heartbeat deadlines, checkpoint state, append-only event replay, result validation, replay audit, metrics, admin result ledger, and trust overrides.
 - Python Miner CLI with capability advertisement, `/ready` preflight, bounded retry behavior, result `idempotency_key`, heartbeats, and bounded session controls.
-- Deterministic CPU-only workload contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, and `browser_probe`.
+- Deterministic CPU-only workload contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, `model_bundle_infer`, and `browser_probe`.
 - Protocol boundary around `runtime_contract_v1`, `outer_optimizer_contract_v1`, supported workloads, supported delta formats, and workload-specific validation.
 - Delta transport paths for `dense_float`, `sign_compressed`, and `sign_compressed_ef`.
 - Admission and operator safety: shared Miner token, per-Miner token registry, observer token, admin token, hashed token verifiers, security preflight, redacted `/state`, aggregate `/metrics`, and safe admin ledger views.
@@ -45,7 +45,7 @@ Do not imply these are implemented:
 - hardware attestation
 - hardened public-internet security
 
-The current model bundle and micro LM workloads are dependency-free contract rehearsals, not throughput benchmarks.
+The current model bundle, model bundle inference, and micro LM workloads are dependency-free contract rehearsals, not throughput benchmarks.
 
 ## Strategic Route
 
@@ -55,7 +55,7 @@ Recommended sequence:
 
 1. Keep the Alpha control plane reliable, testable, and well documented.
 2. Keep README, ROADMAP, protocol docs, use cases, static site, and project memory synchronized.
-3. Build a useful home-compute demo that feels close to Swarm Inference, starting with small model artifacts and explicit capability matching.
+3. Expand the read-only `model_bundle_infer` probe into a useful home-compute demo that feels close to Swarm Inference, starting with small model artifacts and explicit capability matching.
 4. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 5. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.
 6. Expand browser-native participation from WebRTC/Worker probes toward WebGPU/WebAssembly only after tensor transfer and lifecycle limits are measured.

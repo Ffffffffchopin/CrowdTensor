@@ -43,6 +43,7 @@ Current workload types:
 - `cpu_lora_mock`: dependency-free adapter update mock
 - `micro_transformer_lm`: tiny analytic character language-model workload
 - `model_bundle_lm`: model-artifact-shaped contract with identity and version checks
+- `model_bundle_infer`: read-only inference-shaped model bundle probe with prediction recomputation
 - `browser_probe`: browser Worker compute probe that does not update model state
 
 Each workload defines claim-time input, result payload shape, validation gates, and update behavior. New workloads should keep the network lease/heartbeat protocol unchanged.

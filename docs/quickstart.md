@@ -123,7 +123,7 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_acceptance.json
 ```
 
-The default suite includes the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks.
+The default suite includes the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`) and read-only `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks.
 
 Run the same suite with local auth enabled inside checks that support shared auth env vars:
 

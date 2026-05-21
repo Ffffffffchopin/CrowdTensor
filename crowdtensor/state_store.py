@@ -41,6 +41,7 @@ from .protocol import (
     WORKLOAD_CPU_LORA_MOCK,
     WORKLOAD_DILOCO_TRAIN,
     WORKLOAD_MICRO_TRANSFORMER_LM,
+    WORKLOAD_MODEL_BUNDLE_INFER,
     WORKLOAD_MODEL_BUNDLE_LM,
     new_lease_token,
     new_task_id,
@@ -69,10 +70,12 @@ from .micro_transformer import (
 )
 from .model_bundle import (
     apply_model_bundle_update,
+    model_bundle_inference_spec_for,
     model_bundle_loss,
     model_bundle_training_spec_for,
     model_bundle_version,
     validate_model_bundle_delta,
+    validate_model_bundle_inference,
 )
 from .outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
@@ -387,6 +390,7 @@ class StateStore:
         probe_result: dict | None = None,
         adapter_delta: dict | None = None,
         bundle_delta: dict | None = None,
+        inference_result: dict | None = None,
         metrics: dict | None = None,
     ) -> dict:
         with self._lock:
@@ -437,6 +441,15 @@ class StateStore:
                     attempt=attempt,
                     idempotency_key=idempotency_key,
                     bundle_delta=bundle_delta,
+                    metrics=metrics,
+                )
+            if workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
+                return self._complete_model_bundle_inference_task(
+                    task,
+                    lease_token=lease_token,
+                    attempt=attempt,
+                    idempotency_key=idempotency_key,
+                    inference_result=inference_result,
                     metrics=metrics,
                 )
             if workload_type != WORKLOAD_DILOCO_TRAIN:
@@ -841,6 +854,62 @@ class StateStore:
         self.ensure_backlog()
         return response
 
+    def _complete_model_bundle_inference_task(
+        self,
+        task: dict,
+        *,
+        lease_token: str,
+        attempt: int,
+        idempotency_key: str | None = None,
+        inference_result: dict | None = None,
+        metrics: dict | None = None,
+    ) -> dict:
+        validation = validate_model_bundle_inference(self._model, inference_result)
+        staleness = model_bundle_version(self._model) - int(task["model_version"])
+        now = now_epoch()
+        response = {
+            "accepted": True,
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "workload_type": WORKLOAD_MODEL_BUNDLE_INFER,
+            "bundle_id": validation.get("bundle_id"),
+            "model_version": model_bundle_version(self._model),
+            "bundle_version": validation.get("base_bundle_version"),
+            "artifact_hash": validation.get("artifact_hash"),
+            "predicted_token_id": validation.get("predicted_token_id"),
+            "predicted_token": validation.get("predicted_token"),
+            "target_token_id": validation.get("target_token_id"),
+            "target_token": validation.get("target_token"),
+            "correct": bool(validation.get("correct", False)),
+            "staleness": staleness,
+        } if validation["accepted"] else dict(validation)
+        event = {
+            "type": EVENT_TASK_COMPLETED if validation["accepted"] else EVENT_TASK_REJECTED,
+            "task_id": task["task_id"],
+            "attempt": attempt,
+            "lease_token": lease_token,
+            "miner_id": task.get("miner_id"),
+            "base_model_version": int(task["model_version"]),
+            "inference_result": validation.get("inference_result") if validation["accepted"] else inference_result,
+            "metrics": metrics or {},
+            "staleness": staleness,
+            "validation": validation,
+            "result_model_version": model_bundle_version(self._model),
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "result_response": response,
+            **self._idempotency_event_fields(
+                idempotency_key,
+                lease_token=lease_token,
+            ),
+            "ts": now,
+        }
+        self._apply_task_event(self._append_event(event))
+        self.ensure_backlog()
+        if not validation["accepted"]:
+            raise ResultRejected(validation)
+        return response
+
     def reap_expired(self, *, now: float | None = None) -> list[str]:
         with self._lock:
             current = now_epoch() if now is None else float(now)
@@ -1199,6 +1268,7 @@ class StateStore:
                 "probe_result": {},
                 "adapter_delta": {},
                 "bundle_delta": {},
+                "inference_result": {},
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1265,6 +1335,7 @@ class StateStore:
                 "probe_result": event.get("probe_result", {}),
                 "adapter_delta": event.get("adapter_delta", {}),
                 "bundle_delta": event.get("bundle_delta", {}),
+                "inference_result": event.get("inference_result", {}),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1292,6 +1363,7 @@ class StateStore:
                 "probe_result": event.get("probe_result", {}),
                 "adapter_delta": event.get("adapter_delta", {}),
                 "bundle_delta": event.get("bundle_delta", {}),
+                "inference_result": event.get("inference_result", {}),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1317,6 +1389,7 @@ class StateStore:
                 "probe_result": {},
                 "adapter_delta": {},
                 "bundle_delta": {},
+                "inference_result": {},
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1394,7 +1467,7 @@ class StateStore:
         if not isinstance(metrics, dict):
             return {}
         public = dict(metrics)
-        for field in ("local_delta", "pseudo_gradient", "compressed_delta", "adapter_delta", "bundle_delta"):
+        for field in ("local_delta", "pseudo_gradient", "compressed_delta", "adapter_delta", "bundle_delta", "inference_result"):
             public.pop(field, None)
         return public
 
@@ -1406,9 +1479,11 @@ class StateStore:
         public.pop("result_lease_token_hash", None)
         public.pop("result_response", None)
         public.pop("bundle_delta", None)
+        public.pop("inference_result", None)
         public["metrics"] = self._public_metrics(public.get("metrics"))
         validation = dict(public.get("validation") or {})
         validation.pop("bundle_delta", None)
+        validation.pop("inference_result", None)
         public["validation"] = validation
         return public
 
@@ -1471,6 +1546,11 @@ class StateStore:
             "bundle_id",
             "base_bundle_version",
             "artifact_hash",
+            "predicted_token_id",
+            "predicted_token",
+            "target_token_id",
+            "target_token",
+            "correct",
         ]
         return {
             field: validation.get(field)
@@ -1582,14 +1662,14 @@ class StateStore:
     def _model_version_for_task(self, task: dict) -> int:
         if self._workload_type(task) == WORKLOAD_MICRO_TRANSFORMER_LM:
             return micro_transformer_version(self._model)
-        if self._workload_type(task) == WORKLOAD_MODEL_BUNDLE_LM:
+        if self._workload_type(task) in {WORKLOAD_MODEL_BUNDLE_LM, WORKLOAD_MODEL_BUNDLE_INFER}:
             return model_bundle_version(self._model)
         return int(self._model["version"])
 
     def _claim_weights_for_task(self, task: dict, workload_spec: dict) -> list[float]:
         if self._workload_type(task) == WORKLOAD_MICRO_TRANSFORMER_LM:
             return list(workload_spec.get("weights", []))
-        if self._workload_type(task) == WORKLOAD_MODEL_BUNDLE_LM:
+        if self._workload_type(task) in {WORKLOAD_MODEL_BUNDLE_LM, WORKLOAD_MODEL_BUNDLE_INFER}:
             return list(workload_spec.get("weights", []))
         return list(self._model["weights"])
 
@@ -1721,6 +1801,12 @@ class StateStore:
             )
         if workload_type == WORKLOAD_MODEL_BUNDLE_LM:
             return model_bundle_training_spec_for(
+                task["task_id"],
+                task.get("miner_id") or "anonymous",
+                self._model.get("model_bundle", {}),
+            )
+        if workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
+            return model_bundle_inference_spec_for(
                 task["task_id"],
                 task.get("miner_id") or "anonymous",
                 self._model.get("model_bundle", {}),

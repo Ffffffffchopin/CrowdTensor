@@ -9,7 +9,7 @@ CrowdTensor is an open-source path toward fault-tolerant AI swarms built from or
 - Run a local Coordinator and Miner loop on a normal CPU-only Linux machine.
 - Connect controlled remote Python Miners with token-backed admission and retry behavior.
 - Validate timeout recovery, stale result rejection, checkpoint replay, result ledger, and Support Bundle generation.
-- Run deterministic tiny workloads shaped like future model contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm`.
+- Run deterministic tiny workloads shaped like future model contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, and read-only `model_bundle_infer`.
 - Try browser-native experiments for WebRTC tensor transport, browser Worker compute probes, and a browser Miner bridge.
 
 ## What Is Not Ready
@@ -97,7 +97,7 @@ The Compose file uses local demo tokens by default. Copy `.env.example` to `.env
 
 - **Coordinator / Miner loop**: task claim, heartbeat, result submission, and bounded long-running Miner sessions.
 - **Fault tolerance**: lease timeout requeue, stale result rejection, checkpoint recovery, and append-only event replay.
-- **Runtime contracts**: deterministic CPU-only `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm` workloads.
+- **Runtime contracts**: deterministic CPU-only `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, and `model_bundle_infer` workloads.
 - **Validation**: finite-value checks, shape checks, norm/loss gates, and optional deterministic replay audit.
 - **Trust controls**: workload-scoped Miner scoring, quarantine, admin trust overrides, and redacted event tails.
 - **Result traceability**: admin result ledger for accepted/rejected outcomes, validation, audit, model impact, and Miner score summaries.
@@ -248,6 +248,12 @@ Run only the model bundle LM smoke:
 
 ```bash
 python3 scripts/model_bundle_smoke.py --port 8902
+```
+
+Run only the read-only model bundle inference smoke:
+
+```bash
+python3 scripts/model_bundle_inference_smoke.py --port 8903
 ```
 
 Run only the remote Miner invite/join smoke:

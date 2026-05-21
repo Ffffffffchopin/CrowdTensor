@@ -10,6 +10,7 @@ Today:
 
 - Run the 5-minute local Coordinator/Miner demo from [Quickstart](quickstart.md).
 - Inspect how a Miner claims work, sends heartbeats, retries transient failures, and submits a validated result.
+- Run the read-only `model_bundle_infer` smoke to see a Swarm Inference shaped result path without model mutation.
 - Use CPU-only workloads to understand reliability behavior before trusting remote hardware.
 
 Not ready yet:
@@ -62,6 +63,10 @@ Today:
 ## Future Swarm Inference User
 
 Goal: split useful model-serving work across ordinary machines.
+
+Today:
+
+- `model_bundle_infer` can verify a tiny built-in bundle prediction through the same claim, heartbeat, result, validation, and ledger path used by other workloads.
 
 Planned path:
 

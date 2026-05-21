@@ -14,7 +14,9 @@ from typing import Iterable
 
 
 MODEL_BUNDLE_SCHEMA_VERSION = "model_bundle_lm_v1"
+MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION = "model_bundle_infer_v1"
 WORKLOAD_TYPE = "model_bundle_lm"
+INFERENCE_WORKLOAD_TYPE = "model_bundle_infer"
 BUNDLE_ID = "builtin-char-bundle"
 CORPUS = "crowd tensor nodes route gradients safely "
 VOCAB = sorted(set(CORPUS))
@@ -155,6 +157,33 @@ def model_bundle_training_spec_for(task_id: str, miner_id: str, model: dict) -> 
             current["bundle_id"],
             current["version"],
         ) % _example_count(token_ids, config),
+    }
+
+
+def model_bundle_inference_spec_for(task_id: str, miner_id: str, model: dict) -> dict:
+    current = normalize_model_bundle(model)
+    config = dict(current["config"])
+    token_ids = list(TOKEN_IDS)
+    sample_offset = _stable_offset(
+        task_id,
+        miner_id,
+        current["bundle_id"],
+        current["version"],
+        "infer",
+    ) % _example_count(token_ids, config)
+    context, target = _example_at(token_ids, config, sample_offset)
+    return {
+        "type": INFERENCE_WORKLOAD_TYPE,
+        "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+        "bundle_id": current["bundle_id"],
+        "bundle_version": int(current["version"]),
+        "artifact_hash": current["artifact_hash"],
+        "config": config,
+        "weights": list(current["weights"]),
+        "prompt_token_ids": context,
+        "target_token_id": target,
+        "top_k": 3,
+        "sample_offset": sample_offset,
     }
 
 
@@ -300,6 +329,200 @@ def run_model_bundle_inner_loop(
         "local_delta_scale": local_delta_scale,
         "sample_offset": sample_offset,
         "delta_norm": _l2(values),
+    }
+
+
+def _token_text(config: dict, token_id: int) -> str:
+    cfg = normalize_config(config)
+    vocab = list(cfg["vocab"])
+    if not vocab:
+        return ""
+    return str(vocab[int(token_id) % len(vocab)])
+
+
+def run_model_bundle_inference(workload_spec: dict) -> dict:
+    spec = dict(workload_spec or {})
+    config = normalize_config(spec.get("config"))
+    weights = [float(value) for value in spec.get("weights", [])]
+    expected = parameter_count(config)
+    if len(weights) != expected:
+        raise ValueError(f"model bundle inference weights length {len(weights)} does not match expected {expected}")
+    prompt = [int(value) % int(config["vocab_size"]) for value in spec.get("prompt_token_ids", [])]
+    if len(prompt) != int(config["context_length"]):
+        raise ValueError("model bundle inference prompt length does not match context_length")
+    target = int(spec.get("target_token_id", 0)) % int(config["vocab_size"])
+    top_k = max(1, min(int(spec.get("top_k", 3)), int(config["vocab_size"])))
+    start = time.monotonic()
+    logits = logits_for(weights, config, prompt)
+    probabilities = _softmax(logits)
+    ranked = sorted(
+        enumerate(probabilities),
+        key=lambda item: (-float(item[1]), int(item[0])),
+    )[:top_k]
+    elapsed_ms = (time.monotonic() - start) * 1000.0
+    predicted_id = int(ranked[0][0])
+    return {
+        "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+        "inference_result": {
+            "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+            "bundle_id": str(spec.get("bundle_id", BUNDLE_ID)),
+            "base_bundle_version": int(spec.get("bundle_version", 0)),
+            "artifact_hash": str(spec.get("artifact_hash", "")),
+            "prompt_token_ids": prompt,
+            "target_token_id": target,
+            "target_token": _token_text(config, target),
+            "predicted_token_id": predicted_id,
+            "predicted_token": _token_text(config, predicted_id),
+            "top_k": [
+                {
+                    "token_id": int(token_id),
+                    "token": _token_text(config, int(token_id)),
+                    "probability": float(probability),
+                }
+                for token_id, probability in ranked
+            ],
+            "correct": predicted_id == target,
+        },
+        "prediction_correct": predicted_id == target,
+        "elapsed_ms": elapsed_ms,
+        "top_k": top_k,
+        "sample_offset": int(spec.get("sample_offset", 0)),
+    }
+
+
+def validate_model_bundle_inference(model: dict, inference_result: dict | None) -> dict:
+    current = normalize_model_bundle(model)
+    if not isinstance(inference_result, dict):
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_missing",
+            "reason": "model_bundle_infer requires an inference_result object",
+            "inference_result": inference_result,
+        }
+    if str(inference_result.get("schema_version")) != MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION:
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_schema_mismatch",
+            "reason": "inference_result schema_version does not match model_bundle_infer_v1",
+            "inference_result": inference_result,
+        }
+    if str(inference_result.get("bundle_id")) != current["bundle_id"]:
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_bundle_id_mismatch",
+            "reason": "inference_result bundle_id does not match current bundle",
+            "inference_result": inference_result,
+        }
+    try:
+        base_bundle_version = int(inference_result.get("base_bundle_version", -1))
+    except (TypeError, ValueError):
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_version_not_numeric",
+            "reason": "inference_result base_bundle_version must be an integer",
+            "inference_result": inference_result,
+        }
+    if base_bundle_version != int(current["version"]):
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_version_mismatch",
+            "reason": "inference_result base_bundle_version does not match current bundle version",
+            "inference_result": inference_result,
+        }
+    if str(inference_result.get("artifact_hash")) != current["artifact_hash"]:
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_artifact_hash_mismatch",
+            "reason": "inference_result artifact_hash does not match current bundle artifact_hash",
+            "inference_result": inference_result,
+        }
+    config = current["config"]
+    try:
+        prompt = [int(value) % int(config["vocab_size"]) for value in inference_result.get("prompt_token_ids", [])]
+        target = int(inference_result.get("target_token_id"))
+        predicted = int(inference_result.get("predicted_token_id"))
+        top_k_rows = list(inference_result.get("top_k") or [])
+    except (TypeError, ValueError):
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_not_numeric",
+            "reason": "inference_result contains non-numeric token fields",
+            "inference_result": inference_result,
+        }
+    if len(prompt) != int(config["context_length"]):
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_prompt_length_mismatch",
+            "reason": "inference_result prompt length does not match current bundle context_length",
+            "inference_result": inference_result,
+        }
+    if not top_k_rows:
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_top_k_missing",
+            "reason": "inference_result top_k must contain at least one row",
+            "inference_result": inference_result,
+        }
+    expected = run_model_bundle_inference({
+        "bundle_id": current["bundle_id"],
+        "bundle_version": current["version"],
+        "artifact_hash": current["artifact_hash"],
+        "config": config,
+        "weights": current["weights"],
+        "prompt_token_ids": prompt,
+        "target_token_id": target,
+        "top_k": len(top_k_rows),
+    })["inference_result"]
+    try:
+        observed_top = [
+            {
+                "token_id": int(row.get("token_id")),
+                "probability": float(row.get("probability")),
+            }
+            for row in top_k_rows
+        ]
+    except (AttributeError, TypeError, ValueError):
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_top_k_invalid",
+            "reason": "inference_result top_k rows must contain numeric token_id and probability",
+            "inference_result": inference_result,
+        }
+    expected_top = [
+        {
+            "token_id": int(row["token_id"]),
+            "probability": float(row["probability"]),
+        }
+        for row in expected["top_k"]
+    ]
+    if predicted != int(expected["predicted_token_id"]) or observed_top != expected_top:
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_prediction_mismatch",
+            "reason": "inference_result prediction does not match Coordinator recomputation",
+            "expected": expected,
+            "inference_result": inference_result,
+        }
+    correct = predicted == target
+    return {
+        "accepted": True,
+        "code": "ok",
+        "reason": "accepted",
+        "inference_result": {
+            **inference_result,
+            "prompt_token_ids": prompt,
+            "target_token_id": target,
+            "predicted_token_id": predicted,
+            "correct": correct,
+        },
+        "bundle_id": current["bundle_id"],
+        "base_bundle_version": base_bundle_version,
+        "artifact_hash": current["artifact_hash"],
+        "predicted_token_id": predicted,
+        "predicted_token": _token_text(config, predicted),
+        "target_token_id": target,
+        "target_token": _token_text(config, target),
+        "correct": correct,
     }
 
 

@@ -13,7 +13,7 @@ CrowdTensorD is the current Alpha daemon/control plane. It validates the reliabi
 The current code supports:
 
 - Coordinator/Miner task leasing, heartbeat recovery, timeout requeue, stale result rejection, and checkpoint replay.
-- Deterministic CPU-only workloads: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, and `browser_probe`.
+- Deterministic CPU-only workloads: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, `model_bundle_infer`, and `browser_probe`.
 - `runtime_contract_v1`, workload capability matching, delta transport negotiation, validation, replay audit, result ledger, trust quarantine, and operator controls.
 - Controlled remote Miner demos with token-backed admission, hashed token config, `/ready` preflight, retries, and Support Bundle diagnostics.
 - Browser experiments for WebRTC tensor transport, Worker compute probes, and a browser Miner bridge.
@@ -30,7 +30,7 @@ Roadmap priority:
 
 1. Preserve Alpha reliability and operator trust.
 2. Make the project easy for strangers to understand and run.
-3. Add a useful home-compute workload with explicit hardware/capability matching.
+3. Expand the current read-only `model_bundle_infer` probe into a useful home-compute inference demo with explicit hardware/capability matching.
 4. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
 5. Treat incentives and reputation as later protocol layers, not prerequisites for local demos.
 

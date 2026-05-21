@@ -177,6 +177,7 @@ class MinerCliTests(unittest.TestCase):
         self.assertIn("sign_compressed", capabilities["supported_delta_formats"])
         self.assertIn("sign_compressed_ef", capabilities["supported_delta_formats"])
         self.assertIn("model_bundle_lm", capabilities["supported_workloads"])
+        self.assertIn("model_bundle_infer", capabilities["supported_workloads"])
 
     def test_auto_delta_format_follows_claim_optimizer_spec(self) -> None:
         self.assertEqual(
@@ -263,6 +264,32 @@ class MinerCliTests(unittest.TestCase):
         self.assertIsNone(next_residual)
         self.assertEqual(payload["bundle_delta"], bundle_delta)
         self.assertNotIn("compressed_delta", payload)
+
+    def test_build_result_payload_keeps_model_bundle_inference_result(self) -> None:
+        inference_result = {
+            "schema_version": "model_bundle_infer_v1",
+            "bundle_id": "bundle",
+            "base_bundle_version": 0,
+            "artifact_hash": "sha256:abc",
+            "prompt_token_ids": [1, 2, 3, 4],
+            "target_token_id": 5,
+            "predicted_token_id": 5,
+            "top_k": [{"token_id": 5, "probability": 0.25}],
+            "correct": True,
+        }
+
+        payload, next_residual = miner_cli.build_result_payload(
+            {"lease_token": "lease", "attempt": 1, "workload_type": "model_bundle_infer"},
+            {"inference_result": inference_result, "prediction_correct": True},
+            delta_format="sign_compressed_ef",
+            elapsed_ms=1.0,
+        )
+
+        self.assertIsNone(next_residual)
+        self.assertEqual(payload["inference_result"], inference_result)
+        self.assertNotIn("compressed_delta", payload)
+        self.assertNotIn("inference_result", payload["metrics"])
+        self.assertTrue(payload["metrics"]["prediction_correct"])
 
 
 if __name__ == "__main__":
