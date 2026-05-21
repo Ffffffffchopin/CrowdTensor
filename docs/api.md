@@ -261,6 +261,24 @@ For the default `diloco_train` workload, send `local_delta` or `pseudo_gradient`
 }
 ```
 
+`diloco_train` also accepts an experimental `compressed_delta` transport. `sign_compressed` is a CPU-only contract check format: Coordinator decodes it to a dense delta, then reuses the normal validation, audit, optimizer, checkpoint, and idempotency path.
+
+```json
+{
+  "lease_token": "lease-token-from-claim",
+  "attempt": 1,
+  "compressed_delta": {
+    "format": "sign_compressed",
+    "encoding": "ternary_signs_v1",
+    "scale": 0.1,
+    "signs": [1, -1, 0]
+  },
+  "metrics": {"delta_format": "sign_compressed"}
+}
+```
+
+`signs` may contain only `-1`, `0`, or `1`; `scale` must be finite and non-negative. If multiple delta forms are present, Coordinator prefers `local_delta`, then `pseudo_gradient`, then `compressed_delta`.
+
 `idempotency_key` is optional for compatibility with older Miners, but remote Miners should send a stable unique value per claimed task. When a result with the same `task_id`, `attempt`, `lease_token`, and `idempotency_key` is retried after a lost response, Coordinator returns the original response without applying the update twice. Reusing a different key after the task is already terminal returns `409`.
 
 Successful `diloco_train` response fields include:
@@ -275,7 +293,7 @@ Successful `diloco_train` response fields include:
 - `loss`
 - `staleness`
 
-`optimizer` summarizes the accepted outer update, including `contract_version`, `optimizer_type`, `delta_format`, `optimizer_step_before`, `optimizer_step_after`, `delta_norm`, and `velocity_norm`.
+`optimizer` summarizes the accepted outer update, including `contract_version`, `optimizer_type`, `delta_format`, `optimizer_step_before`, `optimizer_step_after`, `delta_norm`, `decoded_delta_norm`, `compression_ratio_estimate`, and `velocity_norm`.
 
 Other current workload result fields:
 

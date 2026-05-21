@@ -9,6 +9,8 @@ from typing import Iterable
 CONTRACT_VERSION = "outer_optimizer_contract_v1"
 OPTIMIZER_DILOCO_MOMENTUM = "diloco_momentum"
 DELTA_FORMAT_DENSE_FLOAT = "dense_float"
+DELTA_FORMAT_SIGN_COMPRESSED = "sign_compressed"
+SIGN_ENCODING_TERNARY_V1 = "ternary_signs_v1"
 
 
 def default_outer_optimizer_contract(model: dict | None = None) -> dict:
@@ -61,7 +63,84 @@ def l2_norm(values: Iterable[float]) -> float:
     return math.sqrt(sum(float(value) * float(value) for value in values))
 
 
-def apply_outer_optimizer_update(model: dict, local_delta: Iterable[float]) -> tuple[dict, dict]:
+def compress_sign_delta(local_delta: Iterable[float]) -> dict:
+    values = [float(value) for value in local_delta]
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("local_delta contains NaN or infinite values")
+    if not values:
+        scale = 0.0
+    else:
+        scale = sum(abs(value) for value in values) / len(values)
+    signs = [
+        1 if value > 0 else -1 if value < 0 else 0
+        for value in values
+    ]
+    return {
+        "format": DELTA_FORMAT_SIGN_COMPRESSED,
+        "encoding": SIGN_ENCODING_TERNARY_V1,
+        "scale": scale,
+        "signs": signs,
+    }
+
+
+def decode_delta_payload(
+    *,
+    local_delta: Iterable[float] | None = None,
+    pseudo_gradient: Iterable[float] | None = None,
+    compressed_delta: dict | None = None,
+) -> tuple[list[float] | None, dict]:
+    if local_delta is not None:
+        values = [float(value) for value in local_delta]
+        return values, {
+            "delta_format": DELTA_FORMAT_DENSE_FLOAT,
+            "decoded_delta_norm": l2_norm(values),
+            "compression_ratio_estimate": 1.0,
+        }
+    if pseudo_gradient is not None:
+        values = [float(value) for value in pseudo_gradient]
+        return values, {
+            "delta_format": DELTA_FORMAT_DENSE_FLOAT,
+            "decoded_delta_norm": l2_norm(values),
+            "compression_ratio_estimate": 1.0,
+        }
+    if compressed_delta is None:
+        return None, {"delta_format": DELTA_FORMAT_DENSE_FLOAT}
+    if not isinstance(compressed_delta, dict):
+        raise ValueError("compressed_delta must be an object")
+    if compressed_delta.get("format") != DELTA_FORMAT_SIGN_COMPRESSED:
+        raise ValueError("compressed_delta format must be sign_compressed")
+    if compressed_delta.get("encoding") != SIGN_ENCODING_TERNARY_V1:
+        raise ValueError("compressed_delta encoding must be ternary_signs_v1")
+    try:
+        scale = float(compressed_delta.get("scale"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("compressed_delta scale must be numeric") from exc
+    if not math.isfinite(scale) or scale < 0.0:
+        raise ValueError("compressed_delta scale must be finite and non-negative")
+    signs = compressed_delta.get("signs")
+    if not isinstance(signs, list):
+        raise ValueError("compressed_delta signs must be a list")
+    values: list[float] = []
+    for sign in signs:
+        if not isinstance(sign, int) or sign not in {-1, 0, 1}:
+            raise ValueError("compressed_delta signs must contain only -1, 0, or 1")
+        values.append(float(sign) * scale)
+    dense_bytes = max(1, len(values) * 8)
+    compressed_bytes = max(1, len(signs) + 8)
+    return values, {
+        "delta_format": DELTA_FORMAT_SIGN_COMPRESSED,
+        "decoded_delta_norm": l2_norm(values),
+        "compression_ratio_estimate": round(dense_bytes / compressed_bytes, 6),
+        "encoding": SIGN_ENCODING_TERNARY_V1,
+    }
+
+
+def apply_outer_optimizer_update(
+    model: dict,
+    local_delta: Iterable[float],
+    *,
+    delta_metadata: dict | None = None,
+) -> tuple[dict, dict]:
     current = dict(model)
     contract = normalize_outer_optimizer_contract(current)
     if contract["contract_version"] != CONTRACT_VERSION:
@@ -103,6 +182,9 @@ def apply_outer_optimizer_update(model: dict, local_delta: Iterable[float]) -> t
         result_contract=next_contract,
         local_delta=delta,
         next_velocity=next_velocity,
+        delta_format=(delta_metadata or {}).get("delta_format"),
+        decoded_delta_norm=(delta_metadata or {}).get("decoded_delta_norm"),
+        compression_ratio_estimate=(delta_metadata or {}).get("compression_ratio_estimate"),
     )
     next_model = {
         **current,
@@ -123,11 +205,14 @@ def optimizer_result_summary(
     result_contract: dict,
     local_delta: Iterable[float],
     next_velocity: Iterable[float],
+    delta_format: str | None = None,
+    decoded_delta_norm: float | None = None,
+    compression_ratio_estimate: float | None = None,
 ) -> dict:
-    return {
+    summary = {
         "contract_version": result_contract.get("contract_version", CONTRACT_VERSION),
         "optimizer_type": result_contract.get("optimizer_type", OPTIMIZER_DILOCO_MOMENTUM),
-        "delta_format": result_contract.get("delta_format", DELTA_FORMAT_DENSE_FLOAT),
+        "delta_format": delta_format or result_contract.get("delta_format", DELTA_FORMAT_DENSE_FLOAT),
         "optimizer_step_before": int(claim_spec.get("optimizer_step", 0)),
         "optimizer_step_after": int(result_contract.get("optimizer_step", 0)),
         "outer_lr": float(result_contract.get("outer_lr", 0.0)),
@@ -136,3 +221,8 @@ def optimizer_result_summary(
         "delta_norm": l2_norm(local_delta),
         "velocity_norm": l2_norm(next_velocity),
     }
+    if decoded_delta_norm is not None:
+        summary["decoded_delta_norm"] = float(decoded_delta_norm)
+    if compression_ratio_estimate is not None:
+        summary["compression_ratio_estimate"] = float(compression_ratio_estimate)
+    return summary

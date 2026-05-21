@@ -66,6 +66,7 @@ from .micro_transformer import (
     validate_micro_transformer_delta,
 )
 from .outer_optimizer import optimizer_claim_spec
+from .outer_optimizer import decode_delta_payload
 from .validation import validate_local_delta
 
 
@@ -359,6 +360,7 @@ class StateStore:
         idempotency_key: str | None = None,
         local_delta: Iterable[float] | None = None,
         pseudo_gradient: Iterable[float] | None = None,
+        compressed_delta: dict | None = None,
         probe_result: dict | None = None,
         adapter_delta: dict | None = None,
         metrics: dict | None = None,
@@ -407,9 +409,14 @@ class StateStore:
             if workload_type != WORKLOAD_DILOCO_TRAIN:
                 raise ValueError(f"unsupported workload_type {workload_type}")
 
-            raw_delta = local_delta if local_delta is not None else pseudo_gradient
             staleness = int(self._model["version"]) - int(task["model_version"])
+            raw_delta, delta_metadata = decode_delta_payload(
+                local_delta=local_delta,
+                pseudo_gradient=pseudo_gradient,
+                compressed_delta=compressed_delta,
+            )
             validation = validate_local_delta(self._model, raw_delta)
+            validation = {**validation, **delta_metadata}
             if validation["accepted"]:
                 validation = self._audit_diloco_result(task, validation)
             else:
@@ -440,7 +447,11 @@ class StateStore:
                 raise ResultRejected(validation)
 
             delta = validation["local_delta"]
-            next_model, optimizer_summary = apply_outer_update_with_summary(self._model, delta)
+            next_model, optimizer_summary = apply_outer_update_with_summary(
+                self._model,
+                delta,
+                delta_metadata=delta_metadata,
+            )
             response = {
                 "accepted": True,
                 "model_version": next_model["version"],

@@ -6,8 +6,11 @@ from crowdtensor.diloco import apply_outer_update, default_model
 from crowdtensor.outer_optimizer import (
     CONTRACT_VERSION,
     DELTA_FORMAT_DENSE_FLOAT,
+    DELTA_FORMAT_SIGN_COMPRESSED,
     OPTIMIZER_DILOCO_MOMENTUM,
     apply_outer_optimizer_update,
+    compress_sign_delta,
+    decode_delta_payload,
     normalize_outer_optimizer_contract,
     optimizer_claim_spec,
 )
@@ -55,6 +58,33 @@ class OuterOptimizerTests(unittest.TestCase):
         self.assertEqual(contract["outer_lr"], 0.25)
         self.assertEqual(contract["outer_momentum"], 0.8)
         self.assertEqual(contract["weight_count"], 2)
+
+    def test_sign_compressed_delta_decodes_to_scaled_signs(self) -> None:
+        compressed = compress_sign_delta([0.2, -0.4, 0.0])
+        decoded, metadata = decode_delta_payload(compressed_delta=compressed)
+
+        self.assertEqual(compressed["format"], DELTA_FORMAT_SIGN_COMPRESSED)
+        self.assertEqual(compressed["signs"], [1, -1, 0])
+        self.assertEqual(len(decoded), 3)
+        self.assertAlmostEqual(decoded[0], 0.2)
+        self.assertAlmostEqual(decoded[1], -0.2)
+        self.assertEqual(decoded[2], 0.0)
+        self.assertEqual(metadata["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED)
+        self.assertGreater(metadata["compression_ratio_estimate"], 0.0)
+
+    def test_sign_compressed_delta_rejects_invalid_payloads(self) -> None:
+        cases = [
+            {"format": "broken", "encoding": "ternary_signs_v1", "scale": 1.0, "signs": [1]},
+            {"format": "sign_compressed", "encoding": "broken", "scale": 1.0, "signs": [1]},
+            {"format": "sign_compressed", "encoding": "ternary_signs_v1", "scale": -1.0, "signs": [1]},
+            {"format": "sign_compressed", "encoding": "ternary_signs_v1", "scale": 1.0, "signs": [2]},
+            {"format": "sign_compressed", "encoding": "ternary_signs_v1", "scale": 1.0, "signs": "1"},
+        ]
+
+        for payload in cases:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    decode_delta_payload(compressed_delta=payload)
 
 
 if __name__ == "__main__":

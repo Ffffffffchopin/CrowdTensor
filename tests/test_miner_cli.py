@@ -170,6 +170,31 @@ class MinerCliTests(unittest.TestCase):
         self.assertEqual(payload["preflight_failures"], 0)
         self.assertEqual(payload["workloads"], {"diloco_train": 1})
 
+    def test_build_result_payload_uses_sign_compressed_delta(self) -> None:
+        payload = miner_cli.build_result_payload(
+            {"lease_token": "lease", "attempt": 1, "workload_type": "diloco_train"},
+            {"local_delta": [0.1, -0.3, 0.0], "inner_loss_start": 1.0},
+            delta_format="sign_compressed",
+            elapsed_ms=12.5,
+        )
+
+        self.assertNotIn("local_delta", payload)
+        self.assertEqual(payload["compressed_delta"]["format"], "sign_compressed")
+        self.assertEqual(payload["compressed_delta"]["signs"], [1, -1, 0])
+        self.assertEqual(payload["metrics"]["delta_format"], "sign_compressed")
+        self.assertEqual(payload["metrics"]["elapsed_ms"], 12.5)
+
+    def test_build_result_payload_keeps_lora_adapter_delta(self) -> None:
+        payload = miner_cli.build_result_payload(
+            {"lease_token": "lease", "attempt": 1, "workload_type": "cpu_lora_mock"},
+            {"adapter_delta": {"values": [0.1], "rank": 1}, "adapter_loss_start": 1.0},
+            delta_format="sign_compressed",
+            elapsed_ms=1.0,
+        )
+
+        self.assertIn("adapter_delta", payload)
+        self.assertNotIn("compressed_delta", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

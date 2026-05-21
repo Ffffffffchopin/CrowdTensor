@@ -19,6 +19,7 @@ from crowdtensor.diloco import run_inner_loop
 from crowdtensor.lora_mock import run_lora_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
+from crowdtensor.outer_optimizer import DELTA_FORMAT_DENSE_FLOAT, DELTA_FORMAT_SIGN_COMPRESSED, compress_sign_delta
 
 
 RETRYABLE_HTTP_STATUSES = {500, 502, 504}
@@ -243,6 +244,29 @@ def miner_capabilities() -> dict:
     }
 
 
+def build_result_payload(claim: dict, inner_result: dict, *, delta_format: str, elapsed_ms: float) -> dict:
+    workload_type = claim.get("workload_type", "diloco_train")
+    payload = {
+        "lease_token": claim["lease_token"],
+        "attempt": claim["attempt"],
+        "idempotency_key": uuid.uuid4().hex,
+        "metrics": {
+            key: value
+            for key, value in inner_result.items()
+            if key not in {"local_delta", "adapter_delta"}
+        },
+    }
+    payload["metrics"]["elapsed_ms"] = elapsed_ms
+    if workload_type == "cpu_lora_mock":
+        payload["adapter_delta"] = inner_result["adapter_delta"]
+    elif delta_format == DELTA_FORMAT_SIGN_COMPRESSED:
+        payload["compressed_delta"] = compress_sign_delta(inner_result["local_delta"])
+        payload["metrics"]["delta_format"] = DELTA_FORMAT_SIGN_COMPRESSED
+    else:
+        payload["local_delta"] = inner_result["local_delta"]
+    return payload
+
+
 def process_one(args: argparse.Namespace, counters: Counter) -> bool:
     claim = post_json(
         args.coordinator,
@@ -309,21 +333,12 @@ def process_one(args: argparse.Namespace, counters: Counter) -> bool:
         if stop.is_set():
             print("lease heartbeat stopped before result upload", file=sys.stderr, flush=True)
             return False
-        payload = {
-            "lease_token": claim["lease_token"],
-            "attempt": claim["attempt"],
-            "idempotency_key": uuid.uuid4().hex,
-            "metrics": {
-                key: value
-                for key, value in inner_result.items()
-                if key not in {"local_delta", "adapter_delta"}
-            },
-        }
-        payload["metrics"]["elapsed_ms"] = round((time.monotonic() - task_started_at) * 1000.0, 6)
-        if workload_type == "cpu_lora_mock":
-            payload["adapter_delta"] = inner_result["adapter_delta"]
-        else:
-            payload["local_delta"] = inner_result["local_delta"]
+        payload = build_result_payload(
+            claim,
+            inner_result,
+            delta_format=args.delta_format,
+            elapsed_ms=round((time.monotonic() - task_started_at) * 1000.0, 6),
+        )
         stop.set()
         thread.join(timeout=max(0.1, args.heartbeat_timeout))
         result = post_json(
@@ -384,6 +399,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--claim-timeout", type=float, default=10.0)
     parser.add_argument("--result-timeout", type=float, default=10.0)
     parser.add_argument("--heartbeat-timeout", type=float, default=5.0)
+    parser.add_argument(
+        "--delta-format",
+        choices=[DELTA_FORMAT_DENSE_FLOAT, DELTA_FORMAT_SIGN_COMPRESSED],
+        default=DELTA_FORMAT_DENSE_FLOAT,
+        help="delta transport format for diloco_train results",
+    )
     parser.add_argument("--skip-preflight", action="store_true", help="skip the startup /ready protocol check")
     parser.add_argument("--preflight-timeout", type=float, default=5.0)
     parser.add_argument("--max-request-attempts", type=int, default=3)

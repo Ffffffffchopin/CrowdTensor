@@ -11,6 +11,7 @@ from crowdtensor.state_store import StateStore
 from crowdtensor.diloco import run_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
+from crowdtensor.outer_optimizer import compress_sign_delta
 from crowdtensor.toy_compute import compute_pseudo_gradient
 
 
@@ -269,6 +270,36 @@ class StateStoreTests(unittest.TestCase):
                 '"adapter_delta"',
             ]:
                 self.assertNotIn(forbidden, public_text)
+
+    def test_sign_compressed_result_updates_model_and_ledger_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+            claim = store.claim_task("compressed-miner")
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="compressed-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                compressed_delta=compress_sign_delta(inner_result["local_delta"]),
+                metrics={"transport": "sign_compressed"},
+            )
+
+            self.assertTrue(result["accepted"])
+            self.assertEqual(result["optimizer"]["delta_format"], "sign_compressed")
+            self.assertIn("decoded_delta_norm", result["optimizer"])
+            self.assertIn("compression_ratio_estimate", result["optimizer"])
+            row = store.result_ledger(status="accepted")[0]
+            self.assertEqual(row["optimizer"]["delta_format"], "sign_compressed")
+            public_text = json.dumps(row, sort_keys=True)
+            self.assertNotIn("compressed_delta", public_text)
+            self.assertNotIn("signs", public_text)
 
     def test_result_ledger_survives_restart_with_event_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

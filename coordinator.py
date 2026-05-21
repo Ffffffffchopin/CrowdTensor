@@ -313,6 +313,7 @@ def create_app(
         idempotency_key: str | None = None
         local_delta: list[float] | None = None
         pseudo_gradient: list[float] | None = None
+        compressed_delta: dict[str, Any] | None = None
         probe_result: dict[str, Any] | None = None
         adapter_delta: dict[str, Any] | None = None
         metrics: dict[str, Any] = Field(default_factory=dict)
@@ -541,6 +542,7 @@ def create_app(
                 idempotency_key=request.idempotency_key,
                 local_delta=request.local_delta,
                 pseudo_gradient=request.pseudo_gradient,
+                compressed_delta=request.compressed_delta,
                 probe_result=request.probe_result,
                 adapter_delta=request.adapter_delta,
                 metrics=request.metrics,

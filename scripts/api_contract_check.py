@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
 
 from crowdtensor.auth import hash_token  # noqa: E402
 from crowdtensor.diloco import run_inner_loop  # noqa: E402
+from crowdtensor.outer_optimizer import compress_sign_delta  # noqa: E402
 
 
 ADMIN_TOKEN = "api-contract-admin"
@@ -227,6 +228,29 @@ def complete_claim(args: argparse.Namespace, claim: dict, miner_id: str, token: 
             "attempt": claim["attempt"],
             "local_delta": inner_result["local_delta"],
             "metrics": {**inner_result, "elapsed_ms": 1.0},
+        },
+        miner_token=token,
+    )
+
+
+def complete_compressed_claim(args: argparse.Namespace, claim: dict, miner_id: str, token: str) -> dict:
+    inner_result = run_inner_loop(
+        claim["weights"],
+        task_id=claim["task_id"],
+        miner_id=miner_id,
+        model_version=int(claim["model_version"]),
+        inner_steps=int(claim["inner_steps"]),
+        training_spec=claim["training_spec"],
+    )
+    return request_json(
+        "POST",
+        args.base_url,
+        f"/tasks/{claim['task_id']}/result",
+        {
+            "lease_token": claim["lease_token"],
+            "attempt": claim["attempt"],
+            "compressed_delta": compress_sign_delta(inner_result["local_delta"]),
+            "metrics": {"elapsed_ms": 1.0, "delta_format": "sign_compressed"},
         },
         miner_token=token,
     )
@@ -470,16 +494,22 @@ def verify_miner_endpoints(args: argparse.Namespace) -> dict:
     )
     shared_claim = claim_task(args, SHARED_MINER, MINER_TOKEN)
     shared_result = complete_claim(args, shared_claim, SHARED_MINER, MINER_TOKEN)
+    compressed_claim = claim_task(args, f"{SHARED_MINER}-compressed", MINER_TOKEN)
+    compressed_result = complete_compressed_claim(args, compressed_claim, f"{SHARED_MINER}-compressed", MINER_TOKEN)
 
     if "stale" not in str(bad_result.get("detail")):
         raise RuntimeError(f"unexpected stale result response: {bad_result}")
-    if result.get("accepted") is not True or shared_result.get("accepted") is not True:
-        raise RuntimeError(f"expected accepted results: registered={result} shared={shared_result}")
+    if result.get("accepted") is not True or shared_result.get("accepted") is not True or compressed_result.get("accepted") is not True:
+        raise RuntimeError(
+            f"expected accepted results: registered={result} shared={shared_result} compressed={compressed_result}"
+        )
     result_optimizer = result.get("optimizer") or {}
     if result_optimizer.get("contract_version") != "outer_optimizer_contract_v1":
         raise RuntimeError(f"result missing optimizer contract summary: {result}")
     if result_optimizer.get("optimizer_step_after") != result.get("optimizer_step"):
         raise RuntimeError(f"result optimizer step summary mismatch: {result}")
+    if (compressed_result.get("optimizer") or {}).get("delta_format") != "sign_compressed":
+        raise RuntimeError(f"compressed result missing sign_compressed optimizer summary: {compressed_result}")
     if "not leased" not in str(duplicate_result.get("detail")):
         raise RuntimeError(f"unexpected duplicate result response: {duplicate_result}")
 
@@ -487,10 +517,11 @@ def verify_miner_endpoints(args: argparse.Namespace) -> dict:
     tasks = state.get("tasks") or []
     if any(task.get("lease_token") and task.get("lease_token") != "<redacted>" for task in tasks):
         raise RuntimeError(f"unredacted lease token in state tasks: {state}")
-    if int(state.get("accepted_results", 0)) != 2:
-        raise RuntimeError(f"expected two accepted results: {state}")
+    if int(state.get("accepted_results", 0)) != 3:
+        raise RuntimeError(f"expected three accepted results: {state}")
     return {
         "accepted_results": state.get("accepted_results"),
+        "compressed_delta_format": (compressed_result.get("optimizer") or {}).get("delta_format"),
         "disabled_detail": disabled_claim.get("detail"),
         "registered_bad_detail": wrong_registered.get("detail"),
         "stale_result_status": 409,

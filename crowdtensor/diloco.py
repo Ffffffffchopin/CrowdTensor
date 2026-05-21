@@ -233,9 +233,14 @@ def run_inner_loop(
     }
 
 
-def apply_outer_update_with_summary(model: dict, local_delta: Iterable[float]) -> tuple[dict, dict]:
+def apply_outer_update_with_summary(
+    model: dict,
+    local_delta: Iterable[float],
+    *,
+    delta_metadata: dict | None = None,
+) -> tuple[dict, dict]:
     current = normalize_model(model)
-    optimized, summary = apply_outer_optimizer_update(current, local_delta)
+    optimized, summary = apply_outer_optimizer_update(current, local_delta, delta_metadata=delta_metadata)
     return {
         **optimized,
         "schema_version": SCHEMA_VERSION,
