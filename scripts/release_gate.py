@@ -34,6 +34,7 @@ REQUIRED_FILES = [
     "scripts/readiness_check.py",
     "scripts/hash_token.py",
     "scripts/token_hash_auth_check.py",
+    "scripts/security_preflight.py",
     "docs/api.md",
     "docs/quickstart.md",
     "docs/remote-miner.md",
@@ -279,6 +280,31 @@ def check_remote_miner_docs(root: Path) -> dict[str, Any]:
     return check_result("remote_miner_docs", not details, details)
 
 
+def check_security_preflight_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/operations.md",
+            "docs/security.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "scripts/security_preflight.py",
+        "--strict",
+        "--miner-token-registry",
+        "security preflight",
+    ]:
+        if fragment not in combined:
+            details.append(f"security preflight docs or CI must mention {fragment}")
+    return check_result("security_preflight_docs", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -351,6 +377,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python -m pip install -e .[dev]": "CI must install the dev package",
         "python -m py_compile": "CI must compile Python entrypoints",
         "python scripts/release_gate.py --json": "CI must run the release gate",
+        "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "python -m unittest discover -s tests -v": "CI must run unit tests",
         "runtime_acceptance_pack.py": "CI must run the runtime acceptance pack",
     }
@@ -373,6 +400,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_result_idempotency_docs(gate_root),
         check_result_ledger_docs(gate_root),
         check_remote_miner_docs(gate_root),
+        check_security_preflight_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

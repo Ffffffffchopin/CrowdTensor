@@ -98,6 +98,23 @@ Alpha release gate:
 python3 scripts/release_gate.py --json
 ```
 
+Security preflight:
+
+```bash
+python3 scripts/security_preflight.py --json
+```
+
+Remote demo preflight:
+
+```bash
+python3 scripts/security_preflight.py \
+  --host 0.0.0.0 \
+  --miner-token-registry state/miner_registry.json \
+  --observer-token sha256:OBSERVER_DIGEST \
+  --admin-token sha256:ADMIN_DIGEST \
+  --json
+```
+
 Readiness/profile smoke:
 
 ```bash
@@ -189,6 +206,10 @@ For registry-backed remote Miners, generate or rotate the entry with `scripts/cr
 **401 invalid observer token**
 
 Pass `x-crowdtensor-observer-token` when reading `/state` or `/metrics`.
+
+**Security preflight fails**
+
+Fix `error` findings before a remote demo. Typical causes are binding to `0.0.0.0` without Miner, observer, or admin tokens, using `local-*` demo tokens on a remote bind, or storing plaintext tokens in `--miner-token-registry`. Use `--strict` when warning-level findings should also block CI.
 
 **503 no compatible queued task available**
 

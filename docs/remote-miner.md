@@ -45,6 +45,17 @@ python3 scripts/create_miner_invite.py \
 
 ## 2. Start Coordinator With Registry
 
+Run the offline security preflight before binding beyond loopback:
+
+```bash
+python3 scripts/security_preflight.py \
+  --host 0.0.0.0 \
+  --miner-token-registry state/miner_registry.json \
+  --observer-token sha256:OBSERVER_DIGEST \
+  --admin-token sha256:ADMIN_DIGEST \
+  --json
+```
+
 ```bash
 crowdtensord \
   --host 0.0.0.0 \
@@ -56,6 +67,8 @@ crowdtensord \
 ```
 
 For controlled demos, put TLS or a VPN in front of the Coordinator. Do not expose the admin token path to the open internet.
+
+Use `--strict` with `scripts/security_preflight.py` when warning-level findings should block a CI or release rehearsal.
 
 ## 3. Run the Remote Miner
 

@@ -46,6 +46,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "result_idempotency_docs",
                 "result_ledger_docs",
                 "remote_miner_docs",
+                "security_preflight_docs",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -190,6 +191,21 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "remote_miner_docs")
         self.assertTrue(any("scripts/create_miner_invite.py" in detail for detail in details))
+
+    def test_security_preflight_docs_must_describe_preflight_gate(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        (tmp_root / "README.md").write_text("No security preflight docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "quickstart.md").write_text("No security preflight docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "remote-miner.md").write_text("No security preflight docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "operations.md").write_text("No security preflight docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "security.md").write_text("No security preflight docs here.\n", encoding="utf-8")
+        (tmp_root / ".github" / "workflows" / "ci.yml").write_text("No security preflight docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "security_preflight_docs")
+        self.assertTrue(any("scripts/security_preflight.py" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

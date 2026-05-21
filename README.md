@@ -91,6 +91,17 @@ Run the Alpha release gate first to verify package metadata, docs links, Docker/
 python3 scripts/release_gate.py --json
 ```
 
+Run the offline security preflight before a controlled remote demo:
+
+```bash
+python3 scripts/security_preflight.py \
+  --host 0.0.0.0 \
+  --miner-token-registry state/miner_registry.json \
+  --observer-token sha256:OBSERVER_DIGEST \
+  --admin-token sha256:ADMIN_DIGEST \
+  --json
+```
+
 Run the non-browser V1 acceptance pack from a normal Linux shell with localhost networking:
 
 ```bash
@@ -161,6 +172,12 @@ Run only the remote Miner invite/join smoke:
 
 ```bash
 python3 scripts/remote_miner_join_check.py --port 8898
+```
+
+Run only the security preflight:
+
+```bash
+python3 scripts/security_preflight.py --json
 ```
 
 ## Security Model

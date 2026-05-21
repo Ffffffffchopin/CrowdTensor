@@ -111,6 +111,19 @@ For controlled remote demos:
 
 Use `scripts/remote_miner_join_check.py` to validate registry-backed Miner onboarding in a local smoke test before sending invite commands to a remote machine.
 
+Run the offline security preflight before binding beyond loopback:
+
+```bash
+python3 scripts/security_preflight.py \
+  --host 0.0.0.0 \
+  --miner-token-registry state/miner_registry.json \
+  --observer-token sha256:OBSERVER_DIGEST \
+  --admin-token sha256:ADMIN_DIGEST \
+  --json
+```
+
+The preflight reads CLI/env-style configuration and the registry file without contacting a running Coordinator. It fails high-risk remote demo mistakes, including missing Miner/observer/admin auth, local demo tokens on a remote bind, invalid registry JSON, and plaintext registry token verifiers. Add `--strict` when warnings should also fail CI.
+
 ## Replay Audit
 
 `--replay-audit` verifies deterministic workload outputs against claim-time state. This is a control-plane integrity check for supported toy workloads, not a cryptographic proof of useful external compute.
