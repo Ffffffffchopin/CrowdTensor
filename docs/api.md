@@ -92,6 +92,52 @@ Response:
 {"events": [], "limit": 50}
 ```
 
+### `GET /admin/results?limit=50&status=any`
+
+Returns a result-level traceability ledger. Requires `x-crowdtensor-admin-token`.
+
+Query parameters:
+
+- `limit`: `0..500`, default `50`
+- `status`: `any`, `accepted`, or `rejected`
+- `miner_id`: optional exact Miner ID filter
+- `workload_type`: optional exact workload filter
+
+Each result row is newest-first by `event_index` and includes safe operator fields:
+
+- `event_index`
+- `task_id`
+- `status`
+- `accepted`
+- `miner_id`
+- `workload_type`
+- `attempt`
+- `base_model_version`
+- `result_model_version`
+- `staleness`
+- `model_updated`
+- `adapter_updated`
+- `micro_transformer_updated`
+- `idempotent`
+- `terminal_at`
+- `validation`
+- `audit`
+- `miner_workload_score`
+
+The ledger intentionally avoids raw `lease_token`, idempotency keys or hashes, `result_response`, `local_delta`, and `adapter_delta`.
+
+Response:
+
+```json
+{
+  "results": [],
+  "limit": 50,
+  "status": "any",
+  "miner_id": "",
+  "workload_type": ""
+}
+```
+
 ### `POST /admin/trust-overrides`
 
 Sets or clears a workload-scoped trust override. Requires `x-crowdtensor-admin-token`.
@@ -241,4 +287,10 @@ Run the result idempotency smoke when changing Miner result upload behavior:
 
 ```bash
 python3 scripts/result_idempotency_check.py --port 8896
+```
+
+Run the result ledger smoke when changing operator audit views:
+
+```bash
+python3 scripts/result_ledger_check.py --port 8897
 ```

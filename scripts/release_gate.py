@@ -27,6 +27,7 @@ REQUIRED_FILES = [
     ".github/workflows/ci.yml",
     "scripts/api_contract_check.py",
     "scripts/result_idempotency_check.py",
+    "scripts/result_ledger_check.py",
     "scripts/miner_resilience_check.py",
     "scripts/readiness_check.py",
     "scripts/hash_token.py",
@@ -171,6 +172,7 @@ def check_api_docs(root: Path) -> dict[str, Any]:
         "GET /state",
         "GET /metrics",
         "GET /admin/events",
+        "GET /admin/results",
         "POST /admin/trust-overrides",
         "POST /tasks/claim",
         "POST /tasks/{task_id}/heartbeat",
@@ -229,6 +231,24 @@ def check_result_idempotency_docs(root: Path) -> dict[str, Any]:
         if fragment not in combined:
             details.append(f"README.md, docs/api.md, docs/operations.md, or runtime_acceptance_pack.py must mention {fragment}")
     return check_result("result_idempotency_docs", not details, details)
+
+
+def check_result_ledger_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in ["README.md", "docs/api.md", "docs/operations.md", "scripts/runtime_acceptance_pack.py"]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "GET /admin/results",
+        "scripts/result_ledger_check.py",
+        "result_ledger",
+        "--skip-result-ledger",
+    ]:
+        if fragment not in combined:
+            details.append(f"README.md, docs/api.md, docs/operations.md, or runtime_acceptance_pack.py must mention {fragment}")
+    return check_result("result_ledger_docs", not details, details)
 
 
 def check_dockerfile(root: Path) -> dict[str, Any]:
@@ -323,6 +343,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_api_docs(gate_root),
         check_miner_resilience_docs(gate_root),
         check_result_idempotency_docs(gate_root),
+        check_result_ledger_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

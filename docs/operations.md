@@ -81,6 +81,15 @@ curl -H 'x-crowdtensor-observer-token: local-observer' \
 
 `/metrics` is aggregate-only and avoids lease tokens, task payloads, Miner IDs, and raw Miner metadata.
 
+Admin result ledger:
+
+```bash
+curl -H 'x-crowdtensor-admin-token: local-admin' \
+  'http://127.0.0.1:8787/admin/results?status=rejected&limit=20'
+```
+
+`GET /admin/results` is the safest operator view for result traceability. It includes validation, replay audit, model impact, and Miner workload score summaries, but avoids raw lease tokens, idempotency material, full result responses, and tensor deltas.
+
 ## Acceptance Checks
 
 Alpha release gate:
@@ -111,6 +120,12 @@ Result idempotency smoke:
 
 ```bash
 python3 scripts/result_idempotency_check.py --port 8896
+```
+
+Result ledger smoke:
+
+```bash
+python3 scripts/result_ledger_check.py --port 8897
 ```
 
 Unit tests:

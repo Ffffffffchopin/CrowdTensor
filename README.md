@@ -76,6 +76,7 @@ The Compose file uses local demo tokens by default. Copy `.env.example` to `.env
 - **Runtime contracts**: deterministic CPU-only `diloco_train`, `cpu_lora_mock`, and `micro_transformer_lm` workloads.
 - **Validation**: finite-value checks, shape checks, norm/loss gates, and optional deterministic replay audit.
 - **Trust controls**: workload-scoped Miner scoring, quarantine, admin trust overrides, and redacted event tails.
+- **Result traceability**: admin result ledger for accepted/rejected outcomes, validation, audit, model impact, and Miner score summaries.
 - **Admission controls**: shared Miner token, observer token, admin token, per-Miner token registry, and hashed token configuration.
 - **Remote Miner resilience**: startup `/ready` preflight, bounded retry for transient claim/heartbeat/result failures, result `idempotency_key`, and retry counters.
 - **Browser experiments**: WebRTC tensor tunnel, browser Worker compute probe, and browser Miner bridge.
@@ -107,6 +108,7 @@ It runs the core smoke checks sequentially:
 - operator control
 - micro Transformer LM
 - result idempotency
+- result ledger
 - Miner resilience
 - Miner auth
 - observer auth
@@ -146,6 +148,12 @@ Run only the result idempotency smoke:
 
 ```bash
 python3 scripts/result_idempotency_check.py --port 8896
+```
+
+Run only the result ledger smoke:
+
+```bash
+python3 scripts/result_ledger_check.py --port 8897
 ```
 
 ## Security Model

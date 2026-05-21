@@ -285,6 +285,7 @@ def verify_observer_endpoints(args: argparse.Namespace) -> dict:
 
 def verify_admin_endpoints(args: argparse.Namespace) -> dict:
     missing_events = request_json("GET", args.base_url, "/admin/events?limit=1", expected_status=403)
+    missing_results = request_json("GET", args.base_url, "/admin/results?limit=1", expected_status=403)
     bad_override = request_json(
         "POST",
         args.base_url,
@@ -327,9 +328,19 @@ def verify_admin_endpoints(args: argparse.Namespace) -> dict:
         expected_status=422,
     )
     events = request_json("GET", args.base_url, "/admin/events?limit=50", admin_token=ADMIN_TOKEN)
+    invalid_results = request_json(
+        "GET",
+        args.base_url,
+        "/admin/results?status=broken",
+        admin_token=ADMIN_TOKEN,
+        expected_status=422,
+    )
+    results = request_json("GET", args.base_url, "/admin/results?limit=10", admin_token=ADMIN_TOKEN)
 
     if missing_events.get("detail") != "invalid admin token":
         raise RuntimeError(f"unexpected missing admin response: {missing_events}")
+    if missing_results.get("detail") != "invalid admin token":
+        raise RuntimeError(f"unexpected missing admin results response: {missing_results}")
     if bad_override.get("detail") != "invalid admin token":
         raise RuntimeError(f"unexpected bad admin response: {bad_override}")
     if block.get("mode") != "block" or reset.get("mode") != "none":
@@ -342,8 +353,14 @@ def verify_admin_endpoints(args: argparse.Namespace) -> dict:
         raise RuntimeError(f"missing trust override event in admin tail: {events}")
     if any(event.get("lease_token") and event.get("lease_token") != "<redacted>" for event in events.get("events", [])):
         raise RuntimeError(f"unredacted lease token in admin events: {events}")
+    if "accepted, or rejected" not in str(invalid_results.get("detail")):
+        raise RuntimeError(f"unexpected invalid result ledger status response: {invalid_results}")
+    assert_keys(results, {"results", "limit", "status", "miner_id", "workload_type"}, path="/admin/results")
+    if "result_idempotency_key_hash" in json.dumps(results, sort_keys=True):
+        raise RuntimeError(f"admin result ledger leaked idempotency hash: {results}")
     return {
         "admin_events": len(events.get("events", [])),
+        "admin_results": len(results.get("results", [])),
         "blocked_claim_detail": blocked_claim.get("detail"),
         "invalid_mode_status": 422,
     }

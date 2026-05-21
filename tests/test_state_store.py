@@ -195,6 +195,99 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(summary["accepted_results"], 1)
             self.assertEqual(summary["model"]["global_step"], 1)
 
+    def test_result_ledger_summarizes_terminal_results_and_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+            accepted_claim = store.claim_task("ledger-accepted")
+            inner_result = run_inner_loop(
+                accepted_claim["weights"],
+                task_id=accepted_claim["task_id"],
+                miner_id="ledger-accepted",
+                model_version=accepted_claim["model_version"],
+                inner_steps=accepted_claim["inner_steps"],
+            )
+            store.complete_task(
+                accepted_claim["task_id"],
+                lease_token=accepted_claim["lease_token"],
+                attempt=accepted_claim["attempt"],
+                idempotency_key="ledger-key",
+                local_delta=inner_result["local_delta"],
+                metrics=inner_result,
+            )
+
+            rejected_claim = store.claim_task("ledger-rejected")
+            with self.assertRaises(ResultRejected):
+                store.complete_task(
+                    rejected_claim["task_id"],
+                    lease_token=rejected_claim["lease_token"],
+                    attempt=rejected_claim["attempt"],
+                    idempotency_key="bad-ledger-key",
+                    local_delta=[100.0 for _ in rejected_claim["weights"]],
+                )
+
+            rows = store.result_ledger(limit=10)
+            self.assertEqual(len(rows), 2)
+            self.assertGreater(rows[0]["event_index"], rows[1]["event_index"])
+            accepted = store.result_ledger(status="accepted")[0]
+            rejected = store.result_ledger(status="rejected")[0]
+            self.assertEqual(accepted["task_id"], accepted_claim["task_id"])
+            self.assertEqual(accepted["validation"]["code"], "ok")
+            self.assertEqual(accepted["audit"], {})
+            self.assertTrue(accepted["idempotent"])
+            self.assertTrue(accepted["model_updated"])
+            self.assertEqual(rejected["task_id"], rejected_claim["task_id"])
+            self.assertFalse(rejected["accepted"])
+            self.assertEqual(rejected["validation"]["code"], "delta_norm_too_large")
+            self.assertEqual(rejected["miner_workload_score"]["rejected"], 1)
+            self.assertEqual(
+                store.result_ledger(miner_id="ledger-accepted", workload_type="diloco_train")[0]["task_id"],
+                accepted_claim["task_id"],
+            )
+            self.assertEqual(store.result_ledger(limit=0), [])
+            with self.assertRaises(ValueError):
+                store.result_ledger(status="broken")
+
+            public_text = json.dumps(rows, sort_keys=True)
+            for forbidden in [
+                "ledger-key",
+                "bad-ledger-key",
+                '"lease_token"',
+                '"result_idempotency_key_hash"',
+                '"result_lease_token_hash"',
+                '"result_response"',
+                '"local_delta"',
+                '"adapter_delta"',
+            ]:
+                self.assertNotIn(forbidden, public_text)
+
+    def test_result_ledger_survives_restart_with_event_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+            claim = store.claim_task("ledger-restart")
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="ledger-restart",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+            store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                idempotency_key="restart-ledger-key",
+                local_delta=inner_result["local_delta"],
+                metrics=inner_result,
+            )
+            before = store.result_ledger()[0]
+
+            restarted = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+            after = restarted.result_ledger()[0]
+
+            self.assertEqual(after["task_id"], before["task_id"])
+            self.assertEqual(after["event_index"], before["event_index"])
+            self.assertTrue(after["idempotent"])
+
     def test_micro_transformer_workload_updates_nested_lm_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = StateStore(

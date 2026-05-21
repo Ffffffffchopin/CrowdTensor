@@ -300,6 +300,46 @@ class StateStore:
                 for event in events[-capped:]
             ]
 
+    def result_ledger(
+        self,
+        *,
+        limit: int = 50,
+        status: str = "any",
+        miner_id: str | None = None,
+        workload_type: str | None = None,
+    ) -> list[dict]:
+        capped = min(MAX_EVENT_TAIL_LIMIT, max(0, int(limit)))
+        if capped == 0:
+            return []
+        wanted_status = str(status or "any").strip().lower()
+        if wanted_status not in {"any", "accepted", "rejected"}:
+            raise ValueError("status must be any, accepted, or rejected")
+        wanted_miner = str(miner_id or "").strip()
+        wanted_workload = str(workload_type or "").strip()
+
+        with self._lock:
+            scored = self._miner_workload_scores()
+            rows = [
+                self._result_ledger_entry(task, scored)
+                for task in self._tasks.values()
+                if task.get("status") in {STATUS_COMPLETED, STATUS_REJECTED}
+            ]
+            rows.sort(key=lambda item: int(item.get("event_index", 0)), reverse=True)
+            filtered = []
+            for row in rows:
+                if wanted_status == "accepted" and row["status"] != STATUS_COMPLETED:
+                    continue
+                if wanted_status == "rejected" and row["status"] != STATUS_REJECTED:
+                    continue
+                if wanted_miner and row["miner_id"] != wanted_miner:
+                    continue
+                if wanted_workload and row["workload_type"] != wanted_workload:
+                    continue
+                filtered.append(row)
+                if len(filtered) >= capped:
+                    break
+            return filtered
+
     def complete_task(
         self,
         task_id: str,
@@ -988,6 +1028,7 @@ class StateStore:
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
+                "result_event_index": None,
                 "model_updated": False,
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
@@ -1048,6 +1089,7 @@ class StateStore:
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
+                "result_event_index": int(event.get("event_index", self._event_index)),
                 "model_updated": bool(event.get("model_updated", True)),
                 "adapter_updated": bool(event.get("adapter_updated", False)),
                 "micro_transformer_updated": bool(event.get("micro_transformer_updated", False)),
@@ -1070,6 +1112,7 @@ class StateStore:
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
+                "result_event_index": int(event.get("event_index", self._event_index)),
                 "model_updated": False,
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
@@ -1092,6 +1135,7 @@ class StateStore:
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
+                "result_event_index": None,
                 "model_updated": False,
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
@@ -1167,6 +1211,76 @@ class StateStore:
         public.pop("result_lease_token_hash", None)
         public.pop("result_response", None)
         return public
+
+    def _result_ledger_entry(self, task: dict, workload_scores: dict) -> dict:
+        validation = task.get("validation") or {}
+        workload_type = self._workload_type(task)
+        miner_id = task.get("miner_id") or "anonymous"
+        score = workload_scores.get(miner_id, {}).get(workload_type, {})
+        terminal_at = task.get("completed_at") or task.get("rejected_at") or task.get("updated_at")
+        return {
+            "event_index": int(task.get("result_event_index") or 0),
+            "task_id": task["task_id"],
+            "status": task.get("status"),
+            "accepted": task.get("status") == STATUS_COMPLETED,
+            "miner_id": miner_id,
+            "workload_type": workload_type,
+            "attempt": int(task.get("attempt", 0) or 0),
+            "base_model_version": task.get("base_model_version"),
+            "result_model_version": task.get("result_model_version"),
+            "staleness": int(task.get("staleness", 0) or 0),
+            "model_updated": bool(task.get("model_updated", False)),
+            "adapter_updated": bool(task.get("adapter_updated", False)),
+            "micro_transformer_updated": bool(task.get("micro_transformer_updated", False)),
+            "idempotent": bool(task.get("result_idempotency_key_hash")),
+            "terminal_at": float(terminal_at or 0.0),
+            "validation": self._validation_summary(validation),
+            "audit": self._audit_summary(validation),
+            "miner_workload_score": {
+                "score": score.get("score"),
+                "accepted": score.get("accepted", 0),
+                "rejected": score.get("rejected", 0),
+                "consecutive_rejections": score.get("consecutive_rejections", 0),
+                "quarantined": bool(score.get("quarantined", False)),
+                "last_rejection_code": score.get("last_rejection_code"),
+            },
+        }
+
+    def _validation_summary(self, validation: dict) -> dict:
+        fields = [
+            "accepted",
+            "code",
+            "reason",
+            "delta_norm",
+            "loss_before",
+            "loss_after",
+            "loss_delta",
+            "max_delta_norm",
+            "max_loss_delta",
+            "ops",
+            "elapsed_ms",
+            "hash",
+        ]
+        return {
+            field: validation.get(field)
+            for field in fields
+            if field in validation
+        }
+
+    def _audit_summary(self, validation: dict) -> dict:
+        fields = [
+            "audit_mode",
+            "audit_accepted",
+            "audit_code",
+            "audit_reason",
+            "audit_max_abs_error",
+            "audit_tolerance",
+        ]
+        return {
+            field: validation.get(field)
+            for field in fields
+            if field in validation
+        }
 
     def _redact_event(self, event: dict) -> dict:
         def redact(value):

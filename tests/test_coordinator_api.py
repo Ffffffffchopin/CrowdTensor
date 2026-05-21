@@ -863,6 +863,61 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertTrue(claimed_events)
             self.assertEqual(claimed_events[-1]["lease_token"], "<redacted>")
 
+    def test_admin_results_reports_safe_result_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10, admin_token="secret")
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            admin_results = endpoint_for(app, "/admin/results", "GET")
+            claim = claim_task(request_model(claim_task)(miner_id="ledger-api-miner"))
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="ledger-api-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+            result = result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    idempotency_key="api-ledger-key",
+                    local_delta=inner_result["local_delta"],
+                    metrics=inner_result,
+                ),
+            )
+            self.assertTrue(result["accepted"])
+
+            with self.assertRaises(HTTPException) as bad_token:
+                admin_results(limit=10, x_crowdtensor_admin_token="bad")
+            self.assertEqual(bad_token.exception.status_code, 403)
+            with self.assertRaises(HTTPException) as bad_status:
+                admin_results(limit=10, status="broken", x_crowdtensor_admin_token="secret")
+            self.assertEqual(bad_status.exception.status_code, 422)
+
+            ledger = admin_results(
+                limit=10,
+                status="accepted",
+                miner_id="ledger-api-miner",
+                workload_type="diloco_train",
+                x_crowdtensor_admin_token="secret",
+            )
+            self.assertEqual(ledger["status"], "accepted")
+            self.assertEqual(len(ledger["results"]), 1)
+            row = ledger["results"][0]
+            self.assertEqual(row["task_id"], claim["task_id"])
+            self.assertTrue(row["idempotent"])
+            self.assertEqual(row["validation"]["code"], "ok")
+            self.assertEqual(row["audit"], {})
+            self.assertTrue(row["model_updated"])
+            public_text = json.dumps(ledger, sort_keys=True)
+            self.assertNotIn("api-ledger-key", public_text)
+            self.assertNotIn("lease_token", public_text)
+            self.assertNotIn("result_idempotency_key_hash", public_text)
+            self.assertNotIn("result_response", public_text)
+            self.assertNotIn("local_delta", public_text)
+
     def test_create_app_accepts_task_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(

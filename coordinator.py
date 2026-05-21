@@ -456,6 +456,31 @@ def create_app(
             "limit": min(500, max(0, int(limit))),
         }
 
+    @app.get("/admin/results")
+    def admin_results(
+        limit: int = Query(default=50, ge=0, le=500),
+        status: str = Query(default="any"),
+        miner_id: str = Query(default=""),
+        workload_type: str = Query(default=""),
+        x_crowdtensor_admin_token: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(x_crowdtensor_admin_token)
+        try:
+            return {
+                "results": store.result_ledger(
+                    limit=limit,
+                    status=status,
+                    miner_id=miner_id,
+                    workload_type=workload_type,
+                ),
+                "limit": min(500, max(0, int(limit))),
+                "status": status,
+                "miner_id": miner_id,
+                "workload_type": workload_type,
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.post("/admin/trust-overrides")
     def admin_trust_overrides(
         request: TrustOverrideRequest,

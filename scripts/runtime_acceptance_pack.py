@@ -104,17 +104,18 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         ("operator_control", "operator_control_check.py", args.base_port + 5, args.skip_operator),
         ("micro_transformer", "micro_transformer_smoke.py", args.base_port + 6, args.skip_micro_transformer),
         ("result_idempotency", "result_idempotency_check.py", args.base_port + 7, args.skip_result_idempotency),
-        ("miner_resilience", "miner_resilience_check.py", args.base_port + 8, args.skip_miner_resilience),
-        ("miner_auth", "miner_auth_check.py", args.base_port + 9, args.skip_miner_auth),
-        ("observer_auth", "observer_auth_check.py", args.base_port + 10, args.skip_observer_auth),
-        ("miner_registry_auth", "miner_registry_auth_check.py", args.base_port + 11, args.skip_miner_registry_auth),
-        ("token_hash_auth", "token_hash_auth_check.py", args.base_port + 12, args.skip_token_hash_auth),
+        ("result_ledger", "result_ledger_check.py", args.base_port + 8, args.skip_result_ledger),
+        ("miner_resilience", "miner_resilience_check.py", args.base_port + 9, args.skip_miner_resilience),
+        ("miner_auth", "miner_auth_check.py", args.base_port + 10, args.skip_miner_auth),
+        ("observer_auth", "observer_auth_check.py", args.base_port + 11, args.skip_observer_auth),
+        ("miner_registry_auth", "miner_registry_auth_check.py", args.base_port + 12, args.skip_miner_registry_auth),
+        ("token_hash_auth", "token_hash_auth_check.py", args.base_port + 13, args.skip_token_hash_auth),
     ]
     if args.include_remote_miner:
         specs.append((
             "remote_miner",
             "remote_miner_readiness_check.py",
-            args.base_port + 13,
+            args.base_port + 14,
             args.skip_remote_miner,
         ))
     for name, script_name, port, skipped in specs:
@@ -137,18 +138,18 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         })
     if args.include_browser:
         browser_specs = [
-            ("webrtc", "webrtc_smoke.py", args.base_port + 14, None, args.skip_webrtc),
-            ("runtime_contract", "runtime_contract_check.py", args.base_port + 15, args.base_port + 16, args.skip_runtime_contract),
-            ("browser_miner", "browser_miner_smoke.py", args.base_port + 17, args.base_port + 18, args.skip_browser_miner),
-            ("browser_probe", "browser_probe_smoke.py", args.base_port + 19, args.base_port + 20, args.skip_browser_probe),
-            ("capability_ledger", "capability_ledger_check.py", args.base_port + 21, args.base_port + 22, args.skip_capability_ledger),
+            ("webrtc", "webrtc_smoke.py", args.base_port + 15, None, args.skip_webrtc),
+            ("runtime_contract", "runtime_contract_check.py", args.base_port + 16, args.base_port + 17, args.skip_runtime_contract),
+            ("browser_miner", "browser_miner_smoke.py", args.base_port + 18, args.base_port + 19, args.skip_browser_miner),
+            ("browser_probe", "browser_probe_smoke.py", args.base_port + 20, args.base_port + 21, args.skip_browser_probe),
+            ("capability_ledger", "capability_ledger_check.py", args.base_port + 22, args.base_port + 23, args.skip_capability_ledger),
         ]
         if args.include_browser_chaos:
             browser_specs.append((
                 "browser_chaos",
                 "browser_miner_chaos.py",
-                args.base_port + 23,
                 args.base_port + 24,
+                args.base_port + 25,
                 args.skip_browser_chaos,
             ))
         for name, script_name, port, web_port, skipped in browser_specs:
@@ -272,6 +273,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-trust", action="store_true")
     parser.add_argument("--skip-micro-transformer", action="store_true")
     parser.add_argument("--skip-result-idempotency", action="store_true")
+    parser.add_argument("--skip-result-ledger", action="store_true")
     parser.add_argument("--skip-miner-resilience", action="store_true")
     parser.add_argument("--skip-miner-auth", action="store_true")
     parser.add_argument("--skip-observer-auth", action="store_true")

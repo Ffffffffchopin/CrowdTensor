@@ -36,6 +36,7 @@ def acceptance_args(**overrides):
         "skip_operator": False,
         "skip_micro_transformer": False,
         "skip_result_idempotency": False,
+        "skip_result_ledger": False,
         "skip_miner_resilience": False,
         "skip_miner_auth": False,
         "skip_observer_auth": False,
@@ -78,8 +79,8 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         checks = runtime_acceptance_pack.selected_checks(args, Path("/tmp/crowdtensor_acceptance_test"))
 
-        self.assertEqual([check["name"] for check in checks], ["readiness", "api_contract", "chaos", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"])
-        self.assertEqual([check["port"] for check in checks], [9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018, 9019, 9020, 9021, 9022])
+        self.assertEqual([check["name"] for check in checks], ["readiness", "api_contract", "chaos", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"])
+        self.assertEqual([check["port"] for check in checks], [9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018, 9019, 9020, 9021, 9022, 9023])
         operator = next(check for check in checks if check["name"] == "operator_control")
         self.assertIn("--admin-token", operator["command"])
         self.assertIn("admin-test", operator["command"])
@@ -94,7 +95,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
         )
 
     def test_readiness_check_is_default_and_skippable(self) -> None:
@@ -137,7 +138,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
         )
         micro = next(check for check in checks if check["name"] == "micro_transformer")
         self.assertEqual(micro["port"], 9016)
@@ -151,7 +152,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
         )
 
     def test_result_idempotency_check_is_default_and_skippable(self) -> None:
@@ -170,6 +171,22 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         )
         self.assertNotIn("result_idempotency", [check["name"] for check in skipped])
 
+    def test_result_ledger_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        result_ledger = next(check for check in checks if check["name"] == "result_ledger")
+        self.assertEqual(result_ledger["port"], 9018)
+        self.assertIn("result_ledger_check.py", result_ledger["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_result_ledger=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("result_ledger", [check["name"] for check in skipped])
+
     def test_miner_resilience_check_is_default_and_skippable(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
             acceptance_args(),
@@ -177,7 +194,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         )
 
         resilience = next(check for check in checks if check["name"] == "miner_resilience")
-        self.assertEqual(resilience["port"], 9018)
+        self.assertEqual(resilience["port"], 9019)
         self.assertIn("miner_resilience_check.py", resilience["command"][1])
 
         skipped = runtime_acceptance_pack.selected_checks(
@@ -193,7 +210,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         )
 
         miner_auth = next(check for check in checks if check["name"] == "miner_auth")
-        self.assertEqual(miner_auth["port"], 9019)
+        self.assertEqual(miner_auth["port"], 9020)
         self.assertIn("miner_auth_check.py", miner_auth["command"][1])
         self.assertNotIn("miner-test", miner_auth["command"])
 
@@ -219,7 +236,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         )
 
         observer_auth = next(check for check in checks if check["name"] == "observer_auth")
-        self.assertEqual(observer_auth["port"], 9020)
+        self.assertEqual(observer_auth["port"], 9021)
         self.assertIn("observer_auth_check.py", observer_auth["command"][1])
 
         skipped = runtime_acceptance_pack.selected_checks(
@@ -235,7 +252,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         )
 
         registry_auth = next(check for check in checks if check["name"] == "miner_registry_auth")
-        self.assertEqual(registry_auth["port"], 9021)
+        self.assertEqual(registry_auth["port"], 9022)
         self.assertIn("miner_registry_auth_check.py", registry_auth["command"][1])
 
         skipped = runtime_acceptance_pack.selected_checks(
@@ -251,7 +268,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         )
 
         hash_auth = next(check for check in checks if check["name"] == "token_hash_auth")
-        self.assertEqual(hash_auth["port"], 9022)
+        self.assertEqual(hash_auth["port"], 9023)
         self.assertIn("token_hash_auth_check.py", hash_auth["command"][1])
 
         skipped = runtime_acceptance_pack.selected_checks(
@@ -277,9 +294,9 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "remote_miner"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "remote_miner"],
         )
-        self.assertEqual(checks[-1]["port"], 9023)
+        self.assertEqual(checks[-1]["port"], 9024)
         self.assertIn("remote_miner_readiness_check.py", checks[-1]["command"][1])
 
     def test_remote_miner_skip_removes_opt_in_check(self) -> None:
@@ -296,13 +313,13 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        browser_checks = checks[13:]
+        browser_checks = checks[14:]
         self.assertEqual(
             [check["name"] for check in browser_checks],
             ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger"],
         )
-        self.assertEqual([check["port"] for check in browser_checks], [9024, 9025, 9027, 9029, 9031])
-        self.assertEqual([check.get("web_port") for check in browser_checks], [None, 9026, 9028, 9030, 9032])
+        self.assertEqual([check["port"] for check in browser_checks], [9025, 9026, 9028, 9030, 9032])
+        self.assertEqual([check.get("web_port") for check in browser_checks], [None, 9027, 9029, 9031, 9033])
         for check in browser_checks:
             self.assertIn("--browser", check["command"])
             self.assertIn("/usr/bin/chromium", check["command"])
@@ -316,19 +333,19 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        browser_checks = checks[13:]
+        browser_checks = checks[14:]
         self.assertEqual(
             [check["name"] for check in browser_checks],
             ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger", "browser_chaos"],
         )
         chaos = browser_checks[-1]
-        self.assertEqual(chaos["port"], 9033)
-        self.assertEqual(chaos["web_port"], 9034)
+        self.assertEqual(chaos["port"], 9034)
+        self.assertEqual(chaos["web_port"], 9035)
         self.assertIn("browser_miner_chaos.py", chaos["command"][1])
         self.assertIn("--coordinator-port", chaos["command"])
-        self.assertIn("9033", chaos["command"])
-        self.assertIn("--web-port", chaos["command"])
         self.assertIn("9034", chaos["command"])
+        self.assertIn("--web-port", chaos["command"])
+        self.assertIn("9035", chaos["command"])
         self.assertIn("--browser", chaos["command"])
         self.assertIn("/usr/bin/chromium", chaos["command"])
 
@@ -362,6 +379,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
                 "operator_control",
                 "micro_transformer",
                 "result_idempotency",
+                "result_ledger",
                 "miner_resilience",
                 "miner_auth",
                 "observer_auth",

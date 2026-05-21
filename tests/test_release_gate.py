@@ -44,6 +44,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "api_docs",
                 "miner_resilience_docs",
                 "result_idempotency_docs",
+                "result_ledger_docs",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -162,6 +163,18 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "result_idempotency_docs")
         self.assertTrue(any("idempotency_key" in detail for detail in details))
+
+    def test_result_ledger_docs_must_describe_operator_ledger(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        (tmp_root / "README.md").write_text("No result ledger docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "operations.md").write_text("No result ledger docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "api.md").write_text("No result ledger docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "result_ledger_docs")
+        self.assertTrue(any("GET /admin/results" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))
