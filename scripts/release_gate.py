@@ -35,6 +35,7 @@ REQUIRED_FILES = [
     "scripts/hash_token.py",
     "scripts/token_hash_auth_check.py",
     "scripts/security_preflight.py",
+    "scripts/browser_acceptance_pack.py",
     "docs/api.md",
     "docs/quickstart.md",
     "docs/remote-miner.md",
@@ -305,6 +306,30 @@ def check_security_preflight_docs(root: Path) -> dict[str, Any]:
     return check_result("security_preflight_docs", not details, details)
 
 
+def check_browser_acceptance_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/quickstart.md",
+            "docs/operations.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "scripts/browser_acceptance_pack.py",
+        "--allow-skip",
+        "webrtc_smoke.py",
+        "browser_miner_smoke.py",
+        "runtime_contract_check.py",
+    ]:
+        if fragment not in combined:
+            details.append(f"browser acceptance docs or CI must mention {fragment}")
+    return check_result("browser_acceptance_docs", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -378,6 +403,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python -m py_compile": "CI must compile Python entrypoints",
         "python scripts/release_gate.py --json": "CI must run the release gate",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
+        "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
         "python -m unittest discover -s tests -v": "CI must run unit tests",
         "runtime_acceptance_pack.py": "CI must run the runtime acceptance pack",
     }
@@ -401,6 +427,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_result_ledger_docs(gate_root),
         check_remote_miner_docs(gate_root),
         check_security_preflight_docs(gate_root),
+        check_browser_acceptance_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

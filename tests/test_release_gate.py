@@ -47,6 +47,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "result_ledger_docs",
                 "remote_miner_docs",
                 "security_preflight_docs",
+                "browser_acceptance_docs",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -206,6 +207,19 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "security_preflight_docs")
         self.assertTrue(any("scripts/security_preflight.py" in detail for detail in details))
+
+    def test_browser_acceptance_docs_must_describe_browser_pack(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        (tmp_root / "README.md").write_text("No browser acceptance docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "quickstart.md").write_text("No browser acceptance docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "operations.md").write_text("No browser acceptance docs here.\n", encoding="utf-8")
+        (tmp_root / ".github" / "workflows" / "ci.yml").write_text("No browser acceptance docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "browser_acceptance_docs")
+        self.assertTrue(any("scripts/browser_acceptance_pack.py" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

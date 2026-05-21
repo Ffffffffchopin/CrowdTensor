@@ -178,7 +178,17 @@ python3 scripts/runtime_acceptance_pack.py \
 
 `--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
 
-Browser acceptance:
+Core browser acceptance:
+
+```bash
+python3 scripts/browser_acceptance_pack.py \
+  --base-port 9310 \
+  --report /tmp/crowdtensor_browser_acceptance.json
+```
+
+This runs `webrtc_smoke.py`, `runtime_contract_check.py`, and `browser_miner_smoke.py`. Use `--allow-skip` when CI should skip cleanly if Playwright or Chromium is unavailable.
+
+Broader browser acceptance:
 
 ```bash
 python3 scripts/runtime_acceptance_pack.py \

@@ -29,3 +29,6 @@ jobs:
       - name: Runtime acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json
+      - name: Browser acceptance
+        if: matrix.python-version == '3.12'
+        run: python scripts/browser_acceptance_pack.py --allow-skip --base-port 9310 --check-timeout 180 --report /tmp/crowdtensor_browser_acceptance.json

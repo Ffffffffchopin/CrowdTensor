@@ -130,6 +130,16 @@ It runs the core smoke checks sequentially:
 Browser-native checks are opt-in because they require Playwright and a Chromium-compatible browser:
 
 ```bash
+python3 scripts/browser_acceptance_pack.py \
+  --base-port 9310 \
+  --report /tmp/crowdtensor_browser_acceptance.json
+```
+
+The browser acceptance pack runs the core browser checks: `webrtc_smoke.py`, `runtime_contract_check.py`, and `browser_miner_smoke.py`. CI uses `--allow-skip` so environments without Playwright or Chromium report a skipped browser pack instead of failing the whole job.
+
+For the broader browser smoke set, use the runtime acceptance pack:
+
+```bash
 python3 scripts/runtime_acceptance_pack.py \
   --base-port 8930 \
   --include-browser \

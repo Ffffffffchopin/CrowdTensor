@@ -170,7 +170,17 @@ http://127.0.0.1:8765/index.html?role=receiver&room=demo
 http://127.0.0.1:8765/index.html?role=sender&room=demo
 ```
 
-Run the lightweight automated browser pack when Playwright and a browser are available:
+Run the core browser acceptance pack when Playwright and a browser are available:
+
+```bash
+python3 scripts/browser_acceptance_pack.py \
+  --base-port 9310 \
+  --report /tmp/crowdtensor_browser_acceptance.json
+```
+
+It runs `webrtc_smoke.py`, `runtime_contract_check.py`, and `browser_miner_smoke.py`. Use `--allow-skip` in CI-style environments where Playwright or Chromium may be unavailable.
+
+Run the broader browser smoke set:
 
 ```bash
 python3 scripts/runtime_acceptance_pack.py \
