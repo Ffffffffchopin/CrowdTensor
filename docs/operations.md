@@ -102,6 +102,18 @@ curl -H 'x-crowdtensor-admin-token: local-admin' \
 
 ## Acceptance Checks
 
+First-run Doctor:
+
+```bash
+python3 scripts/doctor.py --json
+```
+
+Remote and browser dependency probes:
+
+```bash
+python3 scripts/doctor.py --remote-demo --browser --json
+```
+
 Alpha release gate:
 
 ```bash

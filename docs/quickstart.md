@@ -21,6 +21,22 @@ crowdtensord --help
 crowdtensor-miner --help
 ```
 
+## First-run Doctor
+
+Run the lightweight diagnostics before starting services:
+
+```bash
+python3 scripts/doctor.py --json
+```
+
+The First-run Doctor checks Python version, core imports, FastAPI/Uvicorn availability, state directory writability, default port binding, and console entrypoints. It is a quick environment check, not a replacement for runtime acceptance.
+
+For remote-demo and browser dependency probes:
+
+```bash
+python3 scripts/doctor.py --remote-demo --browser --json
+```
+
 ## Run Coordinator
 
 ```bash

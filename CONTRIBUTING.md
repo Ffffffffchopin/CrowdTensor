@@ -15,6 +15,7 @@ pip install -e .[dev]
 Run the core checks before opening a pull request:
 
 ```bash
+python3 scripts/doctor.py --json
 python3 -m py_compile coordinator.py miner_cli.py scripts/*.py crowdtensor/*.py tests/*.py
 python3 -m unittest discover -s tests -v
 python3 scripts/release_gate.py --json

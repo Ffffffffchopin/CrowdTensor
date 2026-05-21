@@ -32,6 +32,7 @@ REQUIRED_FILES = [
     "scripts/remote_miner_join_check.py",
     "scripts/miner_resilience_check.py",
     "scripts/readiness_check.py",
+    "scripts/doctor.py",
     "scripts/hash_token.py",
     "scripts/token_hash_auth_check.py",
     "scripts/security_preflight.py",
@@ -359,6 +360,30 @@ def check_release_evidence_docs(root: Path) -> dict[str, Any]:
     return check_result("release_evidence_docs", not details, details)
 
 
+def check_doctor_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/quickstart.md",
+            "docs/operations.md",
+            "CONTRIBUTING.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "scripts/doctor.py",
+        "--remote-demo",
+        "--browser",
+        "First-run Doctor",
+    ]:
+        if fragment not in combined:
+            details.append(f"doctor docs or CI must mention {fragment}")
+    return check_result("doctor_docs", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -431,6 +456,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python -m pip install -e .[dev]": "CI must install the dev package",
         "python -m py_compile": "CI must compile Python entrypoints",
         "python scripts/release_gate.py --json": "CI must run the release gate",
+        "python scripts/doctor.py --json": "CI must run first-run doctor",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
         "outer_optimizer_check.py": "CI must run the outer optimizer smoke through runtime acceptance",
@@ -464,6 +490,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_security_preflight_docs(gate_root),
         check_browser_acceptance_docs(gate_root),
         check_release_evidence_docs(gate_root),
+        check_doctor_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

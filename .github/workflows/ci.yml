@@ -22,6 +22,8 @@ jobs:
         run: python -m py_compile coordinator.py miner_cli.py scripts/*.py crowdtensor/*.py
       - name: Release gate
         run: python scripts/release_gate.py --json
+      - name: First-run Doctor
+        run: python scripts/doctor.py --json
       - name: Security preflight
         run: python scripts/security_preflight.py --json
       - name: Unit tests

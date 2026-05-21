@@ -29,6 +29,18 @@ python3 -m venv .venv
 pip install -r requirements.txt
 ```
 
+Run the First-run Doctor before starting services:
+
+```bash
+python3 scripts/doctor.py --json
+```
+
+For optional remote and browser checks:
+
+```bash
+python3 scripts/doctor.py --remote-demo --browser --json
+```
+
 Start the Coordinator:
 
 ```bash
