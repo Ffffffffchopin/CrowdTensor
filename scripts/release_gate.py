@@ -37,6 +37,7 @@ REQUIRED_FILES = [
     "scripts/security_preflight.py",
     "scripts/browser_acceptance_pack.py",
     "scripts/outer_optimizer_check.py",
+    "scripts/compressed_error_feedback_check.py",
     "docs/api.md",
     "docs/quickstart.md",
     "docs/remote-miner.md",
@@ -406,6 +407,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
         "outer_optimizer_check.py": "CI must run the outer optimizer smoke through runtime acceptance",
+        "compressed_error_feedback_check.py": "CI must run the compressed error-feedback smoke through runtime acceptance",
         "python -m unittest discover -s tests -v": "CI must run unit tests",
         "runtime_acceptance_pack.py": "CI must run the runtime acceptance pack",
     }

@@ -127,6 +127,7 @@ It runs the core smoke checks sequentially:
 - per-Miner registry auth
 - hashed token auth
 - outer optimizer contract
+- compressed error-feedback delta transport
 
 Browser-native checks are opt-in because they require Playwright and a Chromium-compatible browser:
 
@@ -183,6 +184,12 @@ Run only the opt-in Nesterov outer optimizer smoke:
 
 ```bash
 python3 scripts/outer_optimizer_check.py --port 8899
+```
+
+Run only the sign-compressed error-feedback transport smoke:
+
+```bash
+python3 scripts/compressed_error_feedback_check.py --port 8900
 ```
 
 Run only the remote Miner invite/join smoke:

@@ -171,28 +171,58 @@ class MinerCliTests(unittest.TestCase):
         self.assertEqual(payload["workloads"], {"diloco_train": 1})
 
     def test_build_result_payload_uses_sign_compressed_delta(self) -> None:
-        payload = miner_cli.build_result_payload(
+        payload, next_residual = miner_cli.build_result_payload(
             {"lease_token": "lease", "attempt": 1, "workload_type": "diloco_train"},
             {"local_delta": [0.1, -0.3, 0.0], "inner_loss_start": 1.0},
             delta_format="sign_compressed",
             elapsed_ms=12.5,
         )
 
+        self.assertIsNone(next_residual)
         self.assertNotIn("local_delta", payload)
         self.assertEqual(payload["compressed_delta"]["format"], "sign_compressed")
         self.assertEqual(payload["compressed_delta"]["signs"], [1, -1, 0])
         self.assertEqual(payload["metrics"]["delta_format"], "sign_compressed")
         self.assertEqual(payload["metrics"]["elapsed_ms"], 12.5)
 
+    def test_build_result_payload_uses_error_feedback_delta(self) -> None:
+        payload, next_residual = miner_cli.build_result_payload(
+            {"lease_token": "lease", "attempt": 1, "workload_type": "diloco_train"},
+            {"local_delta": [0.1, -0.3, 0.0], "inner_loss_start": 1.0},
+            delta_format="sign_compressed_ef",
+            elapsed_ms=12.5,
+            residual=[0.05, -0.05, 0.02],
+        )
+
+        self.assertIsNotNone(next_residual)
+        self.assertEqual(len(next_residual or []), 3)
+        self.assertNotIn("local_delta", payload)
+        self.assertEqual(payload["compressed_delta"]["format"], "sign_compressed_ef")
+        self.assertIn("error_feedback", payload["compressed_delta"])
+        self.assertEqual(payload["metrics"]["delta_format"], "sign_compressed_ef")
+
     def test_build_result_payload_keeps_lora_adapter_delta(self) -> None:
-        payload = miner_cli.build_result_payload(
+        payload, next_residual = miner_cli.build_result_payload(
             {"lease_token": "lease", "attempt": 1, "workload_type": "cpu_lora_mock"},
             {"adapter_delta": {"values": [0.1], "rank": 1}, "adapter_loss_start": 1.0},
             delta_format="sign_compressed",
             elapsed_ms=1.0,
         )
 
+        self.assertIsNone(next_residual)
         self.assertIn("adapter_delta", payload)
+        self.assertNotIn("compressed_delta", payload)
+
+    def test_build_result_payload_keeps_micro_transformer_delta_dense(self) -> None:
+        payload, next_residual = miner_cli.build_result_payload(
+            {"lease_token": "lease", "attempt": 1, "workload_type": "micro_transformer_lm"},
+            {"local_delta": [0.1, -0.2, 0.0], "lm_loss_start": 1.0},
+            delta_format="sign_compressed_ef",
+            elapsed_ms=1.0,
+        )
+
+        self.assertIsNone(next_residual)
+        self.assertEqual(payload["local_delta"], [0.1, -0.2, 0.0])
         self.assertNotIn("compressed_delta", payload)
 
 

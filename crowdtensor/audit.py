@@ -10,6 +10,7 @@ from .micro_transformer import run_micro_transformer_inner_loop
 from .outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED,
+    DELTA_FORMAT_SIGN_COMPRESSED_EF,
     compress_sign_delta,
     decode_delta_payload,
     l2_norm,
@@ -56,6 +57,14 @@ def verify_diloco_replay(task: dict, local_delta: Iterable[float], *, tolerance:
     claim_weights = task.get("claim_weights")
     training_spec = task.get("claim_training_spec")
     delta_format = ((task.get("validation") or {}).get("delta_format") or DELTA_FORMAT_DENSE_FLOAT)
+    if delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
+        return _audit_result(
+            accepted=False,
+            code="error_feedback_replay_unsupported",
+            reason="replay audit cannot reproduce Miner-local error-feedback residual state",
+            tolerance=tolerance,
+            delta_format=delta_format,
+        )
     if not isinstance(claim_weights, list) or not isinstance(training_spec, dict):
         return _audit_result(
             accepted=True,

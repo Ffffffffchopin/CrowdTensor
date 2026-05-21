@@ -49,13 +49,13 @@ These workloads validate protocol contracts and recovery behavior. They do not r
 
 `diloco_train` now exposes an explicit `outer_optimizer_contract_v1`. The default implementation is `diloco_momentum` over `dense_float` local deltas, preserving the existing CPU-only math while making the outer optimizer state visible in claims, result responses, checkpoints, and the admin result ledger. `--outer-optimizer diloco_nesterov` enables an OpenDiLoCo-inspired Nesterov outer update for new dense model state without changing the Miner result payload.
 
-This keeps the network layer physically separate from tensor math: Miners receive an `optimizer_spec`, produce the requested delta format, and the Coordinator applies the contract. The first compressed transport is `sign_compressed` with `ternary_signs_v1`; Coordinator decodes it to a dense delta before validation and outer update. Future OpenDiLoCo or DisTrO-style optimizers should extend this contract instead of changing task leasing or heartbeat semantics.
+This keeps the network layer physically separate from tensor math: Miners receive an `optimizer_spec`, produce the requested delta format, and the Coordinator applies the contract. The first compressed transport is `sign_compressed` with `ternary_signs_v1`; Coordinator decodes it to a dense delta before validation and outer update. `sign_compressed_ef` adds a DisTrO-style error-feedback residual loop on the Miner side: the Miner compresses `local_delta + residual`, uploads the sign payload and norm metadata, and only advances its residual buffer after Coordinator acceptance. Future OpenDiLoCo or DisTrO-style optimizers should extend this contract instead of changing task leasing or heartbeat semantics.
 
 ## Validation and Audit
 
 Every training result passes shape, finite-value, norm, and loss-spike checks before it can update state.
 
-With `--replay-audit`, Coordinator also recomputes expected deterministic results for supported workloads from claim-time state. For `sign_compressed`, replay audit recomputes the dense DiLoCo result, applies the same deterministic compression/decode contract, and compares the decoded delta. Mismatches are rejected and feed the normal trust/quarantine ledger.
+With `--replay-audit`, Coordinator also recomputes expected deterministic results for supported workloads from claim-time state. For `sign_compressed`, replay audit recomputes the dense DiLoCo result, applies the same deterministic compression/decode contract, and compares the decoded delta. For `sign_compressed_ef`, replay audit rejects the result with `error_feedback_replay_unsupported` because the residual buffer is intentionally Miner-local state. Mismatches are rejected and feed the normal trust/quarantine ledger.
 
 ## Trust and Scheduling
 

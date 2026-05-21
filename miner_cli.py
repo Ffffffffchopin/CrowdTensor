@@ -19,7 +19,13 @@ from crowdtensor.diloco import run_inner_loop
 from crowdtensor.lora_mock import run_lora_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
-from crowdtensor.outer_optimizer import DELTA_FORMAT_DENSE_FLOAT, DELTA_FORMAT_SIGN_COMPRESSED, compress_sign_delta
+from crowdtensor.outer_optimizer import (
+    DELTA_FORMAT_DENSE_FLOAT,
+    DELTA_FORMAT_SIGN_COMPRESSED,
+    DELTA_FORMAT_SIGN_COMPRESSED_EF,
+    compress_sign_delta,
+    compress_sign_delta_with_error_feedback,
+)
 
 
 RETRYABLE_HTTP_STATUSES = {500, 502, 504}
@@ -244,7 +250,14 @@ def miner_capabilities() -> dict:
     }
 
 
-def build_result_payload(claim: dict, inner_result: dict, *, delta_format: str, elapsed_ms: float) -> dict:
+def build_result_payload(
+    claim: dict,
+    inner_result: dict,
+    *,
+    delta_format: str,
+    elapsed_ms: float,
+    residual: list[float] | None = None,
+) -> tuple[dict, list[float] | None]:
     workload_type = claim.get("workload_type", "diloco_train")
     payload = {
         "lease_token": claim["lease_token"],
@@ -257,17 +270,26 @@ def build_result_payload(claim: dict, inner_result: dict, *, delta_format: str, 
         },
     }
     payload["metrics"]["elapsed_ms"] = elapsed_ms
+    next_residual = None
     if workload_type == "cpu_lora_mock":
         payload["adapter_delta"] = inner_result["adapter_delta"]
+    elif workload_type == WORKLOAD_MICRO_TRANSFORMER_LM:
+        payload["local_delta"] = inner_result["local_delta"]
+    elif delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
+        payload["compressed_delta"], next_residual = compress_sign_delta_with_error_feedback(
+            inner_result["local_delta"],
+            residual=residual,
+        )
+        payload["metrics"]["delta_format"] = DELTA_FORMAT_SIGN_COMPRESSED_EF
     elif delta_format == DELTA_FORMAT_SIGN_COMPRESSED:
         payload["compressed_delta"] = compress_sign_delta(inner_result["local_delta"])
         payload["metrics"]["delta_format"] = DELTA_FORMAT_SIGN_COMPRESSED
     else:
         payload["local_delta"] = inner_result["local_delta"]
-    return payload
+    return payload, next_residual
 
 
-def process_one(args: argparse.Namespace, counters: Counter) -> bool:
+def process_one(args: argparse.Namespace, counters: Counter, residual_state: dict[str, list[float]]) -> bool:
     claim = post_json(
         args.coordinator,
         "/tasks/claim",
@@ -333,11 +355,12 @@ def process_one(args: argparse.Namespace, counters: Counter) -> bool:
         if stop.is_set():
             print("lease heartbeat stopped before result upload", file=sys.stderr, flush=True)
             return False
-        payload = build_result_payload(
+        payload, next_residual = build_result_payload(
             claim,
             inner_result,
             delta_format=args.delta_format,
             elapsed_ms=round((time.monotonic() - task_started_at) * 1000.0, 6),
+            residual=residual_state.get(workload_type),
         )
         stop.set()
         thread.join(timeout=max(0.1, args.heartbeat_timeout))
@@ -353,6 +376,8 @@ def process_one(args: argparse.Namespace, counters: Counter) -> bool:
         )
         counters["accepted_tasks"] += 1
         counters[f"workload:{workload_type}"] += 1
+        if next_residual is not None and workload_type == "diloco_train":
+            residual_state[workload_type] = next_residual
         if workload_type == "cpu_lora_mock":
             print(
                 f"accepted adapter task={claim['task_id']} adapter_step={result['adapter_step']} "
@@ -401,7 +426,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--heartbeat-timeout", type=float, default=5.0)
     parser.add_argument(
         "--delta-format",
-        choices=[DELTA_FORMAT_DENSE_FLOAT, DELTA_FORMAT_SIGN_COMPRESSED],
+        choices=[
+            DELTA_FORMAT_DENSE_FLOAT,
+            DELTA_FORMAT_SIGN_COMPRESSED,
+            DELTA_FORMAT_SIGN_COMPRESSED_EF,
+        ],
         default=DELTA_FORMAT_DENSE_FLOAT,
         help="delta transport format for diloco_train results",
     )
@@ -452,6 +481,7 @@ def summary_payload(args: argparse.Namespace, counters: Counter, started_at: flo
 def main() -> None:
     args = parse_args()
     counters: Counter = Counter()
+    residual_state: dict[str, list[float]] = {}
     started_at = time.monotonic()
     try:
         preflight(args, counters)
@@ -462,7 +492,7 @@ def main() -> None:
                 break
 
             try:
-                process_one(args, counters)
+                process_one(args, counters, residual_state)
             except CoordinatorHTTPError as exc:
                 if exc.status == 409:
                     counters["stale_leases"] += 1

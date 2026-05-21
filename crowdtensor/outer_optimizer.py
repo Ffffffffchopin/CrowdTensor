@@ -15,6 +15,7 @@ SUPPORTED_OUTER_OPTIMIZERS = {
 }
 DELTA_FORMAT_DENSE_FLOAT = "dense_float"
 DELTA_FORMAT_SIGN_COMPRESSED = "sign_compressed"
+DELTA_FORMAT_SIGN_COMPRESSED_EF = "sign_compressed_ef"
 SIGN_ENCODING_TERNARY_V1 = "ternary_signs_v1"
 
 
@@ -101,6 +102,83 @@ def compress_sign_delta(local_delta: Iterable[float]) -> dict:
     }
 
 
+def compress_sign_delta_with_error_feedback(
+    local_delta: Iterable[float],
+    residual: Iterable[float] | None = None,
+) -> tuple[dict, list[float]]:
+    values = [float(value) for value in local_delta]
+    residual_values = [float(value) for value in residual] if residual is not None else [0.0 for _ in values]
+    if len(residual_values) != len(values):
+        residual_values = [0.0 for _ in values]
+    corrected = [
+        value + residual_value
+        for value, residual_value in zip(values, residual_values)
+    ]
+    if not all(math.isfinite(value) for value in corrected):
+        raise ValueError("corrected_delta contains NaN or infinite values")
+    compressed = compress_sign_delta(corrected)
+    decoded, _metadata = decode_delta_payload(compressed_delta=compressed)
+    next_residual = [
+        corrected_value - decoded_value
+        for corrected_value, decoded_value in zip(corrected, decoded or [])
+    ]
+    compressed = {
+        **compressed,
+        "format": DELTA_FORMAT_SIGN_COMPRESSED_EF,
+        "error_feedback": {
+            "residual_norm": l2_norm(next_residual),
+            "corrected_delta_norm": l2_norm(corrected),
+        },
+    }
+    return compressed, next_residual
+
+
+def _decode_sign_payload(compressed_delta: dict, *, delta_format: str) -> tuple[list[float], dict]:
+    if compressed_delta.get("encoding") != SIGN_ENCODING_TERNARY_V1:
+        raise ValueError("compressed_delta encoding must be ternary_signs_v1")
+    try:
+        scale = float(compressed_delta.get("scale"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("compressed_delta scale must be numeric") from exc
+    if not math.isfinite(scale) or scale < 0.0:
+        raise ValueError("compressed_delta scale must be finite and non-negative")
+    signs = compressed_delta.get("signs")
+    if not isinstance(signs, list):
+        raise ValueError("compressed_delta signs must be a list")
+    values: list[float] = []
+    for sign in signs:
+        if not isinstance(sign, int) or sign not in {-1, 0, 1}:
+            raise ValueError("compressed_delta signs must contain only -1, 0, or 1")
+        values.append(float(sign) * scale)
+    dense_bytes = max(1, len(values) * 8)
+    compressed_bytes = max(1, len(signs) + 8)
+    metadata = {
+        "delta_format": delta_format,
+        "decoded_delta_norm": l2_norm(values),
+        "compression_ratio_estimate": round(dense_bytes / compressed_bytes, 6),
+        "encoding": SIGN_ENCODING_TERNARY_V1,
+    }
+    if delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
+        error_feedback = compressed_delta.get("error_feedback")
+        if not isinstance(error_feedback, dict):
+            raise ValueError("compressed_delta error_feedback must be an object")
+        try:
+            residual_norm = float(error_feedback.get("residual_norm"))
+            corrected_delta_norm = float(error_feedback.get("corrected_delta_norm"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("compressed_delta error_feedback norms must be numeric") from exc
+        if not math.isfinite(residual_norm) or residual_norm < 0.0:
+            raise ValueError("compressed_delta error_feedback residual_norm must be finite and non-negative")
+        if not math.isfinite(corrected_delta_norm) or corrected_delta_norm < 0.0:
+            raise ValueError("compressed_delta error_feedback corrected_delta_norm must be finite and non-negative")
+        metadata.update({
+            "error_feedback": True,
+            "residual_norm": residual_norm,
+            "corrected_delta_norm": corrected_delta_norm,
+        })
+    return values, metadata
+
+
 def decode_delta_payload(
     *,
     local_delta: Iterable[float] | None = None,
@@ -125,32 +203,10 @@ def decode_delta_payload(
         return None, {"delta_format": DELTA_FORMAT_DENSE_FLOAT}
     if not isinstance(compressed_delta, dict):
         raise ValueError("compressed_delta must be an object")
-    if compressed_delta.get("format") != DELTA_FORMAT_SIGN_COMPRESSED:
-        raise ValueError("compressed_delta format must be sign_compressed")
-    if compressed_delta.get("encoding") != SIGN_ENCODING_TERNARY_V1:
-        raise ValueError("compressed_delta encoding must be ternary_signs_v1")
-    try:
-        scale = float(compressed_delta.get("scale"))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("compressed_delta scale must be numeric") from exc
-    if not math.isfinite(scale) or scale < 0.0:
-        raise ValueError("compressed_delta scale must be finite and non-negative")
-    signs = compressed_delta.get("signs")
-    if not isinstance(signs, list):
-        raise ValueError("compressed_delta signs must be a list")
-    values: list[float] = []
-    for sign in signs:
-        if not isinstance(sign, int) or sign not in {-1, 0, 1}:
-            raise ValueError("compressed_delta signs must contain only -1, 0, or 1")
-        values.append(float(sign) * scale)
-    dense_bytes = max(1, len(values) * 8)
-    compressed_bytes = max(1, len(signs) + 8)
-    return values, {
-        "delta_format": DELTA_FORMAT_SIGN_COMPRESSED,
-        "decoded_delta_norm": l2_norm(values),
-        "compression_ratio_estimate": round(dense_bytes / compressed_bytes, 6),
-        "encoding": SIGN_ENCODING_TERNARY_V1,
-    }
+    delta_format = compressed_delta.get("format")
+    if delta_format not in {DELTA_FORMAT_SIGN_COMPRESSED, DELTA_FORMAT_SIGN_COMPRESSED_EF}:
+        raise ValueError("compressed_delta format must be sign_compressed or sign_compressed_ef")
+    return _decode_sign_payload(compressed_delta, delta_format=str(delta_format))
 
 
 def apply_outer_optimizer_update(
@@ -211,6 +267,9 @@ def apply_outer_optimizer_update(
         delta_format=(delta_metadata or {}).get("delta_format"),
         decoded_delta_norm=(delta_metadata or {}).get("decoded_delta_norm"),
         compression_ratio_estimate=(delta_metadata or {}).get("compression_ratio_estimate"),
+        error_feedback=(delta_metadata or {}).get("error_feedback"),
+        residual_norm=(delta_metadata or {}).get("residual_norm"),
+        corrected_delta_norm=(delta_metadata or {}).get("corrected_delta_norm"),
     )
     next_model = {
         **current,
@@ -235,6 +294,9 @@ def optimizer_result_summary(
     delta_format: str | None = None,
     decoded_delta_norm: float | None = None,
     compression_ratio_estimate: float | None = None,
+    error_feedback: bool | None = None,
+    residual_norm: float | None = None,
+    corrected_delta_norm: float | None = None,
 ) -> dict:
     outer_update_values = list(outer_update) if outer_update is not None else list(next_velocity)
     summary = {
@@ -254,4 +316,10 @@ def optimizer_result_summary(
         summary["decoded_delta_norm"] = float(decoded_delta_norm)
     if compression_ratio_estimate is not None:
         summary["compression_ratio_estimate"] = float(compression_ratio_estimate)
+    if error_feedback is not None:
+        summary["error_feedback"] = bool(error_feedback)
+    if residual_norm is not None:
+        summary["residual_norm"] = float(residual_norm)
+    if corrected_delta_norm is not None:
+        summary["corrected_delta_norm"] = float(corrected_delta_norm)
     return summary

@@ -7,10 +7,12 @@ from crowdtensor.outer_optimizer import (
     CONTRACT_VERSION,
     DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED,
+    DELTA_FORMAT_SIGN_COMPRESSED_EF,
     OPTIMIZER_DILOCO_MOMENTUM,
     OPTIMIZER_DILOCO_NESTEROV,
     apply_outer_optimizer_update,
     compress_sign_delta,
+    compress_sign_delta_with_error_feedback,
     decode_delta_payload,
     normalize_outer_optimizer_contract,
     optimizer_claim_spec,
@@ -125,6 +127,33 @@ class OuterOptimizerTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(ValueError):
                     decode_delta_payload(compressed_delta=payload)
+
+    def test_sign_compressed_error_feedback_tracks_residual(self) -> None:
+        compressed, residual = compress_sign_delta_with_error_feedback(
+            [0.3, -0.1, 0.0],
+            residual=[0.1, 0.0, -0.05],
+        )
+        decoded, metadata = decode_delta_payload(compressed_delta=compressed)
+        corrected = [0.4, -0.1, -0.05]
+
+        self.assertEqual(compressed["format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+        self.assertEqual(metadata["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+        self.assertTrue(metadata["error_feedback"])
+        self.assertEqual(len(residual), 3)
+        for left, right in zip(residual, [c - d for c, d in zip(corrected, decoded)]):
+            self.assertAlmostEqual(left, right)
+        self.assertAlmostEqual(metadata["residual_norm"], compressed["error_feedback"]["residual_norm"])
+        self.assertAlmostEqual(
+            metadata["corrected_delta_norm"],
+            compressed["error_feedback"]["corrected_delta_norm"],
+        )
+
+    def test_sign_compressed_error_feedback_rejects_invalid_metadata(self) -> None:
+        compressed, _residual = compress_sign_delta_with_error_feedback([0.1, -0.2])
+        compressed["error_feedback"]["residual_norm"] = -1.0
+
+        with self.assertRaises(ValueError):
+            decode_delta_payload(compressed_delta=compressed)
 
 
 if __name__ == "__main__":

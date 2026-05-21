@@ -130,12 +130,13 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         ("miner_registry_auth", "miner_registry_auth_check.py", args.base_port + 12, args.skip_miner_registry_auth),
         ("token_hash_auth", "token_hash_auth_check.py", args.base_port + 13, args.skip_token_hash_auth),
         ("outer_optimizer", "outer_optimizer_check.py", args.base_port + 14, args.skip_outer_optimizer),
+        ("compressed_error_feedback", "compressed_error_feedback_check.py", args.base_port + 15, args.skip_compressed_error_feedback),
     ]
     if args.include_remote_miner:
         specs.append((
             "remote_miner",
             "remote_miner_readiness_check.py",
-            args.base_port + 15,
+            args.base_port + 16,
             args.skip_remote_miner,
         ))
     for name, script_name, port, skipped in specs:
@@ -159,18 +160,18 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         })
     if args.include_browser:
         browser_specs = [
-            ("webrtc", "webrtc_smoke.py", args.base_port + 16, None, args.skip_webrtc),
-            ("runtime_contract", "runtime_contract_check.py", args.base_port + 17, args.base_port + 18, args.skip_runtime_contract),
-            ("browser_miner", "browser_miner_smoke.py", args.base_port + 19, args.base_port + 20, args.skip_browser_miner),
-            ("browser_probe", "browser_probe_smoke.py", args.base_port + 21, args.base_port + 22, args.skip_browser_probe),
-            ("capability_ledger", "capability_ledger_check.py", args.base_port + 23, args.base_port + 24, args.skip_capability_ledger),
+            ("webrtc", "webrtc_smoke.py", args.base_port + 17, None, args.skip_webrtc),
+            ("runtime_contract", "runtime_contract_check.py", args.base_port + 18, args.base_port + 19, args.skip_runtime_contract),
+            ("browser_miner", "browser_miner_smoke.py", args.base_port + 20, args.base_port + 21, args.skip_browser_miner),
+            ("browser_probe", "browser_probe_smoke.py", args.base_port + 22, args.base_port + 23, args.skip_browser_probe),
+            ("capability_ledger", "capability_ledger_check.py", args.base_port + 24, args.base_port + 25, args.skip_capability_ledger),
         ]
         if args.include_browser_chaos:
             browser_specs.append((
                 "browser_chaos",
                 "browser_miner_chaos.py",
-                args.base_port + 25,
                 args.base_port + 26,
+                args.base_port + 27,
                 args.skip_browser_chaos,
             ))
         for name, script_name, port, web_port, skipped in browser_specs:
@@ -302,6 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-miner-registry-auth", action="store_true")
     parser.add_argument("--skip-token-hash-auth", action="store_true")
     parser.add_argument("--skip-outer-optimizer", action="store_true")
+    parser.add_argument("--skip-compressed-error-feedback", action="store_true")
     parser.add_argument("--skip-remote-miner", action="store_true")
     parser.add_argument("--skip-webrtc", action="store_true")
     parser.add_argument("--skip-runtime-contract", action="store_true")

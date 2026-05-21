@@ -1308,6 +1308,12 @@ class StateStore:
             "loss_delta",
             "max_delta_norm",
             "max_loss_delta",
+            "delta_format",
+            "decoded_delta_norm",
+            "compression_ratio_estimate",
+            "error_feedback",
+            "residual_norm",
+            "corrected_delta_norm",
             "ops",
             "elapsed_ms",
             "hash",
@@ -1348,6 +1354,9 @@ class StateStore:
             "delta_norm",
             "velocity_norm",
             "outer_update_norm",
+            "error_feedback",
+            "residual_norm",
+            "corrected_delta_norm",
         ]
         return {
             field: optimizer.get(field)

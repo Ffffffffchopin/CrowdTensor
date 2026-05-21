@@ -181,6 +181,12 @@ Outer optimizer contract smoke:
 python3 scripts/outer_optimizer_check.py --port 8899
 ```
 
+Compressed error-feedback transport smoke:
+
+```bash
+python3 scripts/compressed_error_feedback_check.py --port 8900
+```
+
 Remote-style Miner readiness:
 
 ```bash

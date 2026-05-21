@@ -29,6 +29,9 @@ jobs:
       - name: Outer optimizer smoke
         if: matrix.python-version == '3.12'
         run: python scripts/outer_optimizer_check.py --port 8899
+      - name: Compressed error feedback smoke
+        if: matrix.python-version == '3.12'
+        run: python scripts/compressed_error_feedback_check.py --port 8900
       - name: Runtime acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json

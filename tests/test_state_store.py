@@ -11,7 +11,12 @@ from crowdtensor.state_store import StateStore
 from crowdtensor.diloco import run_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
-from crowdtensor.outer_optimizer import OPTIMIZER_DILOCO_NESTEROV, compress_sign_delta
+from crowdtensor.outer_optimizer import (
+    DELTA_FORMAT_SIGN_COMPRESSED_EF,
+    OPTIMIZER_DILOCO_NESTEROV,
+    compress_sign_delta,
+    compress_sign_delta_with_error_feedback,
+)
 from crowdtensor.toy_compute import compute_pseudo_gradient
 
 
@@ -297,6 +302,44 @@ class StateStoreTests(unittest.TestCase):
             self.assertIn("compression_ratio_estimate", result["optimizer"])
             row = store.result_ledger(status="accepted")[0]
             self.assertEqual(row["optimizer"]["delta_format"], "sign_compressed")
+            public_text = json.dumps(row, sort_keys=True)
+            self.assertNotIn("compressed_delta", public_text)
+            self.assertNotIn("signs", public_text)
+
+    def test_sign_compressed_error_feedback_updates_model_and_ledger_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+            claim = store.claim_task("compressed-ef-miner")
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="compressed-ef-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+            compressed, residual = compress_sign_delta_with_error_feedback(
+                inner_result["local_delta"],
+                residual=[0.01, -0.02, 0.03],
+            )
+
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                compressed_delta=compressed,
+                metrics={"transport": DELTA_FORMAT_SIGN_COMPRESSED_EF},
+            )
+
+            self.assertTrue(result["accepted"])
+            self.assertEqual(len(residual), len(claim["weights"]))
+            self.assertEqual(result["optimizer"]["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+            self.assertTrue(result["optimizer"]["error_feedback"])
+            self.assertIn("residual_norm", result["optimizer"])
+            self.assertIn("corrected_delta_norm", result["optimizer"])
+            row = store.result_ledger(status="accepted")[0]
+            self.assertEqual(row["optimizer"]["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+            self.assertTrue(row["optimizer"]["error_feedback"])
+            self.assertEqual(row["validation"]["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
             public_text = json.dumps(row, sort_keys=True)
             self.assertNotIn("compressed_delta", public_text)
             self.assertNotIn("signs", public_text)
@@ -1189,6 +1232,51 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(raised.exception.validation["audit_delta_format"], "sign_compressed")
             self.assertEqual(summary["audit_results"], 1)
             self.assertEqual(summary["audit_rejections"], 1)
+
+    def test_replay_audit_rejects_sign_compressed_error_feedback_diloco_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                replay_audit=True,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": "diloco_train",
+                    },
+                ],
+            )
+            claim = store.claim_task("audit-compressed-ef-diloco", capabilities=self._python_capabilities())
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="audit-compressed-ef-diloco",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+                training_spec=claim["training_spec"],
+            )
+            compressed, _residual = compress_sign_delta_with_error_feedback(inner_result["local_delta"])
+
+            with self.assertRaises(ResultRejected) as raised:
+                store.complete_task(
+                    claim["task_id"],
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    compressed_delta=compressed,
+                )
+            summary = store.summary()
+            row = store.result_ledger(status="rejected")[0]
+
+            self.assertEqual(raised.exception.validation["code"], "local_delta_replay_mismatch")
+            self.assertEqual(raised.exception.validation["audit_code"], "error_feedback_replay_unsupported")
+            self.assertEqual(raised.exception.validation["audit_delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+            self.assertEqual(summary["audit_results"], 1)
+            self.assertEqual(summary["audit_rejections"], 1)
+            self.assertEqual(row["audit"]["audit_code"], "error_feedback_replay_unsupported")
 
     def test_replay_audit_rejects_small_wrong_diloco_delta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

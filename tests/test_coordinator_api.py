@@ -13,7 +13,12 @@ from fastapi import HTTPException
 from coordinator import create_app, load_miner_token_registry, parse_task_lane
 from crowdtensor.auth import hash_token
 from crowdtensor.diloco import run_inner_loop
-from crowdtensor.outer_optimizer import OPTIMIZER_DILOCO_NESTEROV, compress_sign_delta
+from crowdtensor.outer_optimizer import (
+    DELTA_FORMAT_SIGN_COMPRESSED_EF,
+    OPTIMIZER_DILOCO_NESTEROV,
+    compress_sign_delta,
+    compress_sign_delta_with_error_feedback,
+)
 from crowdtensor.toy_compute import compute_pseudo_gradient
 
 
@@ -949,6 +954,39 @@ class CoordinatorApiTests(unittest.TestCase):
 
             self.assertTrue(result["accepted"])
             self.assertEqual(result["optimizer"]["delta_format"], "sign_compressed")
+            self.assertEqual(state()["accepted_results"], 1)
+
+    def test_sign_compressed_error_feedback_result_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10)
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            state = endpoint_for(app, "/state", "GET")
+            claim = claim_task(request_model(claim_task)(miner_id="api-compressed-ef-miner"))
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="api-compressed-ef-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+            compressed, _residual = compress_sign_delta_with_error_feedback(
+                inner_result["local_delta"],
+                residual=[0.01, -0.02, 0.03],
+            )
+            result = result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    compressed_delta=compressed,
+                    metrics={"transport": DELTA_FORMAT_SIGN_COMPRESSED_EF},
+                ),
+            )
+
+            self.assertTrue(result["accepted"])
+            self.assertEqual(result["optimizer"]["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+            self.assertTrue(result["optimizer"]["error_feedback"])
             self.assertEqual(state()["accepted_results"], 1)
 
     def test_nesterov_outer_optimizer_round_trip(self) -> None:
