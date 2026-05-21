@@ -192,6 +192,12 @@ Run only the sign-compressed error-feedback transport smoke:
 python3 scripts/compressed_error_feedback_check.py --port 8900
 ```
 
+Run only the delta transport negotiation smoke:
+
+```bash
+python3 scripts/delta_transport_negotiation_check.py --port 8901
+```
+
 Run only the remote Miner invite/join smoke:
 
 ```bash

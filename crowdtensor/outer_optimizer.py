@@ -16,6 +16,11 @@ SUPPORTED_OUTER_OPTIMIZERS = {
 DELTA_FORMAT_DENSE_FLOAT = "dense_float"
 DELTA_FORMAT_SIGN_COMPRESSED = "sign_compressed"
 DELTA_FORMAT_SIGN_COMPRESSED_EF = "sign_compressed_ef"
+SUPPORTED_DELTA_FORMATS = {
+    DELTA_FORMAT_DENSE_FLOAT,
+    DELTA_FORMAT_SIGN_COMPRESSED,
+    DELTA_FORMAT_SIGN_COMPRESSED_EF,
+}
 SIGN_ENCODING_TERNARY_V1 = "ternary_signs_v1"
 
 
@@ -24,6 +29,13 @@ def normalize_optimizer_type(value: object | None) -> str:
     if optimizer_type not in SUPPORTED_OUTER_OPTIMIZERS:
         raise ValueError(f"unsupported outer optimizer type {optimizer_type}")
     return optimizer_type
+
+
+def normalize_delta_format(value: object | None) -> str:
+    delta_format = str(value or DELTA_FORMAT_DENSE_FLOAT)
+    if delta_format not in SUPPORTED_DELTA_FORMATS:
+        raise ValueError(f"unsupported delta format {delta_format}")
+    return delta_format
 
 
 def default_outer_optimizer_contract(

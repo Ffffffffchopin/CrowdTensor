@@ -65,7 +65,12 @@ from .micro_transformer import (
     micro_transformer_version,
     validate_micro_transformer_delta,
 )
-from .outer_optimizer import optimizer_claim_spec
+from .outer_optimizer import (
+    DELTA_FORMAT_DENSE_FLOAT,
+    DELTA_FORMAT_SIGN_COMPRESSED_EF,
+    normalize_delta_format,
+    optimizer_claim_spec,
+)
 from .outer_optimizer import decode_delta_payload
 from .outer_optimizer import OPTIMIZER_DILOCO_MOMENTUM
 from .validation import validate_local_delta
@@ -101,6 +106,7 @@ class StateStore:
         task_lanes: Iterable[dict] | None = None,
         replay_audit: bool = False,
         outer_optimizer: str = OPTIMIZER_DILOCO_MOMENTUM,
+        delta_format: str = DELTA_FORMAT_DENSE_FLOAT,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.task_log_path = self.state_dir / "tasks.jsonl"
@@ -110,6 +116,9 @@ class StateStore:
         self.backlog = int(backlog)
         self.replay_audit = bool(replay_audit)
         self.outer_optimizer = str(outer_optimizer or OPTIMIZER_DILOCO_MOMENTUM)
+        self.delta_format = normalize_delta_format(delta_format)
+        if self.replay_audit and self.delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
+            raise ValueError("sign_compressed_ef cannot be used with replay_audit")
         self.task_lanes = self._normalize_task_lanes(task_lanes)
         self._lock = threading.RLock()
         self._event_index = 0
@@ -188,6 +197,7 @@ class StateStore:
             task = sorted(eligible, key=lambda item: item["created_at"])[0]
             model_version = self._model_version_for_task(task)
             claimed_contract = self._claim_contract(task, miner_name, model_version)
+            optimizer_spec = dict(claimed_contract.get("claim_optimizer_spec") or {})
             now = now_epoch()
             event = self._append_event({
                 "type": EVENT_TASK_CLAIMED,
@@ -200,6 +210,7 @@ class StateStore:
                 "model_version": model_version,
                 "inner_steps": int(task.get("inner_steps", self.inner_steps)),
                 **claimed_contract,
+                "claim_optimizer_spec": optimizer_spec,
                 "ts": now,
             })
             self._apply_task_event(event)
@@ -420,6 +431,7 @@ class StateStore:
             )
             validation = validate_local_delta(self._model, raw_delta)
             validation = {**validation, **delta_metadata}
+            validation = self._validate_delta_format_contract(task, validation)
             if validation["accepted"]:
                 validation = self._audit_diloco_result(task, validation)
             else:
@@ -1437,7 +1449,10 @@ class StateStore:
     def _optimizer_spec_for_task(self, task: dict) -> dict:
         if self._workload_type(task) != WORKLOAD_DILOCO_TRAIN:
             return {}
-        return optimizer_claim_spec(self._model)
+        return {
+            **optimizer_claim_spec(self._model),
+            "delta_format": self.delta_format,
+        }
 
     def _claim_contract(self, task: dict, miner_id: str, model_version: int) -> dict:
         audit_mode = task.get("audit_mode", AUDIT_MODE_NONE) or AUDIT_MODE_NONE
@@ -1482,6 +1497,27 @@ class StateStore:
                 "reason": audit.get("audit_reason", "replay audit failed"),
             }
         return {**validation, **audit}
+
+    def _validate_delta_format_contract(self, task: dict, validation: dict) -> dict:
+        expected = normalize_delta_format(
+            (task.get("claim_optimizer_spec") or {}).get("delta_format")
+        )
+        actual = normalize_delta_format(validation.get("delta_format"))
+        if expected == actual:
+            return validation
+        if (
+            task.get("audit_mode", AUDIT_MODE_NONE) == AUDIT_MODE_REPLAY
+            and actual == DELTA_FORMAT_SIGN_COMPRESSED_EF
+        ):
+            return validation
+        return {
+            **validation,
+            "accepted": False,
+            "code": "delta_format_mismatch",
+            "reason": f"result delta_format {actual} does not match claim delta_format {expected}",
+            "expected_delta_format": expected,
+            "actual_delta_format": actual,
+        }
 
     def _audit_diloco_result(self, task: dict, validation: dict) -> dict:
         if task.get("audit_mode", AUDIT_MODE_NONE) != AUDIT_MODE_REPLAY:
@@ -1580,7 +1616,20 @@ class StateStore:
             supported = {supported_workloads}
         else:
             supported = {str(value) for value in supported_workloads}
-        return workload_type in supported
+        if workload_type not in supported:
+            return False
+
+        if workload_type != WORKLOAD_DILOCO_TRAIN:
+            return True
+        expected_format = self._optimizer_spec_for_task(task).get("delta_format", DELTA_FORMAT_DENSE_FLOAT)
+        supported_delta_formats = capabilities.get("supported_delta_formats")
+        if supported_delta_formats is None:
+            return expected_format == DELTA_FORMAT_DENSE_FLOAT
+        if isinstance(supported_delta_formats, str):
+            formats = {supported_delta_formats}
+        else:
+            formats = {str(value) for value in supported_delta_formats}
+        return expected_format in formats
 
     def _validate_probe_result(self, probe_result: dict | None) -> dict:
         if not isinstance(probe_result, dict):

@@ -12,6 +12,8 @@ from crowdtensor.diloco import run_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
 from crowdtensor.outer_optimizer import (
+    DELTA_FORMAT_DENSE_FLOAT,
+    DELTA_FORMAT_SIGN_COMPRESSED,
     DELTA_FORMAT_SIGN_COMPRESSED_EF,
     OPTIMIZER_DILOCO_NESTEROV,
     compress_sign_delta,
@@ -102,6 +104,59 @@ class StateStoreTests(unittest.TestCase):
             self.assertGreater(result["optimizer"]["delta_norm"], 0.0)
             self.assertEqual(summary["last_completed"]["optimizer"]["optimizer_step_after"], 1)
             self.assertIn("micro_transformer", summary["model"])
+
+    def test_claim_advertises_configured_delta_format_without_mutating_model_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=1,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED_EF,
+            )
+            claim = store.claim_task(
+                "compressed-capable",
+                capabilities={
+                    **self._python_capabilities(),
+                    "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED_EF],
+                },
+            )
+
+            self.assertEqual(claim["optimizer_spec"]["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+            self.assertEqual(
+                store.summary()["model"]["outer_optimizer_contract"]["delta_format"],
+                DELTA_FORMAT_DENSE_FLOAT,
+            )
+
+    def test_compressed_delta_claim_requires_matching_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=1,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED_EF,
+            )
+
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("legacy-miner", capabilities=self._python_capabilities())
+
+            claim = store.claim_task(
+                "compressed-capable",
+                capabilities={
+                    **self._python_capabilities(),
+                    "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED_EF],
+                },
+            )
+            self.assertEqual(claim["optimizer_spec"]["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+
+    def test_dense_claim_accepts_legacy_missing_delta_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+
+            claim = store.claim_task("legacy-miner", capabilities=self._python_capabilities())
+
+            self.assertEqual(claim["optimizer_spec"]["delta_format"], DELTA_FORMAT_DENSE_FLOAT)
 
     def test_idempotent_completed_result_does_not_update_twice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -278,8 +333,20 @@ class StateStoreTests(unittest.TestCase):
 
     def test_sign_compressed_result_updates_model_and_ledger_safely(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
-            claim = store.claim_task("compressed-miner")
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=1,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED,
+            )
+            claim = store.claim_task(
+                "compressed-miner",
+                capabilities={
+                    **self._python_capabilities(),
+                    "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED],
+                },
+            )
             inner_result = run_inner_loop(
                 claim["weights"],
                 task_id=claim["task_id"],
@@ -308,8 +375,20 @@ class StateStoreTests(unittest.TestCase):
 
     def test_sign_compressed_error_feedback_updates_model_and_ledger_safely(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
-            claim = store.claim_task("compressed-ef-miner")
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=1,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED_EF,
+            )
+            claim = store.claim_task(
+                "compressed-ef-miner",
+                capabilities={
+                    **self._python_capabilities(),
+                    "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED_EF],
+                },
+            )
             inner_result = run_inner_loop(
                 claim["weights"],
                 task_id=claim["task_id"],
@@ -343,6 +422,54 @@ class StateStoreTests(unittest.TestCase):
             public_text = json.dumps(row, sort_keys=True)
             self.assertNotIn("compressed_delta", public_text)
             self.assertNotIn("signs", public_text)
+
+    def test_delta_format_mismatch_rejects_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=1,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED_EF,
+            )
+            claim = store.claim_task(
+                "wrong-transport-miner",
+                capabilities={
+                    **self._python_capabilities(),
+                    "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED_EF],
+                },
+            )
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="wrong-transport-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+
+            with self.assertRaises(ResultRejected) as raised:
+                store.complete_task(
+                    claim["task_id"],
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    local_delta=inner_result["local_delta"],
+                )
+
+            self.assertEqual(raised.exception.validation["code"], "delta_format_mismatch")
+            self.assertEqual(raised.exception.validation["expected_delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
+            self.assertEqual(raised.exception.validation["actual_delta_format"], DELTA_FORMAT_DENSE_FLOAT)
+
+    def test_replay_audit_rejects_error_feedback_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "sign_compressed_ef"):
+                StateStore(
+                    tmp,
+                    lease_seconds=5,
+                    inner_steps=10,
+                    backlog=1,
+                    replay_audit=True,
+                    delta_format=DELTA_FORMAT_SIGN_COMPRESSED_EF,
+                )
 
     def test_result_ledger_survives_restart_with_event_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1109,6 +1236,7 @@ class StateStoreTests(unittest.TestCase):
                 inner_steps=10,
                 backlog=0,
                 replay_audit=True,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED,
                 task_lanes=[
                     {
                         "runtime": "python-cli",
@@ -1118,7 +1246,13 @@ class StateStoreTests(unittest.TestCase):
                     },
                 ],
             )
-            claim = store.claim_task("audit-compressed-diloco", capabilities=self._python_capabilities())
+            claim = store.claim_task(
+                "audit-compressed-diloco",
+                capabilities={
+                    **self._python_capabilities(),
+                    "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED],
+                },
+            )
             inner_result = run_inner_loop(
                 claim["weights"],
                 task_id=claim["task_id"],
@@ -1155,6 +1289,7 @@ class StateStoreTests(unittest.TestCase):
                 backlog=0,
                 replay_audit=True,
                 outer_optimizer=OPTIMIZER_DILOCO_NESTEROV,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED,
                 task_lanes=[
                     {
                         "runtime": "python-cli",
@@ -1164,7 +1299,13 @@ class StateStoreTests(unittest.TestCase):
                     },
                 ],
             )
-            claim = store.claim_task("nesterov-compressed", capabilities=self._python_capabilities())
+            claim = store.claim_task(
+                "nesterov-compressed",
+                capabilities={
+                    **self._python_capabilities(),
+                    "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED],
+                },
+            )
             inner_result = run_inner_loop(
                 claim["weights"],
                 task_id=claim["task_id"],
@@ -1198,6 +1339,7 @@ class StateStoreTests(unittest.TestCase):
                 inner_steps=10,
                 backlog=0,
                 replay_audit=True,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED,
                 task_lanes=[
                     {
                         "runtime": "python-cli",
@@ -1207,7 +1349,13 @@ class StateStoreTests(unittest.TestCase):
                     },
                 ],
             )
-            claim = store.claim_task("bad-compressed-diloco", capabilities=self._python_capabilities())
+            claim = store.claim_task(
+                "bad-compressed-diloco",
+                capabilities={
+                    **self._python_capabilities(),
+                    "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED],
+                },
+            )
             inner_result = run_inner_loop(
                 claim["weights"],
                 task_id=claim["task_id"],

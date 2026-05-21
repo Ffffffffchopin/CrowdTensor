@@ -19,7 +19,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from crowdtensor.diloco import run_inner_loop  # noqa: E402
-from crowdtensor.outer_optimizer import OPTIMIZER_DILOCO_NESTEROV, compress_sign_delta  # noqa: E402
+from crowdtensor.outer_optimizer import (  # noqa: E402
+    DELTA_FORMAT_DENSE_FLOAT,
+    DELTA_FORMAT_SIGN_COMPRESSED,
+    OPTIMIZER_DILOCO_NESTEROV,
+    compress_sign_delta,
+)
 
 
 def request_json(method: str, base_url: str, path: str, payload: dict | None = None) -> dict:
@@ -85,7 +90,36 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path) -> subprocess.P
     return proc
 
 
-def claim(base_url: str, miner_id: str) -> dict:
+def start_compressed_coordinator(args: argparse.Namespace, state_dir: Path) -> subprocess.Popen:
+    command = [
+        sys.executable,
+        str(ROOT / "coordinator.py"),
+        "--host",
+        args.host,
+        "--port",
+        str(args.port),
+        "--state-dir",
+        str(state_dir),
+        "--lease-seconds",
+        str(args.lease_seconds),
+        "--inner-steps",
+        str(args.inner_steps),
+        "--backlog",
+        "1",
+        "--replay-audit",
+        "--outer-optimizer",
+        OPTIMIZER_DILOCO_NESTEROV,
+        "--delta-format",
+        DELTA_FORMAT_SIGN_COMPRESSED,
+    ]
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    wait_ready(args.base_url, proc, args.startup_timeout)
+    return proc
+
+
+def claim_with_delta_format(base_url: str, miner_id: str, delta_format: str) -> dict:
     return request_json(
         "POST",
         base_url,
@@ -97,6 +131,7 @@ def claim(base_url: str, miner_id: str) -> dict:
                 "backend": "cpu",
                 "protocol_version": "runtime_contract_v1",
                 "supported_workloads": ["diloco_train"],
+                "supported_delta_formats": [delta_format],
             },
         },
     )
@@ -153,6 +188,12 @@ def assert_nesterov_result(claimed: dict, result: dict) -> None:
         raise RuntimeError(f"result missing outer_update_norm: {result}")
 
 
+def assert_claim_delta_format(claimed: dict, expected: str) -> None:
+    actual = (claimed.get("optimizer_spec") or {}).get("delta_format")
+    if actual != expected:
+        raise RuntimeError(f"claim delta_format expected {expected}, got {actual}: {claimed}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run outer optimizer contract smoke test.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -176,31 +217,46 @@ def main() -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
 
     coordinator = None
+    compressed_coordinator = None
     try:
         coordinator = start_coordinator(args, state_dir)
-        dense_claim = claim(args.base_url, "nesterov-dense")
+        dense_claim = claim_with_delta_format(args.base_url, "nesterov-dense", DELTA_FORMAT_DENSE_FLOAT)
+        assert_claim_delta_format(dense_claim, DELTA_FORMAT_DENSE_FLOAT)
         dense_result = complete_dense(args.base_url, dense_claim, "nesterov-dense")
         assert_nesterov_result(dense_claim, dense_result)
 
-        compressed_claim = claim(args.base_url, "nesterov-compressed")
+        state = request_json("GET", args.base_url, "/state")
+        if state.get("audit_results") != 1 or state.get("audit_rejections") != 0:
+            raise RuntimeError(f"unexpected dense replay audit counters: {state}")
+        stop_process(coordinator)
+        coordinator = None
+
+        compressed_coordinator = start_compressed_coordinator(args, state_dir / "compressed")
+        compressed_claim = claim_with_delta_format(
+            args.base_url,
+            "nesterov-compressed",
+            DELTA_FORMAT_SIGN_COMPRESSED,
+        )
+        assert_claim_delta_format(compressed_claim, DELTA_FORMAT_SIGN_COMPRESSED)
         compressed_result = complete_compressed(args.base_url, compressed_claim, "nesterov-compressed")
         assert_nesterov_result(compressed_claim, compressed_result)
         if (compressed_result.get("optimizer") or {}).get("delta_format") != "sign_compressed":
             raise RuntimeError(f"compressed result missing sign_compressed summary: {compressed_result}")
 
-        state = request_json("GET", args.base_url, "/state")
-        if state.get("audit_results") != 2 or state.get("audit_rejections") != 0:
-            raise RuntimeError(f"unexpected replay audit counters: {state}")
-        if (state.get("model") or {}).get("outer_optimizer_type") != OPTIMIZER_DILOCO_NESTEROV:
-            raise RuntimeError(f"state did not persist nesterov optimizer: {state}")
+        compressed_state = request_json("GET", args.base_url, "/state")
+        if compressed_state.get("audit_results") != 1 or compressed_state.get("audit_rejections") != 0:
+            raise RuntimeError(f"unexpected replay audit counters: {compressed_state}")
+        if (compressed_state.get("model") or {}).get("outer_optimizer_type") != OPTIMIZER_DILOCO_NESTEROV:
+            raise RuntimeError(f"state did not persist nesterov optimizer: {compressed_state}")
         print(json.dumps({
-            "accepted_results": state["accepted_results"],
-            "audit_results": state["audit_results"],
+            "accepted_results": state["accepted_results"] + compressed_state["accepted_results"],
+            "audit_results": state["audit_results"] + compressed_state["audit_results"],
             "compressed_delta_format": compressed_result["optimizer"]["delta_format"],
             "optimizer_type": OPTIMIZER_DILOCO_NESTEROV,
         }, sort_keys=True))
     finally:
         stop_process(coordinator)
+        stop_process(compressed_coordinator)
         if temp_dir is not None:
             temp_dir.cleanup()
 

@@ -930,11 +930,17 @@ class CoordinatorApiTests(unittest.TestCase):
 
     def test_sign_compressed_result_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10)
+            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10, delta_format="sign_compressed")
             claim_task = endpoint_for(app, "/tasks/claim", "POST")
             result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
             state = endpoint_for(app, "/state", "GET")
-            claim = claim_task(request_model(claim_task)(miner_id="api-compressed-miner"))
+            claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="api-compressed-miner",
+                    capabilities={"supported_delta_formats": ["sign_compressed"]},
+                )
+            )
+            self.assertEqual(claim["optimizer_spec"]["delta_format"], "sign_compressed")
             inner_result = run_inner_loop(
                 claim["weights"],
                 task_id=claim["task_id"],
@@ -958,11 +964,22 @@ class CoordinatorApiTests(unittest.TestCase):
 
     def test_sign_compressed_error_feedback_result_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10)
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                delta_format=DELTA_FORMAT_SIGN_COMPRESSED_EF,
+            )
             claim_task = endpoint_for(app, "/tasks/claim", "POST")
             result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
             state = endpoint_for(app, "/state", "GET")
-            claim = claim_task(request_model(claim_task)(miner_id="api-compressed-ef-miner"))
+            claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="api-compressed-ef-miner",
+                    capabilities={"supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED_EF]},
+                )
+            )
+            self.assertEqual(claim["optimizer_spec"]["delta_format"], DELTA_FORMAT_SIGN_COMPRESSED_EF)
             inner_result = run_inner_loop(
                 claim["weights"],
                 task_id=claim["task_id"],

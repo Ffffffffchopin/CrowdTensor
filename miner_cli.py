@@ -30,6 +30,12 @@ from crowdtensor.outer_optimizer import (
 
 RETRYABLE_HTTP_STATUSES = {500, 502, 504}
 EXPECTED_PROTOCOL_VERSION = "runtime_contract_v1"
+DELTA_FORMAT_AUTO = "auto"
+SUPPORTED_MINER_DELTA_FORMATS = [
+    DELTA_FORMAT_DENSE_FLOAT,
+    DELTA_FORMAT_SIGN_COMPRESSED,
+    DELTA_FORMAT_SIGN_COMPRESSED_EF,
+]
 
 
 class CoordinatorHTTPError(RuntimeError):
@@ -246,8 +252,16 @@ def miner_capabilities() -> dict:
         "supports_training_spec": True,
         "protocol_version": "runtime_contract_v1",
         "supported_workloads": ["diloco_train", "cpu_lora_mock", WORKLOAD_MICRO_TRANSFORMER_LM],
+        "supported_delta_formats": SUPPORTED_MINER_DELTA_FORMATS,
         "pid": os_safe_pid(),
     }
+
+
+def delta_format_for_claim(claim: dict, requested_format: str) -> str:
+    if requested_format != DELTA_FORMAT_AUTO:
+        return requested_format
+    optimizer_spec = claim.get("optimizer_spec") or {}
+    return str(optimizer_spec.get("delta_format") or DELTA_FORMAT_DENSE_FLOAT)
 
 
 def build_result_payload(
@@ -358,7 +372,7 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
         payload, next_residual = build_result_payload(
             claim,
             inner_result,
-            delta_format=args.delta_format,
+            delta_format=delta_format_for_claim(claim, args.delta_format),
             elapsed_ms=round((time.monotonic() - task_started_at) * 1000.0, 6),
             residual=residual_state.get(workload_type),
         )
@@ -427,12 +441,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--delta-format",
         choices=[
+            DELTA_FORMAT_AUTO,
             DELTA_FORMAT_DENSE_FLOAT,
             DELTA_FORMAT_SIGN_COMPRESSED,
             DELTA_FORMAT_SIGN_COMPRESSED_EF,
         ],
-        default=DELTA_FORMAT_DENSE_FLOAT,
-        help="delta transport format for diloco_train results",
+        default=DELTA_FORMAT_AUTO,
+        help="delta transport format for diloco_train results; auto follows claim optimizer_spec.delta_format",
     )
     parser.add_argument("--skip-preflight", action="store_true", help="skip the startup /ready protocol check")
     parser.add_argument("--preflight-timeout", type=float, default=5.0)

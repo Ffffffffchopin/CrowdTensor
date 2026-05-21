@@ -32,6 +32,9 @@ jobs:
       - name: Compressed error feedback smoke
         if: matrix.python-version == '3.12'
         run: python scripts/compressed_error_feedback_check.py --port 8900
+      - name: Delta transport negotiation smoke
+        if: matrix.python-version == '3.12'
+        run: python scripts/delta_transport_negotiation_check.py --port 8901
       - name: Runtime acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json

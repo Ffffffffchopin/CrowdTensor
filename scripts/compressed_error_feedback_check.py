@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
 
 from crowdtensor.diloco import run_inner_loop  # noqa: E402
 from crowdtensor.outer_optimizer import (  # noqa: E402
+    DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED_EF,
     compress_sign_delta_with_error_feedback,
 )
@@ -110,6 +111,8 @@ def start_coordinator(
     ]
     if replay_audit:
         command.append("--replay-audit")
+    else:
+        command.extend(["--delta-format", DELTA_FORMAT_SIGN_COMPRESSED_EF])
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
     proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
@@ -129,6 +132,10 @@ def claim(base_url: str, miner_id: str) -> dict:
                 "backend": "cpu",
                 "protocol_version": "runtime_contract_v1",
                 "supported_workloads": ["diloco_train"],
+                "supported_delta_formats": [
+                    DELTA_FORMAT_DENSE_FLOAT,
+                    DELTA_FORMAT_SIGN_COMPRESSED_EF,
+                ],
             },
         },
     )

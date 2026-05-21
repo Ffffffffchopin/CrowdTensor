@@ -225,7 +225,7 @@ For `diloco_train`, `optimizer_spec` describes the outer update contract returne
 }
 ```
 
-Coordinator defaults to `diloco_momentum`. Starting it with `--outer-optimizer diloco_nesterov` changes `optimizer_type` in claim and result summaries for new dense model state; Miner result payloads stay the same.
+Coordinator defaults to `diloco_momentum` and `dense_float`. Starting it with `--outer-optimizer diloco_nesterov` changes `optimizer_type` in claim and result summaries for new dense model state. Starting it with `--delta-format sign_compressed` or `--delta-format sign_compressed_ef` changes the claim-time `delta_format`; Miners should follow `optimizer_spec.delta_format`, and should advertise compatible `supported_delta_formats` in claim capabilities.
 
 ### `POST /tasks/{task_id}/heartbeat`
 
@@ -263,7 +263,7 @@ For the default `diloco_train` workload, send `local_delta` or `pseudo_gradient`
 }
 ```
 
-`diloco_train` also accepts experimental `compressed_delta` transports. `sign_compressed` is a CPU-only contract check format: Coordinator decodes it to a dense delta, then reuses the normal validation, audit, optimizer, checkpoint, and idempotency path.
+`diloco_train` also accepts experimental `compressed_delta` transports when the claimed `optimizer_spec.delta_format` requests them. `sign_compressed` is a CPU-only contract check format: Coordinator decodes it to a dense delta, then reuses the normal validation, audit, optimizer, checkpoint, and idempotency path.
 
 ```json
 {
@@ -299,7 +299,7 @@ For the default `diloco_train` workload, send `local_delta` or `pseudo_gradient`
 }
 ```
 
-`signs` may contain only `-1`, `0`, or `1`; `scale`, `residual_norm`, and `corrected_delta_norm` must be finite and non-negative. `sign_compressed_ef` is accepted only as a transport contract. Replay audit rejects it with `audit_code=error_feedback_replay_unsupported` because the Coordinator cannot reconstruct a Miner-local residual buffer from claim-time state. If multiple delta forms are present, Coordinator prefers `local_delta`, then `pseudo_gradient`, then `compressed_delta`.
+`signs` may contain only `-1`, `0`, or `1`; `scale`, `residual_norm`, and `corrected_delta_norm` must be finite and non-negative. `sign_compressed_ef` is accepted only as a transport contract. Replay audit rejects it with `audit_code=error_feedback_replay_unsupported` because the Coordinator cannot reconstruct a Miner-local residual buffer from claim-time state. If multiple delta forms are present, Coordinator prefers `local_delta`, then `pseudo_gradient`, then `compressed_delta`; if the decoded result format does not match the claim contract, Coordinator rejects it with `delta_format_mismatch`.
 
 `idempotency_key` is optional for compatibility with older Miners, but remote Miners should send a stable unique value per claimed task. When a result with the same `task_id`, `attempt`, `lease_token`, and `idempotency_key` is retried after a lost response, Coordinator returns the original response without applying the update twice. Reusing a different key after the task is already terminal returns `409`.
 

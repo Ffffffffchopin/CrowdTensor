@@ -25,7 +25,7 @@ for path in [ROOT, ROOT / "scripts"]:
 
 from auth_headers import activate_miner_token, activate_observer_token, add_miner_token_arg, add_observer_token_arg, coordinator_env, json_headers, observer_headers  # noqa: E402
 from crowdtensor.diloco import run_inner_loop  # noqa: E402
-from crowdtensor.outer_optimizer import compress_sign_delta  # noqa: E402
+from crowdtensor.outer_optimizer import DELTA_FORMAT_SIGN_COMPRESSED, compress_sign_delta  # noqa: E402
 
 
 def request_json(
@@ -96,6 +96,8 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path) -> subprocess.P
         "python-cli:cpu:1:cpu_lora_mock",
         "--task-lane",
         "python-cli:cpu:1:micro_transformer_lm",
+        "--delta-format",
+        DELTA_FORMAT_SIGN_COMPRESSED,
     ]
     env = coordinator_env()
     env["PYTHONUNBUFFERED"] = "1"
@@ -121,6 +123,7 @@ def dense_capabilities() -> dict:
         "backend": "cpu",
         "protocol_version": "runtime_contract_v1",
         "supported_workloads": ["diloco_train"],
+        "supported_delta_formats": [DELTA_FORMAT_SIGN_COMPRESSED],
     }
 
 
@@ -151,6 +154,19 @@ def reject_bad_dense(base_url: str) -> None:
     )
     if claim.get("audit_mode") != "replay" or claim.get("workload_type") != "diloco_train":
         raise RuntimeError(f"expected audited diloco_train claim, got {claim}")
+    if (claim.get("optimizer_spec") or {}).get("delta_format") != DELTA_FORMAT_SIGN_COMPRESSED:
+        raise RuntimeError(f"expected sign_compressed claim, got {claim}")
+
+    inner_result = run_inner_loop(
+        claim["weights"],
+        task_id=claim["task_id"],
+        miner_id=DENSE_MINER_ID,
+        model_version=int(claim["model_version"]),
+        inner_steps=int(claim["inner_steps"]),
+        training_spec=claim["training_spec"],
+    )
+    compressed = compress_sign_delta(inner_result["local_delta"])
+    compressed["signs"] = [-sign for sign in compressed["signs"]]
 
     rejected = request_json(
         "POST",
@@ -159,7 +175,7 @@ def reject_bad_dense(base_url: str) -> None:
         {
             "lease_token": claim["lease_token"],
             "attempt": claim["attempt"],
-            "local_delta": [0.0 for _ in claim["weights"]],
+            "compressed_delta": compressed,
         },
         expected_status=422,
     )
@@ -176,6 +192,8 @@ def accept_sign_compressed_dense(base_url: str) -> None:
     )
     if claim.get("audit_mode") != "replay" or claim.get("workload_type") != "diloco_train":
         raise RuntimeError(f"expected audited diloco_train claim, got {claim}")
+    if (claim.get("optimizer_spec") or {}).get("delta_format") != DELTA_FORMAT_SIGN_COMPRESSED:
+        raise RuntimeError(f"expected sign_compressed claim, got {claim}")
 
     inner_result = run_inner_loop(
         claim["weights"],

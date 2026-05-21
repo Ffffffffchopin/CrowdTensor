@@ -44,6 +44,7 @@ def acceptance_args(**overrides):
         "skip_token_hash_auth": False,
         "skip_outer_optimizer": False,
         "skip_compressed_error_feedback": False,
+        "skip_delta_transport_negotiation": False,
         "skip_remote_miner": False,
         "skip_webrtc": False,
         "skip_runtime_contract": False,
@@ -81,8 +82,8 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         checks = runtime_acceptance_pack.selected_checks(args, Path("/tmp/crowdtensor_acceptance_test"))
 
-        self.assertEqual([check["name"] for check in checks], ["readiness", "api_contract", "chaos", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback"])
-        self.assertEqual([check["port"] for check in checks], [9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018, 9019, 9020, 9021, 9022, 9023, 9024, 9025])
+        self.assertEqual([check["name"] for check in checks], ["readiness", "api_contract", "chaos", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation"])
+        self.assertEqual([check["port"] for check in checks], [9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018, 9019, 9020, 9021, 9022, 9023, 9024, 9025, 9026])
         operator = next(check for check in checks if check["name"] == "operator_control")
         self.assertIn("--admin-token", operator["command"])
         self.assertIn("admin-test", operator["command"])
@@ -97,7 +98,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation"],
         )
 
     def test_readiness_check_is_default_and_skippable(self) -> None:
@@ -140,7 +141,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation"],
         )
         micro = next(check for check in checks if check["name"] == "micro_transformer")
         self.assertEqual(micro["port"], 9016)
@@ -154,7 +155,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation"],
         )
 
     def test_result_idempotency_check_is_default_and_skippable(self) -> None:
@@ -320,6 +321,22 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         )
         self.assertNotIn("compressed_error_feedback", [check["name"] for check in skipped])
 
+    def test_delta_transport_negotiation_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        delta_transport = next(check for check in checks if check["name"] == "delta_transport_negotiation")
+        self.assertEqual(delta_transport["port"], 9026)
+        self.assertIn("delta_transport_negotiation_check.py", delta_transport["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_delta_transport_negotiation=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("delta_transport_negotiation", [check["name"] for check in skipped])
+
     def test_explicit_observer_token_is_not_written_into_commands(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
             acceptance_args(observer_token="observer-test"),
@@ -346,9 +363,9 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "remote_miner"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "remote_miner"],
         )
-        self.assertEqual(checks[-1]["port"], 9026)
+        self.assertEqual(checks[-1]["port"], 9027)
         self.assertIn("remote_miner_readiness_check.py", checks[-1]["command"][1])
 
         authenticated = runtime_acceptance_pack.selected_checks(
@@ -375,13 +392,13 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        browser_checks = checks[16:]
+        browser_checks = checks[17:]
         self.assertEqual(
             [check["name"] for check in browser_checks],
             ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger"],
         )
-        self.assertEqual([check["port"] for check in browser_checks], [9027, 9028, 9030, 9032, 9034])
-        self.assertEqual([check.get("web_port") for check in browser_checks], [None, 9029, 9031, 9033, 9035])
+        self.assertEqual([check["port"] for check in browser_checks], [9028, 9029, 9031, 9033, 9035])
+        self.assertEqual([check.get("web_port") for check in browser_checks], [None, 9030, 9032, 9034, 9036])
         for check in browser_checks:
             self.assertIn("--browser", check["command"])
             self.assertIn("/usr/bin/chromium", check["command"])
@@ -418,19 +435,19 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        browser_checks = checks[16:]
+        browser_checks = checks[17:]
         self.assertEqual(
             [check["name"] for check in browser_checks],
             ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger", "browser_chaos"],
         )
         chaos = browser_checks[-1]
-        self.assertEqual(chaos["port"], 9036)
-        self.assertEqual(chaos["web_port"], 9037)
+        self.assertEqual(chaos["port"], 9037)
+        self.assertEqual(chaos["web_port"], 9038)
         self.assertIn("browser_miner_chaos.py", chaos["command"][1])
         self.assertIn("--coordinator-port", chaos["command"])
-        self.assertIn("9036", chaos["command"])
-        self.assertIn("--web-port", chaos["command"])
         self.assertIn("9037", chaos["command"])
+        self.assertIn("--web-port", chaos["command"])
+        self.assertIn("9038", chaos["command"])
         self.assertIn("--browser", chaos["command"])
         self.assertIn("/usr/bin/chromium", chaos["command"])
 
@@ -472,6 +489,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
                 "token_hash_auth",
                 "outer_optimizer",
                 "compressed_error_feedback",
+                "delta_transport_negotiation",
                 "runtime_contract",
                 "browser_miner",
             ],

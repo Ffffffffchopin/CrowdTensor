@@ -170,6 +170,24 @@ class MinerCliTests(unittest.TestCase):
         self.assertEqual(payload["preflight_failures"], 0)
         self.assertEqual(payload["workloads"], {"diloco_train": 1})
 
+    def test_capabilities_advertise_delta_formats(self) -> None:
+        capabilities = miner_cli.miner_capabilities()
+
+        self.assertIn("dense_float", capabilities["supported_delta_formats"])
+        self.assertIn("sign_compressed", capabilities["supported_delta_formats"])
+        self.assertIn("sign_compressed_ef", capabilities["supported_delta_formats"])
+
+    def test_auto_delta_format_follows_claim_optimizer_spec(self) -> None:
+        self.assertEqual(
+            miner_cli.delta_format_for_claim(
+                {"optimizer_spec": {"delta_format": "sign_compressed"}},
+                "auto",
+            ),
+            "sign_compressed",
+        )
+        self.assertEqual(miner_cli.delta_format_for_claim({}, "auto"), "dense_float")
+        self.assertEqual(miner_cli.delta_format_for_claim({}, "sign_compressed_ef"), "sign_compressed_ef")
+
     def test_build_result_payload_uses_sign_compressed_delta(self) -> None:
         payload, next_residual = miner_cli.build_result_payload(
             {"lease_token": "lease", "attempt": 1, "workload_type": "diloco_train"},

@@ -10,6 +10,7 @@ from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_SIGN_COMPRESSED_EF,
     OPTIMIZER_DILOCO_MOMENTUM,
     OPTIMIZER_DILOCO_NESTEROV,
+    normalize_delta_format,
     apply_outer_optimizer_update,
     compress_sign_delta,
     compress_sign_delta_with_error_feedback,
@@ -83,6 +84,12 @@ class OuterOptimizerTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             apply_outer_optimizer_update(model, [0.1, -0.2, 0.05])
+
+    def test_delta_format_normalization_rejects_unknown_values(self) -> None:
+        self.assertEqual(normalize_delta_format(None), DELTA_FORMAT_DENSE_FLOAT)
+        self.assertEqual(normalize_delta_format(DELTA_FORMAT_SIGN_COMPRESSED), DELTA_FORMAT_SIGN_COMPRESSED)
+        with self.assertRaises(ValueError):
+            normalize_delta_format("broken")
 
     def test_normalize_backfills_legacy_contract(self) -> None:
         contract = normalize_outer_optimizer_contract({
