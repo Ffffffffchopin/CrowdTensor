@@ -76,16 +76,32 @@ class ModelBundleTests(unittest.TestCase):
 
     def test_inference_spec_runs_and_validates_without_mutating_bundle(self) -> None:
         model = default_model()
-        spec = model_bundle_inference_spec_for("task-infer", "miner-infer", model["model_bundle"])
+        spec = model_bundle_inference_spec_for(
+            "task-infer",
+            "miner-infer",
+            model["model_bundle"],
+            request_count=4,
+        )
         result = run_model_bundle_inference(spec)
 
-        validation = validate_model_bundle_inference(model, result["inference_result"])
+        validation = validate_model_bundle_inference(
+            model,
+            result["inference_result"],
+            inference_results=result["inference_results"],
+            expected_requests=spec["requests"],
+        )
 
         self.assertEqual(spec["type"], "model_bundle_infer")
+        self.assertEqual(spec["request_count"], 4)
+        self.assertEqual(len(spec["requests"]), 4)
+        self.assertEqual(len(result["inference_results"]), 4)
         self.assertTrue(validation["accepted"])
         self.assertEqual(validation["code"], "ok")
         self.assertEqual(validation["bundle_id"], spec["bundle_id"])
         self.assertEqual(validation["base_bundle_version"], spec["bundle_version"])
+        self.assertEqual(validation["request_count"], 4)
+        self.assertEqual(validation["correct_count"], result["correct_count"])
+        self.assertEqual(validation["accuracy"], result["accuracy"])
         self.assertIn("predicted_token_id", validation)
         self.assertIn("top_k", result["inference_result"])
         self.assertEqual(model["model_bundle"]["version"], 0)
@@ -101,6 +117,54 @@ class ModelBundleTests(unittest.TestCase):
 
         self.assertFalse(validation["accepted"])
         self.assertEqual(validation["code"], "model_bundle_inference_prediction_mismatch")
+
+    def test_inference_validation_rejects_one_bad_result_in_multi_request_session(self) -> None:
+        model = default_model()
+        spec = model_bundle_inference_spec_for(
+            "task-bad-session",
+            "miner-infer",
+            model["model_bundle"],
+            request_count=3,
+        )
+        result = run_model_bundle_inference(spec)
+        bad_results = [dict(row) for row in result["inference_results"]]
+        bad_results[1]["predicted_token_id"] = (
+            int(bad_results[1]["predicted_token_id"]) + 1
+        ) % spec["config"]["vocab_size"]
+
+        validation = validate_model_bundle_inference(
+            model,
+            bad_results[0],
+            inference_results=bad_results,
+            expected_requests=spec["requests"],
+        )
+
+        self.assertFalse(validation["accepted"])
+        self.assertEqual(validation["code"], "model_bundle_inference_prediction_mismatch")
+        self.assertEqual(validation["request_index"], 1)
+
+    def test_inference_validation_rejects_wrong_claim_time_request(self) -> None:
+        model = default_model()
+        spec = model_bundle_inference_spec_for(
+            "task-wrong-request",
+            "miner-infer",
+            model["model_bundle"],
+            request_count=2,
+        )
+        result = run_model_bundle_inference(spec)
+        wrong_requests = [dict(row) for row in spec["requests"]]
+        wrong_requests[0] = {**wrong_requests[0], "target_token_id": wrong_requests[1]["target_token_id"]}
+
+        validation = validate_model_bundle_inference(
+            model,
+            result["inference_result"],
+            inference_results=result["inference_results"],
+            expected_requests=wrong_requests,
+        )
+
+        self.assertFalse(validation["accepted"])
+        self.assertEqual(validation["code"], "model_bundle_inference_request_mismatch")
+        self.assertEqual(validation["request_index"], 0)
 
 
 if __name__ == "__main__":

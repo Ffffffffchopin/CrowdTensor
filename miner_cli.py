@@ -296,6 +296,7 @@ def build_result_payload(
                 "adapter_delta",
                 "bundle_delta",
                 "inference_result",
+                "inference_results",
             }
         },
     }
@@ -309,6 +310,7 @@ def build_result_payload(
         payload["bundle_delta"] = inner_result["bundle_delta"]
     elif workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
         payload["inference_result"] = inner_result["inference_result"]
+        payload["inference_results"] = inner_result.get("inference_results", [inner_result["inference_result"]])
     elif delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
         payload["compressed_delta"], next_residual = compress_sign_delta_with_error_feedback(
             inner_result["local_delta"],
@@ -455,6 +457,8 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
             print(
                 f"accepted model-bundle-infer task={claim['task_id']} "
                 f"bundle_version={result['bundle_version']} "
+                f"requests={result.get('request_count', 1)} "
+                f"accuracy={float(result.get('accuracy', 1.0 if result.get('correct') else 0.0)):.3f} "
                 f"prediction={result['predicted_token']} "
                 f"target={result['target_token']} "
                 f"correct={result['correct']}",

@@ -30,7 +30,7 @@ Roadmap priority:
 
 1. Preserve Alpha reliability and operator trust.
 2. Make the project easy for strangers to understand and run.
-3. Expand the current read-only `model_bundle_infer` probe into a useful home-compute inference demo with explicit hardware/capability matching.
+3. Expand the current read-only multi-request `model_bundle_infer` probe into a useful home-compute inference demo with explicit hardware/capability matching.
 4. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
 5. Treat incentives and reputation as later protocol layers, not prerequisites for local demos.
 

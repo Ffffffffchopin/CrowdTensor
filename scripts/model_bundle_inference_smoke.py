@@ -79,7 +79,7 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path) -> subprocess.P
         "--lease-seconds",
         str(args.lease_seconds),
         "--inner-steps",
-        str(args.inner_steps),
+        str(args.request_count),
         "--backlog",
         "0",
         "--task-lane",
@@ -144,7 +144,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8903)
     parser.add_argument("--state-dir", default="")
     parser.add_argument("--lease-seconds", type=float, default=10.0)
-    parser.add_argument("--inner-steps", type=int, default=1)
+    parser.add_argument("--inner-steps", type=int, default=1, help="deprecated; use --request-count")
+    parser.add_argument("--request-count", type=int, default=4)
     parser.add_argument("--startup-timeout", type=float, default=10.0)
     parser.add_argument("--admin-token", default="local-admin")
     add_miner_token_arg(parser)
@@ -152,6 +153,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     activate_miner_token(args)
     activate_observer_token(args)
+    if args.request_count < 1:
+        raise SystemExit("--request-count must be at least 1")
     args.base_url = f"http://{args.host}:{args.port}"
     return args
 
@@ -184,6 +187,10 @@ def main() -> None:
         validation = task.get("validation", {})
         if validation.get("code") != "ok":
             raise SystemExit(f"unexpected validation: {validation}")
+        if int(validation.get("request_count", 0)) != args.request_count:
+            raise SystemExit(f"expected {args.request_count} inference requests: {validation}")
+        if "inference_results" in json.dumps(state["tasks"], sort_keys=True):
+            raise SystemExit(f"state leaked raw inference_results: {json.dumps(state, sort_keys=True)}")
         ledger = admin_results(args, status="accepted", workload_type="model_bundle_infer")
         results = ledger.get("results") or []
         if len(results) != 1:
@@ -193,14 +200,19 @@ def main() -> None:
             raise SystemExit(f"inference ledger row must be read-only: {row}")
         if row.get("validation", {}).get("predicted_token_id") != validation.get("predicted_token_id"):
             raise SystemExit(f"ledger prediction summary mismatch: {row}")
+        if row.get("validation", {}).get("request_count") != args.request_count:
+            raise SystemExit(f"ledger request_count mismatch: {row}")
         print(json.dumps({
             "accepted_results": state["accepted_results"],
+            "accuracy": validation.get("accuracy"),
             "bundle_id": bundle["bundle_id"],
             "bundle_version": bundle["version"],
+            "correct_count": validation.get("correct_count"),
             "correct": bool(validation.get("correct", False)),
             "ledger_rows": len(results),
             "miner_summary": miner_summary,
             "predicted_token": validation.get("predicted_token"),
+            "request_count": validation.get("request_count"),
             "target_token": validation.get("target_token"),
             "task_id": task["task_id"],
         }, sort_keys=True))

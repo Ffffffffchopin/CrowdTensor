@@ -217,6 +217,8 @@ Model bundle inference smoke:
 python3 scripts/model_bundle_inference_smoke.py --port 8903
 ```
 
+Use `--request-count N` to exercise a multi-request read-only inference session in one task.
+
 Remote-style Miner readiness:
 
 ```bash

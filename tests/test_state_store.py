@@ -786,6 +786,7 @@ class StateStoreTests(unittest.TestCase):
                 ],
             )
             claim = store.claim_task("bundle-infer-miner", capabilities=self._model_bundle_inference_capabilities())
+            self.assertEqual(claim["workload_spec"]["request_count"], 1)
             inner_result = run_model_bundle_inference(claim["workload_spec"])
 
             result = store.complete_task(
@@ -793,6 +794,7 @@ class StateStoreTests(unittest.TestCase):
                 lease_token=claim["lease_token"],
                 attempt=claim["attempt"],
                 inference_result=inner_result["inference_result"],
+                inference_results=inner_result["inference_results"],
                 metrics=inner_result,
             )
 
@@ -806,12 +808,57 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(summary["accepted_results"], 1)
             self.assertEqual(summary["model_updates"], 0)
             self.assertEqual(summary["model_bundle_updates"], 0)
+            self.assertEqual(result["request_count"], 1)
+            self.assertEqual(result["correct_count"], inner_result["correct_count"])
             row = store.result_ledger(status="accepted", workload_type=WORKLOAD_MODEL_BUNDLE_INFER)[0]
             self.assertEqual(row["workload_type"], WORKLOAD_MODEL_BUNDLE_INFER)
             self.assertFalse(row["model_updated"])
             self.assertFalse(row["model_bundle_updated"])
             self.assertEqual(row["validation"]["predicted_token_id"], result["predicted_token_id"])
+            self.assertEqual(row["validation"]["request_count"], 1)
             self.assertNotIn("inference_result", json.dumps(summary["tasks"], sort_keys=True))
+            self.assertNotIn("inference_results", json.dumps(summary["tasks"], sort_keys=True))
+
+    def test_model_bundle_inference_multi_request_session_is_read_only_and_ledgered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=4,
+                backlog=0,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": WORKLOAD_MODEL_BUNDLE_INFER,
+                    },
+                ],
+            )
+            claim = store.claim_task("bundle-infer-session-miner", capabilities=self._model_bundle_inference_capabilities())
+            inner_result = run_model_bundle_inference(claim["workload_spec"])
+
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                inference_result=inner_result["inference_result"],
+                inference_results=inner_result["inference_results"],
+                metrics=inner_result,
+            )
+
+            summary = store.summary()
+            self.assertEqual(claim["workload_spec"]["request_count"], 4)
+            self.assertEqual(result["request_count"], 4)
+            self.assertEqual(result["correct_count"], inner_result["correct_count"])
+            self.assertEqual(result["accuracy"], inner_result["accuracy"])
+            self.assertEqual(summary["model"]["global_step"], 0)
+            self.assertEqual(summary["model"]["model_bundle"]["version"], 0)
+            row = store.result_ledger(status="accepted", workload_type=WORKLOAD_MODEL_BUNDLE_INFER)[0]
+            self.assertEqual(row["validation"]["request_count"], 4)
+            self.assertEqual(row["validation"]["correct_count"], inner_result["correct_count"])
+            self.assertEqual(row["validation"]["accuracy"], inner_result["accuracy"])
+            self.assertNotIn("inference_results", json.dumps(summary["tasks"], sort_keys=True))
 
     def test_model_bundle_inference_rejects_tampered_prediction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -850,6 +897,76 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(summary["rejected_results"], 1)
             row = store.result_ledger(status="rejected", workload_type=WORKLOAD_MODEL_BUNDLE_INFER)[0]
             self.assertEqual(row["validation"]["code"], "model_bundle_inference_prediction_mismatch")
+
+    def test_model_bundle_inference_rejects_result_for_wrong_claim_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=2,
+                backlog=0,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": WORKLOAD_MODEL_BUNDLE_INFER,
+                    },
+                ],
+            )
+            claim = store.claim_task("wrong-prompt-infer-miner", capabilities=self._model_bundle_inference_capabilities())
+            alternate = dict(claim["workload_spec"])
+            alternate_requests = list(alternate["requests"])
+            alternate["requests"] = [alternate_requests[1], alternate_requests[0]]
+            inner_result = run_model_bundle_inference(alternate)
+
+            with self.assertRaises(ResultRejected) as raised:
+                store.complete_task(
+                    claim["task_id"],
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    inference_result=inner_result["inference_result"],
+                    inference_results=inner_result["inference_results"],
+                    metrics=inner_result,
+                )
+
+            self.assertEqual(raised.exception.validation["code"], "model_bundle_inference_request_id_mismatch")
+
+    def test_model_bundle_inference_rejects_one_tampered_multi_request_prediction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=3,
+                backlog=0,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": WORKLOAD_MODEL_BUNDLE_INFER,
+                    },
+                ],
+            )
+            claim = store.claim_task("bad-infer-session-miner", capabilities=self._model_bundle_inference_capabilities())
+            inner_result = run_model_bundle_inference(claim["workload_spec"])
+            bad_results = [dict(row) for row in inner_result["inference_results"]]
+            bad_results[-1]["predicted_token_id"] = (
+                int(bad_results[-1]["predicted_token_id"]) + 1
+            ) % claim["workload_spec"]["config"]["vocab_size"]
+
+            with self.assertRaises(ResultRejected) as raised:
+                store.complete_task(
+                    claim["task_id"],
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    inference_result=bad_results[0],
+                    inference_results=bad_results,
+                    metrics=inner_result,
+                )
+
+            self.assertEqual(raised.exception.validation["code"], "model_bundle_inference_prediction_mismatch")
+            self.assertEqual(raised.exception.validation["request_index"], 2)
 
     def test_backlog_allows_async_claims_and_records_staleness(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

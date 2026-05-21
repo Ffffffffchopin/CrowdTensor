@@ -17,7 +17,7 @@ Success signal: a contributor can run the local demo, inspect the protocol bound
 
 Status: planned.
 
-- Expand the current read-only `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts and explicit capability matching.
+- Expand the current read-only multi-request `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts and explicit capability matching.
 - Clear hardware matrix for CPU, NVIDIA, AMD, Apple Silicon, and browser paths.
 - Remote Miner onboarding that works through common home-network setups with operator-provided TLS or VPN.
 - Better observability for throughput, latency, availability, and rejected work.

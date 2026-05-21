@@ -549,6 +549,9 @@ def check_model_bundle_inference_docs(root: Path) -> dict[str, Any]:
         "model_bundle_infer_v1",
         "model_bundle_inference_smoke.py",
         "--skip-model-bundle-inference",
+        "--request-count",
+        "inference_results",
+        "request_count",
         "Swarm Inference",
         "read-only",
     ]:

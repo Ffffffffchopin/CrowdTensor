@@ -342,6 +342,7 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "model_bundle_inference_docs")
         self.assertTrue(any("model_bundle_infer" in detail for detail in details))
         self.assertTrue(any("--skip-model-bundle-inference" in detail for detail in details))
+        self.assertTrue(any("--request-count" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

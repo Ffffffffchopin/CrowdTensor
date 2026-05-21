@@ -391,6 +391,7 @@ class StateStore:
         adapter_delta: dict | None = None,
         bundle_delta: dict | None = None,
         inference_result: dict | None = None,
+        inference_results: list[dict] | None = None,
         metrics: dict | None = None,
     ) -> dict:
         with self._lock:
@@ -450,6 +451,7 @@ class StateStore:
                     attempt=attempt,
                     idempotency_key=idempotency_key,
                     inference_result=inference_result,
+                    inference_results=inference_results,
                     metrics=metrics,
                 )
             if workload_type != WORKLOAD_DILOCO_TRAIN:
@@ -862,9 +864,15 @@ class StateStore:
         attempt: int,
         idempotency_key: str | None = None,
         inference_result: dict | None = None,
+        inference_results: list[dict] | None = None,
         metrics: dict | None = None,
     ) -> dict:
-        validation = validate_model_bundle_inference(self._model, inference_result)
+        validation = validate_model_bundle_inference(
+            self._model,
+            inference_result,
+            inference_results=inference_results,
+            expected_requests=(task.get("claim_workload_spec") or {}).get("requests"),
+        )
         staleness = model_bundle_version(self._model) - int(task["model_version"])
         now = now_epoch()
         response = {
@@ -881,6 +889,9 @@ class StateStore:
             "target_token_id": validation.get("target_token_id"),
             "target_token": validation.get("target_token"),
             "correct": bool(validation.get("correct", False)),
+            "request_count": int(validation.get("request_count", 1)),
+            "correct_count": int(validation.get("correct_count", 1 if validation.get("correct") else 0)),
+            "accuracy": float(validation.get("accuracy", 1.0 if validation.get("correct") else 0.0)),
             "staleness": staleness,
         } if validation["accepted"] else dict(validation)
         event = {
@@ -891,6 +902,7 @@ class StateStore:
             "miner_id": task.get("miner_id"),
             "base_model_version": int(task["model_version"]),
             "inference_result": validation.get("inference_result") if validation["accepted"] else inference_result,
+            "inference_results": validation.get("inference_results") if validation["accepted"] else inference_results,
             "metrics": metrics or {},
             "staleness": staleness,
             "validation": validation,
@@ -1269,6 +1281,7 @@ class StateStore:
                 "adapter_delta": {},
                 "bundle_delta": {},
                 "inference_result": {},
+                "inference_results": [],
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1336,6 +1349,7 @@ class StateStore:
                 "adapter_delta": event.get("adapter_delta", {}),
                 "bundle_delta": event.get("bundle_delta", {}),
                 "inference_result": event.get("inference_result", {}),
+                "inference_results": event.get("inference_results", []),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1364,6 +1378,7 @@ class StateStore:
                 "adapter_delta": event.get("adapter_delta", {}),
                 "bundle_delta": event.get("bundle_delta", {}),
                 "inference_result": event.get("inference_result", {}),
+                "inference_results": event.get("inference_results", []),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1390,6 +1405,7 @@ class StateStore:
                 "adapter_delta": {},
                 "bundle_delta": {},
                 "inference_result": {},
+                "inference_results": [],
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1467,7 +1483,15 @@ class StateStore:
         if not isinstance(metrics, dict):
             return {}
         public = dict(metrics)
-        for field in ("local_delta", "pseudo_gradient", "compressed_delta", "adapter_delta", "bundle_delta", "inference_result"):
+        for field in (
+            "local_delta",
+            "pseudo_gradient",
+            "compressed_delta",
+            "adapter_delta",
+            "bundle_delta",
+            "inference_result",
+            "inference_results",
+        ):
             public.pop(field, None)
         return public
 
@@ -1480,10 +1504,12 @@ class StateStore:
         public.pop("result_response", None)
         public.pop("bundle_delta", None)
         public.pop("inference_result", None)
+        public.pop("inference_results", None)
         public["metrics"] = self._public_metrics(public.get("metrics"))
         validation = dict(public.get("validation") or {})
         validation.pop("bundle_delta", None)
         validation.pop("inference_result", None)
+        validation.pop("inference_results", None)
         public["validation"] = validation
         return public
 
@@ -1551,6 +1577,9 @@ class StateStore:
             "target_token_id",
             "target_token",
             "correct",
+            "request_count",
+            "correct_count",
+            "accuracy",
         ]
         return {
             field: validation.get(field)
@@ -1684,6 +1713,16 @@ class StateStore:
     def _claim_contract(self, task: dict, miner_id: str, model_version: int) -> dict:
         audit_mode = task.get("audit_mode", AUDIT_MODE_NONE) or AUDIT_MODE_NONE
         optimizer_spec = self._optimizer_spec_for_task(task)
+        if self._workload_type(task) == WORKLOAD_MODEL_BUNDLE_INFER:
+            claim_task = {**task, "miner_id": miner_id, "model_version": model_version}
+            workload_spec = self._workload_spec(claim_task)
+            return {
+                "audit_mode": audit_mode,
+                "claim_weights": self._claim_weights_for_task(claim_task, workload_spec),
+                "claim_training_spec": {},
+                "claim_optimizer_spec": optimizer_spec,
+                "claim_workload_spec": workload_spec,
+            }
         if audit_mode != AUDIT_MODE_REPLAY:
             return {
                 "audit_mode": audit_mode,
@@ -1810,6 +1849,7 @@ class StateStore:
                 task["task_id"],
                 task.get("miner_id") or "anonymous",
                 self._model.get("model_bundle", {}),
+                request_count=int(task.get("inner_steps", 1)),
             )
         return {"type": WORKLOAD_DILOCO_TRAIN}
 

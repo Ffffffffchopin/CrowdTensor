@@ -280,15 +280,23 @@ class MinerCliTests(unittest.TestCase):
 
         payload, next_residual = miner_cli.build_result_payload(
             {"lease_token": "lease", "attempt": 1, "workload_type": "model_bundle_infer"},
-            {"inference_result": inference_result, "prediction_correct": True},
+            {
+                "inference_result": inference_result,
+                "inference_results": [inference_result, {**inference_result, "request_id": "req-2"}],
+                "prediction_correct": True,
+                "request_count": 2,
+            },
             delta_format="sign_compressed_ef",
             elapsed_ms=1.0,
         )
 
         self.assertIsNone(next_residual)
         self.assertEqual(payload["inference_result"], inference_result)
+        self.assertEqual(len(payload["inference_results"]), 2)
         self.assertNotIn("compressed_delta", payload)
         self.assertNotIn("inference_result", payload["metrics"])
+        self.assertNotIn("inference_results", payload["metrics"])
+        self.assertEqual(payload["metrics"]["request_count"], 2)
         self.assertTrue(payload["metrics"]["prediction_correct"])
 
 

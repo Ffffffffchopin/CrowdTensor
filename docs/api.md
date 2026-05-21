@@ -323,28 +323,31 @@ For `model_bundle_lm`, submit a `bundle_delta` object. It is bound to the claim-
 
 Coordinator rejects stale bundle versions, artifact-hash mismatches, non-finite values, shape mismatches, excessive delta norm, and excessive bundle loss spikes before applying a nested bundle update.
 
-For `model_bundle_infer`, submit an `inference_result` object. It is bound to the current bundle identity and is recomputed by Coordinator before acceptance:
+For `model_bundle_infer`, submit an `inference_results` array for the claim-time `requests` list. The older single `inference_result` object remains accepted for compatibility. Every row is bound to the current bundle identity and is recomputed by Coordinator before acceptance:
 
 ```json
 {
   "lease_token": "lease-token-from-claim",
   "attempt": 1,
-  "inference_result": {
-    "schema_version": "model_bundle_infer_v1",
-    "bundle_id": "builtin-char-bundle",
-    "base_bundle_version": 0,
-    "artifact_hash": "sha256:...",
-    "prompt_token_ids": [1, 2, 3, 4],
-    "target_token_id": 5,
-    "predicted_token_id": 5,
-    "top_k": [{"token_id": 5, "probability": 0.25}],
-    "correct": true
-  },
-  "metrics": {"prediction_correct": true}
+  "inference_results": [
+    {
+      "schema_version": "model_bundle_infer_v1",
+      "request_id": "req-1",
+      "bundle_id": "builtin-char-bundle",
+      "base_bundle_version": 0,
+      "artifact_hash": "sha256:...",
+      "prompt_token_ids": [1, 2, 3, 4],
+      "target_token_id": 5,
+      "predicted_token_id": 5,
+      "top_k": [{"token_id": 5, "probability": 0.25}],
+      "correct": true
+    }
+  ],
+  "metrics": {"request_count": 1, "prediction_correct": true}
 }
 ```
 
-Accepted `model_bundle_infer` results are read-only: `model_updated=false`, `model_bundle_updated=false`, dense `global_step` does not change, and `model_bundle.version` does not advance. The admin result ledger keeps prediction summary fields while redacted `/state` avoids the raw `inference_result`.
+Accepted `model_bundle_infer` results are read-only: `model_updated=false`, `model_bundle_updated=false`, dense `global_step` does not change, and `model_bundle.version` does not advance. The admin result ledger keeps prediction summary fields plus `request_count`, `correct_count`, and `accuracy`, while redacted `/state` avoids raw `inference_result` and `inference_results` payloads.
 
 Successful `diloco_train` response fields include:
 
@@ -366,7 +369,7 @@ Other current workload result fields:
 - `cpu_lora_mock`: submit `adapter_delta`.
 - `micro_transformer_lm`: submit `local_delta`.
 - `model_bundle_lm`: submit `bundle_delta`.
-- `model_bundle_infer`: submit `inference_result`.
+- `model_bundle_infer`: submit `inference_results` or legacy `inference_result`.
 
 ## Common Failure Statuses
 

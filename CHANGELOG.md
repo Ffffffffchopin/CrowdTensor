@@ -9,7 +9,7 @@ CrowdTensorD is currently an experimental control plane for fault-tolerant distr
 ### Added
 
 - Coordinator and Miner loop with task claims, heartbeats, lease timeout recovery, checkpoint replay, and result submission.
-- Deterministic CPU-only workload contracts, including dense toy training, CPU LoRA mock, micro Transformer LM, model bundle LM, and read-only model bundle inference.
+- Deterministic CPU-only workload contracts, including dense toy training, CPU LoRA mock, micro Transformer LM, model bundle LM, and read-only multi-request model bundle inference.
 - Runtime validation for finite values, tensor shape, loss/norm gates, deterministic replay audit, and low-frequency outer optimizer behavior.
 - Miner admission controls with shared tokens, per-Miner token registry, hashed token verifiers, observer/admin separation, and security preflight checks.
 - Operator views for `/health`, `/version`, `/ready`, `/metrics`, redacted `/state`, admin event tails, and admin result ledger.

@@ -45,7 +45,7 @@ Do not imply these are implemented:
 - hardware attestation
 - hardened public-internet security
 
-The current model bundle, model bundle inference, and micro LM workloads are dependency-free contract rehearsals, not throughput benchmarks.
+The current model bundle, multi-request model bundle inference, and micro LM workloads are dependency-free contract rehearsals, not throughput benchmarks.
 
 ## Strategic Route
 
@@ -55,7 +55,7 @@ Recommended sequence:
 
 1. Keep the Alpha control plane reliable, testable, and well documented.
 2. Keep README, ROADMAP, protocol docs, use cases, static site, and project memory synchronized.
-3. Expand the read-only `model_bundle_infer` probe into a useful home-compute demo that feels close to Swarm Inference, starting with small model artifacts and explicit capability matching.
+3. Expand the read-only multi-request `model_bundle_infer` probe into a useful home-compute demo that feels close to Swarm Inference, starting with small model artifacts and explicit capability matching.
 4. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 5. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.
 6. Expand browser-native participation from WebRTC/Worker probes toward WebGPU/WebAssembly only after tensor transfer and lifecycle limits are measured.

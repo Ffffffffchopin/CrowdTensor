@@ -160,18 +160,36 @@ def model_bundle_training_spec_for(task_id: str, miner_id: str, model: dict) -> 
     }
 
 
-def model_bundle_inference_spec_for(task_id: str, miner_id: str, model: dict) -> dict:
+def model_bundle_inference_spec_for(
+    task_id: str,
+    miner_id: str,
+    model: dict,
+    *,
+    request_count: int = 1,
+) -> dict:
     current = normalize_model_bundle(model)
     config = dict(current["config"])
     token_ids = list(TOKEN_IDS)
+    example_count = _example_count(token_ids, config)
     sample_offset = _stable_offset(
         task_id,
         miner_id,
         current["bundle_id"],
         current["version"],
         "infer",
-    ) % _example_count(token_ids, config)
-    context, target = _example_at(token_ids, config, sample_offset)
+    ) % example_count
+    count = max(1, min(int(request_count), example_count))
+    requests = []
+    for index in range(count):
+        context, target = _example_at(token_ids, config, sample_offset + index)
+        requests.append({
+            "request_id": f"req-{index + 1}",
+            "prompt_token_ids": context,
+            "target_token_id": target,
+            "top_k": 3,
+            "sample_offset": sample_offset + index,
+        })
+    first = requests[0]
     return {
         "type": INFERENCE_WORKLOAD_TYPE,
         "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
@@ -180,9 +198,11 @@ def model_bundle_inference_spec_for(task_id: str, miner_id: str, model: dict) ->
         "artifact_hash": current["artifact_hash"],
         "config": config,
         "weights": list(current["weights"]),
-        "prompt_token_ids": context,
-        "target_token_id": target,
-        "top_k": 3,
+        "requests": requests,
+        "request_count": len(requests),
+        "prompt_token_ids": list(first["prompt_token_ids"]),
+        "target_token_id": int(first["target_token_id"]),
+        "top_k": int(first["top_k"]),
         "sample_offset": sample_offset,
     }
 
@@ -340,6 +360,79 @@ def _token_text(config: dict, token_id: int) -> str:
     return str(vocab[int(token_id) % len(vocab)])
 
 
+def _inference_requests_from_spec(spec: dict, config: dict) -> list[dict]:
+    rows = spec.get("requests")
+    if rows is None:
+        rows = [{
+            "request_id": "req-1",
+            "prompt_token_ids": spec.get("prompt_token_ids", []),
+            "target_token_id": spec.get("target_token_id", 0),
+            "top_k": spec.get("top_k", 3),
+            "sample_offset": spec.get("sample_offset", 0),
+        }]
+    requests = []
+    for index, row in enumerate(list(rows)):
+        if not isinstance(row, dict):
+            raise ValueError("model bundle inference request rows must be objects")
+        prompt = [int(value) % int(config["vocab_size"]) for value in row.get("prompt_token_ids", [])]
+        if len(prompt) != int(config["context_length"]):
+            raise ValueError("model bundle inference prompt length does not match context_length")
+        target = int(row.get("target_token_id", 0)) % int(config["vocab_size"])
+        top_k = max(1, min(int(row.get("top_k", spec.get("top_k", 3))), int(config["vocab_size"])))
+        requests.append({
+            "request_id": str(row.get("request_id") or f"req-{index + 1}"),
+            "prompt_token_ids": prompt,
+            "target_token_id": target,
+            "top_k": top_k,
+            "sample_offset": int(row.get("sample_offset", index)),
+        })
+    if not requests:
+        raise ValueError("model bundle inference requires at least one request")
+    return requests
+
+
+def _run_single_model_bundle_inference_request(
+    *,
+    request: dict,
+    config: dict,
+    weights: list[float],
+    bundle_id: str,
+    bundle_version: int,
+    artifact_hash: str,
+) -> dict:
+    prompt = list(request["prompt_token_ids"])
+    target = int(request["target_token_id"])
+    top_k = int(request["top_k"])
+    logits = logits_for(weights, config, prompt)
+    probabilities = _softmax(logits)
+    ranked = sorted(
+        enumerate(probabilities),
+        key=lambda item: (-float(item[1]), int(item[0])),
+    )[:top_k]
+    predicted_id = int(ranked[0][0])
+    return {
+        "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+        "request_id": str(request["request_id"]),
+        "bundle_id": bundle_id,
+        "base_bundle_version": int(bundle_version),
+        "artifact_hash": artifact_hash,
+        "prompt_token_ids": prompt,
+        "target_token_id": target,
+        "target_token": _token_text(config, target),
+        "predicted_token_id": predicted_id,
+        "predicted_token": _token_text(config, predicted_id),
+        "top_k": [
+            {
+                "token_id": int(token_id),
+                "token": _token_text(config, int(token_id)),
+                "probability": float(probability),
+            }
+            for token_id, probability in ranked
+        ],
+        "correct": predicted_id == target,
+    }
+
+
 def run_model_bundle_inference(workload_spec: dict) -> dict:
     spec = dict(workload_spec or {})
     config = normalize_config(spec.get("config"))
@@ -347,63 +440,58 @@ def run_model_bundle_inference(workload_spec: dict) -> dict:
     expected = parameter_count(config)
     if len(weights) != expected:
         raise ValueError(f"model bundle inference weights length {len(weights)} does not match expected {expected}")
-    prompt = [int(value) % int(config["vocab_size"]) for value in spec.get("prompt_token_ids", [])]
-    if len(prompt) != int(config["context_length"]):
-        raise ValueError("model bundle inference prompt length does not match context_length")
-    target = int(spec.get("target_token_id", 0)) % int(config["vocab_size"])
-    top_k = max(1, min(int(spec.get("top_k", 3)), int(config["vocab_size"])))
     start = time.monotonic()
-    logits = logits_for(weights, config, prompt)
-    probabilities = _softmax(logits)
-    ranked = sorted(
-        enumerate(probabilities),
-        key=lambda item: (-float(item[1]), int(item[0])),
-    )[:top_k]
+    requests = _inference_requests_from_spec(spec, config)
+    bundle_id = str(spec.get("bundle_id", BUNDLE_ID))
+    bundle_version = int(spec.get("bundle_version", 0))
+    artifact_hash = str(spec.get("artifact_hash", ""))
+    results = [
+        _run_single_model_bundle_inference_request(
+            request=request,
+            config=config,
+            weights=weights,
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+            artifact_hash=artifact_hash,
+        )
+        for request in requests
+    ]
     elapsed_ms = (time.monotonic() - start) * 1000.0
-    predicted_id = int(ranked[0][0])
+    correct_count = sum(1 for result in results if bool(result["correct"]))
     return {
         "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
-        "inference_result": {
-            "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
-            "bundle_id": str(spec.get("bundle_id", BUNDLE_ID)),
-            "base_bundle_version": int(spec.get("bundle_version", 0)),
-            "artifact_hash": str(spec.get("artifact_hash", "")),
-            "prompt_token_ids": prompt,
-            "target_token_id": target,
-            "target_token": _token_text(config, target),
-            "predicted_token_id": predicted_id,
-            "predicted_token": _token_text(config, predicted_id),
-            "top_k": [
-                {
-                    "token_id": int(token_id),
-                    "token": _token_text(config, int(token_id)),
-                    "probability": float(probability),
-                }
-                for token_id, probability in ranked
-            ],
-            "correct": predicted_id == target,
-        },
-        "prediction_correct": predicted_id == target,
+        "inference_result": results[0],
+        "inference_results": results,
+        "prediction_correct": correct_count == len(results),
+        "request_count": len(results),
+        "correct_count": correct_count,
+        "accuracy": correct_count / len(results),
         "elapsed_ms": elapsed_ms,
-        "top_k": top_k,
+        "top_k": max(int(request["top_k"]) for request in requests),
         "sample_offset": int(spec.get("sample_offset", 0)),
     }
 
 
-def validate_model_bundle_inference(model: dict, inference_result: dict | None) -> dict:
-    current = normalize_model_bundle(model)
-    if not isinstance(inference_result, dict):
-        return {
-            "accepted": False,
-            "code": "model_bundle_inference_missing",
-            "reason": "model_bundle_infer requires an inference_result object",
-            "inference_result": inference_result,
-        }
+def _validate_single_model_bundle_inference_result(
+    current: dict,
+    inference_result: dict,
+    *,
+    expected_request_id: str | None = None,
+) -> dict:
+    config = current["config"]
     if str(inference_result.get("schema_version")) != MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION:
         return {
             "accepted": False,
             "code": "model_bundle_inference_schema_mismatch",
             "reason": "inference_result schema_version does not match model_bundle_infer_v1",
+            "inference_result": inference_result,
+        }
+    request_id = str(inference_result.get("request_id") or expected_request_id or "req-1")
+    if expected_request_id is not None and request_id != str(expected_request_id):
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_request_id_mismatch",
+            "reason": "inference_result request_id does not match expected request order",
             "inference_result": inference_result,
         }
     if str(inference_result.get("bundle_id")) != current["bundle_id"]:
@@ -436,7 +524,6 @@ def validate_model_bundle_inference(model: dict, inference_result: dict | None) 
             "reason": "inference_result artifact_hash does not match current bundle artifact_hash",
             "inference_result": inference_result,
         }
-    config = current["config"]
     try:
         prompt = [int(value) % int(config["vocab_size"]) for value in inference_result.get("prompt_token_ids", [])]
         target = int(inference_result.get("target_token_id"))
@@ -469,9 +556,12 @@ def validate_model_bundle_inference(model: dict, inference_result: dict | None) 
         "artifact_hash": current["artifact_hash"],
         "config": config,
         "weights": current["weights"],
-        "prompt_token_ids": prompt,
-        "target_token_id": target,
-        "top_k": len(top_k_rows),
+        "requests": [{
+            "request_id": request_id,
+            "prompt_token_ids": prompt,
+            "target_token_id": target,
+            "top_k": len(top_k_rows),
+        }],
     })["inference_result"]
     try:
         observed_top = [
@@ -504,25 +594,130 @@ def validate_model_bundle_inference(model: dict, inference_result: dict | None) 
             "inference_result": inference_result,
         }
     correct = predicted == target
+    normalized = {
+        **inference_result,
+        "request_id": request_id,
+        "prompt_token_ids": prompt,
+        "target_token_id": target,
+        "predicted_token_id": predicted,
+        "correct": correct,
+    }
     return {
         "accepted": True,
         "code": "ok",
         "reason": "accepted",
-        "inference_result": {
-            **inference_result,
-            "prompt_token_ids": prompt,
-            "target_token_id": target,
-            "predicted_token_id": predicted,
-            "correct": correct,
-        },
+        "inference_result": normalized,
         "bundle_id": current["bundle_id"],
         "base_bundle_version": base_bundle_version,
         "artifact_hash": current["artifact_hash"],
+        "request_id": request_id,
         "predicted_token_id": predicted,
         "predicted_token": _token_text(config, predicted),
         "target_token_id": target,
         "target_token": _token_text(config, target),
         "correct": correct,
+    }
+
+
+def validate_model_bundle_inference(
+    model: dict,
+    inference_result: dict | None,
+    *,
+    inference_results: list[dict] | None = None,
+    expected_requests: list[dict] | None = None,
+) -> dict:
+    current = normalize_model_bundle(model)
+    if inference_results is None and inference_result is not None:
+        inference_results = [inference_result]
+    if not isinstance(inference_results, list) or not inference_results:
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_missing",
+            "reason": "model_bundle_infer requires inference_result or inference_results",
+            "inference_result": inference_result,
+            "inference_results": inference_results,
+        }
+    normalized_results = []
+    row_validations = []
+    if expected_requests is not None and len(inference_results) != len(expected_requests):
+        return {
+            "accepted": False,
+            "code": "model_bundle_inference_request_count_mismatch",
+            "reason": "inference_results length does not match claim-time requests",
+            "expected_request_count": len(expected_requests),
+            "request_count": len(inference_results),
+            "inference_results": inference_results,
+        }
+    for index, row in enumerate(inference_results):
+        if not isinstance(row, dict):
+            return {
+                "accepted": False,
+                "code": "model_bundle_inference_result_invalid",
+                "reason": "inference_results rows must be objects",
+                "inference_results": inference_results,
+            }
+        expected_row = (expected_requests or [])[index] if expected_requests is not None else None
+        expected_request_id = str(
+            (expected_row or {}).get("request_id")
+            or row.get("request_id")
+            or f"req-{index + 1}"
+        )
+        row_validation = _validate_single_model_bundle_inference_result(
+            current,
+            row,
+            expected_request_id=expected_request_id,
+        )
+        if not row_validation["accepted"]:
+            return {
+                **row_validation,
+                "request_index": index,
+                "inference_results": inference_results,
+            }
+        if expected_row is not None:
+            expected_prompt = [
+                int(value) % int(current["config"]["vocab_size"])
+                for value in expected_row.get("prompt_token_ids", [])
+            ]
+            expected_target = int(expected_row.get("target_token_id", -1)) % int(current["config"]["vocab_size"])
+            normalized = row_validation["inference_result"]
+            if (
+                normalized.get("prompt_token_ids") != expected_prompt
+                or int(normalized.get("target_token_id", -1)) != expected_target
+                or len(normalized.get("top_k") or []) != int(expected_row.get("top_k", len(normalized.get("top_k") or [])))
+            ):
+                return {
+                    "accepted": False,
+                    "code": "model_bundle_inference_request_mismatch",
+                    "reason": "inference_result does not match claim-time request prompt, target, or top_k",
+                    "request_index": index,
+                    "expected_request": expected_row,
+                    "inference_result": row,
+                    "inference_results": inference_results,
+                }
+        row_validations.append(row_validation)
+        normalized_results.append(row_validation["inference_result"])
+
+    first = row_validations[0]
+    correct_count = sum(1 for validation in row_validations if bool(validation["correct"]))
+    request_count = len(row_validations)
+    return {
+        "accepted": True,
+        "code": "ok",
+        "reason": "accepted",
+        "inference_result": normalized_results[0],
+        "inference_results": normalized_results,
+        "bundle_id": current["bundle_id"],
+        "base_bundle_version": first["base_bundle_version"],
+        "artifact_hash": current["artifact_hash"],
+        "request_count": request_count,
+        "correct_count": correct_count,
+        "accuracy": correct_count / request_count,
+        "request_id": first["request_id"],
+        "predicted_token_id": first["predicted_token_id"],
+        "predicted_token": first["predicted_token"],
+        "target_token_id": first["target_token_id"],
+        "target_token": first["target_token"],
+        "correct": bool(first["correct"]),
     }
 
 

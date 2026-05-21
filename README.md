@@ -256,6 +256,8 @@ Run only the read-only model bundle inference smoke:
 python3 scripts/model_bundle_inference_smoke.py --port 8903
 ```
 
+The inference smoke runs a read-only multi-request session by default; use `--request-count N` to change the number of prompts in the task.
+
 Run only the remote Miner invite/join smoke:
 
 ```bash
