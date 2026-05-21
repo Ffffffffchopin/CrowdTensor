@@ -233,6 +233,21 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_browser_acceptance.json
 ```
 
+## Release Evidence
+
+After runtime acceptance has produced `/tmp/crowdtensor_acceptance.json`, build a local release evidence bundle:
+
+```bash
+python3 scripts/release_evidence_pack.py \
+  --runtime-report /tmp/crowdtensor_acceptance.json \
+  --browser-report /tmp/crowdtensor_browser_acceptance.json \
+  --remote-report /tmp/crowdtensor_remote_acceptance.json \
+  --json-out dist/release-evidence.json \
+  --markdown-out dist/release-evidence.md
+```
+
+`scripts/release_evidence_pack.py` records the current git commit, package metadata, release gate summary, security preflight summary, and acceptance report summaries. The runtime report is required. Browser and remote reports are optional by default; use `--strict-optional` when a release candidate must prove both. CI writes `release-evidence.json` and uploads it as an artifact.
+
 ## Troubleshooting
 
 **Address already in use**

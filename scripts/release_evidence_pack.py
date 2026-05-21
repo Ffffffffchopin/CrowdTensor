@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""Build a release evidence report for a CrowdTensorD checkout."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import subprocess
+import sys
+import tomllib
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = ROOT / "scripts"
+for path in [ROOT, SCRIPTS_DIR]:
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+import release_gate  # noqa: E402
+import security_preflight  # noqa: E402
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def read_pyproject(root: Path) -> dict[str, Any]:
+    payload = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    project = payload.get("project", {})
+    return {
+        "name": project.get("name", ""),
+        "version": project.get("version", ""),
+        "requires_python": project.get("requires-python", ""),
+        "scripts": project.get("scripts", {}),
+    }
+
+
+def git_command(root: Path, git_dir: str, work_tree: str, args: list[str]) -> tuple[bool, str]:
+    command = ["git"]
+    if git_dir:
+        command.append(f"--git-dir={git_dir}")
+    if work_tree:
+        command.append(f"--work-tree={work_tree}")
+    command.extend(args)
+    completed = subprocess.run(
+        command,
+        cwd=root,
+        text=True,
+        capture_output=True,
+    )
+    output = (completed.stdout or "").strip()
+    if completed.returncode == 0:
+        return True, output
+    return False, (completed.stderr or output or "git command failed").strip()
+
+
+def collect_git_info(root: Path, *, git_dir: str = "", work_tree: str = "") -> dict[str, Any]:
+    ok, commit = git_command(root, git_dir, work_tree, ["rev-parse", "HEAD"])
+    if not ok:
+        return {
+            "available": False,
+            "commit": "",
+            "branch": "",
+            "remote_origin": "",
+            "dirty": True,
+            "status": [],
+            "error": commit,
+        }
+    branch_ok, branch = git_command(root, git_dir, work_tree, ["rev-parse", "--abbrev-ref", "HEAD"])
+    remote_ok, remote = git_command(root, git_dir, work_tree, ["config", "--get", "remote.origin.url"])
+    status_ok, status = git_command(root, git_dir, work_tree, ["status", "--porcelain"])
+    status_lines = [line for line in status.splitlines() if line.strip()] if status_ok else []
+    return {
+        "available": True,
+        "commit": commit,
+        "branch": branch if branch_ok else "",
+        "remote_origin": remote if remote_ok else "",
+        "dirty": bool(status_lines),
+        "status": status_lines,
+        "error": "" if status_ok else status,
+    }
+
+
+def summarize_checks(report: dict[str, Any], *, label_key: str = "name") -> dict[str, Any]:
+    checks = report.get("checks") if isinstance(report, dict) else []
+    if not isinstance(checks, list):
+        checks = []
+    failed = [
+        str(check.get(label_key) or check.get("id") or "<unnamed>")
+        for check in checks
+        if isinstance(check, dict) and check.get("ok") is not True
+    ]
+    return {
+        "ok": bool(report.get("ok")) if isinstance(report, dict) else False,
+        "total": len(checks),
+        "failed": failed,
+    }
+
+
+def load_acceptance_report(path: str, *, name: str, required: bool) -> dict[str, Any]:
+    if not path:
+        return {
+            "name": name,
+            "path": "",
+            "present": False,
+            "required": required,
+            "ok": not required,
+            "skipped": False,
+            "error": "missing required report path" if required else "",
+            "checks_total": 0,
+            "checks_failed": [],
+        }
+    report_path = Path(path)
+    if not report_path.is_file():
+        return {
+            "name": name,
+            "path": str(report_path),
+            "present": False,
+            "required": required,
+            "ok": not required,
+            "skipped": False,
+            "error": "report file does not exist" if required else "",
+            "checks_total": 0,
+            "checks_failed": [],
+        }
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "name": name,
+            "path": str(report_path),
+            "present": True,
+            "required": required,
+            "ok": False,
+            "skipped": False,
+            "error": f"could not parse report JSON: {exc}",
+            "checks_total": 0,
+            "checks_failed": [],
+        }
+    summary = summarize_checks(payload)
+    return {
+        "name": name,
+        "path": str(report_path),
+        "present": True,
+        "required": required,
+        "ok": summary["ok"],
+        "skipped": bool(payload.get("skipped")),
+        "skip_reason": payload.get("skip_reason", ""),
+        "duration_seconds": payload.get("duration_seconds"),
+        "started_at": payload.get("started_at", ""),
+        "finished_at": payload.get("finished_at", ""),
+        "checks_total": summary["total"],
+        "checks_failed": summary["failed"],
+    }
+
+
+def security_args(args: argparse.Namespace) -> argparse.Namespace:
+    return argparse.Namespace(
+        host=args.security_host,
+        miner_token=args.miner_token,
+        observer_token=args.observer_token,
+        admin_token=args.admin_token,
+        miner_token_registry=args.miner_token_registry,
+        cors_origins=args.cors_origins,
+        strict=args.security_strict,
+    )
+
+
+def blocking_reasons(
+    *,
+    git_info: dict[str, Any],
+    release_gate_report: dict[str, Any],
+    security_report: dict[str, Any],
+    reports: dict[str, dict[str, Any]],
+    allow_dirty: bool,
+) -> list[str]:
+    reasons: list[str] = []
+    if not git_info.get("available"):
+        reasons.append(f"git metadata unavailable: {git_info.get('error', '')}")
+    if git_info.get("dirty") and not allow_dirty:
+        reasons.append("git worktree is dirty")
+    if not release_gate_report.get("ok"):
+        failed = summarize_checks(release_gate_report)["failed"]
+        reasons.append("release gate failed" + (f": {', '.join(failed)}" if failed else ""))
+    if not security_report.get("ok"):
+        reasons.append("security preflight failed")
+    for name, report in reports.items():
+        if report.get("required") and not report.get("present"):
+            reasons.append(f"{name} acceptance report is missing")
+        elif report.get("present") and not report.get("ok"):
+            reasons.append(f"{name} acceptance report is not ok")
+    return reasons
+
+
+def build_evidence(
+    args: argparse.Namespace,
+    *,
+    release_gate_report: dict[str, Any] | None = None,
+    security_report: dict[str, Any] | None = None,
+    git_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    root = Path(args.root).resolve()
+    release_gate_report = release_gate_report if release_gate_report is not None else release_gate.run_release_gate(root)
+    security_report = security_report if security_report is not None else security_preflight.run_preflight(security_args(args))
+    git_info = git_info if git_info is not None else collect_git_info(
+        root,
+        git_dir=args.git_dir,
+        work_tree=args.work_tree,
+    )
+    optional_required = bool(args.strict_optional and not args.allow_missing_optional)
+    reports = {
+        "runtime": load_acceptance_report(args.runtime_report, name="runtime", required=True),
+        "browser": load_acceptance_report(args.browser_report, name="browser", required=optional_required),
+        "remote": load_acceptance_report(args.remote_report, name="remote", required=optional_required),
+    }
+    reasons = blocking_reasons(
+        git_info=git_info,
+        release_gate_report=release_gate_report,
+        security_report=security_report,
+        reports=reports,
+        allow_dirty=bool(args.allow_dirty),
+    )
+    return {
+        "generated_at": utc_now(),
+        "project": read_pyproject(root),
+        "environment": {
+            "python": sys.version.split()[0],
+            "executable": sys.executable,
+            "platform": platform.platform(),
+            "cwd": os.getcwd(),
+        },
+        "git": git_info,
+        "checks": {
+            "release_gate": summarize_checks(release_gate_report),
+            "security_preflight": summarize_checks(security_report, label_key="id"),
+        },
+        "reports": reports,
+        "release_status": {
+            "ready": not reasons,
+            "status": "ready" if not reasons else "blocked",
+            "blocking_reasons": reasons,
+            "allow_dirty": bool(args.allow_dirty),
+            "allow_missing_optional": bool(args.allow_missing_optional),
+            "strict_optional": optional_required,
+        },
+    }
+
+
+def write_json(payload: dict[str, Any], path: str) -> None:
+    if not path:
+        return
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def markdown_status(value: bool) -> str:
+    return "ok" if value else "blocked"
+
+
+def render_markdown(payload: dict[str, Any]) -> str:
+    status = payload["release_status"]
+    git = payload["git"]
+    project = payload["project"]
+    lines = [
+        "# CrowdTensorD Release Evidence",
+        "",
+        f"Status: `{status['status']}`",
+        f"Project: `{project.get('name', '')}` `{project.get('version', '')}`",
+        f"Commit: `{git.get('commit', '')}`",
+        f"Branch: `{git.get('branch', '')}`",
+        f"Generated: `{payload['generated_at']}`",
+        "",
+        "## Checks",
+        "",
+    ]
+    for name, check in payload["checks"].items():
+        failed = ", ".join(check["failed"]) if check["failed"] else "none"
+        lines.append(f"- `{name}`: {markdown_status(check['ok'])}, total={check['total']}, failed={failed}")
+    lines.extend(["", "## Acceptance Reports", ""])
+    for name, report in payload["reports"].items():
+        state = "missing" if not report["present"] else markdown_status(report["ok"])
+        suffix = ""
+        if report.get("skipped"):
+            suffix = f", skipped={report.get('skip_reason', '')}"
+        lines.append(f"- `{name}`: {state}, checks={report['checks_total']}{suffix}")
+    if status["blocking_reasons"]:
+        lines.extend(["", "## Blocking Reasons", ""])
+        lines.extend([f"- {reason}" for reason in status["blocking_reasons"]])
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_markdown(payload: dict[str, Any], path: str) -> None:
+    if not path:
+        return
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(render_markdown(payload), encoding="utf-8")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build a CrowdTensorD release evidence report.")
+    parser.add_argument("--root", default=str(ROOT))
+    parser.add_argument("--runtime-report", required=True)
+    parser.add_argument("--browser-report", default="")
+    parser.add_argument("--remote-report", default="")
+    parser.add_argument("--json-out", default="dist/release-evidence.json")
+    parser.add_argument("--markdown-out", default="")
+    parser.add_argument("--strict-optional", action="store_true")
+    parser.add_argument("--allow-missing-optional", action="store_true", help="accepted for explicit local draft runs")
+    parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--git-dir", default="")
+    parser.add_argument("--work-tree", default="")
+    parser.add_argument("--security-host", default="127.0.0.1")
+    parser.add_argument("--miner-token", default=os.environ.get("CROWDTENSOR_MINER_TOKEN", ""))
+    parser.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
+    parser.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    parser.add_argument("--miner-token-registry", default=os.environ.get("CROWDTENSOR_MINER_TOKEN_REGISTRY", ""))
+    parser.add_argument("--cors-origin", action="append", dest="cors_origins", default=[])
+    parser.add_argument("--security-strict", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    args = parse_args()
+    evidence = build_evidence(args)
+    write_json(evidence, args.json_out)
+    write_markdown(evidence, args.markdown_out)
+    print(json.dumps(evidence, sort_keys=True))
+    raise SystemExit(0 if evidence["release_status"]["ready"] else 1)
+
+
+if __name__ == "__main__":
+    main()

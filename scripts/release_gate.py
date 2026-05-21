@@ -36,6 +36,7 @@ REQUIRED_FILES = [
     "scripts/token_hash_auth_check.py",
     "scripts/security_preflight.py",
     "scripts/browser_acceptance_pack.py",
+    "scripts/release_evidence_pack.py",
     "scripts/outer_optimizer_check.py",
     "scripts/compressed_error_feedback_check.py",
     "scripts/delta_transport_negotiation_check.py",
@@ -336,6 +337,28 @@ def check_browser_acceptance_docs(root: Path) -> dict[str, Any]:
     return check_result("browser_acceptance_docs", not details, details)
 
 
+def check_release_evidence_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "scripts/release_evidence_pack.py",
+        "--runtime-report",
+        "release-evidence.json",
+        "Release Evidence",
+    ]:
+        if fragment not in combined:
+            details.append(f"release evidence docs or CI must mention {fragment}")
+    return check_result("release_evidence_docs", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -414,6 +437,8 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "compressed_error_feedback_check.py": "CI must run the compressed error-feedback smoke through runtime acceptance",
         "delta_transport_negotiation_check.py": "CI must run the delta transport negotiation smoke through runtime acceptance",
         "model_bundle_smoke.py": "CI must run the model bundle smoke through runtime acceptance",
+        "release_evidence_pack.py": "CI must build release evidence",
+        "release-evidence.json": "CI must write release evidence JSON",
         "python -m unittest discover -s tests -v": "CI must run unit tests",
         "runtime_acceptance_pack.py": "CI must run the runtime acceptance pack",
     }
@@ -438,6 +463,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_remote_miner_docs(gate_root),
         check_security_preflight_docs(gate_root),
         check_browser_acceptance_docs(gate_root),
+        check_release_evidence_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

@@ -44,3 +44,14 @@ jobs:
       - name: Browser acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/browser_acceptance_pack.py --allow-skip --base-port 9310 --check-timeout 180 --report /tmp/crowdtensor_browser_acceptance.json
+      - name: Release evidence
+        if: matrix.python-version == '3.12'
+        run: python scripts/release_evidence_pack.py --runtime-report /tmp/crowdtensor_acceptance.json --browser-report /tmp/crowdtensor_browser_acceptance.json --json-out dist/release-evidence.json --markdown-out dist/release-evidence.md
+      - name: Upload release evidence
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence
+          path: |
+            dist/release-evidence.json
+            dist/release-evidence.md

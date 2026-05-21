@@ -150,6 +150,18 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_browser_acceptance.json
 ```
 
+Generate the release evidence bundle after the acceptance reports exist:
+
+```bash
+python3 scripts/release_evidence_pack.py \
+  --runtime-report /tmp/crowdtensor_acceptance.json \
+  --browser-report /tmp/crowdtensor_browser_acceptance.json \
+  --json-out dist/release-evidence.json \
+  --markdown-out dist/release-evidence.md
+```
+
+The Release Evidence output records the git commit, package metadata, release gate result, security preflight result, and acceptance report summaries. CI uploads `release-evidence.json` and the Markdown companion as build artifacts.
+
 Some sandboxes block localhost client sockets. In that case, run unit tests inside the sandbox and run the acceptance pack in an unrestricted shell or CI job.
 
 Run only the readiness/profile smoke:
