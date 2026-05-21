@@ -61,6 +61,7 @@ The Miner claims a task, runs a dependency-free local training loop, uploads a D
 For the full walkthrough, see [docs/quickstart.md](docs/quickstart.md).
 For endpoint-level integration details, see [docs/api.md](docs/api.md).
 For controlled remote Miner setup, see [docs/remote-miner.md](docs/remote-miner.md).
+For release history and maintainer release flow, see [CHANGELOG.md](CHANGELOG.md) and [docs/release.md](docs/release.md).
 
 ## Docker Compose
 
@@ -276,6 +277,8 @@ See [docs/security.md](docs/security.md) before exposing a Coordinator beyond lo
 - [Architecture](docs/architecture.md)
 - [Security](docs/security.md)
 - [Operations](docs/operations.md)
+- [Release Process](docs/release.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

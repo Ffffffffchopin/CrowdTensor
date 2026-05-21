@@ -1,0 +1,33 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: Runtime
+      labels:
+        - runtime
+        - coordinator
+        - miner
+    - title: Security
+      labels:
+        - security
+        - auth
+    - title: Browser
+      labels:
+        - browser
+        - webrtc
+    - title: Documentation
+      labels:
+        - documentation
+        - docs
+    - title: Tests
+      labels:
+        - tests
+        - ci
+    - title: Maintenance
+      labels:
+        - maintenance
+        - dependencies
+    - title: Other Changes
+      labels:
+        - "*"

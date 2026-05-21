@@ -35,6 +35,7 @@ python3 scripts/runtime_acceptance_pack.py \
 - Preserve deterministic CPU-only smoke paths unless the change is explicitly about an optional accelerator path.
 - Add focused tests for changes in lease handling, replay, validation, auth, or result application.
 - Keep public docs in sync with API or operator behavior changes.
+- Update `CHANGELOG.md` for user-visible runtime, API, packaging, security, or operator workflow changes.
 - Do not commit local state directories, token files, browser profiles, checkpoints, or generated caches.
 
 ## Pull Request Checklist
@@ -43,4 +44,5 @@ python3 scripts/runtime_acceptance_pack.py \
 - Unit tests pass.
 - Runtime acceptance is run or the PR explains why it is not applicable.
 - Public docs are updated for user-visible behavior.
+- Release-facing changes update `CHANGELOG.md`; maintainer releases follow `docs/release.md`.
 - Secrets and local runtime artifacts are not included.

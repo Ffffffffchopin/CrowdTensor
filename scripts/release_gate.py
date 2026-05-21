@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FILES = [
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "pyproject.toml",
     "requirements.txt",
@@ -24,6 +25,7 @@ REQUIRED_FILES = [
     "compose.yaml",
     ".dockerignore",
     ".env.example",
+    ".github/release.yml",
     ".github/workflows/ci.yml",
     "scripts/api_contract_check.py",
     "scripts/result_idempotency_check.py",
@@ -49,6 +51,7 @@ REQUIRED_FILES = [
     "docs/architecture.md",
     "docs/security.md",
     "docs/operations.md",
+    "docs/release.md",
 ]
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -408,6 +411,38 @@ def check_support_bundle_docs(root: Path) -> dict[str, Any]:
     return check_result("support_bundle_docs", not details, details)
 
 
+def check_release_materials(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "CHANGELOG.md",
+            "CONTRIBUTING.md",
+            "docs/release.md",
+            ".github/release.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "0.1.0a0",
+        "CHANGELOG.md",
+        "docs/release.md",
+        "scripts/release_gate.py",
+        "scripts/runtime_acceptance_pack.py",
+        "scripts/browser_acceptance_pack.py",
+        "scripts/release_evidence_pack.py",
+        "scripts/support_bundle.py",
+        "git tag",
+        "changelog:",
+        "Runtime",
+        "Security",
+    ]:
+        if fragment not in combined:
+            details.append(f"release materials must mention {fragment}")
+    return check_result("release_materials", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -517,6 +552,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_release_evidence_docs(gate_root),
         check_doctor_docs(gate_root),
         check_support_bundle_docs(gate_root),
+        check_release_materials(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

@@ -51,6 +51,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "release_evidence_docs",
                 "doctor_docs",
                 "support_bundle_docs",
+                "release_materials",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -262,6 +263,21 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "support_bundle_docs")
         self.assertTrue(any("scripts/support_bundle.py" in detail for detail in details))
+
+    def test_release_materials_must_describe_release_flow(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        (tmp_root / "README.md").write_text("No release materials here.\n", encoding="utf-8")
+        (tmp_root / "CHANGELOG.md").write_text("No release materials here.\n", encoding="utf-8")
+        (tmp_root / "CONTRIBUTING.md").write_text("No release materials here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "release.md").write_text("No release materials here.\n", encoding="utf-8")
+        (tmp_root / ".github" / "release.yml").write_text("No release materials here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "release_materials")
+        self.assertTrue(any("scripts/release_gate.py" in detail for detail in details))
+        self.assertTrue(any("git tag" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))
