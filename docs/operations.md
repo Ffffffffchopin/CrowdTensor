@@ -59,6 +59,8 @@ Useful flags:
 - `--heartbeat-interval N`: tune heartbeat cadence
 - `--skip-preflight`: skip the startup `/ready` compatibility check
 - `--max-request-attempts N`: retry transient `/ready`, claim, heartbeat, and idempotent result upload failures
+- `--enable-mock-llm-runtime`: advertise `external_llm_infer` with the deterministic mock runtime
+- `--llm-runtime-cmd CMD`: advertise `external_llm_infer` with an operator-owned command wrapper; `CROWDTENSOR_LLM_RUNTIME_CMD` is also supported
 - `--idle-sleep N`: sleep between failed or unavailable claims
 
 The Miner summary includes `request_retries` and `preflight_failures` so operators can spot unstable links without parsing stderr.
@@ -227,6 +229,14 @@ python3 scripts/inference_session_demo.py --port 8904 --request-count 4
 
 Use `--json` for automation. The demo reports safe session metrics, read-only status, redaction status, and Miner `hardware_profile`; it is a CPU-only Swarm Inference shaped demo, not a real LLM serving benchmark.
 
+External LLM adapter contract smoke:
+
+```bash
+python3 scripts/external_llm_inference_smoke.py --port 8906 --request-count 3
+```
+
+The smoke uses `crowdtensor-miner --enable-mock-llm-runtime` so it is deterministic and CPU-only. For an operator-provided local runtime, run the Miner with `--llm-runtime-cmd /path/to/wrapper` or set `CROWDTENSOR_LLM_RUNTIME_CMD=/path/to/wrapper`; the wrapper receives `prompt` and `max_tokens` arguments and should print completion text to stdout. `external_llm_infer` is read-only, validates `external_llm_infer_v1` prompt hashes and `external_llm_results`, records `request_count`, `completion_count`, `output_chars`, `adapter_kind`, `model_id`, and `requests_per_second`, and keeps raw `output_text` out of `/state` and admin result ledger summaries.
+
 Remote-style Miner readiness:
 
 ```bash
@@ -238,7 +248,7 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_remote_acceptance.json
 ```
 
-The remote readiness smoke verifies `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm` in one long-running Python Miner session. The default runtime acceptance pack separately verifies the read-only `model_bundle_infer` Swarm Inference shaped probe.
+The remote readiness smoke verifies `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm` in one long-running Python Miner session. The default runtime acceptance pack separately verifies the read-only `model_bundle_infer` Swarm Inference shaped probe and the optional `external_llm_infer` adapter contract.
 
 `--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
 

@@ -38,6 +38,7 @@ def acceptance_args(**overrides):
         "skip_model_bundle": False,
         "skip_model_bundle_inference": False,
         "skip_inference_session_demo": False,
+        "skip_external_llm_inference": False,
         "skip_result_idempotency": False,
         "skip_result_ledger": False,
         "skip_miner_resilience": False,
@@ -85,8 +86,8 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         checks = runtime_acceptance_pack.selected_checks(args, Path("/tmp/crowdtensor_acceptance_test"))
 
-        self.assertEqual([check["name"] for check in checks], ["readiness", "api_contract", "chaos", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo"])
-        self.assertEqual([check["port"] for check in checks], [9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018, 9019, 9020, 9021, 9022, 9023, 9024, 9025, 9026, 9027, 9040, 9041])
+        self.assertEqual([check["name"] for check in checks], ["readiness", "api_contract", "chaos", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference"])
+        self.assertEqual([check["port"] for check in checks], [9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018, 9019, 9020, 9021, 9022, 9023, 9024, 9025, 9026, 9027, 9040, 9041, 9042])
         operator = next(check for check in checks if check["name"] == "operator_control")
         self.assertIn("--admin-token", operator["command"])
         self.assertIn("admin-test", operator["command"])
@@ -101,7 +102,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference"],
         )
 
     def test_readiness_check_is_default_and_skippable(self) -> None:
@@ -144,7 +145,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference"],
         )
         micro = next(check for check in checks if check["name"] == "micro_transformer")
         self.assertEqual(micro["port"], 9016)
@@ -158,7 +159,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference"],
         )
 
 
@@ -210,6 +211,22 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
         self.assertNotIn("inference_session_demo", [check["name"] for check in skipped])
+
+    def test_external_llm_inference_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        external = next(check for check in checks if check["name"] == "external_llm_inference")
+        self.assertEqual(external["port"], 9042)
+        self.assertIn("external_llm_inference_smoke.py", external["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_external_llm_inference=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("external_llm_inference", [check["name"] for check in skipped])
 
     def test_result_idempotency_check_is_default_and_skippable(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
@@ -291,6 +308,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             "model_bundle",
             "model_bundle_inference",
             "inference_session_demo",
+            "external_llm_inference",
         }
         for check in checks:
             expected = "miner-test" if check["name"] in token_aware_names else ""
@@ -408,6 +426,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             "model_bundle",
             "model_bundle_inference",
             "inference_session_demo",
+            "external_llm_inference",
         }
         for check in checks:
             expected = "observer-test" if check["name"] in token_aware_names else ""
@@ -422,7 +441,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in checks],
-            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "remote_miner"],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference", "remote_miner"],
         )
         self.assertEqual(checks[-1]["port"], 9028)
         self.assertIn("remote_miner_readiness_check.py", checks[-1]["command"][1])
@@ -451,7 +470,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        browser_checks = checks[20:]
+        browser_checks = checks[21:]
         self.assertEqual(
             [check["name"] for check in browser_checks],
             ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger"],
@@ -480,6 +499,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             "model_bundle",
             "model_bundle_inference",
             "inference_session_demo",
+            "external_llm_inference",
             "runtime_contract",
             "browser_miner",
             "browser_probe",
@@ -497,7 +517,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        browser_checks = checks[20:]
+        browser_checks = checks[21:]
         self.assertEqual(
             [check["name"] for check in browser_checks],
             ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger", "browser_chaos"],
@@ -555,6 +575,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
                 "delta_transport_negotiation",
                 "model_bundle_inference",
                 "inference_session_demo",
+                "external_llm_inference",
                 "runtime_contract",
                 "browser_miner",
             ],

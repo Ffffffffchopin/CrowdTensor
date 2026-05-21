@@ -13,11 +13,11 @@ CrowdTensorD is the current Alpha daemon/control plane. It validates the reliabi
 The current code supports:
 
 - Coordinator/Miner task leasing, heartbeat recovery, timeout requeue, stale result rejection, and checkpoint replay.
-- Deterministic CPU-only workloads: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, measurable read-only `model_bundle_infer`, and `browser_probe`.
+- Deterministic CPU-only workloads: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, measurable read-only `model_bundle_infer`, optional read-only `external_llm_infer`, and `browser_probe`.
 - `runtime_contract_v1`, workload capability matching, CPU `hardware_profile`, delta transport negotiation, validation, replay audit, result ledger, trust quarantine, and operator controls.
 - Controlled remote Miner demos with token-backed admission, hashed token config, `/ready` preflight, retries, and Support Bundle diagnostics.
 - Browser experiments for WebRTC tensor transport, Worker compute probes, and a browser Miner bridge.
-- Release tooling: user-facing inference session demo, release gate, runtime acceptance pack, browser acceptance pack, release evidence, doctor diagnostics, security preflight, and Support Bundle.
+- Release tooling: user-facing inference session demo, external LLM adapter smoke, release gate, runtime acceptance pack, browser acceptance pack, release evidence, doctor diagnostics, security preflight, and Support Bundle.
 - Open-source entrypoints: README, ROADMAP, protocol/use-case docs, release docs, changelog, and static site.
 
 Do not describe the project as already providing production P2P, NAT traversal, real LLM inference/training, GPU pooling, WebGPU model shards, payments, staking, or hardened public-internet security.
@@ -31,7 +31,8 @@ Roadmap priority:
 1. Preserve Alpha reliability and operator trust.
 2. Make the project easy for strangers to understand and run.
 3. Expand the current read-only multi-request `model_bundle_infer` probe into a useful home-compute inference demo with explicit hardware/capability matching.
-4. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
+4. Treat `external_llm_infer_v1` as the narrow optional runtime adapter boundary: use `--enable-mock-llm-runtime` for deterministic checks and `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` only when an operator explicitly owns the local runtime.
+5. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
 5. Treat incentives and reputation as later protocol layers, not prerequisites for local demos.
 
 ## Engineering Rules
@@ -40,7 +41,7 @@ Roadmap priority:
 - Keep CPU-only deterministic smoke paths working even when optional accelerators are added.
 - Version protocol changes; preserve `runtime_contract_v1` unless a change is intentionally versioned.
 - New workload contracts should not mutate task lease or heartbeat semantics.
-- Do not expose raw lease tokens, idempotency material, tensor deltas, registry tokens, or raw state in operator-friendly outputs.
+- Do not expose raw lease tokens, idempotency material, tensor deltas, registry tokens, raw external LLM `output_text`, or raw state in operator-friendly outputs.
 - Prefer narrow, testable additions over broad rewrites.
 - Update public docs, changelog, roadmap, and project memory when user-visible behavior or strategy changes.
 

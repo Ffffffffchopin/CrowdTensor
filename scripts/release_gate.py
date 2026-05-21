@@ -52,6 +52,7 @@ REQUIRED_FILES = [
     "scripts/model_bundle_smoke.py",
     "scripts/model_bundle_inference_smoke.py",
     "scripts/inference_session_demo.py",
+    "scripts/external_llm_inference_smoke.py",
     "docs/api.md",
     "docs/protocol.md",
     "docs/project-memory.md",
@@ -565,6 +566,45 @@ def check_model_bundle_inference_docs(root: Path) -> dict[str, Any]:
     return check_result("model_bundle_inference_docs", not details, details)
 
 
+def check_external_llm_inference_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/api.md",
+            "docs/protocol.md",
+            "docs/architecture.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "external_llm_infer",
+        "external_llm_infer_v1",
+        "external_llm_inference_smoke.py",
+        "--skip-external-llm-inference",
+        "--enable-mock-llm-runtime",
+        "--llm-runtime-cmd",
+        "CROWDTENSOR_LLM_RUNTIME_CMD",
+        "external_llm_results",
+        "completion_count",
+        "output_chars",
+        "adapter_kind",
+        "read-only",
+    ]:
+        if fragment not in combined:
+            details.append(f"external LLM inference docs/CI must mention {fragment}")
+    return check_result("external_llm_inference_docs", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -646,6 +686,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "delta_transport_negotiation_check.py": "CI must run the delta transport negotiation smoke through runtime acceptance",
         "model_bundle_smoke.py": "CI must run the model bundle smoke through runtime acceptance",
         "model_bundle_inference_smoke.py": "CI must run the model bundle inference smoke through runtime acceptance",
+        "external_llm_inference_smoke.py": "CI must run the external LLM inference smoke through runtime acceptance",
         "release_evidence_pack.py": "CI must build release evidence",
         "release-evidence.json": "CI must write release evidence JSON",
         "python -m unittest discover -s tests -v": "CI must run unit tests",
@@ -679,6 +720,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_open_source_entrypoints(gate_root),
         check_project_memory(gate_root),
         check_model_bundle_inference_docs(gate_root),
+        check_external_llm_inference_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

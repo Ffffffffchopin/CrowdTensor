@@ -40,6 +40,7 @@ from .protocol import (
     WORKLOAD_BROWSER_PROBE,
     WORKLOAD_CPU_LORA_MOCK,
     WORKLOAD_DILOCO_TRAIN,
+    WORKLOAD_EXTERNAL_LLM_INFER,
     WORKLOAD_MICRO_TRANSFORMER_LM,
     WORKLOAD_MODEL_BUNDLE_INFER,
     WORKLOAD_MODEL_BUNDLE_LM,
@@ -54,6 +55,10 @@ from .diloco import (
     loss,
     normalize_model,
     training_spec_for,
+)
+from .external_llm import (
+    external_llm_inference_spec_for,
+    validate_external_llm_inference,
 )
 from .lora_mock import (
     apply_adapter_update,
@@ -392,6 +397,8 @@ class StateStore:
         bundle_delta: dict | None = None,
         inference_result: dict | None = None,
         inference_results: list[dict] | None = None,
+        external_llm_result: dict | None = None,
+        external_llm_results: list[dict] | None = None,
         metrics: dict | None = None,
     ) -> dict:
         with self._lock:
@@ -452,6 +459,16 @@ class StateStore:
                     idempotency_key=idempotency_key,
                     inference_result=inference_result,
                     inference_results=inference_results,
+                    metrics=metrics,
+                )
+            if workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
+                return self._complete_external_llm_inference_task(
+                    task,
+                    lease_token=lease_token,
+                    attempt=attempt,
+                    idempotency_key=idempotency_key,
+                    external_llm_result=external_llm_result,
+                    external_llm_results=external_llm_results,
                     metrics=metrics,
                 )
             if workload_type != WORKLOAD_DILOCO_TRAIN:
@@ -922,6 +939,70 @@ class StateStore:
             raise ResultRejected(validation)
         return response
 
+    def _complete_external_llm_inference_task(
+        self,
+        task: dict,
+        *,
+        lease_token: str,
+        attempt: int,
+        idempotency_key: str | None = None,
+        external_llm_result: dict | None = None,
+        external_llm_results: list[dict] | None = None,
+        metrics: dict | None = None,
+    ) -> dict:
+        validation = validate_external_llm_inference(
+            external_llm_result,
+            external_llm_results=external_llm_results,
+            expected_requests=(task.get("claim_workload_spec") or {}).get("requests"),
+        )
+        staleness = int(self._model["version"]) - int(task["model_version"])
+        now = now_epoch()
+        response = {
+            "accepted": True,
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "workload_type": WORKLOAD_EXTERNAL_LLM_INFER,
+            "model_version": int(self._model["version"]),
+            "request_count": int(validation.get("request_count", 0)),
+            "completion_count": int(validation.get("completion_count", 0)),
+            "output_chars": int(validation.get("output_chars", 0)),
+            "adapter_kind": validation.get("adapter_kind"),
+            "model_id": validation.get("model_id"),
+            "output_preview": validation.get("output_preview"),
+            "staleness": staleness,
+        } if validation["accepted"] else dict(validation)
+        event = {
+            "type": EVENT_TASK_COMPLETED if validation["accepted"] else EVENT_TASK_REJECTED,
+            "task_id": task["task_id"],
+            "attempt": attempt,
+            "lease_token": lease_token,
+            "miner_id": task.get("miner_id"),
+            "base_model_version": int(task["model_version"]),
+            "external_llm_result": (
+                validation.get("external_llm_result") if validation["accepted"] else external_llm_result
+            ),
+            "external_llm_results": (
+                validation.get("external_llm_results") if validation["accepted"] else external_llm_results
+            ),
+            "metrics": metrics or {},
+            "staleness": staleness,
+            "validation": validation,
+            "result_model_version": int(self._model["version"]),
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "result_response": response,
+            **self._idempotency_event_fields(
+                idempotency_key,
+                lease_token=lease_token,
+            ),
+            "ts": now,
+        }
+        self._apply_task_event(self._append_event(event))
+        self.ensure_backlog()
+        if not validation["accepted"]:
+            raise ResultRejected(validation)
+        return response
+
     def reap_expired(self, *, now: float | None = None) -> list[str]:
         with self._lock:
             current = now_epoch() if now is None else float(now)
@@ -1282,6 +1363,8 @@ class StateStore:
                 "bundle_delta": {},
                 "inference_result": {},
                 "inference_results": [],
+                "external_llm_result": {},
+                "external_llm_results": [],
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1350,6 +1433,8 @@ class StateStore:
                 "bundle_delta": event.get("bundle_delta", {}),
                 "inference_result": event.get("inference_result", {}),
                 "inference_results": event.get("inference_results", []),
+                "external_llm_result": event.get("external_llm_result", {}),
+                "external_llm_results": event.get("external_llm_results", []),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1379,6 +1464,8 @@ class StateStore:
                 "bundle_delta": event.get("bundle_delta", {}),
                 "inference_result": event.get("inference_result", {}),
                 "inference_results": event.get("inference_results", []),
+                "external_llm_result": event.get("external_llm_result", {}),
+                "external_llm_results": event.get("external_llm_results", []),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1406,6 +1493,8 @@ class StateStore:
                 "bundle_delta": {},
                 "inference_result": {},
                 "inference_results": [],
+                "external_llm_result": {},
+                "external_llm_results": [],
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1491,6 +1580,9 @@ class StateStore:
             "bundle_delta",
             "inference_result",
             "inference_results",
+            "external_llm_result",
+            "external_llm_results",
+            "output_text",
         ):
             public.pop(field, None)
         return public
@@ -1505,11 +1597,16 @@ class StateStore:
         public.pop("bundle_delta", None)
         public.pop("inference_result", None)
         public.pop("inference_results", None)
+        public.pop("external_llm_result", None)
+        public.pop("external_llm_results", None)
         public["metrics"] = self._public_metrics(public.get("metrics"))
         validation = dict(public.get("validation") or {})
         validation.pop("bundle_delta", None)
         validation.pop("inference_result", None)
         validation.pop("inference_results", None)
+        validation.pop("external_llm_result", None)
+        validation.pop("external_llm_results", None)
+        validation.pop("output_text", None)
         public["validation"] = validation
         return public
 
@@ -1581,6 +1678,11 @@ class StateStore:
             "request_count",
             "correct_count",
             "accuracy",
+            "completion_count",
+            "output_chars",
+            "adapter_kind",
+            "model_id",
+            "output_preview",
         ]
         return {
             field: validation.get(field)
@@ -1594,7 +1696,11 @@ class StateStore:
             "request_count",
             "correct_count",
             "accuracy",
+            "completion_count",
+            "output_chars",
             "requests_per_second",
+            "adapter_kind",
+            "model_id",
         ]
         return {
             field: metrics.get(field)
@@ -1646,7 +1752,18 @@ class StateStore:
         def redact(value):
             if isinstance(value, dict):
                 return {
-                    key: ("<redacted>" if key in {"lease_token", "result_idempotency_key_hash", "result_lease_token_hash"} else redact(item))
+                    key: (
+                        "<redacted>"
+                        if key in {
+                            "lease_token",
+                            "result_idempotency_key_hash",
+                            "result_lease_token_hash",
+                            "external_llm_result",
+                            "external_llm_results",
+                            "output_text",
+                        }
+                        else redact(item)
+                    )
                     for key, item in value.items()
                     if key != "result_response"
                 }
@@ -1711,6 +1828,8 @@ class StateStore:
         return int(self._model["version"])
 
     def _claim_weights_for_task(self, task: dict, workload_spec: dict) -> list[float]:
+        if self._workload_type(task) == WORKLOAD_EXTERNAL_LLM_INFER:
+            return []
         if self._workload_type(task) == WORKLOAD_MICRO_TRANSFORMER_LM:
             return list(workload_spec.get("weights", []))
         if self._workload_type(task) in {WORKLOAD_MODEL_BUNDLE_LM, WORKLOAD_MODEL_BUNDLE_INFER}:
@@ -1728,7 +1847,7 @@ class StateStore:
     def _claim_contract(self, task: dict, miner_id: str, model_version: int) -> dict:
         audit_mode = task.get("audit_mode", AUDIT_MODE_NONE) or AUDIT_MODE_NONE
         optimizer_spec = self._optimizer_spec_for_task(task)
-        if self._workload_type(task) == WORKLOAD_MODEL_BUNDLE_INFER:
+        if self._workload_type(task) in {WORKLOAD_MODEL_BUNDLE_INFER, WORKLOAD_EXTERNAL_LLM_INFER}:
             claim_task = {**task, "miner_id": miner_id, "model_version": model_version}
             workload_spec = self._workload_spec(claim_task)
             return {
@@ -1864,6 +1983,12 @@ class StateStore:
                 task["task_id"],
                 task.get("miner_id") or "anonymous",
                 self._model.get("model_bundle", {}),
+                request_count=int(task.get("inner_steps", 1)),
+            )
+        if workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
+            return external_llm_inference_spec_for(
+                task["task_id"],
+                task.get("miner_id") or "anonymous",
                 request_count=int(task.get("inner_steps", 1)),
             )
         return {"type": WORKLOAD_DILOCO_TRAIN}

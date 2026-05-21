@@ -55,6 +55,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "open_source_entrypoints",
                 "project_memory",
                 "model_bundle_inference_docs",
+                "external_llm_inference_docs",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -345,6 +346,33 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("inference_session_demo.py" in detail for detail in details))
         self.assertTrue(any("--skip-inference-session-demo" in detail for detail in details))
         self.assertTrue(any("--request-count" in detail for detail in details))
+
+    def test_external_llm_inference_docs_must_describe_adapter_and_acceptance(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/api.md",
+            "docs/protocol.md",
+            "docs/architecture.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No external LLM inference docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "external_llm_inference_docs")
+        self.assertTrue(any("external_llm_infer" in detail for detail in details))
+        self.assertTrue(any("--enable-mock-llm-runtime" in detail for detail in details))
+        self.assertTrue(any("--llm-runtime-cmd" in detail for detail in details))
+        self.assertTrue(any("--skip-external-llm-inference" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

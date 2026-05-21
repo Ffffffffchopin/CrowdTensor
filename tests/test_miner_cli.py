@@ -178,11 +178,26 @@ class MinerCliTests(unittest.TestCase):
         self.assertIn("sign_compressed_ef", capabilities["supported_delta_formats"])
         self.assertIn("model_bundle_lm", capabilities["supported_workloads"])
         self.assertIn("model_bundle_infer", capabilities["supported_workloads"])
+        self.assertNotIn("external_llm_infer", capabilities["supported_workloads"])
+        self.assertEqual(capabilities["external_llm_runtime"], {})
         self.assertEqual(capabilities["backend"], "cpu")
         profile = capabilities["hardware_profile"]
         self.assertGreaterEqual(profile["cpu_count"], 1)
         self.assertTrue(profile["os"])
         self.assertTrue(profile["python_version"])
+
+    def test_capabilities_advertise_external_llm_only_when_enabled(self) -> None:
+        mock_capabilities = miner_cli.miner_capabilities(enable_mock_llm_runtime=True)
+        command_capabilities = miner_cli.miner_capabilities(
+            llm_runtime_cmd="/usr/local/bin/local-llm",
+            llm_runtime_model_id="local-model",
+        )
+
+        self.assertIn("external_llm_infer", mock_capabilities["supported_workloads"])
+        self.assertEqual(mock_capabilities["external_llm_runtime"]["adapter_kind"], "mock")
+        self.assertIn("external_llm_infer", command_capabilities["supported_workloads"])
+        self.assertEqual(command_capabilities["external_llm_runtime"]["adapter_kind"], "command")
+        self.assertEqual(command_capabilities["external_llm_runtime"]["model_id"], "local-model")
 
     def test_auto_delta_format_follows_claim_optimizer_spec(self) -> None:
         self.assertEqual(
@@ -303,6 +318,41 @@ class MinerCliTests(unittest.TestCase):
         self.assertNotIn("inference_results", payload["metrics"])
         self.assertEqual(payload["metrics"]["request_count"], 2)
         self.assertTrue(payload["metrics"]["prediction_correct"])
+
+    def test_build_result_payload_keeps_external_llm_result(self) -> None:
+        external_result = {
+            "schema_version": "external_llm_infer_v1",
+            "request_id": "req-1",
+            "prompt_hash": "sha256:abc",
+            "adapter_kind": "mock",
+            "model_id": "mock-external-llm",
+            "output_text": "mock completion",
+            "output_chars": 15,
+        }
+
+        payload, next_residual = miner_cli.build_result_payload(
+            {"lease_token": "lease", "attempt": 1, "workload_type": "external_llm_infer"},
+            {
+                "external_llm_result": external_result,
+                "external_llm_results": [external_result, {**external_result, "request_id": "req-2"}],
+                "request_count": 2,
+                "completion_count": 2,
+                "adapter_kind": "mock",
+                "model_id": "mock-external-llm",
+            },
+            delta_format="sign_compressed_ef",
+            elapsed_ms=1.0,
+        )
+
+        self.assertIsNone(next_residual)
+        self.assertEqual(payload["external_llm_result"], external_result)
+        self.assertEqual(len(payload["external_llm_results"]), 2)
+        self.assertNotIn("compressed_delta", payload)
+        self.assertNotIn("external_llm_result", payload["metrics"])
+        self.assertNotIn("external_llm_results", payload["metrics"])
+        self.assertEqual(payload["metrics"]["request_count"], 2)
+        self.assertEqual(payload["metrics"]["completion_count"], 2)
+        self.assertEqual(payload["metrics"]["adapter_kind"], "mock")
 
 
 if __name__ == "__main__":

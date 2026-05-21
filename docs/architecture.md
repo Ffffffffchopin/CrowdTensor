@@ -59,6 +59,8 @@ This keeps the network layer physically separate from tensor math: Miners advert
 
 `model_bundle_infer` reuses the same built-in bundle identity but is intentionally read-only. The claim includes a small `requests` array of prompts, target tokens, and top-k settings plus bundle config and weights; the Miner returns `inference_results`; Coordinator recomputes logits from current bundle state and accepts only matching predictions. It records request count, correct count, accuracy, elapsed time, and requests per second in safe session summaries without changing dense `global_step` or `model_bundle.version`, making it the first measurable Swarm Inference shaped CPU session contract rather than a serving benchmark.
 
+`external_llm_infer` is the optional runtime-adapter boundary for future real local LLM engines. The control plane does not import PyTorch, Transformers, llama.cpp, or GPU libraries. Instead, a Miner can explicitly advertise the workload with `--enable-mock-llm-runtime` for deterministic CI or `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for an operator-owned command. The claim carries prompt requests and prompt hashes under `external_llm_infer_v1`; the Miner returns `external_llm_results` with `output_text`, `adapter_kind`, and `model_id`. Coordinator validates the contract, stores raw output only in internal events, exposes read-only ledger summaries such as `completion_count` and `output_chars`, and keeps `/state` redacted.
+
 ## Validation and Audit
 
 Every training result passes shape, finite-value, norm, and loss-spike checks before it can update state.

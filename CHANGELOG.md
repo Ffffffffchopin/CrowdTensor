@@ -9,7 +9,7 @@ CrowdTensorD is currently an experimental control plane for fault-tolerant distr
 ### Added
 
 - Coordinator and Miner loop with task claims, heartbeats, lease timeout recovery, checkpoint replay, and result submission.
-- Deterministic CPU-only workload contracts, including dense toy training, CPU LoRA mock, micro Transformer LM, model bundle LM, and read-only multi-request model bundle inference.
+- Deterministic CPU-only workload contracts, including dense toy training, CPU LoRA mock, micro Transformer LM, model bundle LM, read-only multi-request model bundle inference, and optional read-only `external_llm_infer_v1` adapter validation.
 - Runtime validation for finite values, tensor shape, loss/norm gates, deterministic replay audit, and low-frequency outer optimizer behavior.
 - Miner admission controls with shared tokens, per-Miner token registry, hashed token verifiers, observer/admin separation, and security preflight checks.
 - Operator views for `/health`, `/version`, `/ready`, `/metrics`, redacted `/state`, admin event tails, and admin result ledger.
@@ -17,6 +17,7 @@ CrowdTensorD is currently an experimental control plane for fault-tolerant distr
 - Browser experiments for WebRTC tensor transfer, browser compute probes, and browser Miner bridge smoke tests.
 - Release tooling: `scripts/release_gate.py`, `scripts/runtime_acceptance_pack.py`, `scripts/browser_acceptance_pack.py`, `scripts/release_evidence_pack.py`, and `scripts/support_bundle.py`.
 - User-facing local inference session demo with safe latency, throughput, read-only, redaction, and Miner hardware profile summaries.
+- External LLM adapter smoke (`scripts/external_llm_inference_smoke.py`) using `--enable-mock-llm-runtime`, with optional `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local runtime wrappers.
 
 ### Known Limitations
 

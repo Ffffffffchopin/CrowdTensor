@@ -17,6 +17,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from crowdtensor.diloco import run_inner_loop
+from crowdtensor.external_llm import WORKLOAD_TYPE as WORKLOAD_EXTERNAL_LLM_INFER
+from crowdtensor.external_llm import run_external_llm_inference, run_mock_external_llm_inference
 from crowdtensor.lora_mock import run_lora_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
@@ -260,21 +262,35 @@ def hardware_profile() -> dict:
     }
 
 
-def miner_capabilities() -> dict:
+def miner_capabilities(
+    *,
+    enable_mock_llm_runtime: bool = False,
+    llm_runtime_cmd: str = "",
+    llm_runtime_model_id: str = "external-llm-runtime",
+) -> dict:
+    supported_workloads = [
+        "diloco_train",
+        "cpu_lora_mock",
+        WORKLOAD_MICRO_TRANSFORMER_LM,
+        WORKLOAD_MODEL_BUNDLE_LM,
+        WORKLOAD_MODEL_BUNDLE_INFER,
+    ]
+    external_llm_runtime = {}
+    if enable_mock_llm_runtime or str(llm_runtime_cmd or "").strip():
+        supported_workloads.append(WORKLOAD_EXTERNAL_LLM_INFER)
+        external_llm_runtime = {
+            "adapter_kind": "mock" if enable_mock_llm_runtime else "command",
+            "model_id": "mock-external-llm" if enable_mock_llm_runtime else llm_runtime_model_id,
+        }
     return {
         "runtime": "python-cli",
         "backend": "cpu",
         "hardware_profile": hardware_profile(),
         "supports_training_spec": True,
         "protocol_version": "runtime_contract_v1",
-        "supported_workloads": [
-            "diloco_train",
-            "cpu_lora_mock",
-            WORKLOAD_MICRO_TRANSFORMER_LM,
-            WORKLOAD_MODEL_BUNDLE_LM,
-            WORKLOAD_MODEL_BUNDLE_INFER,
-        ],
+        "supported_workloads": supported_workloads,
         "supported_delta_formats": SUPPORTED_MINER_DELTA_FORMATS,
+        "external_llm_runtime": external_llm_runtime,
         "pid": os_safe_pid(),
     }
 
@@ -310,6 +326,8 @@ def build_result_payload(
                 "bundle_delta",
                 "inference_result",
                 "inference_results",
+                "external_llm_result",
+                "external_llm_results",
             }
         },
     }
@@ -324,6 +342,12 @@ def build_result_payload(
     elif workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
         payload["inference_result"] = inner_result["inference_result"]
         payload["inference_results"] = inner_result.get("inference_results", [inner_result["inference_result"]])
+    elif workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
+        payload["external_llm_result"] = inner_result["external_llm_result"]
+        payload["external_llm_results"] = inner_result.get(
+            "external_llm_results",
+            [inner_result["external_llm_result"]],
+        )
     elif delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
         payload["compressed_delta"], next_residual = compress_sign_delta_with_error_feedback(
             inner_result["local_delta"],
@@ -344,7 +368,11 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
         "/tasks/claim",
         {
             "miner_id": args.miner_id,
-            "capabilities": miner_capabilities(),
+            "capabilities": miner_capabilities(
+                enable_mock_llm_runtime=args.enable_mock_llm_runtime,
+                llm_runtime_cmd=args.llm_runtime_cmd,
+                llm_runtime_model_id=args.llm_runtime_model_id,
+            ),
         },
         timeout=args.claim_timeout,
         miner_token=args.miner_token,
@@ -363,6 +391,7 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
         WORKLOAD_MICRO_TRANSFORMER_LM,
         WORKLOAD_MODEL_BUNDLE_LM,
         WORKLOAD_MODEL_BUNDLE_INFER,
+        WORKLOAD_EXTERNAL_LLM_INFER,
     }:
         raise RuntimeError(f"python-cli miner does not support workload {workload_type}")
 
@@ -405,6 +434,19 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
             )
         elif workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
             inner_result = run_model_bundle_inference(claim["workload_spec"])
+        elif workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
+            if args.enable_mock_llm_runtime:
+                inner_result = run_mock_external_llm_inference(claim["workload_spec"])
+            elif args.llm_runtime_cmd:
+                inner_result = run_external_llm_inference(
+                    claim["workload_spec"],
+                    adapter_kind="command",
+                    model_id=args.llm_runtime_model_id,
+                    runtime_command=args.llm_runtime_cmd,
+                    timeout=args.llm_runtime_timeout,
+                )
+            else:
+                raise RuntimeError("external_llm_infer requires --enable-mock-llm-runtime or --llm-runtime-cmd")
         else:
             inner_result = run_inner_loop(
                 claim["weights"],
@@ -478,6 +520,16 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
                 flush=True,
             )
             return True
+        if workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
+            print(
+                f"accepted external-llm task={claim['task_id']} "
+                f"requests={result.get('request_count', 0)} "
+                f"adapter={result.get('adapter_kind')} "
+                f"model={result.get('model_id')} "
+                f"output_chars={result.get('output_chars', 0)}",
+                flush=True,
+            )
+            return True
         print(
             f"accepted task={claim['task_id']} global_step={result['global_step']} "
             f"model_version={result['model_version']} optimizer_step={result['optimizer_step']} "
@@ -529,6 +581,27 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("CROWDTENSOR_MINER_TOKEN", ""),
         help="shared Miner token for Coordinator task endpoints; falls back to CROWDTENSOR_MINER_TOKEN",
     )
+    parser.add_argument(
+        "--enable-mock-llm-runtime",
+        action="store_true",
+        help="advertise and execute external_llm_infer with the deterministic local mock runtime",
+    )
+    parser.add_argument(
+        "--llm-runtime-cmd",
+        default=os.environ.get("CROWDTENSOR_LLM_RUNTIME_CMD", ""),
+        help="optional external_llm_infer command; it receives prompt and max_tokens arguments",
+    )
+    parser.add_argument(
+        "--llm-runtime-model-id",
+        default=os.environ.get("CROWDTENSOR_LLM_RUNTIME_MODEL_ID", "external-llm-runtime"),
+        help="model id reported for --llm-runtime-cmd results",
+    )
+    parser.add_argument(
+        "--llm-runtime-timeout",
+        type=float,
+        default=float(os.environ.get("CROWDTENSOR_LLM_RUNTIME_TIMEOUT", "30.0")),
+        help="seconds before an external LLM command invocation is aborted",
+    )
     parser.add_argument("--idle-sleep", type=float, default=2.0)
     args = parser.parse_args()
     if args.once and args.max_tasks <= 0:
@@ -541,6 +614,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--retry-base-sleep must be non-negative")
     if args.retry_max_sleep < 0:
         raise SystemExit("--retry-max-sleep must be non-negative")
+    if args.llm_runtime_timeout <= 0:
+        raise SystemExit("--llm-runtime-timeout must be positive")
     return args
 
 

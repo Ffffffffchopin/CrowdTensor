@@ -9,7 +9,7 @@ CrowdTensor is an open-source path toward fault-tolerant AI swarms built from or
 - Run a local Coordinator and Miner loop on a normal CPU-only Linux machine.
 - Connect controlled remote Python Miners with token-backed admission and retry behavior.
 - Validate timeout recovery, stale result rejection, checkpoint replay, result ledger, and Support Bundle generation.
-- Run deterministic tiny workloads shaped like future model contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, and read-only `model_bundle_infer`.
+- Run deterministic tiny workloads shaped like future model contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, read-only `model_bundle_infer`, and optional read-only `external_llm_infer`.
 - Try browser-native experiments for WebRTC tensor transport, browser Worker compute probes, and a browser Miner bridge.
 
 ## What Is Not Ready
@@ -97,7 +97,7 @@ The Compose file uses local demo tokens by default. Copy `.env.example` to `.env
 
 - **Coordinator / Miner loop**: task claim, heartbeat, result submission, and bounded long-running Miner sessions.
 - **Fault tolerance**: lease timeout requeue, stale result rejection, checkpoint recovery, and append-only event replay.
-- **Runtime contracts**: deterministic CPU-only `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, and `model_bundle_infer` workloads.
+- **Runtime contracts**: deterministic CPU-only `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, `model_bundle_infer`, and optional `external_llm_infer` workloads.
 - **Validation**: finite-value checks, shape checks, norm/loss gates, and optional deterministic replay audit.
 - **Trust controls**: workload-scoped Miner scoring, quarantine, admin trust overrides, and redacted event tails.
 - **Result traceability**: admin result ledger for accepted/rejected outcomes, validation, audit, model impact, and Miner score summaries.
@@ -153,6 +153,9 @@ It runs the core smoke checks sequentially:
 - outer optimizer contract
 - compressed error-feedback delta transport
 - delta transport negotiation
+- read-only model bundle inference
+- local inference session demo
+- optional external LLM runtime adapter contract
 
 Browser-native checks are opt-in because they require Playwright and a Chromium-compatible browser:
 
@@ -266,6 +269,14 @@ python3 scripts/inference_session_demo.py --port 8904 --request-count 4
 ```
 
 Use `--json` when you need a machine-readable report for CI or issue reports.
+
+Run only the optional external LLM adapter smoke:
+
+```bash
+python3 scripts/external_llm_inference_smoke.py --port 8906 --request-count 3
+```
+
+The `external_llm_infer` workload uses the `external_llm_infer_v1` schema. It is read-only and validates `external_llm_results` against claim-time prompt hashes before recording safe `request_count`, `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries. The smoke path uses `crowdtensor-miner --enable-mock-llm-runtime` for deterministic CI. Operators can opt into a local command adapter with `--llm-runtime-cmd` or `CROWDTENSOR_LLM_RUNTIME_CMD`; the command receives `prompt` and `max_tokens` arguments. Raw `output_text` is kept out of `/state` and admin ledger summaries.
 
 Run only the remote Miner invite/join smoke:
 

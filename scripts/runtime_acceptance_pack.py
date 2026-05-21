@@ -22,6 +22,7 @@ TOKEN_ENV_SCRIPTS = {
     "browser_probe_smoke.py",
     "capability_ledger_check.py",
     "chaos_runner.py",
+    "external_llm_inference_smoke.py",
     "micro_transformer_smoke.py",
     "inference_session_demo.py",
     "model_bundle_inference_smoke.py",
@@ -140,6 +141,7 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         ("delta_transport_negotiation", "delta_transport_negotiation_check.py", args.base_port + 17, args.skip_delta_transport_negotiation),
         ("model_bundle_inference", "model_bundle_inference_smoke.py", args.base_port + 30, args.skip_model_bundle_inference),
         ("inference_session_demo", "inference_session_demo.py", args.base_port + 31, args.skip_inference_session_demo),
+        ("external_llm_inference", "external_llm_inference_smoke.py", args.base_port + 32, args.skip_external_llm_inference),
     ]
     if args.include_remote_miner:
         specs.append((
@@ -307,6 +309,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-model-bundle", action="store_true")
     parser.add_argument("--skip-model-bundle-inference", action="store_true")
     parser.add_argument("--skip-inference-session-demo", action="store_true")
+    parser.add_argument("--skip-external-llm-inference", action="store_true")
     parser.add_argument("--skip-result-idempotency", action="store_true")
     parser.add_argument("--skip-result-ledger", action="store_true")
     parser.add_argument("--skip-miner-resilience", action="store_true")

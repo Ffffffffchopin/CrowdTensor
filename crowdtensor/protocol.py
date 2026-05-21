@@ -29,6 +29,7 @@ WORKLOAD_CPU_LORA_MOCK = "cpu_lora_mock"
 WORKLOAD_MICRO_TRANSFORMER_LM = "micro_transformer_lm"
 WORKLOAD_MODEL_BUNDLE_LM = "model_bundle_lm"
 WORKLOAD_MODEL_BUNDLE_INFER = "model_bundle_infer"
+WORKLOAD_EXTERNAL_LLM_INFER = "external_llm_infer"
 DEFAULT_WORKLOAD_TYPE = WORKLOAD_DILOCO_TRAIN
 
 

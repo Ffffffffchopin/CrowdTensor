@@ -341,6 +341,8 @@ def create_app(
         bundle_delta: dict[str, Any] | None = None
         inference_result: dict[str, Any] | None = None
         inference_results: list[dict[str, Any]] | None = None
+        external_llm_result: dict[str, Any] | None = None
+        external_llm_results: list[dict[str, Any]] | None = None
         metrics: dict[str, Any] = Field(default_factory=dict)
 
     class TrustOverrideRequest(BaseModel):
@@ -573,6 +575,8 @@ def create_app(
                 bundle_delta=request.bundle_delta,
                 inference_result=request.inference_result,
                 inference_results=request.inference_results,
+                external_llm_result=request.external_llm_result,
+                external_llm_results=request.external_llm_results,
                 metrics=request.metrics,
             )
         except ResultRejected as exc:

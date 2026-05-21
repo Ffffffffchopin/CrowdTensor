@@ -45,9 +45,12 @@ Current workload types:
 - `micro_transformer_lm`: tiny analytic character language-model workload
 - `model_bundle_lm`: model-artifact-shaped contract with identity and version checks
 - `model_bundle_infer`: read-only inference-shaped model bundle probe with prediction recomputation
+- `external_llm_infer`: optional read-only external LLM runtime adapter contract using `external_llm_infer_v1`
 - `browser_probe`: browser Worker compute probe that does not update model state
 
 Each workload defines claim-time input, result payload shape, validation gates, and update behavior. New workloads should keep the network lease/heartbeat protocol unchanged.
+
+`external_llm_infer` is advertised only by Miners that opt into a local runtime. `--enable-mock-llm-runtime` enables the deterministic mock path used by CI and `scripts/external_llm_inference_smoke.py`; `--llm-runtime-cmd` or `CROWDTENSOR_LLM_RUNTIME_CMD` enables an operator-provided command that receives `prompt` and `max_tokens` arguments. Coordinator validates `external_llm_results` by schema, request order, prompt hash, non-empty output, output length, and request count. The workload is read-only and records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries.
 
 ## Delta Transport
 

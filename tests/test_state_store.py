@@ -9,6 +9,8 @@ from pathlib import Path
 from crowdtensor.protocol import LeaseConflict, NoTaskAvailable, ResultRejected
 from crowdtensor.state_store import StateStore
 from crowdtensor.diloco import run_inner_loop
+from crowdtensor.external_llm import WORKLOAD_TYPE as WORKLOAD_EXTERNAL_LLM_INFER
+from crowdtensor.external_llm import run_mock_external_llm_inference
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
 from crowdtensor.model_bundle import WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_LM
@@ -67,6 +69,9 @@ class StateStoreTests(unittest.TestCase):
 
     def _model_bundle_inference_capabilities(self) -> dict:
         return self._python_capabilities([WORKLOAD_MODEL_BUNDLE_INFER])
+
+    def _external_llm_inference_capabilities(self) -> dict:
+        return self._python_capabilities([WORKLOAD_EXTERNAL_LLM_INFER])
 
     def test_claim_complete_checkpoints_and_creates_next_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -972,7 +977,96 @@ class StateStoreTests(unittest.TestCase):
                 )
 
             self.assertEqual(raised.exception.validation["code"], "model_bundle_inference_prediction_mismatch")
-            self.assertEqual(raised.exception.validation["request_index"], 2)
+
+    def test_external_llm_inference_is_read_only_ledgered_and_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=3,
+                backlog=0,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": WORKLOAD_EXTERNAL_LLM_INFER,
+                    },
+                ],
+            )
+            claim = store.claim_task("external-llm-miner", capabilities=self._external_llm_inference_capabilities())
+            self.assertEqual(claim["workload_type"], WORKLOAD_EXTERNAL_LLM_INFER)
+            self.assertEqual(claim["workload_spec"]["request_count"], 3)
+            self.assertEqual(claim["weights"], [])
+            inner_result = run_mock_external_llm_inference(claim["workload_spec"])
+
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                external_llm_result=inner_result["external_llm_result"],
+                external_llm_results=inner_result["external_llm_results"],
+                metrics=inner_result,
+            )
+
+            summary = store.summary()
+            self.assertFalse(result["model_updated"])
+            self.assertFalse(result["model_bundle_updated"])
+            self.assertEqual(result["workload_type"], WORKLOAD_EXTERNAL_LLM_INFER)
+            self.assertEqual(result["request_count"], 3)
+            self.assertEqual(result["completion_count"], 3)
+            self.assertEqual(result["adapter_kind"], "mock")
+            self.assertGreater(result["output_chars"], 0)
+            self.assertEqual(summary["model"]["global_step"], 0)
+            self.assertEqual(summary["model_updates"], 0)
+            row = store.result_ledger(status="accepted", workload_type=WORKLOAD_EXTERNAL_LLM_INFER)[0]
+            self.assertEqual(row["validation"]["request_count"], 3)
+            self.assertEqual(row["validation"]["completion_count"], 3)
+            self.assertEqual(row["validation"]["adapter_kind"], "mock")
+            self.assertIn("output_preview", row["validation"])
+            self.assertEqual(row["session_metrics"]["request_count"], 3)
+            self.assertEqual(row["session_metrics"]["completion_count"], 3)
+            self.assertEqual(row["session_metrics"]["adapter_kind"], "mock")
+            public_tasks = json.dumps(summary["tasks"], sort_keys=True)
+            self.assertNotIn("external_llm_result", public_tasks)
+            self.assertNotIn("external_llm_results", public_tasks)
+            self.assertNotIn("output_text", public_tasks)
+
+    def test_external_llm_inference_rejects_wrong_prompt_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=1,
+                backlog=0,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": WORKLOAD_EXTERNAL_LLM_INFER,
+                    },
+                ],
+            )
+            claim = store.claim_task("external-bad-miner", capabilities=self._external_llm_inference_capabilities())
+            inner_result = run_mock_external_llm_inference(claim["workload_spec"])
+            bad_result = dict(inner_result["external_llm_result"])
+            bad_result["prompt_hash"] = "sha256:wrong"
+
+            with self.assertRaises(ResultRejected) as raised:
+                store.complete_task(
+                    claim["task_id"],
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    external_llm_result=bad_result,
+                    external_llm_results=[bad_result],
+                    metrics=inner_result,
+                )
+
+            self.assertEqual(raised.exception.validation["code"], "external_llm_prompt_hash_mismatch")
+            row = store.result_ledger(status="rejected", workload_type=WORKLOAD_EXTERNAL_LLM_INFER)[0]
+            self.assertEqual(row["validation"]["code"], "external_llm_prompt_hash_mismatch")
+            self.assertEqual(raised.exception.validation["request_index"], 0)
 
     def test_backlog_allows_async_claims_and_records_staleness(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

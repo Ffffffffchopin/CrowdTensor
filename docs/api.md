@@ -362,6 +362,36 @@ For `model_bundle_infer`, submit an `inference_results` array for the claim-time
 
 Accepted `model_bundle_infer` results are read-only: `model_updated=false`, `model_bundle_updated=false`, dense `global_step` does not change, and `model_bundle.version` does not advance. The admin result ledger keeps prediction summary fields plus `request_count`, `correct_count`, and `accuracy`, and its `session_metrics` summary can include `elapsed_ms` and `requests_per_second`. Redacted `/state` avoids raw `inference_result` and `inference_results` payloads while retaining safe aggregate metrics and Miner capability profiles.
 
+For `external_llm_infer`, submit `external_llm_results` for the claim-time prompt request list. The single `external_llm_result` object is also accepted for a one-request result. Miners only advertise this workload when started with `--enable-mock-llm-runtime` or an operator-provided `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD`.
+
+```json
+{
+  "lease_token": "lease-token-from-claim",
+  "attempt": 1,
+  "external_llm_results": [
+    {
+      "schema_version": "external_llm_infer_v1",
+      "request_id": "req-1",
+      "prompt_hash": "sha256:...",
+      "adapter_kind": "mock",
+      "model_id": "mock-external-llm",
+      "output_text": "mock completion for: Explain CrowdTensor in one sentence.",
+      "output_chars": 61
+    }
+  ],
+  "metrics": {
+    "request_count": 1,
+    "completion_count": 1,
+    "output_chars": 61,
+    "adapter_kind": "mock",
+    "elapsed_ms": 2.5,
+    "requests_per_second": 400.0
+  }
+}
+```
+
+Accepted `external_llm_infer` results are read-only: `model_updated=false`, `model_bundle_updated=false`, and no model checkpoint is changed. Coordinator validates `external_llm_infer_v1`, request order, prompt hashes, non-empty output, output length, and request count. The admin result ledger keeps safe `request_count`, `completion_count`, `output_chars`, `adapter_kind`, `model_id`, and short `output_preview` summaries; redacted `/state` avoids raw `external_llm_result`, `external_llm_results`, and `output_text` payloads.
+
 Successful `diloco_train` response fields include:
 
 - `accepted`
@@ -383,6 +413,7 @@ Other current workload result fields:
 - `micro_transformer_lm`: submit `local_delta`.
 - `model_bundle_lm`: submit `bundle_delta`.
 - `model_bundle_infer`: submit `inference_results` or legacy `inference_result`.
+- `external_llm_infer`: submit `external_llm_results` or legacy one-row `external_llm_result`.
 
 ## Common Failure Statuses
 
