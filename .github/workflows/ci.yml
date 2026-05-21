@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e .[dev]
+      - name: Compile
+        run: python -m py_compile coordinator.py miner_cli.py scripts/*.py crowdtensor/*.py
+      - name: Release gate
+        run: python scripts/release_gate.py --json
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Runtime acceptance
+        if: matrix.python-version == '3.12'
+        run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json

@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.playwright-mcp
+state
+dist
+build
+*.egg-info
+.coverage
+htmlcov
+.env

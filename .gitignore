@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+state/
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+.env
+.ruff_cache/
+.mypy_cache/
+.playwright-mcp/
+.agents/
+.codex/
+.DS_Store

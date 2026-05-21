@@ -1,0 +1,377 @@
+from __future__ import annotations
+
+import argparse
+import importlib.util
+from pathlib import Path
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATH = ROOT / "scripts" / "runtime_acceptance_pack.py"
+SPEC = importlib.util.spec_from_file_location("runtime_acceptance_pack", SCRIPT_PATH)
+runtime_acceptance_pack = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(runtime_acceptance_pack)
+
+
+def acceptance_args(**overrides):
+    values = {
+        "host": "127.0.0.1",
+        "base_port": 9010,
+        "admin_token": "admin-test",
+        "miner_token": "",
+        "observer_token": "",
+        "include_browser": False,
+        "include_browser_chaos": False,
+        "include_micro_transformer": False,
+        "include_remote_miner": False,
+        "browser": "",
+        "headful": False,
+        "browser_timeout": 20.0,
+        "skip_readiness": False,
+        "skip_api_contract": False,
+        "skip_chaos": False,
+        "skip_trust": False,
+        "skip_replay_audit": False,
+        "skip_operator": False,
+        "skip_micro_transformer": False,
+        "skip_result_idempotency": False,
+        "skip_miner_resilience": False,
+        "skip_miner_auth": False,
+        "skip_observer_auth": False,
+        "skip_miner_registry_auth": False,
+        "skip_token_hash_auth": False,
+        "skip_remote_miner": False,
+        "skip_webrtc": False,
+        "skip_runtime_contract": False,
+        "skip_browser_miner": False,
+        "skip_browser_probe": False,
+        "skip_capability_ledger": False,
+        "skip_browser_chaos": False,
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+class RuntimeAcceptancePackTests(unittest.TestCase):
+    def test_build_report_aggregates_check_statuses(self) -> None:
+        passing = runtime_acceptance_pack.build_report(
+            "2026-05-19T00:00:00+00:00",
+            "2026-05-19T00:00:01+00:00",
+            1.2345,
+            [{"name": "chaos", "ok": True}, {"name": "trust", "ok": True}],
+        )
+        failing = runtime_acceptance_pack.build_report(
+            "2026-05-19T00:00:00+00:00",
+            "2026-05-19T00:00:01+00:00",
+            1.0,
+            [{"name": "chaos", "ok": True}, {"name": "operator", "ok": False}],
+        )
+
+        self.assertTrue(passing["ok"])
+        self.assertEqual(passing["duration_seconds"], 1.234)
+        self.assertFalse(failing["ok"])
+        self.assertEqual([check["name"] for check in failing["checks"]], ["chaos", "operator"])
+
+    def test_selected_checks_respects_skips_and_ports(self) -> None:
+        args = acceptance_args(skip_trust=True)
+
+        checks = runtime_acceptance_pack.selected_checks(args, Path("/tmp/crowdtensor_acceptance_test"))
+
+        self.assertEqual([check["name"] for check in checks], ["readiness", "api_contract", "chaos", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"])
+        self.assertEqual([check["port"] for check in checks], [9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018, 9019, 9020, 9021, 9022])
+        operator = next(check for check in checks if check["name"] == "operator_control")
+        self.assertIn("--admin-token", operator["command"])
+        self.assertIn("admin-test", operator["command"])
+        self.assertTrue(all(check.get("miner_token") == "" for check in checks))
+        self.assertTrue(all(check.get("observer_token") == "" for check in checks))
+
+    def test_browser_checks_are_opt_in(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertEqual(
+            [check["name"] for check in checks],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
+        )
+
+    def test_readiness_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        readiness = next(check for check in checks if check["name"] == "readiness")
+        self.assertEqual(readiness["port"], 9010)
+        self.assertIn("readiness_check.py", readiness["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_readiness=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("readiness", [check["name"] for check in skipped])
+
+    def test_api_contract_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        api_contract = next(check for check in checks if check["name"] == "api_contract")
+        self.assertEqual(api_contract["port"], 9011)
+        self.assertIn("api_contract_check.py", api_contract["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_api_contract=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("api_contract", [check["name"] for check in skipped])
+
+    def test_micro_transformer_check_is_default_and_legacy_include_is_noop(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_micro_transformer=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertEqual(
+            [check["name"] for check in checks],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
+        )
+        micro = next(check for check in checks if check["name"] == "micro_transformer")
+        self.assertEqual(micro["port"], 9016)
+        self.assertIn("micro_transformer_smoke.py", micro["command"][1])
+
+    def test_micro_transformer_skip_removes_default_check(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_micro_transformer=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertEqual(
+            [check["name"] for check in checks],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth"],
+        )
+
+    def test_result_idempotency_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        result_idempotency = next(check for check in checks if check["name"] == "result_idempotency")
+        self.assertEqual(result_idempotency["port"], 9017)
+        self.assertIn("result_idempotency_check.py", result_idempotency["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_result_idempotency=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("result_idempotency", [check["name"] for check in skipped])
+
+    def test_miner_resilience_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        resilience = next(check for check in checks if check["name"] == "miner_resilience")
+        self.assertEqual(resilience["port"], 9018)
+        self.assertIn("miner_resilience_check.py", resilience["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_miner_resilience=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("miner_resilience", [check["name"] for check in skipped])
+
+    def test_miner_auth_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        miner_auth = next(check for check in checks if check["name"] == "miner_auth")
+        self.assertEqual(miner_auth["port"], 9019)
+        self.assertIn("miner_auth_check.py", miner_auth["command"][1])
+        self.assertNotIn("miner-test", miner_auth["command"])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_miner_auth=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("miner_auth", [check["name"] for check in skipped])
+
+    def test_explicit_miner_token_is_not_written_into_commands(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(miner_token="miner-test"),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertTrue(all(check.get("miner_token") == "miner-test" for check in checks))
+        self.assertTrue(all("miner-test" not in check["command"] for check in checks))
+
+    def test_observer_auth_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        observer_auth = next(check for check in checks if check["name"] == "observer_auth")
+        self.assertEqual(observer_auth["port"], 9020)
+        self.assertIn("observer_auth_check.py", observer_auth["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_observer_auth=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("observer_auth", [check["name"] for check in skipped])
+
+    def test_miner_registry_auth_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        registry_auth = next(check for check in checks if check["name"] == "miner_registry_auth")
+        self.assertEqual(registry_auth["port"], 9021)
+        self.assertIn("miner_registry_auth_check.py", registry_auth["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_miner_registry_auth=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("miner_registry_auth", [check["name"] for check in skipped])
+
+    def test_token_hash_auth_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        hash_auth = next(check for check in checks if check["name"] == "token_hash_auth")
+        self.assertEqual(hash_auth["port"], 9022)
+        self.assertIn("token_hash_auth_check.py", hash_auth["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_token_hash_auth=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("token_hash_auth", [check["name"] for check in skipped])
+
+    def test_explicit_observer_token_is_not_written_into_commands(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(observer_token="observer-test"),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertTrue(all(check.get("observer_token") == "observer-test" for check in checks))
+        self.assertTrue(all("observer-test" not in check["command"] for check in checks))
+
+    def test_remote_miner_readiness_is_opt_in(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_remote_miner=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertEqual(
+            [check["name"] for check in checks],
+            ["readiness", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "result_idempotency", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "remote_miner"],
+        )
+        self.assertEqual(checks[-1]["port"], 9023)
+        self.assertIn("remote_miner_readiness_check.py", checks[-1]["command"][1])
+
+    def test_remote_miner_skip_removes_opt_in_check(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_remote_miner=True, skip_remote_miner=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertNotIn("remote_miner", [check["name"] for check in checks])
+
+    def test_include_browser_adds_lightweight_browser_pack(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_browser=True, browser="/usr/bin/chromium", headful=True, browser_timeout=7.5),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        browser_checks = checks[13:]
+        self.assertEqual(
+            [check["name"] for check in browser_checks],
+            ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger"],
+        )
+        self.assertEqual([check["port"] for check in browser_checks], [9024, 9025, 9027, 9029, 9031])
+        self.assertEqual([check.get("web_port") for check in browser_checks], [None, 9026, 9028, 9030, 9032])
+        for check in browser_checks:
+            self.assertIn("--browser", check["command"])
+            self.assertIn("/usr/bin/chromium", check["command"])
+            self.assertIn("--headful", check["command"])
+        self.assertIn("--timeout", browser_checks[0]["command"])
+        self.assertIn("7.5", browser_checks[0]["command"])
+
+    def test_include_browser_chaos_adds_full_browser_pack_tail(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_browser=True, include_browser_chaos=True, browser="/usr/bin/chromium"),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        browser_checks = checks[13:]
+        self.assertEqual(
+            [check["name"] for check in browser_checks],
+            ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger", "browser_chaos"],
+        )
+        chaos = browser_checks[-1]
+        self.assertEqual(chaos["port"], 9033)
+        self.assertEqual(chaos["web_port"], 9034)
+        self.assertIn("browser_miner_chaos.py", chaos["command"][1])
+        self.assertIn("--coordinator-port", chaos["command"])
+        self.assertIn("9033", chaos["command"])
+        self.assertIn("--web-port", chaos["command"])
+        self.assertIn("9034", chaos["command"])
+        self.assertIn("--browser", chaos["command"])
+        self.assertIn("/usr/bin/chromium", chaos["command"])
+
+    def test_browser_chaos_skip_removes_full_browser_tail(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_browser=True, include_browser_chaos=True, skip_browser_chaos=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertNotIn("browser_chaos", [check["name"] for check in checks])
+
+    def test_browser_skip_flags_remove_individual_checks(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(
+                include_browser=True,
+                skip_webrtc=True,
+                skip_browser_probe=True,
+                skip_capability_ledger=True,
+            ),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertEqual(
+            [check["name"] for check in checks],
+            [
+                "readiness",
+                "api_contract",
+                "chaos",
+                "trust_quarantine",
+                "replay_audit",
+                "operator_control",
+                "micro_transformer",
+                "result_idempotency",
+                "miner_resilience",
+                "miner_auth",
+                "observer_auth",
+                "miner_registry_auth",
+                "token_hash_auth",
+                "runtime_contract",
+                "browser_miner",
+            ],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

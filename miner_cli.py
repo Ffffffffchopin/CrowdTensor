@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""Headless Miner CLI for CrowdTensorD Phase 1."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import socket
+import sys
+import threading
+import time
+import uuid
+from collections import Counter
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from crowdtensor.diloco import run_inner_loop
+from crowdtensor.lora_mock import run_lora_inner_loop
+from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
+from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
+
+
+RETRYABLE_HTTP_STATUSES = {500, 502, 504}
+EXPECTED_PROTOCOL_VERSION = "runtime_contract_v1"
+
+
+class CoordinatorHTTPError(RuntimeError):
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(f"coordinator returned HTTP {status}: {detail}")
+        self.status = status
+        self.detail = detail
+
+
+class CoordinatorTransportError(RuntimeError):
+    """Raised for transport failures before the Coordinator returns a response."""
+
+
+def request_json(
+    method: str,
+    base_url: str,
+    path: str,
+    payload: dict | None = None,
+    *,
+    timeout: float = 10.0,
+    miner_token: str = "",
+) -> dict:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {"content-type": "application/json"} if payload is not None else {}
+    if miner_token:
+        headers["x-crowdtensor-miner-token"] = miner_token
+    request = Request(
+        f"{base_url.rstrip('/')}{path}",
+        data=body,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw else {}
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise CoordinatorHTTPError(exc.code, detail) from exc
+    except URLError as exc:
+        raise CoordinatorTransportError(f"coordinator is unreachable: {exc}") from exc
+    except OSError as exc:
+        raise CoordinatorTransportError(f"coordinator is unreachable: {exc}") from exc
+
+
+def should_retry_error(exc: Exception) -> bool:
+    if isinstance(exc, CoordinatorTransportError):
+        return True
+    return isinstance(exc, CoordinatorHTTPError) and exc.status in RETRYABLE_HTTP_STATUSES
+
+
+def retry_sleep_seconds(args: argparse.Namespace, attempt: int) -> float:
+    base = max(0.0, float(args.retry_base_sleep))
+    cap = max(base, float(args.retry_max_sleep))
+    return min(cap, base * (2 ** max(0, attempt - 1)))
+
+
+def request_json_with_retries(
+    method: str,
+    base_url: str,
+    path: str,
+    payload: dict | None = None,
+    *,
+    timeout: float,
+    miner_token: str = "",
+    args: argparse.Namespace,
+    counters: Counter | None = None,
+    retry_result_upload: bool = False,
+) -> dict:
+    max_attempts = max(1, int(args.max_request_attempts))
+    if method == "POST" and path.rsplit("/", 1)[-1] == "result" and not retry_result_upload:
+        max_attempts = 1
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return request_json(
+                method,
+                base_url,
+                path,
+                payload,
+                timeout=timeout,
+                miner_token=miner_token,
+            )
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= max_attempts or not should_retry_error(exc):
+                raise
+            if counters is not None:
+                counters["request_retries"] += 1
+            sleep_for = retry_sleep_seconds(args, attempt)
+            print(
+                f"retrying {method} {path} after {exc} "
+                f"(attempt {attempt + 1}/{max_attempts})",
+                file=sys.stderr,
+                flush=True,
+            )
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("request retry loop exited unexpectedly")
+
+
+def post_json(
+    base_url: str,
+    path: str,
+    payload: dict,
+    *,
+    timeout: float = 10.0,
+    miner_token: str = "",
+    args: argparse.Namespace | None = None,
+    counters: Counter | None = None,
+    retry_result_upload: bool = False,
+) -> dict:
+    if args is None:
+        return request_json("POST", base_url, path, payload, timeout=timeout, miner_token=miner_token)
+    return request_json_with_retries(
+        "POST",
+        base_url,
+        path,
+        payload,
+        timeout=timeout,
+        miner_token=miner_token,
+        args=args,
+        counters=counters,
+        retry_result_upload=retry_result_upload,
+    )
+
+
+def preflight(args: argparse.Namespace, counters: Counter) -> None:
+    if args.skip_preflight:
+        return
+    try:
+        payload = request_json_with_retries(
+            "GET",
+            args.coordinator,
+            "/ready",
+            timeout=args.preflight_timeout,
+            args=args,
+            counters=counters,
+        )
+    except Exception:
+        counters["preflight_failures"] += 1
+        raise
+    if payload.get("ok") is not True:
+        counters["preflight_failures"] += 1
+        raise RuntimeError(f"coordinator is not ready: {payload}")
+    protocol_version = payload.get("protocol_version")
+    if protocol_version != EXPECTED_PROTOCOL_VERSION:
+        counters["preflight_failures"] += 1
+        raise RuntimeError(
+            f"coordinator protocol mismatch: expected {EXPECTED_PROTOCOL_VERSION}, got {protocol_version}"
+        )
+    print(
+        f"preflight ok service={payload.get('service', 'unknown')} "
+        f"version={payload.get('version', 'unknown')} protocol={protocol_version}",
+        flush=True,
+    )
+
+
+def run_heartbeat(
+    *,
+    coordinator: str,
+    claim: dict,
+    interval: float,
+    stop: threading.Event,
+    args: argparse.Namespace,
+    counters: Counter,
+    task_started_at: float,
+) -> None:
+    while not stop.wait(interval):
+        try:
+            heartbeat = post_json(
+                coordinator,
+                f"/tasks/{claim['task_id']}/heartbeat",
+                {
+                    "lease_token": claim["lease_token"],
+                    "attempt": claim["attempt"],
+                    "runtime_status": {
+                        "runtime": "python-cli",
+                        "phase": "training",
+                        "workload_type": claim.get("workload_type", "diloco_train"),
+                        "pid": os_safe_pid(),
+                        "accepted_tasks": int(counters.get("accepted_tasks", 0)),
+                        "current_task_elapsed_seconds": round(time.monotonic() - task_started_at, 6),
+                        "compute_seconds": float(args.compute_seconds),
+                        "max_tasks": int(args.max_tasks),
+                    },
+                },
+                timeout=args.heartbeat_timeout,
+                miner_token=args.miner_token,
+                args=args,
+                counters=counters,
+            )
+            print(
+                f"heartbeat task={heartbeat['task_id']} "
+                f"attempt={heartbeat['attempt']} expires={heartbeat['lease_expires_at']:.3f}",
+                flush=True,
+            )
+        except Exception as exc:
+            counters["heartbeat_failures"] += 1
+            print(f"heartbeat failed: {exc}", file=sys.stderr, flush=True)
+            stop.set()
+
+
+def os_safe_pid() -> int:
+    return os.getpid()
+
+
+def miner_capabilities() -> dict:
+    return {
+        "runtime": "python-cli",
+        "backend": "cpu",
+        "supports_training_spec": True,
+        "protocol_version": "runtime_contract_v1",
+        "supported_workloads": ["diloco_train", "cpu_lora_mock", WORKLOAD_MICRO_TRANSFORMER_LM],
+        "pid": os_safe_pid(),
+    }
+
+
+def process_one(args: argparse.Namespace, counters: Counter) -> bool:
+    claim = post_json(
+        args.coordinator,
+        "/tasks/claim",
+        {
+            "miner_id": args.miner_id,
+            "capabilities": miner_capabilities(),
+        },
+        timeout=args.claim_timeout,
+        miner_token=args.miner_token,
+        args=args,
+        counters=counters,
+    )
+    print(
+        f"claimed task={claim['task_id']} attempt={claim['attempt']} "
+        f"model_version={claim['model_version']}",
+        flush=True,
+    )
+    workload_type = claim.get("workload_type", "diloco_train")
+    if workload_type not in {"diloco_train", "cpu_lora_mock", WORKLOAD_MICRO_TRANSFORMER_LM}:
+        raise RuntimeError(f"python-cli miner does not support workload {workload_type}")
+
+    stop = threading.Event()
+    heartbeat_interval = args.heartbeat_interval or float(claim.get("heartbeat_interval", 5.0))
+    task_started_at = time.monotonic()
+    thread = threading.Thread(
+        target=run_heartbeat,
+        kwargs={
+            "coordinator": args.coordinator,
+            "claim": claim,
+            "interval": heartbeat_interval,
+            "stop": stop,
+            "args": args,
+            "counters": counters,
+            "task_started_at": task_started_at,
+        },
+        daemon=True,
+    )
+    thread.start()
+
+    try:
+        if workload_type == "cpu_lora_mock":
+            inner_result = run_lora_inner_loop(
+                claim["workload_spec"],
+                inner_steps=int(claim["inner_steps"]),
+                compute_seconds=args.compute_seconds,
+            )
+        elif workload_type == WORKLOAD_MICRO_TRANSFORMER_LM:
+            inner_result = run_micro_transformer_inner_loop(
+                claim["workload_spec"],
+                inner_steps=int(claim["inner_steps"]),
+                compute_seconds=args.compute_seconds,
+            )
+        else:
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id=args.miner_id,
+                model_version=int(claim["model_version"]),
+                inner_steps=int(claim["inner_steps"]),
+                compute_seconds=args.compute_seconds,
+                training_spec=claim.get("training_spec"),
+            )
+        if stop.is_set():
+            print("lease heartbeat stopped before result upload", file=sys.stderr, flush=True)
+            return False
+        payload = {
+            "lease_token": claim["lease_token"],
+            "attempt": claim["attempt"],
+            "idempotency_key": uuid.uuid4().hex,
+            "metrics": {
+                key: value
+                for key, value in inner_result.items()
+                if key not in {"local_delta", "adapter_delta"}
+            },
+        }
+        payload["metrics"]["elapsed_ms"] = round((time.monotonic() - task_started_at) * 1000.0, 6)
+        if workload_type == "cpu_lora_mock":
+            payload["adapter_delta"] = inner_result["adapter_delta"]
+        else:
+            payload["local_delta"] = inner_result["local_delta"]
+        stop.set()
+        thread.join(timeout=max(0.1, args.heartbeat_timeout))
+        result = post_json(
+            args.coordinator,
+            f"/tasks/{claim['task_id']}/result",
+            payload,
+            timeout=args.result_timeout,
+            miner_token=args.miner_token,
+            args=args,
+            counters=counters,
+            retry_result_upload=bool(payload.get("idempotency_key")),
+        )
+        counters["accepted_tasks"] += 1
+        counters[f"workload:{workload_type}"] += 1
+        if workload_type == "cpu_lora_mock":
+            print(
+                f"accepted adapter task={claim['task_id']} adapter_step={result['adapter_step']} "
+                f"adapter_loss={result['adapter_loss']:.6f}",
+                flush=True,
+            )
+            return True
+        if workload_type == WORKLOAD_MICRO_TRANSFORMER_LM:
+            print(
+                f"accepted micro-transformer task={claim['task_id']} "
+                f"lm_version={result['model_version']} "
+                f"lm_step={result['micro_transformer_optimizer_step']} "
+                f"lm_loss={inner_result['lm_loss_start']:.6f}->{inner_result['lm_loss_end']:.6f}",
+                flush=True,
+            )
+            return True
+        print(
+            f"accepted task={claim['task_id']} global_step={result['global_step']} "
+            f"model_version={result['model_version']} optimizer_step={result['optimizer_step']} "
+            f"inner_loss={inner_result['inner_loss_start']:.6f}->{inner_result['inner_loss_end']:.6f} "
+            f"outer_loss={result['loss']:.6f}",
+            flush=True,
+        )
+        return True
+    finally:
+        stop.set()
+        thread.join(timeout=2.0)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run a CrowdTensorD Phase 1 Miner.")
+    parser.add_argument("--coordinator", default="http://127.0.0.1:8787")
+    parser.add_argument("--miner-id", default=f"{socket.gethostname()}-{os_safe_pid()}")
+    parser.add_argument("--once", action="store_true", help="process one task and exit")
+    parser.add_argument("--max-tasks", type=int, default=0, help="exit after accepting this many tasks; 0 runs forever")
+    parser.add_argument(
+        "--max-runtime-seconds",
+        type=float,
+        default=0.0,
+        help="exit after this many seconds once the current task completes; 0 disables the limit",
+    )
+    parser.add_argument("--compute-seconds", type=float, default=0.0, help="hold the lease for chaos testing")
+    parser.add_argument("--heartbeat-interval", type=float, default=0.0)
+    parser.add_argument("--claim-timeout", type=float, default=10.0)
+    parser.add_argument("--result-timeout", type=float, default=10.0)
+    parser.add_argument("--heartbeat-timeout", type=float, default=5.0)
+    parser.add_argument("--skip-preflight", action="store_true", help="skip the startup /ready protocol check")
+    parser.add_argument("--preflight-timeout", type=float, default=5.0)
+    parser.add_argument("--max-request-attempts", type=int, default=3)
+    parser.add_argument("--retry-base-sleep", type=float, default=0.2)
+    parser.add_argument("--retry-max-sleep", type=float, default=2.0)
+    parser.add_argument(
+        "--miner-token",
+        default=os.environ.get("CROWDTENSOR_MINER_TOKEN", ""),
+        help="shared Miner token for Coordinator task endpoints; falls back to CROWDTENSOR_MINER_TOKEN",
+    )
+    parser.add_argument("--idle-sleep", type=float, default=2.0)
+    args = parser.parse_args()
+    if args.once and args.max_tasks <= 0:
+        args.max_tasks = 1
+    if args.max_tasks < 0:
+        raise SystemExit("--max-tasks must be non-negative")
+    if args.max_request_attempts < 1:
+        raise SystemExit("--max-request-attempts must be at least 1")
+    if args.retry_base_sleep < 0:
+        raise SystemExit("--retry-base-sleep must be non-negative")
+    if args.retry_max_sleep < 0:
+        raise SystemExit("--retry-max-sleep must be non-negative")
+    return args
+
+
+def summary_payload(args: argparse.Namespace, counters: Counter, started_at: float) -> dict:
+    return {
+        "miner_id": args.miner_id,
+        "accepted_tasks": int(counters.get("accepted_tasks", 0)),
+        "failed_claims": int(counters.get("failed_claims", 0)),
+        "rejected_results": int(counters.get("rejected_results", 0)),
+        "stale_leases": int(counters.get("stale_leases", 0)),
+        "heartbeat_failures": int(counters.get("heartbeat_failures", 0)),
+        "request_retries": int(counters.get("request_retries", 0)),
+        "preflight_failures": int(counters.get("preflight_failures", 0)),
+        "workloads": {
+            key.split(":", 1)[1]: int(value)
+            for key, value in sorted(counters.items())
+            if key.startswith("workload:")
+        },
+        "elapsed_seconds": round(time.monotonic() - started_at, 6),
+    }
+
+
+def main() -> None:
+    args = parse_args()
+    counters: Counter = Counter()
+    started_at = time.monotonic()
+    try:
+        preflight(args, counters)
+        while True:
+            if args.max_runtime_seconds > 0 and time.monotonic() - started_at >= args.max_runtime_seconds:
+                break
+            if args.max_tasks > 0 and counters["accepted_tasks"] >= args.max_tasks:
+                break
+
+            try:
+                process_one(args, counters)
+            except CoordinatorHTTPError as exc:
+                if exc.status == 409:
+                    counters["stale_leases"] += 1
+                    print(f"stale lease rejected: {exc.detail}", file=sys.stderr, flush=True)
+                elif exc.status == 422:
+                    counters["rejected_results"] += 1
+                    print(str(exc), file=sys.stderr, flush=True)
+                    time.sleep(args.idle_sleep)
+                else:
+                    counters["failed_claims"] += 1
+                    print(str(exc), file=sys.stderr, flush=True)
+                    time.sleep(args.idle_sleep)
+            except KeyboardInterrupt:
+                raise
+            except CoordinatorTransportError as exc:
+                counters["failed_claims"] += 1
+                print(str(exc), file=sys.stderr, flush=True)
+                time.sleep(args.idle_sleep)
+            except Exception as exc:
+                counters["failed_claims"] += 1
+                print(str(exc), file=sys.stderr, flush=True)
+                time.sleep(args.idle_sleep)
+    finally:
+        print(json.dumps(summary_payload(args, counters, started_at), sort_keys=True), flush=True)
+
+
+if __name__ == "__main__":
+    main()
