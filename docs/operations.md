@@ -260,6 +260,30 @@ python3 scripts/release_evidence_pack.py \
 
 `scripts/release_evidence_pack.py` records the current git commit, package metadata, release gate summary, security preflight summary, and acceptance report summaries. The runtime report is required. Browser and remote reports are optional by default; use `--strict-optional` when a release candidate must prove both. CI writes `release-evidence.json` and uploads it as an artifact.
 
+## Support Bundle
+
+For issue reports or remote-demo troubleshooting, generate a Support Bundle:
+
+```bash
+python3 scripts/support_bundle.py \
+  --json-out /tmp/crowdtensor_support_bundle.json \
+  --markdown-out /tmp/crowdtensor_support_bundle.md
+```
+
+To include live Coordinator summaries:
+
+```bash
+python3 scripts/support_bundle.py \
+  --coordinator http://127.0.0.1:8787 \
+  --observer-token local-observer \
+  --admin-token local-admin \
+  --runtime-report /tmp/crowdtensor_acceptance.json \
+  --release-evidence /tmp/crowdtensor_release_evidence.json \
+  --json-out /tmp/crowdtensor_support_bundle.json
+```
+
+`scripts/support_bundle.py` redacts token, lease, idempotency, weight, and delta-shaped fields. Prefer sharing this bundle over raw `state/` files, raw `/state` output, shell history, or token registry files.
+
 ## Troubleshooting
 
 **Address already in use**

@@ -111,6 +111,12 @@ For controlled remote demos:
 
 Use `scripts/remote_miner_join_check.py` to validate registry-backed Miner onboarding in a local smoke test before sending invite commands to a remote machine.
 
+## Support Bundle Hygiene
+
+Use `scripts/support_bundle.py --json-out /tmp/crowdtensor_support_bundle.json` for issue reports and remote-demo troubleshooting. The Support Bundle redacts token, lease, idempotency, weight, and delta-shaped fields before writing output.
+
+Do not upload raw `state/` directories, token registry files, shell history, raw `/state` output, or unredacted Coordinator logs to public issues.
+
 Run the offline security preflight before binding beyond loopback:
 
 ```bash

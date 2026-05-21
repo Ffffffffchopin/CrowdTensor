@@ -50,6 +50,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "browser_acceptance_docs",
                 "release_evidence_docs",
                 "doctor_docs",
+                "support_bundle_docs",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -248,6 +249,19 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "doctor_docs")
         self.assertTrue(any("scripts/doctor.py" in detail for detail in details))
+
+    def test_support_bundle_docs_must_describe_operator_bundle(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        (tmp_root / "README.md").write_text("No support bundle docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "operations.md").write_text("No support bundle docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "security.md").write_text("No support bundle docs here.\n", encoding="utf-8")
+        (tmp_root / ".github" / "workflows" / "ci.yml").write_text("No support bundle docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "support_bundle_docs")
+        self.assertTrue(any("scripts/support_bundle.py" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

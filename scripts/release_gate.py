@@ -33,6 +33,7 @@ REQUIRED_FILES = [
     "scripts/miner_resilience_check.py",
     "scripts/readiness_check.py",
     "scripts/doctor.py",
+    "scripts/support_bundle.py",
     "scripts/hash_token.py",
     "scripts/token_hash_auth_check.py",
     "scripts/security_preflight.py",
@@ -384,6 +385,29 @@ def check_doctor_docs(root: Path) -> dict[str, Any]:
     return check_result("doctor_docs", not details, details)
 
 
+def check_support_bundle_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/security.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "scripts/support_bundle.py",
+        "--json-out",
+        "Support Bundle",
+        "support_bundle",
+    ]:
+        if fragment not in combined:
+            details.append(f"support bundle docs or CI must mention {fragment}")
+    return check_result("support_bundle_docs", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -457,6 +481,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python -m py_compile": "CI must compile Python entrypoints",
         "python scripts/release_gate.py --json": "CI must run the release gate",
         "python scripts/doctor.py --json": "CI must run first-run doctor",
+        "python scripts/support_bundle.py": "CI must build support bundle",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
         "outer_optimizer_check.py": "CI must run the outer optimizer smoke through runtime acceptance",
@@ -491,6 +516,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_browser_acceptance_docs(gate_root),
         check_release_evidence_docs(gate_root),
         check_doctor_docs(gate_root),
+        check_support_bundle_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

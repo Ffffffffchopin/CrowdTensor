@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""Build a safe CrowdTensorD operator support bundle."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import re
+import sys
+import tomllib
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = ROOT / "scripts"
+for path in [ROOT, SCRIPTS_DIR]:
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+import doctor  # noqa: E402
+import release_evidence_pack  # noqa: E402
+import release_gate  # noqa: E402
+
+
+SENSITIVE_FRAGMENTS = (
+    "token",
+    "secret",
+    "key",
+    "delta",
+    "weights",
+    "lease",
+    "idempotency",
+)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def read_pyproject(root: Path) -> dict[str, Any]:
+    payload = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    project = payload.get("project", {})
+    return {
+        "name": project.get("name", ""),
+        "version": project.get("version", ""),
+        "requires_python": project.get("requires-python", ""),
+    }
+
+
+def is_sensitive_key(key: str) -> bool:
+    lowered = str(key).lower()
+    parts = [part for part in re.split(r"[^a-z0-9]+", lowered) if part]
+    return any(fragment in parts for fragment in SENSITIVE_FRAGMENTS)
+
+
+def sanitize(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if is_sensitive_key(str(key)):
+                sanitized[str(key)] = "<redacted>"
+            else:
+                sanitized[str(key)] = sanitize(item)
+        return sanitized
+    if isinstance(value, list):
+        return [sanitize(item) for item in value]
+    return value
+
+
+def summarize_checks(report: dict[str, Any], *, label_key: str = "name") -> dict[str, Any]:
+    checks = report.get("checks") if isinstance(report, dict) else []
+    if not isinstance(checks, list):
+        checks = []
+    failed = [
+        str(check.get(label_key) or check.get("id") or "<unnamed>")
+        for check in checks
+        if isinstance(check, dict) and check.get("ok") is not True
+    ]
+    return {
+        "ok": bool(report.get("ok")) if isinstance(report, dict) else False,
+        "total": len(checks),
+        "failed": failed,
+    }
+
+
+def load_json_report(path: str, *, name: str, required: bool = False) -> dict[str, Any]:
+    if not path:
+        return {"name": name, "present": False, "required": required, "ok": not required}
+    report_path = Path(path)
+    if not report_path.is_file():
+        return {
+            "name": name,
+            "path": str(report_path),
+            "present": False,
+            "required": required,
+            "ok": not required,
+            "error": "report file does not exist",
+        }
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"{name} report is not valid JSON: {exc}") from exc
+    summary = summarize_checks(payload)
+    return {
+        "name": name,
+        "path": str(report_path),
+        "present": True,
+        "required": required,
+        "ok": bool(payload.get("ok", summary["ok"])),
+        "skipped": bool(payload.get("skipped")),
+        "skip_reason": payload.get("skip_reason", ""),
+        "duration_seconds": payload.get("duration_seconds"),
+        "checks_total": summary["total"],
+        "checks_failed": summary["failed"],
+        "status": payload.get("release_status", {}).get("status", ""),
+        "blocking_reasons": payload.get("release_status", {}).get("blocking_reasons", []),
+    }
+
+
+def request_text(
+    base_url: str,
+    path: str,
+    *,
+    token_header: tuple[str, str] | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    headers = {}
+    if token_header is not None and token_header[1]:
+        headers[token_header[0]] = token_header[1]
+    request = Request(f"{base_url.rstrip('/')}{path}", headers=headers, method="GET")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            return {
+                "ok": 200 <= response.status < 300,
+                "status": response.status,
+                "content_type": response.headers.get("content-type", ""),
+                "body": raw,
+            }
+    except HTTPError as exc:
+        return {
+            "ok": False,
+            "status": exc.code,
+            "content_type": exc.headers.get("content-type", "") if exc.headers else "",
+            "body": exc.read().decode("utf-8"),
+        }
+    except (OSError, URLError) as exc:
+        return {"ok": False, "status": None, "error": str(exc), "body": ""}
+
+
+def request_json(
+    base_url: str,
+    path: str,
+    *,
+    token_header: tuple[str, str] | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    response = request_text(base_url, path, token_header=token_header, timeout=timeout)
+    if not response.get("body"):
+        return response
+    try:
+        response["json"] = sanitize(json.loads(str(response["body"])))
+        response.pop("body", None)
+    except json.JSONDecodeError:
+        response["body"] = str(response["body"])[:1000]
+    return response
+
+
+def state_digest(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("json") if isinstance(payload, dict) else {}
+    if not isinstance(data, dict):
+        return payload
+    model = data.get("model") if isinstance(data.get("model"), dict) else {}
+    return {
+        "ok": payload.get("ok"),
+        "status": payload.get("status"),
+        "event_index": data.get("event_index"),
+        "task_counts": data.get("task_counts", {}),
+        "accepted_results": data.get("accepted_results"),
+        "rejected_results": data.get("rejected_results"),
+        "model": {
+            "global_step": model.get("global_step"),
+            "optimizer_step": model.get("optimizer_step"),
+            "adapter_step": model.get("adapter_step"),
+            "micro_transformer_step": (model.get("micro_transformer") or {}).get("optimizer_step")
+            if isinstance(model.get("micro_transformer"), dict)
+            else None,
+            "model_bundle_step": (model.get("model_bundle") or {}).get("optimizer_step")
+            if isinstance(model.get("model_bundle"), dict)
+            else None,
+        },
+        "miner_profiles": len(data.get("miner_profiles") or {}),
+        "miner_workload_scores": len(data.get("miner_workload_scores") or {}),
+        "task_lanes": len(data.get("task_lanes") or []),
+    }
+
+
+def metrics_digest(payload: dict[str, Any]) -> dict[str, Any]:
+    body = str(payload.get("body") or "")
+    return {
+        "ok": payload.get("ok"),
+        "status": payload.get("status"),
+        "content_type": payload.get("content_type", ""),
+        "line_count": len([line for line in body.splitlines() if line.strip()]),
+        "text": body,
+        "error": payload.get("error", ""),
+    }
+
+
+def collect_online(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.coordinator:
+        return {"enabled": False}
+    observer_header = ("x-crowdtensor-observer-token", args.observer_token)
+    admin_header = ("x-crowdtensor-admin-token", args.admin_token)
+    online: dict[str, Any] = {
+        "enabled": True,
+        "base_url": args.coordinator.rstrip("/"),
+        "health": request_json(args.coordinator, "/health", timeout=args.timeout),
+        "version": request_json(args.coordinator, "/version", timeout=args.timeout),
+        "ready": request_json(args.coordinator, "/ready", timeout=args.timeout),
+        "metrics": metrics_digest(
+            request_text(
+                args.coordinator,
+                "/metrics",
+                token_header=observer_header if args.observer_token else None,
+                timeout=args.timeout,
+            )
+        ),
+    }
+    if args.observer_token:
+        online["state"] = state_digest(
+            request_json(args.coordinator, "/state", token_header=observer_header, timeout=args.timeout)
+        )
+    else:
+        online["state"] = {"present": False, "reason": "observer token not provided"}
+    if args.admin_token:
+        online["admin_results"] = request_json(
+            args.coordinator,
+            f"/admin/results?limit={args.admin_results_limit}",
+            token_header=admin_header,
+            timeout=args.timeout,
+        )
+    else:
+        online["admin_results"] = {"present": False, "reason": "admin token not provided"}
+    return sanitize(online)
+
+
+def doctor_args(args: argparse.Namespace) -> argparse.Namespace:
+    return doctor.parse_args([
+        "--root",
+        str(args.root),
+        "--host",
+        args.host,
+        "--port",
+        str(args.port),
+        "--state-dir",
+        args.state_dir,
+    ])
+
+
+def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.root).resolve()
+    doctor_report = doctor.build_report(doctor_args(args))
+    release_gate_report = release_gate.run_release_gate(root)
+    reports = {
+        "runtime": load_json_report(args.runtime_report, name="runtime"),
+        "browser": load_json_report(args.browser_report, name="browser"),
+        "remote": load_json_report(args.remote_report, name="remote"),
+        "release_evidence": load_json_report(args.release_evidence, name="release_evidence"),
+    }
+    return sanitize({
+        "generated_at": utc_now(),
+        "project": read_pyproject(root),
+        "environment": {
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "cwd": os.getcwd(),
+            "root": str(root),
+        },
+        "git": release_evidence_pack.collect_git_info(
+            root,
+            git_dir=args.git_dir,
+            work_tree=args.work_tree,
+        ),
+        "doctor": {
+            "ok": doctor_report.get("ok"),
+            "summary": doctor_report.get("summary", {}),
+            "checks": doctor_report.get("checks", []),
+        },
+        "release_gate": summarize_checks(release_gate_report),
+        "reports": reports,
+        "online": collect_online(args),
+    })
+
+
+def write_json(payload: dict[str, Any], path: str) -> None:
+    if not path:
+        return
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def render_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# CrowdTensorD Support Bundle",
+        "",
+        f"Generated: `{payload.get('generated_at', '')}`",
+        f"Project: `{payload.get('project', {}).get('name', '')}` `{payload.get('project', {}).get('version', '')}`",
+        f"Commit: `{payload.get('git', {}).get('commit', '')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Doctor: `{payload.get('doctor', {}).get('ok')}`",
+        f"- Release gate: `{payload.get('release_gate', {}).get('ok')}`",
+        f"- Online collection: `{payload.get('online', {}).get('enabled')}`",
+        "",
+        "## Reports",
+        "",
+    ]
+    for name, report in payload.get("reports", {}).items():
+        state = "missing" if not report.get("present") else "ok" if report.get("ok") else "failed"
+        lines.append(f"- `{name}`: {state}, checks={report.get('checks_total', 0)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_markdown(payload: dict[str, Any], path: str) -> None:
+    if not path:
+        return
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(render_markdown(payload), encoding="utf-8")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build a safe CrowdTensorD operator support bundle.")
+    parser.add_argument("--root", default=str(ROOT))
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--state-dir", default="state/support-bundle")
+    parser.add_argument("--coordinator", default="")
+    parser.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
+    parser.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    parser.add_argument("--admin-results-limit", type=int, default=20)
+    parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--runtime-report", default="")
+    parser.add_argument("--browser-report", default="")
+    parser.add_argument("--remote-report", default="")
+    parser.add_argument("--release-evidence", default="")
+    parser.add_argument("--json-out", default="")
+    parser.add_argument("--markdown-out", default="")
+    parser.add_argument("--git-dir", default="")
+    parser.add_argument("--work-tree", default="")
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    try:
+        args = parse_args()
+        bundle = build_bundle(args)
+        write_json(bundle, args.json_out)
+        write_markdown(bundle, args.markdown_out)
+        print(json.dumps(bundle, sort_keys=True))
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True), file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+if __name__ == "__main__":
+    main()
