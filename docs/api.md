@@ -207,8 +207,23 @@ Minimal response fields:
 - `heartbeat_interval`
 - `schema_version`
 - `optimizer_step`
+- `optimizer_spec`
 - `task_requirements`
 - `training_spec`
+
+For `diloco_train`, `optimizer_spec` describes the outer update contract returned with the claim:
+
+```json
+{
+  "contract_version": "outer_optimizer_contract_v1",
+  "optimizer_type": "diloco_momentum",
+  "delta_format": "dense_float",
+  "optimizer_step": 0,
+  "outer_lr": 0.5,
+  "outer_momentum": 0.9,
+  "weight_count": 3
+}
+```
 
 ### `POST /tasks/{task_id}/heartbeat`
 
@@ -256,8 +271,11 @@ Successful `diloco_train` response fields include:
 - `optimizer_step`
 - `weights`
 - `outer_velocity`
+- `optimizer`
 - `loss`
 - `staleness`
+
+`optimizer` summarizes the accepted outer update, including `contract_version`, `optimizer_type`, `delta_format`, `optimizer_step_before`, `optimizer_step_after`, `delta_norm`, and `velocity_norm`.
 
 Other current workload result fields:
 

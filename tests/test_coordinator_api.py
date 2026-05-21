@@ -69,6 +69,8 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertEqual(ready_payload["auth"]["observer_required"], False)
             self.assertIn("queued", ready_payload["task_counts"])
             claim = claim_task(claim_request)
+            self.assertEqual(claim["optimizer_spec"]["contract_version"], "outer_optimizer_contract_v1")
+            self.assertEqual(claim["optimizer_spec"]["delta_format"], "dense_float")
             inner_result = run_inner_loop(
                 claim["weights"],
                 task_id=claim["task_id"],
@@ -86,6 +88,8 @@ class CoordinatorApiTests(unittest.TestCase):
             result = result_task(claim["task_id"], result_request)
             self.assertEqual(result["global_step"], 1)
             self.assertEqual(result["optimizer_step"], 1)
+            self.assertEqual(result["optimizer"]["optimizer_type"], "diloco_momentum")
+            self.assertEqual(result["optimizer"]["optimizer_step_after"], 1)
             summary = state()
             self.assertEqual(summary["task_counts"]["completed"], 1)
             self.assertEqual(summary["task_counts"]["queued"], 1)

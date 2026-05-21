@@ -389,6 +389,7 @@ def verify_miner_endpoints(args: argparse.Namespace) -> dict:
             "heartbeat_interval",
             "schema_version",
             "optimizer_step",
+            "optimizer_spec",
             "task_requirements",
             "training_spec",
         },
@@ -396,6 +397,15 @@ def verify_miner_endpoints(args: argparse.Namespace) -> dict:
     )
     if registered_claim.get("workload_type") != "diloco_train":
         raise RuntimeError(f"expected diloco_train claim: {registered_claim}")
+    optimizer_spec = registered_claim.get("optimizer_spec") or {}
+    expected_optimizer_spec = {
+        "contract_version": "outer_optimizer_contract_v1",
+        "optimizer_type": "diloco_momentum",
+        "delta_format": "dense_float",
+    }
+    for key, value in expected_optimizer_spec.items():
+        if optimizer_spec.get(key) != value:
+            raise RuntimeError(f"/tasks/claim.optimizer_spec.{key} expected {value!r}: {registered_claim}")
     if missing_claim.get("detail") != "invalid miner token":
         raise RuntimeError(f"unexpected missing miner response: {missing_claim}")
     if bad_claim.get("detail") != "invalid miner token":
@@ -465,6 +475,11 @@ def verify_miner_endpoints(args: argparse.Namespace) -> dict:
         raise RuntimeError(f"unexpected stale result response: {bad_result}")
     if result.get("accepted") is not True or shared_result.get("accepted") is not True:
         raise RuntimeError(f"expected accepted results: registered={result} shared={shared_result}")
+    result_optimizer = result.get("optimizer") or {}
+    if result_optimizer.get("contract_version") != "outer_optimizer_contract_v1":
+        raise RuntimeError(f"result missing optimizer contract summary: {result}")
+    if result_optimizer.get("optimizer_step_after") != result.get("optimizer_step"):
+        raise RuntimeError(f"result optimizer step summary mismatch: {result}")
     if "not leased" not in str(duplicate_result.get("detail")):
         raise RuntimeError(f"unexpected duplicate result response: {duplicate_result}")
 

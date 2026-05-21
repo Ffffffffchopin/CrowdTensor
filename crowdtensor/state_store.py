@@ -44,7 +44,14 @@ from .protocol import (
     new_task_id,
     now_epoch,
 )
-from .diloco import apply_outer_update, default_model, loss, normalize_model, training_spec_for
+from .diloco import (
+    apply_outer_update,
+    apply_outer_update_with_summary,
+    default_model,
+    loss,
+    normalize_model,
+    training_spec_for,
+)
 from .lora_mock import (
     apply_adapter_update,
     adapter_loss,
@@ -58,6 +65,7 @@ from .micro_transformer import (
     micro_transformer_version,
     validate_micro_transformer_delta,
 )
+from .outer_optimizer import optimizer_claim_spec
 from .validation import validate_local_delta
 
 
@@ -199,6 +207,7 @@ class StateStore:
             )
             workload_spec = claimed.get("claim_workload_spec") or self._workload_spec(claimed)
             weights = claimed.get("claim_weights") or self._claim_weights_for_task(claimed, workload_spec)
+            optimizer_spec = claimed.get("claim_optimizer_spec") or self._optimizer_spec_for_task(claimed)
             return {
                 "task_id": claimed["task_id"],
                 "attempt": claimed["attempt"],
@@ -213,6 +222,7 @@ class StateStore:
                 "heartbeat_interval": max(1.0, self.lease_seconds / 3.0),
                 "schema_version": self._model.get("schema_version"),
                 "optimizer_step": self._model.get("optimizer_step", 0),
+                "optimizer_spec": optimizer_spec,
                 "task_requirements": self._task_requirements(claimed),
                 "training_spec": training_spec,
             }
@@ -430,7 +440,7 @@ class StateStore:
                 raise ResultRejected(validation)
 
             delta = validation["local_delta"]
-            next_model = apply_outer_update(self._model, delta)
+            next_model, optimizer_summary = apply_outer_update_with_summary(self._model, delta)
             response = {
                 "accepted": True,
                 "model_version": next_model["version"],
@@ -438,6 +448,7 @@ class StateStore:
                 "optimizer_step": next_model["optimizer_step"],
                 "weights": list(next_model["weights"]),
                 "outer_velocity": list(next_model["outer_velocity"]),
+                "optimizer": optimizer_summary,
                 "loss": loss(next_model),
                 "staleness": staleness,
             }
@@ -453,6 +464,7 @@ class StateStore:
                 "metrics": metrics or {},
                 "staleness": staleness,
                 "validation": validation,
+                "optimizer": optimizer_summary,
                 "result_model_version": int(next_model["version"]),
                 "model_updated": True,
                 "result_response": response,
@@ -1047,6 +1059,7 @@ class StateStore:
                 "audit_mode": event.get("audit_mode", AUDIT_MODE_NONE) or AUDIT_MODE_NONE,
                 "claim_weights": None,
                 "claim_training_spec": {},
+                "claim_optimizer_spec": {},
                 "claim_workload_spec": {},
                 "created_at": float(event["ts"]),
                 "updated_at": float(event["ts"]),
@@ -1069,6 +1082,7 @@ class StateStore:
                 "audit_mode": event.get("audit_mode", task.get("audit_mode", AUDIT_MODE_NONE)) or AUDIT_MODE_NONE,
                 "claim_weights": event.get("claim_weights"),
                 "claim_training_spec": event.get("claim_training_spec", {}),
+                "claim_optimizer_spec": event.get("claim_optimizer_spec", {}),
                 "claim_workload_spec": event.get("claim_workload_spec", {}),
             })
         elif event_type == EVENT_TASK_HEARTBEAT:
@@ -1084,6 +1098,7 @@ class StateStore:
                 "staleness": int(event.get("staleness", 0)),
                 "metrics": event.get("metrics", {}),
                 "validation": event.get("validation", {}),
+                "optimizer": event.get("optimizer", {}),
                 "probe_result": event.get("probe_result", {}),
                 "adapter_delta": event.get("adapter_delta", {}),
                 "result_response": event.get("result_response", {}),
@@ -1107,6 +1122,7 @@ class StateStore:
                 "staleness": int(event.get("staleness", 0)),
                 "metrics": event.get("metrics", {}),
                 "validation": event.get("validation", {}),
+                "optimizer": event.get("optimizer", {}),
                 "probe_result": event.get("probe_result", {}),
                 "adapter_delta": event.get("adapter_delta", {}),
                 "result_response": event.get("result_response", {}),
@@ -1143,6 +1159,7 @@ class StateStore:
                 "runtime_status": {},
                 "claim_weights": None,
                 "claim_training_spec": {},
+                "claim_optimizer_spec": {},
                 "claim_workload_spec": {},
                 "completed_at": None,
                 "rejected_at": None,
@@ -1236,6 +1253,7 @@ class StateStore:
             "terminal_at": float(terminal_at or 0.0),
             "validation": self._validation_summary(validation),
             "audit": self._audit_summary(validation),
+            "optimizer": self._optimizer_summary(task.get("optimizer") or {}),
             "miner_workload_score": {
                 "score": score.get("score"),
                 "accepted": score.get("accepted", 0),
@@ -1280,6 +1298,25 @@ class StateStore:
             field: validation.get(field)
             for field in fields
             if field in validation
+        }
+
+    def _optimizer_summary(self, optimizer: dict) -> dict:
+        fields = [
+            "contract_version",
+            "optimizer_type",
+            "delta_format",
+            "optimizer_step_before",
+            "optimizer_step_after",
+            "outer_lr",
+            "outer_momentum",
+            "weight_count",
+            "delta_norm",
+            "velocity_norm",
+        ]
+        return {
+            field: optimizer.get(field)
+            for field in fields
+            if field in optimizer
         }
 
     def _redact_event(self, event: dict) -> dict:
@@ -1352,13 +1389,20 @@ class StateStore:
             return list(workload_spec.get("weights", []))
         return list(self._model["weights"])
 
+    def _optimizer_spec_for_task(self, task: dict) -> dict:
+        if self._workload_type(task) != WORKLOAD_DILOCO_TRAIN:
+            return {}
+        return optimizer_claim_spec(self._model)
+
     def _claim_contract(self, task: dict, miner_id: str, model_version: int) -> dict:
         audit_mode = task.get("audit_mode", AUDIT_MODE_NONE) or AUDIT_MODE_NONE
+        optimizer_spec = self._optimizer_spec_for_task(task)
         if audit_mode != AUDIT_MODE_REPLAY:
             return {
                 "audit_mode": audit_mode,
                 "claim_weights": None,
                 "claim_training_spec": {},
+                "claim_optimizer_spec": optimizer_spec,
                 "claim_workload_spec": {},
             }
 
@@ -1368,6 +1412,7 @@ class StateStore:
             "audit_mode": AUDIT_MODE_REPLAY,
             "claim_weights": self._claim_weights_for_task(claim_task, workload_spec),
             "claim_training_spec": training_spec_for(task["task_id"], miner_id, model_version),
+            "claim_optimizer_spec": optimizer_spec,
             "claim_workload_spec": workload_spec,
         }
 

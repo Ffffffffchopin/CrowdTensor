@@ -13,6 +13,12 @@ import time
 from typing import Iterable
 
 from .micro_transformer import default_micro_transformer_model, normalize_micro_transformer_model
+from .outer_optimizer import (
+    OPTIMIZER_DILOCO_MOMENTUM,
+    apply_outer_optimizer_update,
+    default_outer_optimizer_contract,
+    normalize_outer_optimizer_contract,
+)
 
 
 SCHEMA_VERSION = "diloco_mock_v1"
@@ -38,7 +44,7 @@ TARGETS = [
 
 
 def default_model() -> dict:
-    return {
+    model = {
         "schema_version": SCHEMA_VERSION,
         "version": 0,
         "global_step": 0,
@@ -47,11 +53,14 @@ def default_model() -> dict:
         "outer_momentum": 0.9,
         "outer_velocity": [0.0 for _ in DEFAULT_WEIGHTS],
         "optimizer_step": 0,
+        "outer_optimizer_type": OPTIMIZER_DILOCO_MOMENTUM,
         "adapter_step": 0,
         "adapter_lr": 1.0,
         "lora_adapter": default_lora_adapter(len(DEFAULT_WEIGHTS)),
         "micro_transformer": default_micro_transformer_model(),
     }
+    model["outer_optimizer_contract"] = default_outer_optimizer_contract(model)
+    return model
 
 
 def default_lora_adapter(width: int | None = None) -> dict:
@@ -83,8 +92,7 @@ def normalize_model(model: dict | None) -> dict:
     if len(velocity) != len(weights):
         velocity = [0.0 for _ in weights]
     adapter = normalize_lora_adapter(source.get("lora_adapter"), width=len(weights))
-
-    return {
+    normalized = {
         "schema_version": source.get("schema_version", SCHEMA_VERSION),
         "version": int(source.get("version", 0)),
         "global_step": int(source.get("global_step", 0)),
@@ -93,11 +101,16 @@ def normalize_model(model: dict | None) -> dict:
         "outer_momentum": float(source.get("outer_momentum", 0.9)),
         "outer_velocity": velocity,
         "optimizer_step": int(source.get("optimizer_step", source.get("global_step", 0))),
+        "outer_optimizer_type": source.get("outer_optimizer_type", OPTIMIZER_DILOCO_MOMENTUM),
         "adapter_step": int(source.get("adapter_step", 0)),
         "adapter_lr": float(source.get("adapter_lr", 1.0)),
         "lora_adapter": adapter,
         "micro_transformer": normalize_micro_transformer_model(source.get("micro_transformer")),
     }
+    normalized["outer_optimizer_contract"] = normalize_outer_optimizer_contract(normalized | {
+        "outer_optimizer_contract": source.get("outer_optimizer_contract", {}),
+    })
+    return normalized
 
 
 def stable_offset(*parts: object) -> int:
@@ -220,31 +233,20 @@ def run_inner_loop(
     }
 
 
-def apply_outer_update(model: dict, local_delta: Iterable[float]) -> dict:
+def apply_outer_update_with_summary(model: dict, local_delta: Iterable[float]) -> tuple[dict, dict]:
     current = normalize_model(model)
-    delta = [float(value) for value in local_delta]
-    weights = current["weights"]
-    if len(delta) != len(weights):
-        raise ValueError(f"local delta length {len(delta)} does not match weights length {len(weights)}")
-
-    momentum = current["outer_momentum"]
-    next_velocity = [
-        momentum * velocity + update
-        for velocity, update in zip(current["outer_velocity"], delta)
-    ]
-    next_weights = [
-        weight + current["outer_lr"] * velocity
-        for weight, velocity in zip(weights, next_velocity)
-    ]
+    optimized, summary = apply_outer_optimizer_update(current, local_delta)
     return {
-        **current,
+        **optimized,
         "schema_version": SCHEMA_VERSION,
         "version": current["version"] + 1,
         "global_step": current["global_step"] + 1,
-        "weights": next_weights,
-        "outer_velocity": next_velocity,
-        "optimizer_step": current["optimizer_step"] + 1,
-    }
+    }, summary
+
+
+def apply_outer_update(model: dict, local_delta: Iterable[float]) -> dict:
+    next_model, _summary = apply_outer_update_with_summary(model, local_delta)
+    return next_model
 
 
 def loss(model: dict) -> float:

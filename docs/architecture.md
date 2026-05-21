@@ -45,6 +45,12 @@ Current workload types:
 
 These workloads validate protocol contracts and recovery behavior. They do not represent real model throughput.
 
+## Outer Optimizer Contract
+
+`diloco_train` now exposes an explicit `outer_optimizer_contract_v1`. The current implementation is `diloco_momentum` over `dense_float` local deltas, preserving the existing CPU-only math while making the outer optimizer state visible in claims, result responses, checkpoints, and the admin result ledger.
+
+This keeps the network layer physically separate from tensor math: Miners receive an `optimizer_spec`, produce the requested delta format, and the Coordinator applies the contract. Future OpenDiLoCo or DisTrO-style optimizers should extend this contract instead of changing task leasing or heartbeat semantics.
+
 ## Validation and Audit
 
 Every training result passes shape, finite-value, norm, and loss-spike checks before it can update state.

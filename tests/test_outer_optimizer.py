@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import unittest
+
+from crowdtensor.diloco import apply_outer_update, default_model
+from crowdtensor.outer_optimizer import (
+    CONTRACT_VERSION,
+    DELTA_FORMAT_DENSE_FLOAT,
+    OPTIMIZER_DILOCO_MOMENTUM,
+    apply_outer_optimizer_update,
+    normalize_outer_optimizer_contract,
+    optimizer_claim_spec,
+)
+
+
+class OuterOptimizerTests(unittest.TestCase):
+    def test_claim_spec_exposes_dense_momentum_contract(self) -> None:
+        model = default_model()
+        spec = optimizer_claim_spec(model)
+
+        self.assertEqual(spec["contract_version"], CONTRACT_VERSION)
+        self.assertEqual(spec["optimizer_type"], OPTIMIZER_DILOCO_MOMENTUM)
+        self.assertEqual(spec["delta_format"], DELTA_FORMAT_DENSE_FLOAT)
+        self.assertEqual(spec["optimizer_step"], 0)
+        self.assertEqual(spec["weight_count"], len(model["weights"]))
+
+    def test_optimizer_update_matches_existing_diloco_outer_update(self) -> None:
+        model = default_model()
+        delta = [0.1, -0.2, 0.05]
+
+        optimized, summary = apply_outer_optimizer_update(model, delta)
+        existing = apply_outer_update(model, delta)
+
+        self.assertEqual(optimized["weights"], existing["weights"])
+        self.assertEqual(optimized["outer_velocity"], existing["outer_velocity"])
+        self.assertEqual(optimized["optimizer_step"], existing["optimizer_step"])
+        self.assertEqual(summary["optimizer_step_before"], 0)
+        self.assertEqual(summary["optimizer_step_after"], 1)
+        self.assertGreater(summary["delta_norm"], 0.0)
+        self.assertGreater(summary["velocity_norm"], 0.0)
+
+    def test_normalize_backfills_legacy_contract(self) -> None:
+        contract = normalize_outer_optimizer_contract({
+            "global_step": 3,
+            "optimizer_step": 3,
+            "outer_lr": 0.25,
+            "outer_momentum": 0.8,
+            "weights": [1.0, 2.0],
+        })
+
+        self.assertEqual(contract["contract_version"], CONTRACT_VERSION)
+        self.assertEqual(contract["optimizer_type"], OPTIMIZER_DILOCO_MOMENTUM)
+        self.assertEqual(contract["delta_format"], DELTA_FORMAT_DENSE_FLOAT)
+        self.assertEqual(contract["optimizer_step"], 3)
+        self.assertEqual(contract["outer_lr"], 0.25)
+        self.assertEqual(contract["outer_momentum"], 0.8)
+        self.assertEqual(contract["weight_count"], 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

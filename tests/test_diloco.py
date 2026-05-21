@@ -49,6 +49,10 @@ class DiLoCoTests(unittest.TestCase):
         self.assertEqual(normalized["optimizer_step"], 7)
         self.assertEqual(normalized["outer_velocity"], [0.0, 0.0, 0.0])
         self.assertEqual(normalized["outer_momentum"], 0.9)
+        self.assertEqual(normalized["outer_optimizer_type"], "diloco_momentum")
+        self.assertEqual(normalized["outer_optimizer_contract"]["contract_version"], "outer_optimizer_contract_v1")
+        self.assertEqual(normalized["outer_optimizer_contract"]["delta_format"], "dense_float")
+        self.assertEqual(normalized["outer_optimizer_contract"]["optimizer_step"], 7)
         self.assertEqual(normalized["adapter_step"], 0)
         self.assertEqual(normalized["lora_adapter"]["values"], [0.0, 0.0, 0.0])
 
