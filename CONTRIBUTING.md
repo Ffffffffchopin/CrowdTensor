@@ -31,10 +31,12 @@ python3 scripts/runtime_acceptance_pack.py \
 
 ## Contribution Guidelines
 
+- Read `AGENTS.md` and `docs/project-memory.md` before making broad design, protocol, roadmap, or positioning changes.
 - Keep network/control-plane code physically separate from workload compute code.
 - Preserve deterministic CPU-only smoke paths unless the change is explicitly about an optional accelerator path.
 - Add focused tests for changes in lease handling, replay, validation, auth, or result application.
 - Keep public docs in sync with API or operator behavior changes.
+- Update `AGENTS.md` and `docs/project-memory.md` when long-term project identity, implemented capability, non-capability claims, or roadmap priority changes.
 - Update `CHANGELOG.md` for user-visible runtime, API, packaging, security, or operator workflow changes.
 - Do not commit local state directories, token files, browser profiles, checkpoints, or generated caches.
 

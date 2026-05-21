@@ -53,6 +53,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "support_bundle_docs",
                 "release_materials",
                 "open_source_entrypoints",
+                "project_memory",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -301,6 +302,20 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "open_source_entrypoints")
         self.assertTrue(any("home compute" in detail for detail in details))
         self.assertTrue(any("runtime_contract_v1" in detail for detail in details))
+
+    def test_project_memory_must_preserve_long_term_context(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        (tmp_root / "AGENTS.md").write_text("No project memory here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "project-memory.md").write_text("No project memory here.\n", encoding="utf-8")
+        (tmp_root / "README.md").write_text("No project memory here.\n", encoding="utf-8")
+        (tmp_root / "CONTRIBUTING.md").write_text("No project memory here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "project_memory")
+        self.assertTrue(any("runtime_contract_v1" in detail for detail in details))
+        self.assertTrue(any("P2P/NAT" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

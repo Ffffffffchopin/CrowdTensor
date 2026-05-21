@@ -16,6 +16,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FILES = [
+    "AGENTS.md",
     "README.md",
     "CHANGELOG.md",
     "ROADMAP.md",
@@ -51,6 +52,7 @@ REQUIRED_FILES = [
     "scripts/model_bundle_smoke.py",
     "docs/api.md",
     "docs/protocol.md",
+    "docs/project-memory.md",
     "docs/use-cases.md",
     "docs/quickstart.md",
     "docs/remote-miner.md",
@@ -488,6 +490,39 @@ def check_open_source_entrypoints(root: Path) -> dict[str, Any]:
     return check_result("open_source_entrypoints", not details, details)
 
 
+def check_project_memory(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "AGENTS.md",
+            "docs/project-memory.md",
+            "README.md",
+            "CONTRIBUTING.md",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "CrowdTensor",
+        "CrowdTensorD",
+        "runtime_contract_v1",
+        "Swarm Inference",
+        "Swarm Training",
+        "not yet",
+        "P2P/NAT",
+        "CPU-only",
+        "Support Bundle",
+        "release gate",
+        "home compute",
+        "operator",
+        "network/control-plane code",
+        "project memory",
+    ]:
+        if fragment not in combined:
+            details.append(f"project memory must mention {fragment}")
+    return check_result("project_memory", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -599,6 +634,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_support_bundle_docs(gate_root),
         check_release_materials(gate_root),
         check_open_source_entrypoints(gate_root),
+        check_project_memory(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),

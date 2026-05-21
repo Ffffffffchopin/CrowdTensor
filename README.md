@@ -70,6 +70,7 @@ For the current protocol boundary, see [docs/protocol.md](docs/protocol.md).
 For endpoint-level integration details, see [docs/api.md](docs/api.md).
 For controlled remote Miner setup, see [docs/remote-miner.md](docs/remote-miner.md).
 For the project roadmap, see [ROADMAP.md](ROADMAP.md).
+For durable project memory and future-agent context, see [AGENTS.md](AGENTS.md) and [docs/project-memory.md](docs/project-memory.md).
 For release history and maintainer release flow, see [CHANGELOG.md](CHANGELOG.md) and [docs/release.md](docs/release.md).
 
 ## Docker Compose
@@ -291,6 +292,8 @@ See [docs/security.md](docs/security.md) before exposing a Coordinator beyond lo
 - [Release Process](docs/release.md)
 - [Changelog](CHANGELOG.md)
 - [Roadmap](ROADMAP.md)
+- [Project Memory](docs/project-memory.md)
+- [Agent Instructions](AGENTS.md)
 - [Static Site](site/index.html)
 
 ## License
