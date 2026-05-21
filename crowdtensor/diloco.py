@@ -13,6 +13,7 @@ import time
 from typing import Iterable
 
 from .micro_transformer import default_micro_transformer_model, normalize_micro_transformer_model
+from .model_bundle import default_model_bundle, normalize_model_bundle
 from .outer_optimizer import (
     OPTIMIZER_DILOCO_MOMENTUM,
     apply_outer_optimizer_update,
@@ -60,6 +61,7 @@ def default_model(*, outer_optimizer_type: str = OPTIMIZER_DILOCO_MOMENTUM) -> d
         "adapter_lr": 1.0,
         "lora_adapter": default_lora_adapter(len(DEFAULT_WEIGHTS)),
         "micro_transformer": default_micro_transformer_model(),
+        "model_bundle": default_model_bundle(),
     }
     model["outer_optimizer_contract"] = default_outer_optimizer_contract(
         model,
@@ -111,6 +113,7 @@ def normalize_model(model: dict | None) -> dict:
         "adapter_lr": float(source.get("adapter_lr", 1.0)),
         "lora_adapter": adapter,
         "micro_transformer": normalize_micro_transformer_model(source.get("micro_transformer")),
+        "model_bundle": normalize_model_bundle(source.get("model_bundle")),
     }
     normalized["outer_optimizer_contract"] = normalize_outer_optimizer_contract(normalized | {
         "outer_optimizer_contract": source.get("outer_optimizer_contract", {}),

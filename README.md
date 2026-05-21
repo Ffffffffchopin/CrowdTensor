@@ -74,7 +74,7 @@ The Compose file uses local demo tokens by default. Copy `.env.example` to `.env
 
 - **Coordinator / Miner loop**: task claim, heartbeat, result submission, and bounded long-running Miner sessions.
 - **Fault tolerance**: lease timeout requeue, stale result rejection, checkpoint recovery, and append-only event replay.
-- **Runtime contracts**: deterministic CPU-only `diloco_train`, `cpu_lora_mock`, and `micro_transformer_lm` workloads.
+- **Runtime contracts**: deterministic CPU-only `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm` workloads.
 - **Validation**: finite-value checks, shape checks, norm/loss gates, and optional deterministic replay audit.
 - **Trust controls**: workload-scoped Miner scoring, quarantine, admin trust overrides, and redacted event tails.
 - **Result traceability**: admin result ledger for accepted/rejected outcomes, validation, audit, model impact, and Miner score summaries.
@@ -119,6 +119,7 @@ It runs the core smoke checks sequentially:
 - replay audit
 - operator control
 - micro Transformer LM
+- model bundle LM
 - result idempotency
 - result ledger
 - Miner resilience
@@ -128,6 +129,7 @@ It runs the core smoke checks sequentially:
 - hashed token auth
 - outer optimizer contract
 - compressed error-feedback delta transport
+- delta transport negotiation
 
 Browser-native checks are opt-in because they require Playwright and a Chromium-compatible browser:
 
@@ -196,6 +198,12 @@ Run only the delta transport negotiation smoke:
 
 ```bash
 python3 scripts/delta_transport_negotiation_check.py --port 8901
+```
+
+Run only the model bundle LM smoke:
+
+```bash
+python3 scripts/model_bundle_smoke.py --port 8902
 ```
 
 Run only the remote Miner invite/join smoke:

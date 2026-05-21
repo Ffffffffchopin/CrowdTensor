@@ -155,6 +155,13 @@ def build_metrics_text(summary: dict[str, Any]) -> str:
             micro_transformer.get("optimizer_step", 0),
             {"step": "micro_transformer"},
         )
+    model_bundle = model.get("model_bundle") or {}
+    if isinstance(model_bundle, dict):
+        add(
+            "crowdtensord_model_step",
+            model_bundle.get("optimizer_step", 0),
+            {"step": "model_bundle"},
+        )
 
     lines.extend([
         "# HELP crowdtensord_task_count Current task count by status.",
@@ -182,6 +189,11 @@ def build_metrics_text(summary: dict[str, Any]) -> str:
         "crowdtensord_model_updates_total",
         summary.get("micro_transformer_updates", 0),
         {"target": "micro_transformer"},
+    )
+    add(
+        "crowdtensord_model_updates_total",
+        summary.get("model_bundle_updates", 0),
+        {"target": "model_bundle"},
     )
 
     lines.extend([
@@ -326,6 +338,7 @@ def create_app(
         compressed_delta: dict[str, Any] | None = None
         probe_result: dict[str, Any] | None = None
         adapter_delta: dict[str, Any] | None = None
+        bundle_delta: dict[str, Any] | None = None
         metrics: dict[str, Any] = Field(default_factory=dict)
 
     class TrustOverrideRequest(BaseModel):
@@ -555,6 +568,7 @@ def create_app(
                 compressed_delta=request.compressed_delta,
                 probe_result=request.probe_result,
                 adapter_delta=request.adapter_delta,
+                bundle_delta=request.bundle_delta,
                 metrics=request.metrics,
             )
         except ResultRejected as exc:

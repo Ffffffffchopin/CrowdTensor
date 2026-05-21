@@ -193,6 +193,12 @@ Delta transport negotiation smoke:
 python3 scripts/delta_transport_negotiation_check.py --port 8901
 ```
 
+Model bundle LM smoke:
+
+```bash
+python3 scripts/model_bundle_smoke.py --port 8902
+```
+
 Remote-style Miner readiness:
 
 ```bash

@@ -41,6 +41,7 @@ Current workload types:
 - `diloco_train`: tiny deterministic DiLoCo-style dense update
 - `cpu_lora_mock`: dependency-free adapter update mock
 - `micro_transformer_lm`: tiny character language-model workload with analytic CPU backprop
+- `model_bundle_lm`: CPU-only model bundle contract with artifact identity, versioning, and replayable deltas
 - `browser_probe`: deterministic browser Worker compute probe that does not update model state
 
 These workloads validate protocol contracts and recovery behavior. They do not represent real model throughput.
@@ -50,6 +51,10 @@ These workloads validate protocol contracts and recovery behavior. They do not r
 `diloco_train` now exposes an explicit `outer_optimizer_contract_v1`. The default implementation is `diloco_momentum` over `dense_float` local deltas, preserving the existing CPU-only math while making the outer optimizer state visible in claims, result responses, checkpoints, and the admin result ledger. `--outer-optimizer diloco_nesterov` enables an OpenDiLoCo-inspired Nesterov outer update for new dense model state without changing the Miner result payload.
 
 This keeps the network layer physically separate from tensor math: Miners advertise `supported_delta_formats`, receive an `optimizer_spec`, produce the requested delta format, and the Coordinator applies the contract. Legacy Miners without a delta capability can still claim default `dense_float` work, but they are incompatible with Coordinator-advertised compressed transports. The first compressed transport is `sign_compressed` with `ternary_signs_v1`; Coordinator decodes it to a dense delta before validation and outer update. `sign_compressed_ef` adds a DisTrO-style error-feedback residual loop on the Miner side: the Miner compresses `local_delta + residual`, uploads the sign payload and norm metadata, and only advances its residual buffer after Coordinator acceptance. Future OpenDiLoCo or DisTrO-style optimizers should extend this contract instead of changing task leasing or heartbeat semantics.
+
+## Model Bundle Contract
+
+`model_bundle_lm` is the first dependency-free boundary shaped like a real model artifact. The claim includes `bundle_id`, `bundle_version`, `artifact_hash`, weights, config, and token IDs inside `workload_spec`; the Miner returns `bundle_delta` with the same identity fields plus numeric delta values. Coordinator validates bundle identity, shape, finite values, delta norm, and loss spike before applying a nested bundle update. Dense `global_step` remains unchanged, while `model_bundle.version`, `model_bundle.optimizer_step`, and `model_bundle.artifact_hash` advance.
 
 ## Validation and Audit
 

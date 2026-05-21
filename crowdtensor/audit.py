@@ -7,6 +7,7 @@ from typing import Iterable
 from .diloco import run_inner_loop
 from .lora_mock import run_lora_inner_loop
 from .micro_transformer import run_micro_transformer_inner_loop
+from .model_bundle import run_model_bundle_inner_loop
 from .outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED,
@@ -199,6 +200,60 @@ def verify_micro_transformer_replay(
         reason="accepted" if accepted else (
             f"micro_transformer local_delta replay max_abs_error {error:.9f} exceeds tolerance {tolerance:.9f}"
         ),
+        max_error=error,
+        tolerance=tolerance,
+    )
+
+
+def verify_model_bundle_replay(
+    task: dict,
+    bundle_delta: dict,
+    *,
+    tolerance: float = REPLAY_TOLERANCE,
+) -> dict:
+    """Recompute a model bundle result from the persisted claim contract."""
+
+    workload_spec = task.get("claim_workload_spec")
+    if not isinstance(workload_spec, dict):
+        return _audit_result(
+            accepted=True,
+            code="replay_contract_missing",
+            reason="replay audit skipped because claim workload contract is missing",
+            tolerance=tolerance,
+        )
+
+    expected_delta = run_model_bundle_inner_loop(
+        workload_spec,
+        inner_steps=int(task.get("inner_steps", 1) or 1),
+    )["bundle_delta"]
+    actual_values = [float(value) for value in bundle_delta.get("values", [])]
+    expected_values = [float(value) for value in expected_delta.get("values", [])]
+    if len(actual_values) != len(expected_values):
+        return _audit_result(
+            accepted=False,
+            code="model_bundle_delta_replay_mismatch",
+            reason=f"model_bundle delta length {len(actual_values)} does not match replay length {len(expected_values)}",
+            max_error=None,
+            tolerance=tolerance,
+        )
+
+    identity_matches = (
+        str(bundle_delta.get("schema_version")) == str(expected_delta.get("schema_version"))
+        and str(bundle_delta.get("bundle_id")) == str(expected_delta.get("bundle_id"))
+        and int(bundle_delta.get("base_bundle_version", -1)) == int(expected_delta.get("base_bundle_version", -2))
+        and str(bundle_delta.get("artifact_hash")) == str(expected_delta.get("artifact_hash"))
+    )
+    error = max_abs_error(actual_values, expected_values)
+    accepted = identity_matches and error <= tolerance
+    reason = "accepted"
+    if not identity_matches:
+        reason = "model_bundle delta identity does not match replay identity"
+    elif not accepted:
+        reason = f"model_bundle delta replay max_abs_error {error:.9f} exceeds tolerance {tolerance:.9f}"
+    return _audit_result(
+        accepted=accepted,
+        code="ok" if accepted else "model_bundle_delta_replay_mismatch",
+        reason=reason,
         max_error=error,
         tolerance=tolerance,
     )

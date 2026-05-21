@@ -35,6 +35,9 @@ jobs:
       - name: Delta transport negotiation smoke
         if: matrix.python-version == '3.12'
         run: python scripts/delta_transport_negotiation_check.py --port 8901
+      - name: Model bundle smoke
+        if: matrix.python-version == '3.12'
+        run: python scripts/model_bundle_smoke.py --port 8902
       - name: Runtime acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from coordinator import create_app, load_miner_token_registry, parse_task_lane
 from crowdtensor.auth import hash_token
 from crowdtensor.diloco import run_inner_loop
+from crowdtensor.model_bundle import run_model_bundle_inner_loop
 from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_SIGN_COMPRESSED_EF,
     OPTIMIZER_DILOCO_NESTEROV,
@@ -473,7 +474,9 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertIn('crowdtensord_results_total{result="accepted"} 1', text)
             self.assertIn('crowdtensord_model_step{step="global"} 1', text)
             self.assertIn('crowdtensord_model_step{step="micro_transformer"} 0', text)
+            self.assertIn('crowdtensord_model_step{step="model_bundle"} 0', text)
             self.assertIn('crowdtensord_model_updates_total{target="micro_transformer"} 0', text)
+            self.assertIn('crowdtensord_model_updates_total{target="model_bundle"} 0', text)
             self.assertIn('crowdtensord_trust_overrides{mode="block"} 1', text)
             self.assertIn('crowdtensord_miner_workload_blocks{source="manual"} 1', text)
             self.assertNotIn("metrics-miner", text)
@@ -1085,6 +1088,10 @@ class CoordinatorApiTests(unittest.TestCase):
         self.assertEqual(lm_lane["workload_type"], "micro_transformer_lm")
         self.assertEqual(lm_lane["runtime"], "python-cli")
 
+        bundle_lane = parse_task_lane("python-cli:cpu:1:model_bundle_lm")
+        self.assertEqual(bundle_lane["workload_type"], "model_bundle_lm")
+        self.assertEqual(bundle_lane["runtime"], "python-cli")
+
     def test_browser_probe_result_does_not_update_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(
@@ -1237,6 +1244,60 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertEqual(summary["model"]["global_step"], 0)
             self.assertEqual(summary["model"]["micro_transformer"]["version"], 1)
             self.assertEqual(summary["micro_transformer_updates"], 1)
+
+    def test_model_bundle_result_updates_nested_bundle_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=6,
+                backlog=0,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": "model_bundle_lm",
+                    },
+                ],
+            )
+            state = endpoint_for(app, "/state", "GET")
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="bundle-api-miner",
+                    capabilities={
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "protocol_version": "runtime_contract_v1",
+                        "supported_workloads": ["model_bundle_lm"],
+                    },
+                )
+            )
+            inner_result = run_model_bundle_inner_loop(
+                claim["workload_spec"],
+                inner_steps=claim["inner_steps"],
+            )
+
+            result = result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    bundle_delta=inner_result["bundle_delta"],
+                    metrics=inner_result,
+                ),
+            )
+            summary = state()
+
+            self.assertTrue(result["model_bundle_updated"])
+            self.assertFalse(result["model_updated"])
+            self.assertEqual(result["workload_type"], "model_bundle_lm")
+            self.assertEqual(summary["model"]["global_step"], 0)
+            self.assertEqual(summary["model"]["model_bundle"]["version"], 1)
+            self.assertEqual(summary["model_bundle_updates"], 1)
+            self.assertNotIn("bundle_delta", json.dumps(summary["tasks"], sort_keys=True))
 
 
 if __name__ == "__main__":

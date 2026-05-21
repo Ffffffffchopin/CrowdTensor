@@ -118,13 +118,14 @@ Each result row is newest-first by `event_index` and includes safe operator fiel
 - `model_updated`
 - `adapter_updated`
 - `micro_transformer_updated`
+- `model_bundle_updated`
 - `idempotent`
 - `terminal_at`
 - `validation`
 - `audit`
 - `miner_workload_score`
 
-The ledger intentionally avoids raw `lease_token`, idempotency keys or hashes, `result_response`, `local_delta`, and `adapter_delta`.
+The ledger intentionally avoids raw `lease_token`, idempotency keys or hashes, `result_response`, `local_delta`, `adapter_delta`, and `bundle_delta`.
 
 Response:
 
@@ -303,6 +304,25 @@ For the default `diloco_train` workload, send `local_delta` or `pseudo_gradient`
 
 `idempotency_key` is optional for compatibility with older Miners, but remote Miners should send a stable unique value per claimed task. When a result with the same `task_id`, `attempt`, `lease_token`, and `idempotency_key` is retried after a lost response, Coordinator returns the original response without applying the update twice. Reusing a different key after the task is already terminal returns `409`.
 
+For `model_bundle_lm`, submit a `bundle_delta` object. It is bound to the claim-time bundle identity:
+
+```json
+{
+  "lease_token": "lease-token-from-claim",
+  "attempt": 1,
+  "bundle_delta": {
+    "schema_version": "model_bundle_lm_v1",
+    "bundle_id": "builtin-char-bundle",
+    "base_bundle_version": 0,
+    "artifact_hash": "sha256:...",
+    "values": [0.01, -0.02]
+  },
+  "metrics": {"bundle_loss_start": 2.8, "bundle_loss_end": 2.7}
+}
+```
+
+Coordinator rejects stale bundle versions, artifact-hash mismatches, non-finite values, shape mismatches, excessive delta norm, and excessive bundle loss spikes before applying a nested bundle update.
+
 Successful `diloco_train` response fields include:
 
 - `accepted`
@@ -322,6 +342,7 @@ Other current workload result fields:
 - `browser_probe`: submit `probe_result`.
 - `cpu_lora_mock`: submit `adapter_delta`.
 - `micro_transformer_lm`: submit `local_delta`.
+- `model_bundle_lm`: submit `bundle_delta`.
 
 ## Common Failure Statuses
 

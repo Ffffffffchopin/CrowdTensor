@@ -176,6 +176,7 @@ class MinerCliTests(unittest.TestCase):
         self.assertIn("dense_float", capabilities["supported_delta_formats"])
         self.assertIn("sign_compressed", capabilities["supported_delta_formats"])
         self.assertIn("sign_compressed_ef", capabilities["supported_delta_formats"])
+        self.assertIn("model_bundle_lm", capabilities["supported_workloads"])
 
     def test_auto_delta_format_follows_claim_optimizer_spec(self) -> None:
         self.assertEqual(
@@ -241,6 +242,26 @@ class MinerCliTests(unittest.TestCase):
 
         self.assertIsNone(next_residual)
         self.assertEqual(payload["local_delta"], [0.1, -0.2, 0.0])
+        self.assertNotIn("compressed_delta", payload)
+
+    def test_build_result_payload_keeps_model_bundle_delta_dense(self) -> None:
+        bundle_delta = {
+            "schema_version": "model_bundle_lm_v1",
+            "bundle_id": "bundle",
+            "base_bundle_version": 0,
+            "artifact_hash": "sha256:abc",
+            "values": [0.1, -0.2],
+        }
+
+        payload, next_residual = miner_cli.build_result_payload(
+            {"lease_token": "lease", "attempt": 1, "workload_type": "model_bundle_lm"},
+            {"bundle_delta": bundle_delta, "bundle_loss_start": 1.0},
+            delta_format="sign_compressed_ef",
+            elapsed_ms=1.0,
+        )
+
+        self.assertIsNone(next_residual)
+        self.assertEqual(payload["bundle_delta"], bundle_delta)
         self.assertNotIn("compressed_delta", payload)
 
 

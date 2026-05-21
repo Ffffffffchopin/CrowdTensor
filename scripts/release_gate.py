@@ -39,6 +39,7 @@ REQUIRED_FILES = [
     "scripts/outer_optimizer_check.py",
     "scripts/compressed_error_feedback_check.py",
     "scripts/delta_transport_negotiation_check.py",
+    "scripts/model_bundle_smoke.py",
     "docs/api.md",
     "docs/quickstart.md",
     "docs/remote-miner.md",
@@ -410,6 +411,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "outer_optimizer_check.py": "CI must run the outer optimizer smoke through runtime acceptance",
         "compressed_error_feedback_check.py": "CI must run the compressed error-feedback smoke through runtime acceptance",
         "delta_transport_negotiation_check.py": "CI must run the delta transport negotiation smoke through runtime acceptance",
+        "model_bundle_smoke.py": "CI must run the model bundle smoke through runtime acceptance",
         "python -m unittest discover -s tests -v": "CI must run unit tests",
         "runtime_acceptance_pack.py": "CI must run the runtime acceptance pack",
     }

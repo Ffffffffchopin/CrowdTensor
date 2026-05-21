@@ -19,6 +19,8 @@ from crowdtensor.diloco import run_inner_loop
 from crowdtensor.lora_mock import run_lora_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
+from crowdtensor.model_bundle import WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_LM
+from crowdtensor.model_bundle import run_model_bundle_inner_loop
 from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED,
@@ -251,7 +253,12 @@ def miner_capabilities() -> dict:
         "backend": "cpu",
         "supports_training_spec": True,
         "protocol_version": "runtime_contract_v1",
-        "supported_workloads": ["diloco_train", "cpu_lora_mock", WORKLOAD_MICRO_TRANSFORMER_LM],
+        "supported_workloads": [
+            "diloco_train",
+            "cpu_lora_mock",
+            WORKLOAD_MICRO_TRANSFORMER_LM,
+            WORKLOAD_MODEL_BUNDLE_LM,
+        ],
         "supported_delta_formats": SUPPORTED_MINER_DELTA_FORMATS,
         "pid": os_safe_pid(),
     }
@@ -280,7 +287,7 @@ def build_result_payload(
         "metrics": {
             key: value
             for key, value in inner_result.items()
-            if key not in {"local_delta", "adapter_delta"}
+            if key not in {"local_delta", "pseudo_gradient", "compressed_delta", "adapter_delta", "bundle_delta"}
         },
     }
     payload["metrics"]["elapsed_ms"] = elapsed_ms
@@ -289,6 +296,8 @@ def build_result_payload(
         payload["adapter_delta"] = inner_result["adapter_delta"]
     elif workload_type == WORKLOAD_MICRO_TRANSFORMER_LM:
         payload["local_delta"] = inner_result["local_delta"]
+    elif workload_type == WORKLOAD_MODEL_BUNDLE_LM:
+        payload["bundle_delta"] = inner_result["bundle_delta"]
     elif delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
         payload["compressed_delta"], next_residual = compress_sign_delta_with_error_feedback(
             inner_result["local_delta"],
@@ -322,7 +331,12 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
         flush=True,
     )
     workload_type = claim.get("workload_type", "diloco_train")
-    if workload_type not in {"diloco_train", "cpu_lora_mock", WORKLOAD_MICRO_TRANSFORMER_LM}:
+    if workload_type not in {
+        "diloco_train",
+        "cpu_lora_mock",
+        WORKLOAD_MICRO_TRANSFORMER_LM,
+        WORKLOAD_MODEL_BUNDLE_LM,
+    }:
         raise RuntimeError(f"python-cli miner does not support workload {workload_type}")
 
     stop = threading.Event()
@@ -352,6 +366,12 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
             )
         elif workload_type == WORKLOAD_MICRO_TRANSFORMER_LM:
             inner_result = run_micro_transformer_inner_loop(
+                claim["workload_spec"],
+                inner_steps=int(claim["inner_steps"]),
+                compute_seconds=args.compute_seconds,
+            )
+        elif workload_type == WORKLOAD_MODEL_BUNDLE_LM:
+            inner_result = run_model_bundle_inner_loop(
                 claim["workload_spec"],
                 inner_steps=int(claim["inner_steps"]),
                 compute_seconds=args.compute_seconds,
@@ -405,6 +425,15 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
                 f"lm_version={result['model_version']} "
                 f"lm_step={result['micro_transformer_optimizer_step']} "
                 f"lm_loss={inner_result['lm_loss_start']:.6f}->{inner_result['lm_loss_end']:.6f}",
+                flush=True,
+            )
+            return True
+        if workload_type == WORKLOAD_MODEL_BUNDLE_LM:
+            print(
+                f"accepted model-bundle task={claim['task_id']} "
+                f"bundle_version={result['bundle_version']} "
+                f"bundle_step={result['bundle_optimizer_step']} "
+                f"bundle_loss={inner_result['bundle_loss_start']:.6f}->{inner_result['bundle_loss_end']:.6f}",
                 flush=True,
             )
             return True

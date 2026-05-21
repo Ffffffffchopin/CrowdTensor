@@ -15,6 +15,7 @@ from .audit import (
     verify_diloco_replay,
     verify_lora_replay,
     verify_micro_transformer_replay,
+    verify_model_bundle_replay,
 )
 from .protocol import (
     DEFAULT_PROTOCOL_VERSION,
@@ -40,6 +41,7 @@ from .protocol import (
     WORKLOAD_CPU_LORA_MOCK,
     WORKLOAD_DILOCO_TRAIN,
     WORKLOAD_MICRO_TRANSFORMER_LM,
+    WORKLOAD_MODEL_BUNDLE_LM,
     new_lease_token,
     new_task_id,
     now_epoch,
@@ -64,6 +66,13 @@ from .micro_transformer import (
     micro_transformer_training_spec_for,
     micro_transformer_version,
     validate_micro_transformer_delta,
+)
+from .model_bundle import (
+    apply_model_bundle_update,
+    model_bundle_loss,
+    model_bundle_training_spec_for,
+    model_bundle_version,
+    validate_model_bundle_delta,
 )
 from .outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
@@ -377,6 +386,7 @@ class StateStore:
         compressed_delta: dict | None = None,
         probe_result: dict | None = None,
         adapter_delta: dict | None = None,
+        bundle_delta: dict | None = None,
         metrics: dict | None = None,
     ) -> dict:
         with self._lock:
@@ -418,6 +428,15 @@ class StateStore:
                     attempt=attempt,
                     idempotency_key=idempotency_key,
                     local_delta=local_delta if local_delta is not None else pseudo_gradient,
+                    metrics=metrics,
+                )
+            if workload_type == WORKLOAD_MODEL_BUNDLE_LM:
+                return self._complete_model_bundle_task(
+                    task,
+                    lease_token=lease_token,
+                    attempt=attempt,
+                    idempotency_key=idempotency_key,
+                    bundle_delta=bundle_delta,
                     metrics=metrics,
                 )
             if workload_type != WORKLOAD_DILOCO_TRAIN:
@@ -734,6 +753,94 @@ class StateStore:
         self.ensure_backlog()
         return response
 
+    def _complete_model_bundle_task(
+        self,
+        task: dict,
+        *,
+        lease_token: str,
+        attempt: int,
+        idempotency_key: str | None = None,
+        bundle_delta: dict | None = None,
+        metrics: dict | None = None,
+    ) -> dict:
+        validation = validate_model_bundle_delta(self._model, bundle_delta)
+        staleness = model_bundle_version(self._model) - int(task["model_version"])
+        now = now_epoch()
+        if validation["accepted"]:
+            validation = self._audit_model_bundle_result(task, validation)
+        else:
+            validation = self._annotate_audit_skip(task, validation)
+        if not validation["accepted"]:
+            response = dict(validation)
+            event = self._append_event({
+                "type": EVENT_TASK_REJECTED,
+                "task_id": task["task_id"],
+                "attempt": attempt,
+                "lease_token": lease_token,
+                "miner_id": task.get("miner_id"),
+                "base_model_version": int(task["model_version"]),
+                "bundle_delta": validation.get("bundle_delta"),
+                "metrics": metrics or {},
+                "staleness": staleness,
+                "validation": validation,
+                "result_model_version": model_bundle_version(self._model),
+                "model_updated": False,
+                "model_bundle_updated": False,
+                "result_response": response,
+                **self._idempotency_event_fields(
+                    idempotency_key,
+                    lease_token=lease_token,
+                ),
+                "ts": now,
+            })
+            self._apply_task_event(event)
+            self.ensure_backlog()
+            raise ResultRejected(validation)
+
+        normalized_delta = validation["bundle_delta"]
+        next_model = apply_model_bundle_update(self._model, normalized_delta)
+        next_bundle = next_model["model_bundle"]
+        response = {
+            "accepted": True,
+            "model_updated": False,
+            "model_bundle_updated": True,
+            "workload_type": WORKLOAD_MODEL_BUNDLE_LM,
+            "bundle_id": next_bundle["bundle_id"],
+            "model_version": int(next_bundle["version"]),
+            "bundle_version": int(next_bundle["version"]),
+            "bundle_optimizer_step": int(next_bundle["optimizer_step"]),
+            "bundle_loss": model_bundle_loss(next_model),
+            "artifact_hash": next_bundle["artifact_hash"],
+            "staleness": staleness,
+        }
+        event = self._append_event({
+            "type": EVENT_TASK_COMPLETED,
+            "task_id": task["task_id"],
+            "attempt": attempt,
+            "lease_token": lease_token,
+            "miner_id": task.get("miner_id"),
+            "base_model_version": int(task["model_version"]),
+            "bundle_delta": normalized_delta,
+            "metrics": metrics or {},
+            "staleness": staleness,
+            "validation": validation,
+            "result_model_version": int(next_bundle["version"]),
+            "model_updated": False,
+            "model_bundle_updated": True,
+            "model_bundle_step_result": int(next_bundle["optimizer_step"]),
+            "result_response": response,
+            **self._idempotency_event_fields(
+                idempotency_key,
+                lease_token=lease_token,
+            ),
+            "ts": now,
+        })
+        self._apply_task_event(event)
+        self._model = next_model
+        self._write_checkpoint()
+        self.ensure_backlog()
+        return response
+
     def reap_expired(self, *, now: float | None = None) -> list[str]:
         with self._lock:
             current = now_epoch() if now is None else float(now)
@@ -790,6 +897,10 @@ class StateStore:
                 task for task in completed
                 if bool(task.get("micro_transformer_updated", False))
             ]
+            model_bundle_updates = [
+                task for task in completed
+                if bool(task.get("model_bundle_updated", False))
+            ]
             staleness_values = [
                 int(task.get("staleness", 0) or 0)
                 for task in completed
@@ -834,6 +945,7 @@ class StateStore:
                 "model_updates": len(model_updates),
                 "adapter_updates": len(adapter_updates),
                 "micro_transformer_updates": len(micro_transformer_updates),
+                "model_bundle_updates": len(model_bundle_updates),
                 "rejected_results": len(rejected),
                 "audit_results": len(audit_results),
                 "audit_rejections": len(audit_rejections),
@@ -926,6 +1038,10 @@ class StateStore:
                 delta = event.get("local_delta")
                 if delta is not None:
                     self._model = apply_micro_transformer_update(self._model, delta)
+            elif bool(event.get("model_bundle_updated", False)):
+                delta = event.get("bundle_delta")
+                if delta is not None:
+                    self._model = apply_model_bundle_update(self._model, delta)
 
     def _create_task(
         self,
@@ -1082,6 +1198,7 @@ class StateStore:
                 "validation": {},
                 "probe_result": {},
                 "adapter_delta": {},
+                "bundle_delta": {},
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1089,6 +1206,7 @@ class StateStore:
                 "model_updated": False,
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
+                "model_bundle_updated": False,
                 "capabilities": {},
                 "runtime_status": {},
                 "completed_at": None,
@@ -1146,6 +1264,7 @@ class StateStore:
                 "optimizer": event.get("optimizer", {}),
                 "probe_result": event.get("probe_result", {}),
                 "adapter_delta": event.get("adapter_delta", {}),
+                "bundle_delta": event.get("bundle_delta", {}),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1153,8 +1272,10 @@ class StateStore:
                 "model_updated": bool(event.get("model_updated", True)),
                 "adapter_updated": bool(event.get("adapter_updated", False)),
                 "micro_transformer_updated": bool(event.get("micro_transformer_updated", False)),
+                "model_bundle_updated": bool(event.get("model_bundle_updated", False)),
                 "adapter_step_result": event.get("adapter_step_result"),
                 "micro_transformer_step_result": event.get("micro_transformer_step_result"),
+                "model_bundle_step_result": event.get("model_bundle_step_result"),
                 "completed_at": float(event["ts"]),
             })
         elif event_type == EVENT_TASK_REJECTED:
@@ -1170,6 +1291,7 @@ class StateStore:
                 "optimizer": event.get("optimizer", {}),
                 "probe_result": event.get("probe_result", {}),
                 "adapter_delta": event.get("adapter_delta", {}),
+                "bundle_delta": event.get("bundle_delta", {}),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1177,6 +1299,7 @@ class StateStore:
                 "model_updated": False,
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
+                "model_bundle_updated": False,
                 "rejected_at": float(event["ts"]),
             })
         elif event_type == EVENT_TASK_REQUEUED:
@@ -1193,6 +1316,7 @@ class StateStore:
                 "validation": {},
                 "probe_result": {},
                 "adapter_delta": {},
+                "bundle_delta": {},
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1200,6 +1324,7 @@ class StateStore:
                 "model_updated": False,
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
+                "model_bundle_updated": False,
                 "capabilities": {},
                 "runtime_status": {},
                 "claim_weights": None,
@@ -1265,6 +1390,14 @@ class StateStore:
     def _hash_secret(self, value: str) -> str:
         return "sha256:" + hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
+    def _public_metrics(self, metrics: dict | None) -> dict:
+        if not isinstance(metrics, dict):
+            return {}
+        public = dict(metrics)
+        for field in ("local_delta", "pseudo_gradient", "compressed_delta", "adapter_delta", "bundle_delta"):
+            public.pop(field, None)
+        return public
+
     def _public_task(self, task: dict) -> dict:
         public = dict(task)
         if public.get("lease_token"):
@@ -1272,6 +1405,11 @@ class StateStore:
         public.pop("result_idempotency_key_hash", None)
         public.pop("result_lease_token_hash", None)
         public.pop("result_response", None)
+        public.pop("bundle_delta", None)
+        public["metrics"] = self._public_metrics(public.get("metrics"))
+        validation = dict(public.get("validation") or {})
+        validation.pop("bundle_delta", None)
+        public["validation"] = validation
         return public
 
     def _result_ledger_entry(self, task: dict, workload_scores: dict) -> dict:
@@ -1294,6 +1432,7 @@ class StateStore:
             "model_updated": bool(task.get("model_updated", False)),
             "adapter_updated": bool(task.get("adapter_updated", False)),
             "micro_transformer_updated": bool(task.get("micro_transformer_updated", False)),
+            "model_bundle_updated": bool(task.get("model_bundle_updated", False)),
             "idempotent": bool(task.get("result_idempotency_key_hash")),
             "terminal_at": float(terminal_at or 0.0),
             "validation": self._validation_summary(validation),
@@ -1329,6 +1468,9 @@ class StateStore:
             "ops",
             "elapsed_ms",
             "hash",
+            "bundle_id",
+            "base_bundle_version",
+            "artifact_hash",
         ]
         return {
             field: validation.get(field)
@@ -1432,6 +1574,7 @@ class StateStore:
             WORKLOAD_DILOCO_TRAIN,
             WORKLOAD_CPU_LORA_MOCK,
             WORKLOAD_MICRO_TRANSFORMER_LM,
+            WORKLOAD_MODEL_BUNDLE_LM,
         }:
             return AUDIT_MODE_REPLAY
         return AUDIT_MODE_NONE
@@ -1439,10 +1582,14 @@ class StateStore:
     def _model_version_for_task(self, task: dict) -> int:
         if self._workload_type(task) == WORKLOAD_MICRO_TRANSFORMER_LM:
             return micro_transformer_version(self._model)
+        if self._workload_type(task) == WORKLOAD_MODEL_BUNDLE_LM:
+            return model_bundle_version(self._model)
         return int(self._model["version"])
 
     def _claim_weights_for_task(self, task: dict, workload_spec: dict) -> list[float]:
         if self._workload_type(task) == WORKLOAD_MICRO_TRANSFORMER_LM:
+            return list(workload_spec.get("weights", []))
+        if self._workload_type(task) == WORKLOAD_MODEL_BUNDLE_LM:
             return list(workload_spec.get("weights", []))
         return list(self._model["weights"])
 
@@ -1537,6 +1684,12 @@ class StateStore:
         audit = verify_micro_transformer_replay(task, validation["local_delta"])
         return self._merge_audit_validation(validation, audit, "micro_transformer_delta_replay_mismatch")
 
+    def _audit_model_bundle_result(self, task: dict, validation: dict) -> dict:
+        if task.get("audit_mode", AUDIT_MODE_NONE) != AUDIT_MODE_REPLAY:
+            return validation
+        audit = verify_model_bundle_replay(task, validation["bundle_delta"])
+        return self._merge_audit_validation(validation, audit, "model_bundle_delta_replay_mismatch")
+
     def _task_requirements(self, task: dict) -> dict:
         return {
             "runtime": task.get("required_runtime", REQUIREMENT_ANY) or REQUIREMENT_ANY,
@@ -1565,6 +1718,12 @@ class StateStore:
                 task["task_id"],
                 task.get("miner_id") or "anonymous",
                 self._model.get("micro_transformer", {}),
+            )
+        if workload_type == WORKLOAD_MODEL_BUNDLE_LM:
+            return model_bundle_training_spec_for(
+                task["task_id"],
+                task.get("miner_id") or "anonymous",
+                self._model.get("model_bundle", {}),
             )
         return {"type": WORKLOAD_DILOCO_TRAIN}
 

@@ -11,6 +11,8 @@ from crowdtensor.state_store import StateStore
 from crowdtensor.diloco import run_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
+from crowdtensor.model_bundle import WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_LM
+from crowdtensor.model_bundle import run_model_bundle_inner_loop
 from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED,
@@ -57,6 +59,9 @@ class StateStoreTests(unittest.TestCase):
 
     def _micro_transformer_capabilities(self) -> dict:
         return self._python_capabilities([WORKLOAD_MICRO_TRANSFORMER_LM])
+
+    def _model_bundle_capabilities(self) -> dict:
+        return self._python_capabilities([WORKLOAD_MODEL_BUNDLE_LM])
 
     def test_claim_complete_checkpoints_and_creates_next_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -650,6 +655,114 @@ class StateStoreTests(unittest.TestCase):
             )
             with self.assertRaises(NoTaskAvailable):
                 store.claim_task("bad-lm-miner", capabilities=self._micro_transformer_capabilities())
+
+    def test_model_bundle_workload_updates_nested_bundle_state_and_survives_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=6,
+                backlog=0,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": WORKLOAD_MODEL_BUNDLE_LM,
+                    },
+                ],
+            )
+            claim = store.claim_task("bundle-miner", capabilities=self._model_bundle_capabilities())
+            inner_result = run_model_bundle_inner_loop(
+                claim["workload_spec"],
+                inner_steps=claim["inner_steps"],
+            )
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                bundle_delta=inner_result["bundle_delta"],
+                metrics=inner_result,
+            )
+
+            summary = store.summary()
+            self.assertEqual(claim["workload_type"], WORKLOAD_MODEL_BUNDLE_LM)
+            self.assertEqual(result["workload_type"], WORKLOAD_MODEL_BUNDLE_LM)
+            self.assertTrue(result["model_bundle_updated"])
+            self.assertFalse(result["model_updated"])
+            self.assertEqual(summary["model"]["global_step"], 0)
+            self.assertEqual(summary["model"]["model_bundle"]["version"], 1)
+            self.assertEqual(summary["model_updates"], 0)
+            self.assertEqual(summary["model_bundle_updates"], 1)
+            self.assertEqual(summary["accepted_results"], 1)
+            row = store.result_ledger(status="accepted")[0]
+            self.assertTrue(row["model_bundle_updated"])
+            self.assertEqual(row["workload_type"], WORKLOAD_MODEL_BUNDLE_LM)
+            self.assertEqual(row["validation"]["bundle_id"], result["bundle_id"])
+            self.assertNotIn("bundle_delta", json.dumps(summary["tasks"], sort_keys=True))
+
+            recovered = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=6,
+                backlog=0,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": WORKLOAD_MODEL_BUNDLE_LM,
+                    },
+                ],
+            )
+            recovered_summary = recovered.summary()
+            self.assertEqual(recovered_summary["model"]["model_bundle"]["version"], 1)
+            self.assertEqual(recovered_summary["model"]["model_bundle"]["optimizer_step"], 1)
+
+    def test_model_bundle_replay_audit_rejects_mismatch_and_quarantines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=6,
+                backlog=0,
+                replay_audit=True,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": WORKLOAD_MODEL_BUNDLE_LM,
+                    },
+                ],
+            )
+            for _ in range(2):
+                claim = store.claim_task("bad-bundle-miner", capabilities=self._model_bundle_capabilities())
+                inner_result = run_model_bundle_inner_loop(
+                    claim["workload_spec"],
+                    inner_steps=claim["inner_steps"],
+                )
+                bad_delta = dict(inner_result["bundle_delta"])
+                bad_values = list(bad_delta["values"])
+                bad_values[0] += 0.001
+                bad_delta["values"] = bad_values
+                with self.assertRaises(ResultRejected) as raised:
+                    store.complete_task(
+                        claim["task_id"],
+                        lease_token=claim["lease_token"],
+                        attempt=claim["attempt"],
+                        bundle_delta=bad_delta,
+                        metrics=inner_result,
+                    )
+                self.assertEqual(raised.exception.validation["code"], "model_bundle_delta_replay_mismatch")
+
+            summary = store.summary()
+            self.assertEqual(summary["audit_rejections"], 2)
+            self.assertTrue(
+                summary["miner_workload_scores"]["bad-bundle-miner"][WORKLOAD_MODEL_BUNDLE_LM]["quarantined"]
+            )
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("bad-bundle-miner", capabilities=self._model_bundle_capabilities())
 
     def test_backlog_allows_async_claims_and_records_staleness(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
