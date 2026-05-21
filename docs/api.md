@@ -225,6 +225,8 @@ For `diloco_train`, `optimizer_spec` describes the outer update contract returne
 }
 ```
 
+Coordinator defaults to `diloco_momentum`. Starting it with `--outer-optimizer diloco_nesterov` changes `optimizer_type` in claim and result summaries for new dense model state; Miner result payloads stay the same.
+
 ### `POST /tasks/{task_id}/heartbeat`
 
 Extends a live lease. If Miner auth is configured, pass `x-crowdtensor-miner-token`.
@@ -293,7 +295,7 @@ Successful `diloco_train` response fields include:
 - `loss`
 - `staleness`
 
-`optimizer` summarizes the accepted outer update, including `contract_version`, `optimizer_type`, `delta_format`, `optimizer_step_before`, `optimizer_step_after`, `delta_norm`, `decoded_delta_norm`, `compression_ratio_estimate`, and `velocity_norm`.
+`optimizer` summarizes the accepted outer update, including `contract_version`, `optimizer_type`, `delta_format`, `optimizer_step_before`, `optimizer_step_after`, `delta_norm`, `decoded_delta_norm`, `compression_ratio_estimate`, `velocity_norm`, and `outer_update_norm`.
 
 Other current workload result fields:
 

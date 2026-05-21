@@ -67,6 +67,7 @@ from .micro_transformer import (
 )
 from .outer_optimizer import optimizer_claim_spec
 from .outer_optimizer import decode_delta_payload
+from .outer_optimizer import OPTIMIZER_DILOCO_MOMENTUM
 from .validation import validate_local_delta
 
 
@@ -99,6 +100,7 @@ class StateStore:
         backlog: int = 1,
         task_lanes: Iterable[dict] | None = None,
         replay_audit: bool = False,
+        outer_optimizer: str = OPTIMIZER_DILOCO_MOMENTUM,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.task_log_path = self.state_dir / "tasks.jsonl"
@@ -107,6 +109,7 @@ class StateStore:
         self.inner_steps = int(inner_steps)
         self.backlog = int(backlog)
         self.replay_audit = bool(replay_audit)
+        self.outer_optimizer = str(outer_optimizer or OPTIMIZER_DILOCO_MOMENTUM)
         self.task_lanes = self._normalize_task_lanes(task_lanes)
         self._lock = threading.RLock()
         self._event_index = 0
@@ -114,7 +117,7 @@ class StateStore:
         self._incompatible_claims: list[dict] = []
         self._blocked_claims: list[dict] = []
         self._trust_overrides: dict[str, dict[str, dict]] = {}
-        self._model = default_model()
+        self._model = default_model(outer_optimizer_type=self.outer_optimizer)
 
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self._load()
@@ -883,7 +886,26 @@ class StateStore:
             if bool(event.get("model_updated", True)):
                 delta = event.get("local_delta", event.get("pseudo_gradient"))
                 if delta is not None:
-                    self._model = apply_outer_update(self._model, delta)
+                    optimizer = event.get("optimizer") or {}
+                    if optimizer.get("optimizer_type"):
+                        replay_model = {
+                            **self._model,
+                            "outer_optimizer_type": optimizer["optimizer_type"],
+                            "outer_optimizer_contract": {
+                                **(self._model.get("outer_optimizer_contract") or {}),
+                                "optimizer_type": optimizer["optimizer_type"],
+                            },
+                        }
+                    else:
+                        replay_model = {
+                            **self._model,
+                            "outer_optimizer_type": OPTIMIZER_DILOCO_MOMENTUM,
+                            "outer_optimizer_contract": {
+                                **(self._model.get("outer_optimizer_contract") or {}),
+                                "optimizer_type": OPTIMIZER_DILOCO_MOMENTUM,
+                            },
+                        }
+                    self._model = apply_outer_update(replay_model, delta)
             elif bool(event.get("adapter_updated", False)):
                 delta = event.get("adapter_delta")
                 if delta is not None:
@@ -1325,6 +1347,7 @@ class StateStore:
             "weight_count",
             "delta_norm",
             "velocity_norm",
+            "outer_update_norm",
         ]
         return {
             field: optimizer.get(field)

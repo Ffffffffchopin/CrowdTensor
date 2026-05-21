@@ -17,6 +17,7 @@ from crowdtensor.protocol import (
     NoTaskAvailable,
     ResultRejected,
 )
+from crowdtensor.outer_optimizer import OPTIMIZER_DILOCO_MOMENTUM, SUPPORTED_OUTER_OPTIMIZERS
 from crowdtensor.state_store import StateStore
 
 
@@ -264,6 +265,7 @@ def create_app(
     reaper_interval: float = 1.0,
     cors_origins: list[str] | None = None,
     replay_audit: bool = False,
+    outer_optimizer: str = OPTIMIZER_DILOCO_MOMENTUM,
     admin_token: str | None = None,
     miner_token: str | None = None,
     miner_token_registry: str | Path | None = None,
@@ -283,6 +285,7 @@ def create_app(
         backlog=backlog,
         task_lanes=task_lanes,
         replay_audit=replay_audit,
+        outer_optimizer=outer_optimizer,
     )
     configured_admin_token = admin_token if admin_token is not None else os.environ.get("CROWDTENSOR_ADMIN_TOKEN", "")
     configured_miner_token = miner_token if miner_token is not None else os.environ.get("CROWDTENSOR_MINER_TOKEN", "")
@@ -601,6 +604,12 @@ def parse_args() -> argparse.Namespace:
         help="enable deterministic replay audit for supported training workloads",
     )
     parser.add_argument(
+        "--outer-optimizer",
+        choices=sorted(SUPPORTED_OUTER_OPTIMIZERS),
+        default=OPTIMIZER_DILOCO_MOMENTUM,
+        help="outer optimizer for new dense DiLoCo state",
+    )
+    parser.add_argument(
         "--admin-token",
         default=None,
         help="admin token for control-plane endpoints; falls back to CROWDTENSOR_ADMIN_TOKEN",
@@ -646,6 +655,7 @@ def main() -> None:
         reaper_interval=args.reaper_interval,
         cors_origins=args.cors_origins or ["http://127.0.0.1:8765", "http://localhost:8765"],
         replay_audit=args.replay_audit,
+        outer_optimizer=args.outer_optimizer,
         admin_token=args.admin_token,
         miner_token=args.miner_token,
         miner_token_registry=args.miner_token_registry,

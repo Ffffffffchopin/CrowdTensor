@@ -36,6 +36,7 @@ REQUIRED_FILES = [
     "scripts/token_hash_auth_check.py",
     "scripts/security_preflight.py",
     "scripts/browser_acceptance_pack.py",
+    "scripts/outer_optimizer_check.py",
     "docs/api.md",
     "docs/quickstart.md",
     "docs/remote-miner.md",
@@ -404,6 +405,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python scripts/release_gate.py --json": "CI must run the release gate",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
+        "outer_optimizer_check.py": "CI must run the outer optimizer smoke through runtime acceptance",
         "python -m unittest discover -s tests -v": "CI must run unit tests",
         "runtime_acceptance_pack.py": "CI must run the runtime acceptance pack",
     }

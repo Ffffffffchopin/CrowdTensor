@@ -8,17 +8,34 @@ from typing import Iterable
 
 CONTRACT_VERSION = "outer_optimizer_contract_v1"
 OPTIMIZER_DILOCO_MOMENTUM = "diloco_momentum"
+OPTIMIZER_DILOCO_NESTEROV = "diloco_nesterov"
+SUPPORTED_OUTER_OPTIMIZERS = {
+    OPTIMIZER_DILOCO_MOMENTUM,
+    OPTIMIZER_DILOCO_NESTEROV,
+}
 DELTA_FORMAT_DENSE_FLOAT = "dense_float"
 DELTA_FORMAT_SIGN_COMPRESSED = "sign_compressed"
 SIGN_ENCODING_TERNARY_V1 = "ternary_signs_v1"
 
 
-def default_outer_optimizer_contract(model: dict | None = None) -> dict:
+def normalize_optimizer_type(value: object | None) -> str:
+    optimizer_type = str(value or OPTIMIZER_DILOCO_MOMENTUM)
+    if optimizer_type not in SUPPORTED_OUTER_OPTIMIZERS:
+        raise ValueError(f"unsupported outer optimizer type {optimizer_type}")
+    return optimizer_type
+
+
+def default_outer_optimizer_contract(
+    model: dict | None = None,
+    *,
+    optimizer_type: str = OPTIMIZER_DILOCO_MOMENTUM,
+) -> dict:
     source = dict(model or {})
     weights = [float(value) for value in source.get("weights", [])]
+    selected = normalize_optimizer_type(source.get("outer_optimizer_type", optimizer_type))
     return {
         "contract_version": CONTRACT_VERSION,
-        "optimizer_type": OPTIMIZER_DILOCO_MOMENTUM,
+        "optimizer_type": selected,
         "delta_format": DELTA_FORMAT_DENSE_FLOAT,
         "outer_lr": float(source.get("outer_lr", 0.5)),
         "outer_momentum": float(source.get("outer_momentum", 0.9)),
@@ -31,12 +48,13 @@ def normalize_outer_optimizer_contract(model: dict | None) -> dict:
     source = dict(model or {})
     raw_contract = dict(source.get("outer_optimizer_contract") or {})
     weights = [float(value) for value in source.get("weights", [])]
+    optimizer_type = raw_contract.get(
+        "optimizer_type",
+        source.get("outer_optimizer_type", OPTIMIZER_DILOCO_MOMENTUM),
+    )
     return {
         "contract_version": raw_contract.get("contract_version", CONTRACT_VERSION),
-        "optimizer_type": raw_contract.get(
-            "optimizer_type",
-            source.get("outer_optimizer_type", OPTIMIZER_DILOCO_MOMENTUM),
-        ),
+        "optimizer_type": optimizer_type,
         "delta_format": raw_contract.get("delta_format", DELTA_FORMAT_DENSE_FLOAT),
         "outer_lr": float(source.get("outer_lr", raw_contract.get("outer_lr", 0.5))),
         "outer_momentum": float(source.get("outer_momentum", raw_contract.get("outer_momentum", 0.9))),
@@ -145,8 +163,7 @@ def apply_outer_optimizer_update(
     contract = normalize_outer_optimizer_contract(current)
     if contract["contract_version"] != CONTRACT_VERSION:
         raise ValueError(f"unsupported outer optimizer contract {contract['contract_version']}")
-    if contract["optimizer_type"] != OPTIMIZER_DILOCO_MOMENTUM:
-        raise ValueError(f"unsupported outer optimizer type {contract['optimizer_type']}")
+    optimizer_type = normalize_optimizer_type(contract["optimizer_type"])
     if contract["delta_format"] != DELTA_FORMAT_DENSE_FLOAT:
         raise ValueError(f"unsupported delta format {contract['delta_format']}")
 
@@ -164,14 +181,22 @@ def apply_outer_optimizer_update(
         momentum * old_velocity + update
         for old_velocity, update in zip(velocity, delta)
     ]
+    if optimizer_type == OPTIMIZER_DILOCO_NESTEROV:
+        outer_update = [
+            update + momentum * update_velocity
+            for update, update_velocity in zip(delta, next_velocity)
+        ]
+    else:
+        outer_update = list(next_velocity)
     next_weights = [
         weight + outer_lr * update_velocity
-        for weight, update_velocity in zip(weights, next_velocity)
+        for weight, update_velocity in zip(weights, outer_update)
     ]
     step_before = int(current.get("optimizer_step", contract["optimizer_step"]))
     step_after = step_before + 1
     next_contract = {
         **contract,
+        "optimizer_type": optimizer_type,
         "outer_lr": outer_lr,
         "outer_momentum": momentum,
         "optimizer_step": step_after,
@@ -182,6 +207,7 @@ def apply_outer_optimizer_update(
         result_contract=next_contract,
         local_delta=delta,
         next_velocity=next_velocity,
+        outer_update=outer_update,
         delta_format=(delta_metadata or {}).get("delta_format"),
         decoded_delta_norm=(delta_metadata or {}).get("decoded_delta_norm"),
         compression_ratio_estimate=(delta_metadata or {}).get("compression_ratio_estimate"),
@@ -205,10 +231,12 @@ def optimizer_result_summary(
     result_contract: dict,
     local_delta: Iterable[float],
     next_velocity: Iterable[float],
+    outer_update: Iterable[float] | None = None,
     delta_format: str | None = None,
     decoded_delta_norm: float | None = None,
     compression_ratio_estimate: float | None = None,
 ) -> dict:
+    outer_update_values = list(outer_update) if outer_update is not None else list(next_velocity)
     summary = {
         "contract_version": result_contract.get("contract_version", CONTRACT_VERSION),
         "optimizer_type": result_contract.get("optimizer_type", OPTIMIZER_DILOCO_MOMENTUM),
@@ -220,6 +248,7 @@ def optimizer_result_summary(
         "weight_count": int(result_contract.get("weight_count", 0)),
         "delta_norm": l2_norm(local_delta),
         "velocity_norm": l2_norm(next_velocity),
+        "outer_update_norm": l2_norm(outer_update_values),
     }
     if decoded_delta_norm is not None:
         summary["decoded_delta_norm"] = float(decoded_delta_norm)

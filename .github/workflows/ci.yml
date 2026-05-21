@@ -26,6 +26,9 @@ jobs:
         run: python scripts/security_preflight.py --json
       - name: Unit tests
         run: python -m unittest discover -s tests -v
+      - name: Outer optimizer smoke
+        if: matrix.python-version == '3.12'
+        run: python scripts/outer_optimizer_check.py --port 8899
       - name: Runtime acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json

@@ -11,7 +11,7 @@ from crowdtensor.state_store import StateStore
 from crowdtensor.diloco import run_inner_loop
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
-from crowdtensor.outer_optimizer import compress_sign_delta
+from crowdtensor.outer_optimizer import OPTIMIZER_DILOCO_NESTEROV, compress_sign_delta
 from crowdtensor.toy_compute import compute_pseudo_gradient
 
 
@@ -328,6 +328,84 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(after["task_id"], before["task_id"])
             self.assertEqual(after["event_index"], before["event_index"])
             self.assertTrue(after["idempotent"])
+
+    def test_nesterov_outer_optimizer_updates_and_survives_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=1,
+                outer_optimizer=OPTIMIZER_DILOCO_NESTEROV,
+            )
+            claim = store.claim_task("nesterov-miner")
+            self.assertEqual(claim["optimizer_spec"]["optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="nesterov-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                local_delta=inner_result["local_delta"],
+                metrics=inner_result,
+            )
+
+            self.assertEqual(result["optimizer"]["optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+            self.assertIn("outer_update_norm", result["optimizer"])
+            self.assertEqual(store.summary()["model"]["outer_optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+
+            restarted = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+            summary = restarted.summary()
+            self.assertEqual(summary["model"]["outer_optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+            self.assertEqual(summary["last_completed"]["optimizer"]["optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+            self.assertIn("outer_update_norm", summary["last_completed"]["optimizer"])
+
+    def test_legacy_completed_event_replays_with_momentum_even_when_nesterov_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+            claim = store.claim_task("legacy-replay")
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="legacy-replay",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+            store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                local_delta=inner_result["local_delta"],
+                metrics=inner_result,
+            )
+            expected_weights = store.summary()["model"]["weights"]
+            checkpoint = Path(tmp) / "global_model.json"
+            checkpoint.unlink()
+            task_log = Path(tmp) / "tasks.jsonl"
+            lines = []
+            for line in task_log.read_text(encoding="utf-8").splitlines():
+                event = json.loads(line)
+                if event.get("type") == "task_completed":
+                    event.pop("optimizer", None)
+                lines.append(json.dumps(event, sort_keys=True))
+            task_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            recovered = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=1,
+                outer_optimizer=OPTIMIZER_DILOCO_NESTEROV,
+            )
+
+            self.assertEqual(recovered.summary()["model"]["weights"], expected_weights)
+            self.assertEqual(recovered.summary()["model"]["outer_optimizer_type"], "diloco_momentum")
 
     def test_micro_transformer_workload_updates_nested_lm_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1024,6 +1102,50 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(summary["last_completed"]["validation"]["audit_delta_format"], "sign_compressed")
             self.assertEqual(row["audit"]["audit_delta_format"], "sign_compressed")
             self.assertIn("audit_expected_delta_norm", row["audit"])
+
+    def test_nesterov_sign_compressed_result_passes_replay_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                replay_audit=True,
+                outer_optimizer=OPTIMIZER_DILOCO_NESTEROV,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": "diloco_train",
+                    },
+                ],
+            )
+            claim = store.claim_task("nesterov-compressed", capabilities=self._python_capabilities())
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="nesterov-compressed",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+                training_spec=claim["training_spec"],
+            )
+
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                compressed_delta=compress_sign_delta(inner_result["local_delta"]),
+                metrics={"delta_format": "sign_compressed"},
+            )
+            summary = store.summary()
+
+            self.assertEqual(claim["optimizer_spec"]["optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+            self.assertEqual(result["optimizer"]["optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+            self.assertEqual(result["optimizer"]["delta_format"], "sign_compressed")
+            self.assertEqual(summary["audit_results"], 1)
+            self.assertEqual(summary["audit_rejections"], 0)
+            self.assertEqual(summary["last_completed"]["validation"]["audit_code"], "ok")
 
     def test_replay_audit_rejects_wrong_sign_compressed_diloco_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

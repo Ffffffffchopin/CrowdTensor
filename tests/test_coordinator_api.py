@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from coordinator import create_app, load_miner_token_registry, parse_task_lane
 from crowdtensor.auth import hash_token
 from crowdtensor.diloco import run_inner_loop
-from crowdtensor.outer_optimizer import compress_sign_delta
+from crowdtensor.outer_optimizer import OPTIMIZER_DILOCO_NESTEROV, compress_sign_delta
 from crowdtensor.toy_compute import compute_pseudo_gradient
 
 
@@ -950,6 +950,41 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertTrue(result["accepted"])
             self.assertEqual(result["optimizer"]["delta_format"], "sign_compressed")
             self.assertEqual(state()["accepted_results"], 1)
+
+    def test_nesterov_outer_optimizer_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                outer_optimizer=OPTIMIZER_DILOCO_NESTEROV,
+            )
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            state = endpoint_for(app, "/state", "GET")
+
+            claim = claim_task(request_model(claim_task)(miner_id="api-nesterov-miner"))
+            self.assertEqual(claim["optimizer_spec"]["optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="api-nesterov-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+            result = result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    local_delta=inner_result["local_delta"],
+                    metrics=inner_result,
+                ),
+            )
+
+            self.assertEqual(result["optimizer"]["optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+            self.assertIn("outer_update_norm", result["optimizer"])
+            self.assertEqual(state()["model"]["outer_optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
 
     def test_create_app_accepts_task_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -23,6 +23,16 @@ crowdtensord \
   --admin-token local-admin
 ```
 
+To run the experimental OpenDiLoCo-inspired Nesterov outer update for new dense model state:
+
+```bash
+crowdtensord \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --state-dir state-nesterov \
+  --outer-optimizer diloco_nesterov
+```
+
 To avoid storing a usable token directly in Coordinator config, generate a hashed token verifier:
 
 ```bash
@@ -163,6 +173,12 @@ Default runtime acceptance:
 python3 scripts/runtime_acceptance_pack.py \
   --base-port 8910 \
   --report /tmp/crowdtensor_acceptance.json
+```
+
+Outer optimizer contract smoke:
+
+```bash
+python3 scripts/outer_optimizer_check.py --port 8899
 ```
 
 Remote-style Miner readiness:

@@ -8,6 +8,7 @@ from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED,
     OPTIMIZER_DILOCO_MOMENTUM,
+    OPTIMIZER_DILOCO_NESTEROV,
     apply_outer_optimizer_update,
     compress_sign_delta,
     decode_delta_payload,
@@ -41,6 +42,45 @@ class OuterOptimizerTests(unittest.TestCase):
         self.assertEqual(summary["optimizer_step_after"], 1)
         self.assertGreater(summary["delta_norm"], 0.0)
         self.assertGreater(summary["velocity_norm"], 0.0)
+        self.assertEqual(summary["outer_update_norm"], summary["velocity_norm"])
+
+    def test_nesterov_optimizer_uses_lookahead_outer_update(self) -> None:
+        model = default_model(outer_optimizer_type=OPTIMIZER_DILOCO_NESTEROV)
+        model["outer_velocity"] = [0.05, -0.1, 0.0]
+        delta = [0.1, -0.2, 0.05]
+
+        optimized, summary = apply_outer_optimizer_update(model, delta)
+
+        momentum = model["outer_momentum"]
+        next_velocity = [
+            momentum * old_velocity + update
+            for old_velocity, update in zip(model["outer_velocity"], delta)
+        ]
+        outer_update = [
+            update + momentum * update_velocity
+            for update, update_velocity in zip(delta, next_velocity)
+        ]
+        expected_weights = [
+            weight + model["outer_lr"] * update
+            for weight, update in zip(model["weights"], outer_update)
+        ]
+        self.assertEqual(optimized["outer_optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+        self.assertEqual(optimized["outer_velocity"], next_velocity)
+        self.assertEqual(optimized["weights"], expected_weights)
+        self.assertEqual(summary["optimizer_type"], OPTIMIZER_DILOCO_NESTEROV)
+        self.assertGreater(summary["outer_update_norm"], 0.0)
+        self.assertNotEqual(summary["outer_update_norm"], summary["velocity_norm"])
+
+    def test_unsupported_outer_optimizer_is_rejected(self) -> None:
+        model = default_model()
+        model["outer_optimizer_type"] = "broken"
+        model["outer_optimizer_contract"] = {
+            **model["outer_optimizer_contract"],
+            "optimizer_type": "broken",
+        }
+
+        with self.assertRaises(ValueError):
+            apply_outer_optimizer_update(model, [0.1, -0.2, 0.05])
 
     def test_normalize_backfills_legacy_contract(self) -> None:
         contract = normalize_outer_optimizer_contract({

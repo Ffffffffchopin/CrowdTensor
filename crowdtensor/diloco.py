@@ -17,6 +17,7 @@ from .outer_optimizer import (
     OPTIMIZER_DILOCO_MOMENTUM,
     apply_outer_optimizer_update,
     default_outer_optimizer_contract,
+    normalize_optimizer_type,
     normalize_outer_optimizer_contract,
 )
 
@@ -43,7 +44,8 @@ TARGETS = [
 ]
 
 
-def default_model() -> dict:
+def default_model(*, outer_optimizer_type: str = OPTIMIZER_DILOCO_MOMENTUM) -> dict:
+    selected_optimizer = normalize_optimizer_type(outer_optimizer_type)
     model = {
         "schema_version": SCHEMA_VERSION,
         "version": 0,
@@ -53,13 +55,16 @@ def default_model() -> dict:
         "outer_momentum": 0.9,
         "outer_velocity": [0.0 for _ in DEFAULT_WEIGHTS],
         "optimizer_step": 0,
-        "outer_optimizer_type": OPTIMIZER_DILOCO_MOMENTUM,
+        "outer_optimizer_type": selected_optimizer,
         "adapter_step": 0,
         "adapter_lr": 1.0,
         "lora_adapter": default_lora_adapter(len(DEFAULT_WEIGHTS)),
         "micro_transformer": default_micro_transformer_model(),
     }
-    model["outer_optimizer_contract"] = default_outer_optimizer_contract(model)
+    model["outer_optimizer_contract"] = default_outer_optimizer_contract(
+        model,
+        optimizer_type=selected_optimizer,
+    )
     return model
 
 

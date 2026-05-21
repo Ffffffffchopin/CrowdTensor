@@ -47,7 +47,7 @@ These workloads validate protocol contracts and recovery behavior. They do not r
 
 ## Outer Optimizer Contract
 
-`diloco_train` now exposes an explicit `outer_optimizer_contract_v1`. The current implementation is `diloco_momentum` over `dense_float` local deltas, preserving the existing CPU-only math while making the outer optimizer state visible in claims, result responses, checkpoints, and the admin result ledger.
+`diloco_train` now exposes an explicit `outer_optimizer_contract_v1`. The default implementation is `diloco_momentum` over `dense_float` local deltas, preserving the existing CPU-only math while making the outer optimizer state visible in claims, result responses, checkpoints, and the admin result ledger. `--outer-optimizer diloco_nesterov` enables an OpenDiLoCo-inspired Nesterov outer update for new dense model state without changing the Miner result payload.
 
 This keeps the network layer physically separate from tensor math: Miners receive an `optimizer_spec`, produce the requested delta format, and the Coordinator applies the contract. The first compressed transport is `sign_compressed` with `ternary_signs_v1`; Coordinator decodes it to a dense delta before validation and outer update. Future OpenDiLoCo or DisTrO-style optimizers should extend this contract instead of changing task leasing or heartbeat semantics.
 

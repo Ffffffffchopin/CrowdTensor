@@ -126,6 +126,7 @@ It runs the core smoke checks sequentially:
 - observer auth
 - per-Miner registry auth
 - hashed token auth
+- outer optimizer contract
 
 Browser-native checks are opt-in because they require Playwright and a Chromium-compatible browser:
 
@@ -176,6 +177,12 @@ Run only the result ledger smoke:
 
 ```bash
 python3 scripts/result_ledger_check.py --port 8897
+```
+
+Run only the opt-in Nesterov outer optimizer smoke:
+
+```bash
+python3 scripts/outer_optimizer_check.py --port 8899
 ```
 
 Run only the remote Miner invite/join smoke:
