@@ -189,8 +189,24 @@ def main() -> None:
             raise SystemExit(f"unexpected validation: {validation}")
         if int(validation.get("request_count", 0)) != args.request_count:
             raise SystemExit(f"expected {args.request_count} inference requests: {validation}")
+        metrics = task.get("metrics", {})
+        if int(metrics.get("request_count", 0)) != args.request_count:
+            raise SystemExit(f"task metrics request_count mismatch: {metrics}")
+        if float(metrics.get("elapsed_ms", -1.0)) < 0.0:
+            raise SystemExit(f"task metrics elapsed_ms invalid: {metrics}")
+        if float(metrics.get("requests_per_second", 0.0)) <= 0.0:
+            raise SystemExit(f"task metrics requests_per_second invalid: {metrics}")
         if "inference_results" in json.dumps(state["tasks"], sort_keys=True):
             raise SystemExit(f"state leaked raw inference_results: {json.dumps(state, sort_keys=True)}")
+        profiles = state.get("miner_profiles", {})
+        profile = profiles.get("model-bundle-infer-smoke")
+        if not profile:
+            raise SystemExit(f"missing miner profile: {profiles}")
+        hardware = (profile.get("last_capabilities") or {}).get("hardware_profile") or {}
+        if profile.get("runtime") != "python-cli" or profile.get("backend") != "cpu":
+            raise SystemExit(f"unexpected miner profile runtime/backend: {profile}")
+        if int(hardware.get("cpu_count", 0)) < 1 or not hardware.get("os") or not hardware.get("python_version"):
+            raise SystemExit(f"missing hardware profile: {profile}")
         ledger = admin_results(args, status="accepted", workload_type="model_bundle_infer")
         results = ledger.get("results") or []
         if len(results) != 1:
@@ -202,6 +218,13 @@ def main() -> None:
             raise SystemExit(f"ledger prediction summary mismatch: {row}")
         if row.get("validation", {}).get("request_count") != args.request_count:
             raise SystemExit(f"ledger request_count mismatch: {row}")
+        session_metrics = row.get("session_metrics", {})
+        if int(session_metrics.get("request_count", 0)) != args.request_count:
+            raise SystemExit(f"ledger session_metrics request_count mismatch: {row}")
+        if float(session_metrics.get("elapsed_ms", -1.0)) < 0.0:
+            raise SystemExit(f"ledger session_metrics elapsed_ms invalid: {row}")
+        if float(session_metrics.get("requests_per_second", 0.0)) <= 0.0:
+            raise SystemExit(f"ledger session_metrics requests_per_second invalid: {row}")
         print(json.dumps({
             "accepted_results": state["accepted_results"],
             "accuracy": validation.get("accuracy"),
@@ -209,10 +232,12 @@ def main() -> None:
             "bundle_version": bundle["version"],
             "correct_count": validation.get("correct_count"),
             "correct": bool(validation.get("correct", False)),
+            "hardware_profile": hardware,
             "ledger_rows": len(results),
             "miner_summary": miner_summary,
             "predicted_token": validation.get("predicted_token"),
             "request_count": validation.get("request_count"),
+            "requests_per_second": session_metrics.get("requests_per_second"),
             "target_token": validation.get("target_token"),
             "task_id": task["task_id"],
         }, sort_keys=True))

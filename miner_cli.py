@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import socket
 import sys
 import threading
@@ -248,10 +249,22 @@ def os_safe_pid() -> int:
     return os.getpid()
 
 
+def hardware_profile() -> dict:
+    return {
+        "os": platform.system() or "unknown",
+        "platform": platform.platform(aliased=True, terse=True) or "unknown",
+        "machine": platform.machine() or "unknown",
+        "processor": platform.processor() or "unknown",
+        "cpu_count": os.cpu_count() or 1,
+        "python_version": platform.python_version(),
+    }
+
+
 def miner_capabilities() -> dict:
     return {
         "runtime": "python-cli",
         "backend": "cpu",
+        "hardware_profile": hardware_profile(),
         "supports_training_spec": True,
         "protocol_version": "runtime_contract_v1",
         "supported_workloads": [

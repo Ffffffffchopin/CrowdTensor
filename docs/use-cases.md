@@ -67,13 +67,14 @@ Goal: split useful model-serving work across ordinary machines.
 Today:
 
 - `model_bundle_infer` can verify a tiny built-in bundle prediction session through the same claim, heartbeat, result, validation, and ledger path used by other workloads.
+- The Python Miner advertises a CPU `hardware_profile`, and the inference smoke reports aggregate `elapsed_ms`, `requests_per_second`, request count, and accuracy for the session.
 
 Planned path:
 
 - Model bundle identity and validation.
 - Backend capability matching.
 - Result traceability and trust scoring.
-- Latency and throughput reporting.
+- Richer latency and throughput reporting.
 - Runtime adapters for real inference engines.
 
 CrowdTensorD does not currently provide real Swarm Inference. The current model bundle path is a dependency-free contract rehearsal.

@@ -552,6 +552,8 @@ def check_model_bundle_inference_docs(root: Path) -> dict[str, Any]:
         "--request-count",
         "inference_results",
         "request_count",
+        "requests_per_second",
+        "hardware_profile",
         "Swarm Inference",
         "read-only",
     ]:

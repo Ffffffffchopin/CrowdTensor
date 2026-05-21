@@ -13,8 +13,8 @@ CrowdTensorD is the current Alpha daemon/control plane. It validates the reliabi
 The current code supports:
 
 - Coordinator/Miner task leasing, heartbeat recovery, timeout requeue, stale result rejection, and checkpoint replay.
-- Deterministic CPU-only workloads: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, `model_bundle_infer`, and `browser_probe`.
-- `runtime_contract_v1`, workload capability matching, delta transport negotiation, validation, replay audit, result ledger, trust quarantine, and operator controls.
+- Deterministic CPU-only workloads: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, measurable read-only `model_bundle_infer`, and `browser_probe`.
+- `runtime_contract_v1`, workload capability matching, CPU `hardware_profile`, delta transport negotiation, validation, replay audit, result ledger, trust quarantine, and operator controls.
 - Controlled remote Miner demos with token-backed admission, hashed token config, `/ready` preflight, retries, and Support Bundle diagnostics.
 - Browser experiments for WebRTC tensor transport, Worker compute probes, and a browser Miner bridge.
 - Release tooling: release gate, runtime acceptance pack, browser acceptance pack, release evidence, doctor diagnostics, security preflight, and Support Bundle.

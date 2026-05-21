@@ -178,6 +178,11 @@ class MinerCliTests(unittest.TestCase):
         self.assertIn("sign_compressed_ef", capabilities["supported_delta_formats"])
         self.assertIn("model_bundle_lm", capabilities["supported_workloads"])
         self.assertIn("model_bundle_infer", capabilities["supported_workloads"])
+        self.assertEqual(capabilities["backend"], "cpu")
+        profile = capabilities["hardware_profile"]
+        self.assertGreaterEqual(profile["cpu_count"], 1)
+        self.assertTrue(profile["os"])
+        self.assertTrue(profile["python_version"])
 
     def test_auto_delta_format_follows_claim_optimizer_spec(self) -> None:
         self.assertEqual(

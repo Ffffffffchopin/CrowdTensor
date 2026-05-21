@@ -852,12 +852,18 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(result["request_count"], 4)
             self.assertEqual(result["correct_count"], inner_result["correct_count"])
             self.assertEqual(result["accuracy"], inner_result["accuracy"])
+            self.assertGreater(inner_result["requests_per_second"], 0.0)
             self.assertEqual(summary["model"]["global_step"], 0)
             self.assertEqual(summary["model"]["model_bundle"]["version"], 0)
             row = store.result_ledger(status="accepted", workload_type=WORKLOAD_MODEL_BUNDLE_INFER)[0]
             self.assertEqual(row["validation"]["request_count"], 4)
             self.assertEqual(row["validation"]["correct_count"], inner_result["correct_count"])
             self.assertEqual(row["validation"]["accuracy"], inner_result["accuracy"])
+            self.assertEqual(row["session_metrics"]["request_count"], 4)
+            self.assertEqual(row["session_metrics"]["correct_count"], inner_result["correct_count"])
+            self.assertEqual(row["session_metrics"]["accuracy"], inner_result["accuracy"])
+            self.assertGreaterEqual(row["session_metrics"]["elapsed_ms"], 0.0)
+            self.assertGreater(row["session_metrics"]["requests_per_second"], 0.0)
             self.assertNotIn("inference_results", json.dumps(summary["tasks"], sort_keys=True))
 
     def test_model_bundle_inference_rejects_tampered_prediction(self) -> None:
@@ -1127,6 +1133,14 @@ class StateStoreTests(unittest.TestCase):
                 capabilities={
                     "runtime": "python-cli",
                     "backend": "cpu",
+                    "hardware_profile": {
+                        "os": "Linux",
+                        "platform": "Linux",
+                        "machine": "x86_64",
+                        "processor": "x86_64",
+                        "cpu_count": 8,
+                        "python_version": "3.12.0",
+                    },
                     "supports_training_spec": True,
                 },
             )
@@ -1156,6 +1170,8 @@ class StateStoreTests(unittest.TestCase):
             profile = store.summary()["miner_profiles"]["profile-miner"]
             self.assertEqual(profile["runtime"], "python-cli")
             self.assertEqual(profile["backend"], "cpu")
+            self.assertEqual(profile["last_capabilities"]["hardware_profile"]["cpu_count"], 8)
+            self.assertEqual(profile["last_capabilities"]["hardware_profile"]["os"], "Linux")
             self.assertEqual(profile["accepted"], 1)
             self.assertEqual(profile["rejected"], 0)
             self.assertEqual(profile["avg_worker_elapsed_ms"], 12.5)

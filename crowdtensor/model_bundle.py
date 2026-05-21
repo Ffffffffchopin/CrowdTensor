@@ -458,6 +458,7 @@ def run_model_bundle_inference(workload_spec: dict) -> dict:
     ]
     elapsed_ms = (time.monotonic() - start) * 1000.0
     correct_count = sum(1 for result in results if bool(result["correct"]))
+    elapsed_seconds = max(elapsed_ms / 1000.0, 1e-9)
     return {
         "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
         "inference_result": results[0],
@@ -467,6 +468,7 @@ def run_model_bundle_inference(workload_spec: dict) -> dict:
         "correct_count": correct_count,
         "accuracy": correct_count / len(results),
         "elapsed_ms": elapsed_ms,
+        "requests_per_second": len(results) / elapsed_seconds,
         "top_k": max(int(request["top_k"]) for request in requests),
         "sample_offset": int(spec.get("sample_offset", 0)),
     }

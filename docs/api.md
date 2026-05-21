@@ -187,6 +187,14 @@ Request:
   "capabilities": {
     "runtime": "python-cli",
     "backend": "cpu",
+    "hardware_profile": {
+      "os": "Linux",
+      "platform": "Linux",
+      "machine": "x86_64",
+      "processor": "x86_64",
+      "cpu_count": 8,
+      "python_version": "3.12.0"
+    },
     "protocol_version": "runtime_contract_v1",
     "supported_workloads": ["diloco_train"]
   }
@@ -343,11 +351,16 @@ For `model_bundle_infer`, submit an `inference_results` array for the claim-time
       "correct": true
     }
   ],
-  "metrics": {"request_count": 1, "prediction_correct": true}
+  "metrics": {
+    "request_count": 1,
+    "prediction_correct": true,
+    "elapsed_ms": 2.5,
+    "requests_per_second": 400.0
+  }
 }
 ```
 
-Accepted `model_bundle_infer` results are read-only: `model_updated=false`, `model_bundle_updated=false`, dense `global_step` does not change, and `model_bundle.version` does not advance. The admin result ledger keeps prediction summary fields plus `request_count`, `correct_count`, and `accuracy`, while redacted `/state` avoids raw `inference_result` and `inference_results` payloads.
+Accepted `model_bundle_infer` results are read-only: `model_updated=false`, `model_bundle_updated=false`, dense `global_step` does not change, and `model_bundle.version` does not advance. The admin result ledger keeps prediction summary fields plus `request_count`, `correct_count`, and `accuracy`, and its `session_metrics` summary can include `elapsed_ms` and `requests_per_second`. Redacted `/state` avoids raw `inference_result` and `inference_results` payloads while retaining safe aggregate metrics and Miner capability profiles.
 
 Successful `diloco_train` response fields include:
 

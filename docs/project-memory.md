@@ -22,7 +22,7 @@ The project should be honest about status. It is an Alpha control plane, not yet
 The project currently includes:
 
 - FastAPI Coordinator with task queues, task lanes, leases, heartbeat deadlines, checkpoint state, append-only event replay, result validation, replay audit, metrics, admin result ledger, and trust overrides.
-- Python Miner CLI with capability advertisement, `/ready` preflight, bounded retry behavior, result `idempotency_key`, heartbeats, and bounded session controls.
+- Python Miner CLI with capability advertisement, CPU `hardware_profile`, `/ready` preflight, bounded retry behavior, result `idempotency_key`, heartbeats, and bounded session controls.
 - Deterministic CPU-only workload contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, `model_bundle_infer`, and `browser_probe`.
 - Protocol boundary around `runtime_contract_v1`, `outer_optimizer_contract_v1`, supported workloads, supported delta formats, and workload-specific validation.
 - Delta transport paths for `dense_float`, `sign_compressed`, and `sign_compressed_ef`.
@@ -45,7 +45,7 @@ Do not imply these are implemented:
 - hardware attestation
 - hardened public-internet security
 
-The current model bundle, multi-request model bundle inference, and micro LM workloads are dependency-free contract rehearsals, not throughput benchmarks.
+The current model bundle, measurable multi-request model bundle inference, and micro LM workloads are dependency-free contract rehearsals, not real LLM or GPU throughput benchmarks.
 
 ## Strategic Route
 

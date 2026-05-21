@@ -32,6 +32,7 @@ Miners own:
 - `protocol_version`
 - `supported_workloads`
 - `supported_delta_formats`
+- optional `hardware_profile` metadata such as OS, CPU count, Python version, and platform
 
 Miners that do not advertise newer optional fields remain compatible with default dense CPU work, but they are not eligible for workloads requiring compressed transports or specific backend features.
 

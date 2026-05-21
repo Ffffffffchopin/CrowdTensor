@@ -1537,6 +1537,7 @@ class StateStore:
             "idempotent": bool(task.get("result_idempotency_key_hash")),
             "terminal_at": float(terminal_at or 0.0),
             "validation": self._validation_summary(validation),
+            "session_metrics": self._session_metrics_summary(task.get("metrics") or {}),
             "audit": self._audit_summary(validation),
             "optimizer": self._optimizer_summary(task.get("optimizer") or {}),
             "miner_workload_score": {
@@ -1585,6 +1586,20 @@ class StateStore:
             field: validation.get(field)
             for field in fields
             if field in validation
+        }
+
+    def _session_metrics_summary(self, metrics: dict) -> dict:
+        fields = [
+            "elapsed_ms",
+            "request_count",
+            "correct_count",
+            "accuracy",
+            "requests_per_second",
+        ]
+        return {
+            field: metrics.get(field)
+            for field in fields
+            if field in metrics
         }
 
     def _audit_summary(self, validation: dict) -> dict:
