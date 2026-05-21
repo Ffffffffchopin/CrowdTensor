@@ -55,7 +55,7 @@ This keeps the network layer physically separate from tensor math: Miners receiv
 
 Every training result passes shape, finite-value, norm, and loss-spike checks before it can update state.
 
-With `--replay-audit`, Coordinator also recomputes expected deterministic results for supported workloads from claim-time state. Mismatches are rejected and feed the normal trust/quarantine ledger.
+With `--replay-audit`, Coordinator also recomputes expected deterministic results for supported workloads from claim-time state. For `sign_compressed`, replay audit recomputes the dense DiLoCo result, applies the same deterministic compression/decode contract, and compares the decoded delta. Mismatches are rejected and feed the normal trust/quarantine ledger.
 
 ## Trust and Scheduling
 

@@ -7,6 +7,13 @@ from typing import Iterable
 from .diloco import run_inner_loop
 from .lora_mock import run_lora_inner_loop
 from .micro_transformer import run_micro_transformer_inner_loop
+from .outer_optimizer import (
+    DELTA_FORMAT_DENSE_FLOAT,
+    DELTA_FORMAT_SIGN_COMPRESSED,
+    compress_sign_delta,
+    decode_delta_payload,
+    l2_norm,
+)
 
 
 AUDIT_MODE_NONE = "none"
@@ -28,6 +35,8 @@ def _audit_result(
     reason: str,
     max_error: float | None = None,
     tolerance: float = REPLAY_TOLERANCE,
+    delta_format: str = DELTA_FORMAT_DENSE_FLOAT,
+    expected_delta_norm: float | None = None,
 ) -> dict:
     return {
         "audit_mode": AUDIT_MODE_REPLAY,
@@ -36,6 +45,8 @@ def _audit_result(
         "audit_reason": reason,
         "audit_max_abs_error": max_error,
         "audit_tolerance": tolerance,
+        "audit_delta_format": delta_format,
+        "audit_expected_delta_norm": expected_delta_norm,
     }
 
 
@@ -44,15 +55,17 @@ def verify_diloco_replay(task: dict, local_delta: Iterable[float], *, tolerance:
 
     claim_weights = task.get("claim_weights")
     training_spec = task.get("claim_training_spec")
+    delta_format = ((task.get("validation") or {}).get("delta_format") or DELTA_FORMAT_DENSE_FLOAT)
     if not isinstance(claim_weights, list) or not isinstance(training_spec, dict):
         return _audit_result(
             accepted=True,
             code="replay_contract_missing",
             reason="replay audit skipped because claim contract is missing",
             tolerance=tolerance,
+            delta_format=delta_format,
         )
 
-    expected = run_inner_loop(
+    expected_dense = run_inner_loop(
         claim_weights,
         task_id=task["task_id"],
         miner_id=task.get("miner_id") or "anonymous",
@@ -60,6 +73,13 @@ def verify_diloco_replay(task: dict, local_delta: Iterable[float], *, tolerance:
         inner_steps=int(task.get("inner_steps", 1) or 1),
         training_spec=training_spec,
     )["local_delta"]
+    if delta_format == DELTA_FORMAT_SIGN_COMPRESSED:
+        expected, _metadata = decode_delta_payload(
+            compressed_delta=compress_sign_delta(expected_dense)
+        )
+    else:
+        expected = expected_dense
+
     actual = [float(value) for value in local_delta]
     if len(actual) != len(expected):
         return _audit_result(
@@ -68,6 +88,8 @@ def verify_diloco_replay(task: dict, local_delta: Iterable[float], *, tolerance:
             reason=f"local_delta length {len(actual)} does not match replay length {len(expected)}",
             max_error=None,
             tolerance=tolerance,
+            delta_format=delta_format,
+            expected_delta_norm=l2_norm(expected),
         )
 
     error = max_abs_error(actual, expected)
@@ -80,6 +102,8 @@ def verify_diloco_replay(task: dict, local_delta: Iterable[float], *, tolerance:
         ),
         max_error=error,
         tolerance=tolerance,
+        delta_format=delta_format,
+        expected_delta_norm=l2_norm(expected),
     )
 
 

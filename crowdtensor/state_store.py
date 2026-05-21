@@ -1304,6 +1304,8 @@ class StateStore:
             "audit_reason",
             "audit_max_abs_error",
             "audit_tolerance",
+            "audit_delta_format",
+            "audit_expected_delta_norm",
         ]
         return {
             field: validation.get(field)
@@ -1452,7 +1454,7 @@ class StateStore:
     def _audit_diloco_result(self, task: dict, validation: dict) -> dict:
         if task.get("audit_mode", AUDIT_MODE_NONE) != AUDIT_MODE_REPLAY:
             return validation
-        audit = verify_diloco_replay(task, validation["local_delta"])
+        audit = verify_diloco_replay({**task, "validation": validation}, validation["local_delta"])
         return self._merge_audit_validation(validation, audit, "local_delta_replay_mismatch")
 
     def _audit_lora_result(self, task: dict, validation: dict) -> dict:

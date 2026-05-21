@@ -126,4 +126,4 @@ The preflight reads CLI/env-style configuration and the registry file without co
 
 ## Replay Audit
 
-`--replay-audit` verifies deterministic workload outputs against claim-time state. This is a control-plane integrity check for supported toy workloads, not a cryptographic proof of useful external compute.
+`--replay-audit` verifies deterministic workload outputs against claim-time state. For `sign_compressed` DiLoCo results, it recomputes the dense delta, applies the same deterministic sign compression/decode contract, and compares decoded deltas. This is a control-plane integrity check for supported toy workloads, not a cryptographic proof of useful external compute.

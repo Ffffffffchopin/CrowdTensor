@@ -980,6 +980,94 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(summary["audit_rejections"], 0)
             self.assertEqual(summary["last_completed"]["validation"]["audit_code"], "ok")
 
+    def test_replay_audit_accepts_sign_compressed_diloco_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                replay_audit=True,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": "diloco_train",
+                    },
+                ],
+            )
+            claim = store.claim_task("audit-compressed-diloco", capabilities=self._python_capabilities())
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="audit-compressed-diloco",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+                training_spec=claim["training_spec"],
+            )
+
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                compressed_delta=compress_sign_delta(inner_result["local_delta"]),
+                metrics={"transport": "sign_compressed"},
+            )
+            summary = store.summary()
+            row = store.result_ledger(status="accepted")[0]
+
+            self.assertEqual(result["optimizer"]["delta_format"], "sign_compressed")
+            self.assertEqual(summary["audit_results"], 1)
+            self.assertEqual(summary["audit_rejections"], 0)
+            self.assertEqual(summary["last_completed"]["validation"]["audit_code"], "ok")
+            self.assertEqual(summary["last_completed"]["validation"]["audit_delta_format"], "sign_compressed")
+            self.assertEqual(row["audit"]["audit_delta_format"], "sign_compressed")
+            self.assertIn("audit_expected_delta_norm", row["audit"])
+
+    def test_replay_audit_rejects_wrong_sign_compressed_diloco_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(
+                tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                replay_audit=True,
+                task_lanes=[
+                    {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "count": 1,
+                        "workload_type": "diloco_train",
+                    },
+                ],
+            )
+            claim = store.claim_task("bad-compressed-diloco", capabilities=self._python_capabilities())
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="bad-compressed-diloco",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+                training_spec=claim["training_spec"],
+            )
+            compressed = compress_sign_delta(inner_result["local_delta"])
+            compressed["signs"] = [-sign for sign in compressed["signs"]]
+
+            with self.assertRaises(ResultRejected) as raised:
+                store.complete_task(
+                    claim["task_id"],
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    compressed_delta=compressed,
+                )
+            summary = store.summary()
+
+            self.assertEqual(raised.exception.validation["code"], "local_delta_replay_mismatch")
+            self.assertEqual(raised.exception.validation["audit_delta_format"], "sign_compressed")
+            self.assertEqual(summary["audit_results"], 1)
+            self.assertEqual(summary["audit_rejections"], 1)
+
     def test_replay_audit_rejects_small_wrong_diloco_delta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = StateStore(

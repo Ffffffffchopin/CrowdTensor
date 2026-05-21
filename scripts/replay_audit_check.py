@@ -19,10 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 DENSE_MINER_ID = "replay-audit-dense"
 LORA_MINER_ID = "replay-audit-lora"
 MICRO_TRANSFORMER_MINER_ID = "replay-audit-micro-transformer"
-if str(ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(ROOT / "scripts"))
+for path in [ROOT, ROOT / "scripts"]:
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from auth_headers import activate_miner_token, activate_observer_token, add_miner_token_arg, add_observer_token_arg, coordinator_env, json_headers, observer_headers  # noqa: E402
+from crowdtensor.diloco import run_inner_loop  # noqa: E402
+from crowdtensor.outer_optimizer import compress_sign_delta  # noqa: E402
 
 
 def request_json(
@@ -164,6 +167,42 @@ def reject_bad_dense(base_url: str) -> None:
         raise RuntimeError(f"unexpected dense rejection payload: {rejected}")
 
 
+def accept_sign_compressed_dense(base_url: str) -> None:
+    claim = request_json(
+        "POST",
+        base_url,
+        "/tasks/claim",
+        {"miner_id": f"{DENSE_MINER_ID}-compressed", "capabilities": dense_capabilities()},
+    )
+    if claim.get("audit_mode") != "replay" or claim.get("workload_type") != "diloco_train":
+        raise RuntimeError(f"expected audited diloco_train claim, got {claim}")
+
+    inner_result = run_inner_loop(
+        claim["weights"],
+        task_id=claim["task_id"],
+        miner_id=f"{DENSE_MINER_ID}-compressed",
+        model_version=int(claim["model_version"]),
+        inner_steps=int(claim["inner_steps"]),
+        training_spec=claim["training_spec"],
+    )
+    accepted = request_json(
+        "POST",
+        base_url,
+        f"/tasks/{claim['task_id']}/result",
+        {
+            "lease_token": claim["lease_token"],
+            "attempt": claim["attempt"],
+            "compressed_delta": compress_sign_delta(inner_result["local_delta"]),
+            "metrics": {"delta_format": "sign_compressed"},
+        },
+    )
+    if accepted.get("accepted") is not True:
+        raise RuntimeError(f"expected compressed dense acceptance, got {accepted}")
+    optimizer = accepted.get("optimizer") or {}
+    if optimizer.get("delta_format") != "sign_compressed":
+        raise RuntimeError(f"expected sign_compressed optimizer summary, got {accepted}")
+
+
 def reject_bad_lora(base_url: str) -> None:
     claim = request_json(
         "POST",
@@ -243,6 +282,7 @@ def main() -> None:
     try:
         coordinator = start_coordinator(args, state_dir)
         reject_bad_dense(args.base_url)
+        accept_sign_compressed_dense(args.base_url)
         reject_bad_lora(args.base_url)
         reject_bad_micro_transformer(args.base_url)
         reject_bad_lora(args.base_url)
@@ -259,7 +299,7 @@ def main() -> None:
 
         state = request_json("GET", args.base_url, "/state")
         lora_score = state["miner_workload_scores"][LORA_MINER_ID]["cpu_lora_mock"]
-        if state.get("audit_results") != 4 or state.get("audit_rejections") != 4:
+        if state.get("audit_results") != 5 or state.get("audit_rejections") != 4:
             raise SystemExit(f"unexpected audit counters: {json.dumps(state, sort_keys=True)}")
         if not lora_score.get("quarantined"):
             raise SystemExit(f"lora miner was not quarantined: {json.dumps(state, sort_keys=True)}")
@@ -267,6 +307,7 @@ def main() -> None:
         print(json.dumps({
             "audit_results": state["audit_results"],
             "audit_rejections": state["audit_rejections"],
+            "compressed_dense_accepted": True,
             "dense_rejected": True,
             "lora_quarantined": lora_score["quarantined"],
             "lora_rejected": lora_score["rejected"],
