@@ -210,6 +210,8 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_remote_acceptance.json
 ```
 
+The remote readiness smoke verifies `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm` in one long-running Python Miner session.
+
 `--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
 
 Core browser acceptance:

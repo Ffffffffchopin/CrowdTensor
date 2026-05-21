@@ -118,6 +118,8 @@ python3 scripts/remote_miner_readiness_check.py \
   --observer-token local-observer
 ```
 
+This readiness smoke now runs all default Python Miner workloads: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm`.
+
 The default runtime acceptance pack keeps the remote Miner check opt-in:
 
 ```bash

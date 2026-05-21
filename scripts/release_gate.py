@@ -276,6 +276,8 @@ def check_remote_miner_docs(root: Path) -> dict[str, Any]:
     for fragment in [
         "scripts/create_miner_invite.py",
         "scripts/remote_miner_join_check.py",
+        "scripts/remote_miner_readiness_check.py",
+        "model_bundle_lm",
         "--miner-token-registry",
         "sha256:",
         "Remote Miner Onboarding",

@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 MINER_ID = "remote-readiness-python"
-WORKLOADS = {"diloco_train", "cpu_lora_mock", "micro_transformer_lm"}
+WORKLOADS = {"diloco_train", "cpu_lora_mock", "micro_transformer_lm", "model_bundle_lm"}
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -74,6 +74,8 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path) -> subprocess.P
         "python-cli:cpu:1:cpu_lora_mock",
         "--task-lane",
         "python-cli:cpu:1:micro_transformer_lm",
+        "--task-lane",
+        "python-cli:cpu:1:model_bundle_lm",
     ]
     env = coordinator_env()
     env["PYTHONUNBUFFERED"] = "1"
@@ -144,7 +146,7 @@ def run_miner(args: argparse.Namespace) -> dict:
     return parse_summary(completed.stdout)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run remote-style Python Miner readiness smoke.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8891)
@@ -153,13 +155,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inner-steps", type=int, default=4)
     parser.add_argument("--compute-seconds", type=float, default=0.8)
     parser.add_argument("--heartbeat-interval", type=float, default=0.2)
-    parser.add_argument("--max-tasks", type=int, default=3)
+    parser.add_argument("--max-tasks", type=int, default=4)
     parser.add_argument("--max-runtime-seconds", type=float, default=30.0)
     parser.add_argument("--startup-timeout", type=float, default=10.0)
     parser.add_argument("--miner-timeout", type=float, default=40.0)
     add_miner_token_arg(parser)
     add_observer_token_arg(parser)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     activate_miner_token(args)
     activate_observer_token(args)
     args.base_url = f"http://{args.host}:{args.port}"
@@ -195,6 +197,10 @@ def main() -> None:
             raise SystemExit(f"missing python-cli/cpu profile: {json.dumps(profile, sort_keys=True)}")
         if int(profile.get("accepted", 0)) != args.max_tasks:
             raise SystemExit(f"unexpected profile accepted count: {json.dumps(profile, sort_keys=True)}")
+        capabilities = profile.get("last_capabilities") or {}
+        advertised_workloads = set(capabilities.get("supported_workloads") or [])
+        if not WORKLOADS.issubset(advertised_workloads):
+            raise SystemExit(f"missing advertised workloads: {json.dumps(profile, sort_keys=True)}")
         runtime_status = profile.get("last_runtime_status") or {}
         if int(runtime_status.get("accepted_tasks", 0)) < 1:
             raise SystemExit(f"missing long-run runtime status: {json.dumps(profile, sort_keys=True)}")
@@ -203,6 +209,7 @@ def main() -> None:
             "accepted_results": state["accepted_results"],
             "adapter_updates": state["adapter_updates"],
             "dense_updates": state["model_updates"],
+            "model_bundle_updates": state["model_bundle_updates"],
             "micro_transformer_updates": state["micro_transformer_updates"],
             "miner_summary": miner_summary,
             "profile_accepted": profile["accepted"],

@@ -19,12 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 DENSE_MINER_ID = "replay-audit-dense"
 LORA_MINER_ID = "replay-audit-lora"
 MICRO_TRANSFORMER_MINER_ID = "replay-audit-micro-transformer"
+MODEL_BUNDLE_MINER_ID = "replay-audit-model-bundle"
 for path in [ROOT, ROOT / "scripts"]:
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
 from auth_headers import activate_miner_token, activate_observer_token, add_miner_token_arg, add_observer_token_arg, coordinator_env, json_headers, observer_headers  # noqa: E402
 from crowdtensor.diloco import run_inner_loop  # noqa: E402
+from crowdtensor.model_bundle import run_model_bundle_inner_loop  # noqa: E402
 from crowdtensor.outer_optimizer import DELTA_FORMAT_SIGN_COMPRESSED, compress_sign_delta  # noqa: E402
 
 
@@ -96,6 +98,8 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path) -> subprocess.P
         "python-cli:cpu:1:cpu_lora_mock",
         "--task-lane",
         "python-cli:cpu:1:micro_transformer_lm",
+        "--task-lane",
+        "python-cli:cpu:2:model_bundle_lm",
         "--delta-format",
         DELTA_FORMAT_SIGN_COMPRESSED,
     ]
@@ -142,6 +146,15 @@ def micro_transformer_capabilities() -> dict:
         "backend": "cpu",
         "protocol_version": "runtime_contract_v1",
         "supported_workloads": ["micro_transformer_lm"],
+    }
+
+
+def model_bundle_capabilities() -> dict:
+    return {
+        "runtime": "python-cli",
+        "backend": "cpu",
+        "protocol_version": "runtime_contract_v1",
+        "supported_workloads": ["model_bundle_lm"],
     }
 
 
@@ -271,6 +284,71 @@ def reject_bad_micro_transformer(base_url: str) -> None:
         raise RuntimeError(f"unexpected micro_transformer rejection payload: {rejected}")
 
 
+def accept_model_bundle(base_url: str) -> None:
+    claim = request_json(
+        "POST",
+        base_url,
+        "/tasks/claim",
+        {"miner_id": f"{MODEL_BUNDLE_MINER_ID}-accepted", "capabilities": model_bundle_capabilities()},
+    )
+    if claim.get("audit_mode") != "replay" or claim.get("workload_type") != "model_bundle_lm":
+        raise RuntimeError(f"expected audited model_bundle_lm claim, got {claim}")
+
+    inner_result = run_model_bundle_inner_loop(
+        claim["workload_spec"],
+        inner_steps=int(claim["inner_steps"]),
+    )
+    accepted = request_json(
+        "POST",
+        base_url,
+        f"/tasks/{claim['task_id']}/result",
+        {
+            "lease_token": claim["lease_token"],
+            "attempt": claim["attempt"],
+            "bundle_delta": inner_result["bundle_delta"],
+            "metrics": {
+                "bundle_loss_start": inner_result["bundle_loss_start"],
+                "bundle_loss_end": inner_result["bundle_loss_end"],
+            },
+        },
+    )
+    if accepted.get("accepted") is not True or accepted.get("model_bundle_updated") is not True:
+        raise RuntimeError(f"expected model_bundle acceptance, got {accepted}")
+
+
+def reject_bad_model_bundle(base_url: str) -> None:
+    claim = request_json(
+        "POST",
+        base_url,
+        "/tasks/claim",
+        {"miner_id": MODEL_BUNDLE_MINER_ID, "capabilities": model_bundle_capabilities()},
+    )
+    if claim.get("audit_mode") != "replay" or claim.get("workload_type") != "model_bundle_lm":
+        raise RuntimeError(f"expected audited model_bundle_lm claim, got {claim}")
+
+    inner_result = run_model_bundle_inner_loop(
+        claim["workload_spec"],
+        inner_steps=int(claim["inner_steps"]),
+    )
+    bad_delta = dict(inner_result["bundle_delta"])
+    values = list(bad_delta["values"])
+    values[0] += 0.001
+    bad_delta["values"] = values
+    rejected = request_json(
+        "POST",
+        base_url,
+        f"/tasks/{claim['task_id']}/result",
+        {
+            "lease_token": claim["lease_token"],
+            "attempt": claim["attempt"],
+            "bundle_delta": bad_delta,
+        },
+        expected_status=422,
+    )
+    if rejected.get("detail", {}).get("code") != "model_bundle_delta_replay_mismatch":
+        raise RuntimeError(f"unexpected model_bundle rejection payload: {rejected}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run replay audit smoke test.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -303,6 +381,8 @@ def main() -> None:
         accept_sign_compressed_dense(args.base_url)
         reject_bad_lora(args.base_url)
         reject_bad_micro_transformer(args.base_url)
+        accept_model_bundle(args.base_url)
+        reject_bad_model_bundle(args.base_url)
         reject_bad_lora(args.base_url)
 
         blocked = request_json(
@@ -317,7 +397,7 @@ def main() -> None:
 
         state = request_json("GET", args.base_url, "/state")
         lora_score = state["miner_workload_scores"][LORA_MINER_ID]["cpu_lora_mock"]
-        if state.get("audit_results") != 5 or state.get("audit_rejections") != 4:
+        if state.get("audit_results") != 7 or state.get("audit_rejections") != 5:
             raise SystemExit(f"unexpected audit counters: {json.dumps(state, sort_keys=True)}")
         if not lora_score.get("quarantined"):
             raise SystemExit(f"lora miner was not quarantined: {json.dumps(state, sort_keys=True)}")
@@ -329,6 +409,8 @@ def main() -> None:
             "dense_rejected": True,
             "lora_quarantined": lora_score["quarantined"],
             "lora_rejected": lora_score["rejected"],
+            "model_bundle_accepted": True,
+            "model_bundle_rejected": True,
             "micro_transformer_rejected": True,
         }, sort_keys=True))
     finally:
