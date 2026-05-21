@@ -123,7 +123,15 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_acceptance.json
 ```
 
-The default suite includes the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`) and read-only multi-request `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks.
+The default suite includes the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`), read-only multi-request `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`), and user-facing inference session demo (`scripts/inference_session_demo.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks.
+
+Run only the local inference session demo:
+
+```bash
+python3 scripts/inference_session_demo.py --port 8904 --request-count 4
+```
+
+Add `--json` for a machine-readable report with `request_count`, `accuracy`, `elapsed_ms`, `requests_per_second`, read-only status, redaction status, and Miner `hardware_profile`.
 
 Run the same suite with local auth enabled inside checks that support shared auth env vars:
 

@@ -16,6 +16,7 @@ CrowdTensorD is currently an experimental control plane for fault-tolerant distr
 - Remote Miner demo flow with invite generation, readiness checks, retry counters, result `idempotency_key`, and controlled remote acceptance.
 - Browser experiments for WebRTC tensor transfer, browser compute probes, and browser Miner bridge smoke tests.
 - Release tooling: `scripts/release_gate.py`, `scripts/runtime_acceptance_pack.py`, `scripts/browser_acceptance_pack.py`, `scripts/release_evidence_pack.py`, and `scripts/support_bundle.py`.
+- User-facing local inference session demo with safe latency, throughput, read-only, redaction, and Miner hardware profile summaries.
 
 ### Known Limitations
 

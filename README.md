@@ -259,6 +259,14 @@ python3 scripts/model_bundle_inference_smoke.py --port 8903
 The inference smoke runs a read-only multi-request session by default; use `--request-count N` to change the number of prompts in the task.
 It reports safe session metrics such as `elapsed_ms`, `requests_per_second`, `request_count`, accuracy, and the Python Miner `hardware_profile` so users can inspect the CPU baseline without treating it as a real LLM or GPU benchmark.
 
+Run the user-facing local inference session demo:
+
+```bash
+python3 scripts/inference_session_demo.py --port 8904 --request-count 4
+```
+
+Use `--json` when you need a machine-readable report for CI or issue reports.
+
 Run only the remote Miner invite/join smoke:
 
 ```bash

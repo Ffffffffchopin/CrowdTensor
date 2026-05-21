@@ -23,6 +23,7 @@ TOKEN_ENV_SCRIPTS = {
     "capability_ledger_check.py",
     "chaos_runner.py",
     "micro_transformer_smoke.py",
+    "inference_session_demo.py",
     "model_bundle_inference_smoke.py",
     "model_bundle_smoke.py",
     "operator_control_check.py",
@@ -63,6 +64,8 @@ def check_command(
     ]
     if script_name == "operator_control_check.py":
         command.extend(["--admin-token", admin_token])
+    if script_name == "inference_session_demo.py":
+        command.append("--json")
     return command
 
 
@@ -136,6 +139,7 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         ("compressed_error_feedback", "compressed_error_feedback_check.py", args.base_port + 16, args.skip_compressed_error_feedback),
         ("delta_transport_negotiation", "delta_transport_negotiation_check.py", args.base_port + 17, args.skip_delta_transport_negotiation),
         ("model_bundle_inference", "model_bundle_inference_smoke.py", args.base_port + 30, args.skip_model_bundle_inference),
+        ("inference_session_demo", "inference_session_demo.py", args.base_port + 31, args.skip_inference_session_demo),
     ]
     if args.include_remote_miner:
         specs.append((
@@ -302,6 +306,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-micro-transformer", action="store_true")
     parser.add_argument("--skip-model-bundle", action="store_true")
     parser.add_argument("--skip-model-bundle-inference", action="store_true")
+    parser.add_argument("--skip-inference-session-demo", action="store_true")
     parser.add_argument("--skip-result-idempotency", action="store_true")
     parser.add_argument("--skip-result-ledger", action="store_true")
     parser.add_argument("--skip-miner-resilience", action="store_true")

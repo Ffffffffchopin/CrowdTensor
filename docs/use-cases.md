@@ -10,6 +10,7 @@ Today:
 
 - Run the 5-minute local Coordinator/Miner demo from [Quickstart](quickstart.md).
 - Inspect how a Miner claims work, sends heartbeats, retries transient failures, and submits a validated result.
+- Run `scripts/inference_session_demo.py` for a user-facing local inference session summary.
 - Run the read-only `model_bundle_infer` smoke to see a multi-request Swarm Inference shaped result path without model mutation.
 - Use CPU-only workloads to understand reliability behavior before trusting remote hardware.
 
@@ -67,7 +68,7 @@ Goal: split useful model-serving work across ordinary machines.
 Today:
 
 - `model_bundle_infer` can verify a tiny built-in bundle prediction session through the same claim, heartbeat, result, validation, and ledger path used by other workloads.
-- The Python Miner advertises a CPU `hardware_profile`, and the inference smoke reports aggregate `elapsed_ms`, `requests_per_second`, request count, and accuracy for the session.
+- The Python Miner advertises a CPU `hardware_profile`, and `scripts/inference_session_demo.py` reports aggregate `elapsed_ms`, `requests_per_second`, request count, accuracy, read-only status, and redaction status for the session.
 
 Planned path:
 

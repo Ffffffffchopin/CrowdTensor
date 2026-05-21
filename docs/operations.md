@@ -219,6 +219,14 @@ python3 scripts/model_bundle_inference_smoke.py --port 8903
 
 Use `--request-count N` to exercise a multi-request read-only inference session in one task.
 
+User-facing local inference session demo:
+
+```bash
+python3 scripts/inference_session_demo.py --port 8904 --request-count 4
+```
+
+Use `--json` for automation. The demo reports safe session metrics, read-only status, redaction status, and Miner `hardware_profile`; it is a CPU-only Swarm Inference shaped demo, not a real LLM serving benchmark.
+
 Remote-style Miner readiness:
 
 ```bash

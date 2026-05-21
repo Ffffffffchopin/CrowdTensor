@@ -45,6 +45,9 @@ jobs:
       - name: Model bundle inference smoke
         if: matrix.python-version == '3.12'
         run: python scripts/model_bundle_inference_smoke.py --port 8903
+      - name: Inference session demo
+        if: matrix.python-version == '3.12'
+        run: python scripts/inference_session_demo.py --port 8904 --request-count 4 --json
       - name: Runtime acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json
