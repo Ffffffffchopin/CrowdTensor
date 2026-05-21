@@ -128,6 +128,12 @@ Result ledger smoke:
 python3 scripts/result_ledger_check.py --port 8897
 ```
 
+Remote Miner invite/join smoke:
+
+```bash
+python3 scripts/remote_miner_join_check.py --port 8898
+```
+
 Unit tests:
 
 ```bash
@@ -153,6 +159,8 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_remote_acceptance.json
 ```
 
+`--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
+
 Browser acceptance:
 
 ```bash
@@ -175,6 +183,8 @@ Some restricted environments block localhost client sockets. Run unit tests ther
 **401 invalid miner token**
 
 Confirm the Coordinator and Miner use the same `CROWDTENSOR_MINER_TOKEN`, or use the exact per-Miner token from the registry.
+
+For registry-backed remote Miners, generate or rotate the entry with `scripts/create_miner_invite.py` and confirm the remote `--miner-id` matches the registry entry.
 
 **401 invalid observer token**
 

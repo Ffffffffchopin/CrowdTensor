@@ -107,7 +107,7 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_acceptance.json
 ```
 
-Run the same suite with local auth enabled inside child checks:
+Run the same suite with local auth enabled inside checks that support shared auth env vars:
 
 ```bash
 python3 scripts/runtime_acceptance_pack.py \
@@ -116,6 +116,19 @@ python3 scripts/runtime_acceptance_pack.py \
   --observer-token local-observer \
   --report /tmp/crowdtensor_auth_acceptance.json
 ```
+
+## Remote Miner Demo
+
+Generate a registry-backed invite and run a Miner on another Linux host or container:
+
+```bash
+python3 scripts/create_miner_invite.py \
+  --registry state/miner_registry.json \
+  --miner-id remote-linux-1 \
+  --coordinator-url https://YOUR_COORDINATOR_HOST
+```
+
+See [Remote Miner Onboarding](remote-miner.md) for the full controlled remote demo flow and `scripts/remote_miner_join_check.py`.
 
 ## Docker Compose
 

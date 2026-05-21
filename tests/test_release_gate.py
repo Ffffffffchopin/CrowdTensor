@@ -45,6 +45,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "miner_resilience_docs",
                 "result_idempotency_docs",
                 "result_ledger_docs",
+                "remote_miner_docs",
                 "dockerfile",
                 "compose",
                 "dockerignore",
@@ -175,6 +176,20 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "result_ledger_docs")
         self.assertTrue(any("GET /admin/results" in detail for detail in details))
+
+    def test_remote_miner_docs_must_describe_invite_flow(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        (tmp_root / "README.md").write_text("No remote Miner docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "quickstart.md").write_text("No remote Miner docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "remote-miner.md").write_text("No remote Miner docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "operations.md").write_text("No remote Miner docs here.\n", encoding="utf-8")
+        (tmp_root / "docs" / "security.md").write_text("No remote Miner docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "remote_miner_docs")
+        self.assertTrue(any("scripts/create_miner_invite.py" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

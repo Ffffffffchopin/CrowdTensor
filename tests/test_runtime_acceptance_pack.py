@@ -226,7 +226,16 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        self.assertTrue(all(check.get("miner_token") == "miner-test" for check in checks))
+        token_aware_names = {
+            "chaos",
+            "trust_quarantine",
+            "replay_audit",
+            "operator_control",
+            "micro_transformer",
+        }
+        for check in checks:
+            expected = "miner-test" if check["name"] in token_aware_names else ""
+            self.assertEqual(check.get("miner_token"), expected)
         self.assertTrue(all("miner-test" not in check["command"] for check in checks))
 
     def test_observer_auth_check_is_default_and_skippable(self) -> None:
@@ -283,7 +292,16 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        self.assertTrue(all(check.get("observer_token") == "observer-test" for check in checks))
+        token_aware_names = {
+            "chaos",
+            "trust_quarantine",
+            "replay_audit",
+            "operator_control",
+            "micro_transformer",
+        }
+        for check in checks:
+            expected = "observer-test" if check["name"] in token_aware_names else ""
+            self.assertEqual(check.get("observer_token"), expected)
         self.assertTrue(all("observer-test" not in check["command"] for check in checks))
 
     def test_remote_miner_readiness_is_opt_in(self) -> None:
@@ -298,6 +316,16 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         )
         self.assertEqual(checks[-1]["port"], 9024)
         self.assertIn("remote_miner_readiness_check.py", checks[-1]["command"][1])
+
+        authenticated = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_remote_miner=True, miner_token="miner-test", observer_token="observer-test"),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        remote = next(check for check in authenticated if check["name"] == "remote_miner")
+        self.assertEqual(remote.get("miner_token"), "miner-test")
+        self.assertEqual(remote.get("observer_token"), "observer-test")
+        self.assertTrue(all("miner-test" not in check["command"] for check in authenticated))
+        self.assertTrue(all("observer-test" not in check["command"] for check in authenticated))
 
     def test_remote_miner_skip_removes_opt_in_check(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
@@ -326,6 +354,29 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             self.assertIn("--headful", check["command"])
         self.assertIn("--timeout", browser_checks[0]["command"])
         self.assertIn("7.5", browser_checks[0]["command"])
+
+    def test_browser_auth_tokens_only_target_token_aware_checks(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_browser=True, miner_token="miner-test", observer_token="observer-test"),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        token_aware_names = {
+            "chaos",
+            "trust_quarantine",
+            "replay_audit",
+            "operator_control",
+            "micro_transformer",
+            "runtime_contract",
+            "browser_miner",
+            "browser_probe",
+            "capability_ledger",
+        }
+        for check in checks:
+            expected_miner = "miner-test" if check["name"] in token_aware_names else ""
+            expected_observer = "observer-test" if check["name"] in token_aware_names else ""
+            self.assertEqual(check.get("miner_token"), expected_miner, check["name"])
+            self.assertEqual(check.get("observer_token"), expected_observer, check["name"])
 
     def test_include_browser_chaos_adds_full_browser_pack_tail(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(

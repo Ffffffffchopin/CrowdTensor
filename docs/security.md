@@ -57,6 +57,17 @@ The `token` field may also use `sha256:<digest>`.
 
 If a claiming `miner_id` exists in the registry, it must use its own token. Disabled miners are rejected. Unknown miners can still use the shared fallback token when configured.
 
+Create registry entries without storing plaintext tokens:
+
+```bash
+python3 scripts/create_miner_invite.py \
+  --registry state/miner_registry.json \
+  --miner-id remote-linux-1 \
+  --coordinator-url https://YOUR_COORDINATOR_HOST
+```
+
+The invite output prints the plaintext token once for the remote Miner, while the registry stores only the `sha256:` verifier. See [Remote Miner Onboarding](remote-miner.md).
+
 **Observer token**
 
 `--observer-token` or `CROWDTENSOR_OBSERVER_TOKEN` protects read-only `/state` and `/metrics`. `/health`, `/version`, and `/ready` remain public for process health checks and non-sensitive runtime profile checks.
@@ -97,6 +108,8 @@ For controlled remote demos:
 - bind admin access to a private network or VPN
 - monitor `/metrics` and event tails
 - rotate demo tokens after every test
+
+Use `scripts/remote_miner_join_check.py` to validate registry-backed Miner onboarding in a local smoke test before sending invite commands to a remote machine.
 
 ## Replay Audit
 

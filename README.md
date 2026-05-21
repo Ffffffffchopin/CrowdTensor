@@ -48,6 +48,7 @@ The Miner claims a task, runs a dependency-free local training loop, uploads a D
 
 For the full walkthrough, see [docs/quickstart.md](docs/quickstart.md).
 For endpoint-level integration details, see [docs/api.md](docs/api.md).
+For controlled remote Miner setup, see [docs/remote-miner.md](docs/remote-miner.md).
 
 ## Docker Compose
 
@@ -156,6 +157,12 @@ Run only the result ledger smoke:
 python3 scripts/result_ledger_check.py --port 8897
 ```
 
+Run only the remote Miner invite/join smoke:
+
+```bash
+python3 scripts/remote_miner_join_check.py --port 8898
+```
+
 ## Security Model
 
 CrowdTensorD has local-development admission controls, not a complete public network security model.
@@ -177,6 +184,7 @@ See [docs/security.md](docs/security.md) before exposing a Coordinator beyond lo
 
 - [Quickstart](docs/quickstart.md)
 - [API Reference](docs/api.md)
+- [Remote Miner Onboarding](docs/remote-miner.md)
 - [Architecture](docs/architecture.md)
 - [Security](docs/security.md)
 - [Operations](docs/operations.md)

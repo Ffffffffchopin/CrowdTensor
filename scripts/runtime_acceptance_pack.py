@@ -16,6 +16,19 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+TOKEN_ENV_SCRIPTS = {
+    "browser_miner_chaos.py",
+    "browser_miner_smoke.py",
+    "browser_probe_smoke.py",
+    "capability_ledger_check.py",
+    "chaos_runner.py",
+    "micro_transformer_smoke.py",
+    "operator_control_check.py",
+    "remote_miner_readiness_check.py",
+    "replay_audit_check.py",
+    "runtime_contract_check.py",
+    "trust_quarantine_check.py",
+}
 
 
 def utc_now() -> str:
@@ -93,6 +106,12 @@ def browser_check_command(
     return command
 
 
+def token_env_for(script_name: str, args: argparse.Namespace) -> dict[str, str]:
+    if script_name not in TOKEN_ENV_SCRIPTS:
+        return {"miner_token": "", "observer_token": ""}
+    return {"miner_token": args.miner_token, "observer_token": args.observer_token}
+
+
 def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     specs = [
@@ -122,12 +141,13 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         if skipped:
             continue
         state_dir = state_root / name
+        token_env = token_env_for(script_name, args)
         checks.append({
             "name": name,
             "port": port,
             "state_dir": str(state_dir),
-            "miner_token": args.miner_token,
-            "observer_token": args.observer_token,
+            "miner_token": token_env["miner_token"],
+            "observer_token": token_env["observer_token"],
             "command": check_command(
                 script_name,
                 host=args.host,
@@ -156,13 +176,14 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
             if skipped:
                 continue
             state_dir = state_root / name
+            token_env = token_env_for(script_name, args)
             checks.append({
                 "name": name,
                 "port": port,
                 "web_port": web_port,
                 "state_dir": str(state_dir),
-                "miner_token": args.miner_token,
-                "observer_token": args.observer_token,
+                "miner_token": token_env["miner_token"],
+                "observer_token": token_env["observer_token"],
                 "command": browser_check_command(
                     script_name,
                     host=args.host,

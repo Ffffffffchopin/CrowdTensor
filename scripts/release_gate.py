@@ -28,12 +28,15 @@ REQUIRED_FILES = [
     "scripts/api_contract_check.py",
     "scripts/result_idempotency_check.py",
     "scripts/result_ledger_check.py",
+    "scripts/create_miner_invite.py",
+    "scripts/remote_miner_join_check.py",
     "scripts/miner_resilience_check.py",
     "scripts/readiness_check.py",
     "scripts/hash_token.py",
     "scripts/token_hash_auth_check.py",
     "docs/api.md",
     "docs/quickstart.md",
+    "docs/remote-miner.md",
     "docs/architecture.md",
     "docs/security.md",
     "docs/operations.md",
@@ -251,6 +254,31 @@ def check_result_ledger_docs(root: Path) -> dict[str, Any]:
     return check_result("result_ledger_docs", not details, details)
 
 
+def check_remote_miner_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/operations.md",
+            "docs/security.md",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "scripts/create_miner_invite.py",
+        "scripts/remote_miner_join_check.py",
+        "--miner-token-registry",
+        "sha256:",
+        "Remote Miner Onboarding",
+    ]:
+        if fragment not in combined:
+            details.append(f"remote Miner docs must mention {fragment}")
+    return check_result("remote_miner_docs", not details, details)
+
+
 def check_dockerfile(root: Path) -> dict[str, Any]:
     try:
         text = read_text(root, "Dockerfile")
@@ -344,6 +372,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_miner_resilience_docs(gate_root),
         check_result_idempotency_docs(gate_root),
         check_result_ledger_docs(gate_root),
+        check_remote_miner_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),
         check_dockerignore(gate_root),
