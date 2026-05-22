@@ -998,6 +998,12 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(claim["workload_type"], WORKLOAD_EXTERNAL_LLM_INFER)
             self.assertEqual(claim["workload_spec"]["request_count"], 3)
             self.assertEqual(claim["weights"], [])
+            raw_prompts = [row["prompt"] for row in claim["workload_spec"]["requests"]]
+            claim_events = json.dumps(store.event_tail(limit=20), sort_keys=True)
+            for prompt in raw_prompts:
+                self.assertNotIn(prompt, claim_events)
+            self.assertIn("<redacted>", claim_events)
+            self.assertIn("prompt_hash", claim_events)
             inner_result = run_mock_external_llm_inference(claim["workload_spec"])
 
             result = store.complete_task(
@@ -1023,7 +1029,7 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(row["validation"]["request_count"], 3)
             self.assertEqual(row["validation"]["completion_count"], 3)
             self.assertEqual(row["validation"]["adapter_kind"], "mock")
-            self.assertIn("output_preview", row["validation"])
+            self.assertEqual(row["validation"]["output_preview"], "<redacted>")
             self.assertEqual(row["session_metrics"]["request_count"], 3)
             self.assertEqual(row["session_metrics"]["completion_count"], 3)
             self.assertEqual(row["session_metrics"]["adapter_kind"], "mock")
@@ -1031,6 +1037,16 @@ class StateStoreTests(unittest.TestCase):
             self.assertNotIn("external_llm_result", public_tasks)
             self.assertNotIn("external_llm_results", public_tasks)
             self.assertNotIn("output_text", public_tasks)
+            for prompt in raw_prompts:
+                self.assertNotIn(prompt, public_tasks)
+            self.assertIn("<redacted>", public_tasks)
+            self.assertIn("prompt_hash", public_tasks)
+            ledger_payload = json.dumps(row, sort_keys=True)
+            for prompt in raw_prompts:
+                self.assertNotIn(prompt, ledger_payload)
+            completed_events = json.dumps(store.event_tail(limit=20), sort_keys=True)
+            for prompt in raw_prompts:
+                self.assertNotIn(prompt, completed_events)
 
     def test_external_llm_inference_rejects_wrong_prompt_hash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

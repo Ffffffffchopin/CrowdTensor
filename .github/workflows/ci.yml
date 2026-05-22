@@ -51,6 +51,9 @@ jobs:
       - name: External LLM inference smoke
         if: matrix.python-version == '3.12'
         run: python scripts/external_llm_inference_smoke.py --port 8906
+      - name: External LLM HTTP adapter smoke
+        if: matrix.python-version == '3.12'
+        run: python scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908
       - name: Runtime acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json

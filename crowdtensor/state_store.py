@@ -1599,15 +1599,44 @@ class StateStore:
         public.pop("inference_results", None)
         public.pop("external_llm_result", None)
         public.pop("external_llm_results", None)
+        public["claim_workload_spec"] = self._public_workload_spec(
+            public.get("claim_workload_spec"),
+            workload_type=self._workload_type(task),
+        )
         public["metrics"] = self._public_metrics(public.get("metrics"))
-        validation = dict(public.get("validation") or {})
-        validation.pop("bundle_delta", None)
-        validation.pop("inference_result", None)
-        validation.pop("inference_results", None)
-        validation.pop("external_llm_result", None)
-        validation.pop("external_llm_results", None)
-        validation.pop("output_text", None)
-        public["validation"] = validation
+        public["validation"] = self._public_validation(
+            public.get("validation"),
+            workload_type=self._workload_type(task),
+        )
+        return public
+
+    def _public_workload_spec(self, workload_spec: dict | None, *, workload_type: str) -> dict:
+        if not isinstance(workload_spec, dict):
+            return {}
+        public = json.loads(json.dumps(workload_spec))
+        if workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
+            requests = public.get("requests")
+            if isinstance(requests, list):
+                for request in requests:
+                    if isinstance(request, dict) and "prompt" in request:
+                        request["prompt"] = "<redacted>"
+        return public
+
+    def _public_validation(self, validation: dict | None, *, workload_type: str) -> dict:
+        if not isinstance(validation, dict):
+            return {}
+        public = dict(validation)
+        for field in (
+            "bundle_delta",
+            "inference_result",
+            "inference_results",
+            "external_llm_result",
+            "external_llm_results",
+            "output_text",
+        ):
+            public.pop(field, None)
+        if workload_type == WORKLOAD_EXTERNAL_LLM_INFER and "output_preview" in public:
+            public["output_preview"] = "<redacted>"
         return public
 
     def _result_ledger_entry(self, task: dict, workload_scores: dict) -> dict:
@@ -1633,7 +1662,7 @@ class StateStore:
             "model_bundle_updated": bool(task.get("model_bundle_updated", False)),
             "idempotent": bool(task.get("result_idempotency_key_hash")),
             "terminal_at": float(terminal_at or 0.0),
-            "validation": self._validation_summary(validation),
+            "validation": self._validation_summary(validation, workload_type=workload_type),
             "session_metrics": self._session_metrics_summary(task.get("metrics") or {}),
             "audit": self._audit_summary(validation),
             "optimizer": self._optimizer_summary(task.get("optimizer") or {}),
@@ -1647,7 +1676,7 @@ class StateStore:
             },
         }
 
-    def _validation_summary(self, validation: dict) -> dict:
+    def _validation_summary(self, validation: dict, *, workload_type: str = "") -> dict:
         fields = [
             "accepted",
             "code",
@@ -1684,11 +1713,14 @@ class StateStore:
             "model_id",
             "output_preview",
         ]
-        return {
+        summary = {
             field: validation.get(field)
             for field in fields
             if field in validation
         }
+        if workload_type == WORKLOAD_EXTERNAL_LLM_INFER and "output_preview" in summary:
+            summary["output_preview"] = "<redacted>"
+        return summary
 
     def _session_metrics_summary(self, metrics: dict) -> dict:
         fields = [
@@ -1751,7 +1783,7 @@ class StateStore:
     def _redact_event(self, event: dict) -> dict:
         def redact(value):
             if isinstance(value, dict):
-                return {
+                redacted = {
                     key: (
                         "<redacted>"
                         if key in {
@@ -1767,6 +1799,27 @@ class StateStore:
                     for key, item in value.items()
                     if key != "result_response"
                 }
+                workload_type = str(redacted.get("workload_type") or "")
+                claim_spec = redacted.get("claim_workload_spec")
+                is_external_llm = (
+                    (
+                        workload_type == WORKLOAD_EXTERNAL_LLM_INFER
+                        or (isinstance(claim_spec, dict) and claim_spec.get("type") == WORKLOAD_EXTERNAL_LLM_INFER)
+                        or "external_llm_result" in redacted
+                        or "external_llm_results" in redacted
+                    )
+                )
+                if is_external_llm and isinstance(claim_spec, dict):
+                    redacted["claim_workload_spec"] = self._public_workload_spec(
+                        claim_spec,
+                        workload_type=WORKLOAD_EXTERNAL_LLM_INFER,
+                    )
+                if is_external_llm and isinstance(redacted.get("validation"), dict):
+                    validation = dict(redacted["validation"])
+                    if "output_preview" in validation:
+                        validation["output_preview"] = "<redacted>"
+                    redacted["validation"] = validation
+                return redacted
             if isinstance(value, list):
                 return [redact(item) for item in value]
             return value

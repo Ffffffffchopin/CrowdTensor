@@ -50,7 +50,7 @@ Current workload types:
 
 Each workload defines claim-time input, result payload shape, validation gates, and update behavior. New workloads should keep the network lease/heartbeat protocol unchanged.
 
-`external_llm_infer` is advertised only by Miners that opt into a local runtime. `--enable-mock-llm-runtime` enables the deterministic mock path used by CI and `scripts/external_llm_inference_smoke.py`; `--llm-runtime-cmd` or `CROWDTENSOR_LLM_RUNTIME_CMD` enables an operator-provided command that receives `prompt` and `max_tokens` arguments. Coordinator validates `external_llm_results` by schema, request order, prompt hash, non-empty output, output length, and request count. The workload is read-only and records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries.
+`external_llm_infer` is advertised only by Miners that opt into a local runtime. `--enable-mock-llm-runtime` enables the deterministic mock path used by CI and `scripts/external_llm_inference_smoke.py`; `--llm-runtime-cmd` or `CROWDTENSOR_LLM_RUNTIME_CMD` enables an operator-provided command that receives `prompt` and `max_tokens` arguments; `--llm-runtime-url` or `CROWDTENSOR_LLM_RUNTIME_URL` enables an OpenAI-compatible chat completions adapter covered by `scripts/external_llm_http_adapter_smoke.py`. Optional HTTP bearer tokens come from `--llm-runtime-api-key` or `CROWDTENSOR_LLM_RUNTIME_API_KEY` and are never advertised in Miner capabilities. Coordinator validates `external_llm_results` by schema, request order, prompt hash, non-empty output, output length, and request count. The workload is read-only and records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries.
 
 ## Delta Transport
 

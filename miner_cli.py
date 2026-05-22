@@ -266,6 +266,7 @@ def miner_capabilities(
     *,
     enable_mock_llm_runtime: bool = False,
     llm_runtime_cmd: str = "",
+    llm_runtime_url: str = "",
     llm_runtime_model_id: str = "external-llm-runtime",
 ) -> dict:
     supported_workloads = [
@@ -276,11 +277,19 @@ def miner_capabilities(
         WORKLOAD_MODEL_BUNDLE_INFER,
     ]
     external_llm_runtime = {}
-    if enable_mock_llm_runtime or str(llm_runtime_cmd or "").strip():
+    if enable_mock_llm_runtime or str(llm_runtime_cmd or "").strip() or str(llm_runtime_url or "").strip():
         supported_workloads.append(WORKLOAD_EXTERNAL_LLM_INFER)
+        adapter_kind = "mock"
+        model_id = "mock-external-llm"
+        if not enable_mock_llm_runtime and str(llm_runtime_cmd or "").strip():
+            adapter_kind = "command"
+            model_id = llm_runtime_model_id
+        if not enable_mock_llm_runtime and not str(llm_runtime_cmd or "").strip() and str(llm_runtime_url or "").strip():
+            adapter_kind = "http_openai_chat"
+            model_id = llm_runtime_model_id
         external_llm_runtime = {
-            "adapter_kind": "mock" if enable_mock_llm_runtime else "command",
-            "model_id": "mock-external-llm" if enable_mock_llm_runtime else llm_runtime_model_id,
+            "adapter_kind": adapter_kind,
+            "model_id": model_id,
         }
     return {
         "runtime": "python-cli",
@@ -371,6 +380,7 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
             "capabilities": miner_capabilities(
                 enable_mock_llm_runtime=args.enable_mock_llm_runtime,
                 llm_runtime_cmd=args.llm_runtime_cmd,
+                llm_runtime_url=args.llm_runtime_url,
                 llm_runtime_model_id=args.llm_runtime_model_id,
             ),
         },
@@ -445,8 +455,20 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
                     runtime_command=args.llm_runtime_cmd,
                     timeout=args.llm_runtime_timeout,
                 )
+            elif args.llm_runtime_url:
+                inner_result = run_external_llm_inference(
+                    claim["workload_spec"],
+                    adapter_kind="http_openai_chat",
+                    model_id=args.llm_runtime_model_id,
+                    runtime_url=args.llm_runtime_url,
+                    api_key=args.llm_runtime_api_key,
+                    timeout=args.llm_runtime_timeout,
+                )
             else:
-                raise RuntimeError("external_llm_infer requires --enable-mock-llm-runtime or --llm-runtime-cmd")
+                raise RuntimeError(
+                    "external_llm_infer requires --enable-mock-llm-runtime, "
+                    "--llm-runtime-cmd, or --llm-runtime-url"
+                )
         else:
             inner_result = run_inner_loop(
                 claim["weights"],
@@ -590,6 +612,16 @@ def parse_args() -> argparse.Namespace:
         "--llm-runtime-cmd",
         default=os.environ.get("CROWDTENSOR_LLM_RUNTIME_CMD", ""),
         help="optional external_llm_infer command; it receives prompt and max_tokens arguments",
+    )
+    parser.add_argument(
+        "--llm-runtime-url",
+        default=os.environ.get("CROWDTENSOR_LLM_RUNTIME_URL", ""),
+        help="optional OpenAI-compatible chat completions endpoint for external_llm_infer",
+    )
+    parser.add_argument(
+        "--llm-runtime-api-key",
+        default=os.environ.get("CROWDTENSOR_LLM_RUNTIME_API_KEY", ""),
+        help="optional bearer token for --llm-runtime-url; never advertised in Miner capabilities",
     )
     parser.add_argument(
         "--llm-runtime-model-id",

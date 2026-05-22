@@ -20,7 +20,7 @@ Status: planned.
 - Expand the current read-only multi-request `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts and explicit capability matching.
 - Keep the measurable CPU inference session path visible with safe latency, throughput, accuracy, and Miner hardware profile summaries.
 - Keep `scripts/inference_session_demo.py` as the low-friction local demo while richer runtime adapters mature.
-- Use `external_llm_infer_v1` as the first narrow optional adapter contract: deterministic `--enable-mock-llm-runtime` for CI, operator-owned `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for local experiments, and read-only validation of `external_llm_results` before any production serving claims.
+- Use `external_llm_infer_v1` as the first narrow optional adapter contract: deterministic `--enable-mock-llm-runtime` for CI, operator-owned `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD`, OpenAI-compatible `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for local servers, and read-only validation of `external_llm_results` before any production serving claims.
 - Clear hardware matrix for CPU, NVIDIA, AMD, Apple Silicon, and browser paths.
 - Remote Miner onboarding that works through common home-network setups with operator-provided TLS or VPN.
 - Better observability for throughput, latency, availability, and rejected work.

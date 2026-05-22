@@ -276,7 +276,13 @@ Run only the optional external LLM adapter smoke:
 python3 scripts/external_llm_inference_smoke.py --port 8906 --request-count 3
 ```
 
-The `external_llm_infer` workload uses the `external_llm_infer_v1` schema. It is read-only and validates `external_llm_results` against claim-time prompt hashes before recording safe `request_count`, `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries. The smoke path uses `crowdtensor-miner --enable-mock-llm-runtime` for deterministic CI. Operators can opt into a local command adapter with `--llm-runtime-cmd` or `CROWDTENSOR_LLM_RUNTIME_CMD`; the command receives `prompt` and `max_tokens` arguments. Raw `output_text` is kept out of `/state` and admin ledger summaries.
+Run the OpenAI-compatible HTTP adapter variant:
+
+```bash
+python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908
+```
+
+The `external_llm_infer` workload uses the `external_llm_infer_v1` schema. It is read-only and validates `external_llm_results` against claim-time prompt hashes before recording safe `request_count`, `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries. The smoke path uses `crowdtensor-miner --enable-mock-llm-runtime` for deterministic CI. Operators can opt into a local command adapter with `--llm-runtime-cmd` or `CROWDTENSOR_LLM_RUNTIME_CMD`; the command receives `prompt` and `max_tokens` arguments. Operators can also opt into an OpenAI-compatible chat completions endpoint with `--llm-runtime-url` or `CROWDTENSOR_LLM_RUNTIME_URL`, plus optional `--llm-runtime-api-key` / `CROWDTENSOR_LLM_RUNTIME_API_KEY`. Runtime URLs and API keys are never advertised in Miner capabilities. Raw prompts and `output_text` are kept out of `/state` and admin ledger summaries.
 
 Run only the remote Miner invite/join smoke:
 

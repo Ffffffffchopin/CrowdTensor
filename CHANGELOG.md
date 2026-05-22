@@ -17,7 +17,7 @@ CrowdTensorD is currently an experimental control plane for fault-tolerant distr
 - Browser experiments for WebRTC tensor transfer, browser compute probes, and browser Miner bridge smoke tests.
 - Release tooling: `scripts/release_gate.py`, `scripts/runtime_acceptance_pack.py`, `scripts/browser_acceptance_pack.py`, `scripts/release_evidence_pack.py`, and `scripts/support_bundle.py`.
 - User-facing local inference session demo with safe latency, throughput, read-only, redaction, and Miner hardware profile summaries.
-- External LLM adapter smoke (`scripts/external_llm_inference_smoke.py`) using `--enable-mock-llm-runtime`, with optional `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local runtime wrappers.
+- External LLM adapter smokes (`scripts/external_llm_inference_smoke.py`, `scripts/external_llm_http_adapter_smoke.py`) using `--enable-mock-llm-runtime`, optional `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD`, and OpenAI-compatible `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for operator-owned local runtime wrappers.
 
 ### Known Limitations
 

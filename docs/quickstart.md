@@ -123,7 +123,7 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_acceptance.json
 ```
 
-The default suite includes the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`), read-only multi-request `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`), user-facing inference session demo (`scripts/inference_session_demo.py`), and optional external LLM adapter smoke (`scripts/external_llm_inference_smoke.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks. Use `--skip-external-llm-inference` if you need to omit that adapter check.
+The default suite includes the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`), read-only multi-request `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`), user-facing inference session demo (`scripts/inference_session_demo.py`), optional external LLM mock/command adapter smoke (`scripts/external_llm_inference_smoke.py`), and OpenAI-compatible HTTP adapter smoke (`scripts/external_llm_http_adapter_smoke.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks. Use `--skip-external-llm-inference` or `--skip-external-llm-http-adapter` if you need to omit those adapter checks.
 
 Run only the local inference session demo:
 
@@ -139,7 +139,13 @@ Run only the optional external LLM adapter contract smoke:
 python3 scripts/external_llm_inference_smoke.py --port 8906 --request-count 3
 ```
 
-This smoke starts `crowdtensor-miner --enable-mock-llm-runtime`, exercises `external_llm_infer_v1`, validates `external_llm_results`, and checks that the read-only ledger exposes `completion_count`, `output_chars`, and `adapter_kind` without leaking raw `output_text`. To use a local runtime wrapper instead of the mock, start a Miner with `--llm-runtime-cmd /path/to/wrapper` or `CROWDTENSOR_LLM_RUNTIME_CMD=/path/to/wrapper`; the wrapper receives `prompt` and `max_tokens` arguments.
+Run the OpenAI-compatible HTTP adapter variant:
+
+```bash
+python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908
+```
+
+These smokes exercise `external_llm_infer_v1`, validate `external_llm_results`, and check that the read-only ledger exposes `completion_count`, `output_chars`, and `adapter_kind` without leaking raw prompts or `output_text`. To use a local runtime wrapper instead of the mock, start a Miner with `--llm-runtime-cmd /path/to/wrapper` or `CROWDTENSOR_LLM_RUNTIME_CMD=/path/to/wrapper`; the wrapper receives `prompt` and `max_tokens` arguments. To use an OpenAI-compatible local server, start a Miner with `--llm-runtime-url http://127.0.0.1:11434/v1/chat/completions` or `CROWDTENSOR_LLM_RUNTIME_URL=...`, plus optional `--llm-runtime-api-key` / `CROWDTENSOR_LLM_RUNTIME_API_KEY`.
 
 Run the same suite with local auth enabled inside checks that support shared auth env vars:
 

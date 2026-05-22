@@ -45,7 +45,7 @@ Do not imply these are implemented:
 - hardware attestation
 - hardened public-internet security
 
-The current model bundle, measurable multi-request model bundle inference, optional `external_llm_infer_v1` adapter, and micro LM workloads are dependency-free contract rehearsals, not real LLM or GPU throughput benchmarks. `external_llm_infer` is read-only, validates `external_llm_results`, records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries, and must keep raw `output_text` out of `/state`.
+The current model bundle, measurable multi-request model bundle inference, optional `external_llm_infer_v1` adapter, and micro LM workloads are dependency-free contract rehearsals, not real LLM or GPU throughput benchmarks. `external_llm_infer` is read-only, validates `external_llm_results`, records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries, supports deterministic mock, command, and OpenAI-compatible HTTP adapters, and must keep raw prompts, raw `output_text`, runtime URLs, and API keys out of public state.
 
 ## Strategic Route
 
@@ -56,7 +56,7 @@ Recommended sequence:
 1. Keep the Alpha control plane reliable, testable, and well documented.
 2. Keep README, ROADMAP, protocol docs, use cases, static site, and project memory synchronized.
 3. Expand the read-only multi-request `model_bundle_infer` probe into a useful home-compute demo that feels close to Swarm Inference, starting with small model artifacts and explicit capability matching.
-4. Keep `external_llm_infer_v1` as the narrow optional runtime adapter contract: deterministic `--enable-mock-llm-runtime` for CI and explicit `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local experiments.
+4. Keep `external_llm_infer_v1` as the narrow optional runtime adapter contract: deterministic `--enable-mock-llm-runtime` for CI, explicit `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local experiments, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
 5. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 6. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.
 7. Expand browser-native participation from WebRTC/Worker probes toward WebGPU/WebAssembly only after tensor transfer and lifecycle limits are measured.

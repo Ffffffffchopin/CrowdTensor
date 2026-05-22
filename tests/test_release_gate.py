@@ -370,9 +370,12 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "external_llm_inference_docs")
         self.assertTrue(any("external_llm_infer" in detail for detail in details))
+        self.assertTrue(any("external_llm_http_adapter_smoke.py" in detail for detail in details))
         self.assertTrue(any("--enable-mock-llm-runtime" in detail for detail in details))
         self.assertTrue(any("--llm-runtime-cmd" in detail for detail in details))
+        self.assertTrue(any("--llm-runtime-url" in detail for detail in details))
         self.assertTrue(any("--skip-external-llm-inference" in detail for detail in details))
+        self.assertTrue(any("--skip-external-llm-http-adapter" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

@@ -192,12 +192,20 @@ class MinerCliTests(unittest.TestCase):
             llm_runtime_cmd="/usr/local/bin/local-llm",
             llm_runtime_model_id="local-model",
         )
+        http_capabilities = miner_cli.miner_capabilities(
+            llm_runtime_url="http://127.0.0.1:11434/v1/chat/completions",
+            llm_runtime_model_id="http-model",
+        )
 
         self.assertIn("external_llm_infer", mock_capabilities["supported_workloads"])
         self.assertEqual(mock_capabilities["external_llm_runtime"]["adapter_kind"], "mock")
         self.assertIn("external_llm_infer", command_capabilities["supported_workloads"])
         self.assertEqual(command_capabilities["external_llm_runtime"]["adapter_kind"], "command")
         self.assertEqual(command_capabilities["external_llm_runtime"]["model_id"], "local-model")
+        self.assertIn("external_llm_infer", http_capabilities["supported_workloads"])
+        self.assertEqual(http_capabilities["external_llm_runtime"]["adapter_kind"], "http_openai_chat")
+        self.assertEqual(http_capabilities["external_llm_runtime"]["model_id"], "http-model")
+        self.assertNotIn("runtime_url", http_capabilities["external_llm_runtime"])
 
     def test_auto_delta_format_follows_claim_optimizer_spec(self) -> None:
         self.assertEqual(

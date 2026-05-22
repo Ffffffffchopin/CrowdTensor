@@ -8,9 +8,12 @@ is allowed to execute them.
 from __future__ import annotations
 
 import hashlib
+import json
 import shlex
 import subprocess
 import time
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 SCHEMA_VERSION = "external_llm_infer_v1"
@@ -100,12 +103,78 @@ def run_external_llm_command(
     return completed.stdout.strip()
 
 
+def parse_openai_chat_completion(payload: dict) -> str:
+    if not isinstance(payload, dict):
+        raise RuntimeError("external LLM HTTP response must be a JSON object")
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("external LLM HTTP response missing choices")
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise RuntimeError("external LLM HTTP response choice must be an object")
+    message = first.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(
+                str(part.get("text", ""))
+                if isinstance(part, dict)
+                else str(part)
+                for part in content
+            )
+        if str(content or "").strip():
+            return str(content).strip()
+    text = first.get("text")
+    if str(text or "").strip():
+        return str(text).strip()
+    raise RuntimeError("external LLM HTTP response contained empty completion text")
+
+
+def run_external_llm_http(
+    *,
+    url: str,
+    prompt: str,
+    max_tokens: int,
+    model_id: str,
+    timeout: float,
+    api_key: str = "",
+) -> str:
+    endpoint = str(url or "").strip()
+    if not endpoint:
+        raise ValueError("external LLM runtime URL is empty")
+    body = json.dumps({
+        "model": model_id,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max(1, int(max_tokens)),
+        "temperature": 0,
+    }).encode("utf-8")
+    headers = {"content-type": "application/json"}
+    if api_key:
+        headers["authorization"] = f"Bearer {api_key}"
+    request = Request(endpoint, data=body, headers=headers, method="POST")
+    try:
+        with urlopen(request, timeout=float(timeout)) as response:
+            raw = response.read().decode("utf-8")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"external LLM HTTP runtime returned {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"external LLM HTTP runtime unavailable: {exc.reason}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"external LLM HTTP runtime returned invalid JSON: {exc}") from exc
+    return parse_openai_chat_completion(payload)
+
+
 def run_external_llm_inference(
     workload_spec: dict,
     *,
     adapter_kind: str,
     model_id: str,
     runtime_command: str = "",
+    runtime_url: str = "",
+    api_key: str = "",
     timeout: float = 30.0,
 ) -> dict:
     spec = dict(workload_spec or {})
@@ -123,6 +192,15 @@ def run_external_llm_inference(
                 prompt=prompt,
                 max_tokens=max_tokens,
                 timeout=timeout,
+            )
+        elif runtime_url:
+            text = run_external_llm_http(
+                url=runtime_url,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                model_id=model_id,
+                timeout=timeout,
+                api_key=api_key,
             )
         else:
             text = _bounded_words(f"mock completion for: {prompt}", max_tokens)

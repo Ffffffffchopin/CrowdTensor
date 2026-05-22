@@ -61,6 +61,8 @@ Useful flags:
 - `--max-request-attempts N`: retry transient `/ready`, claim, heartbeat, and idempotent result upload failures
 - `--enable-mock-llm-runtime`: advertise `external_llm_infer` with the deterministic mock runtime
 - `--llm-runtime-cmd CMD`: advertise `external_llm_infer` with an operator-owned command wrapper; `CROWDTENSOR_LLM_RUNTIME_CMD` is also supported
+- `--llm-runtime-url URL`: advertise `external_llm_infer` with an OpenAI-compatible chat completions endpoint; `CROWDTENSOR_LLM_RUNTIME_URL` is also supported
+- `--llm-runtime-api-key TOKEN`: optional bearer token for `--llm-runtime-url`; `CROWDTENSOR_LLM_RUNTIME_API_KEY` is also supported and is not advertised in capabilities
 - `--idle-sleep N`: sleep between failed or unavailable claims
 
 The Miner summary includes `request_retries` and `preflight_failures` so operators can spot unstable links without parsing stderr.
@@ -235,7 +237,13 @@ External LLM adapter contract smoke:
 python3 scripts/external_llm_inference_smoke.py --port 8906 --request-count 3
 ```
 
-The smoke uses `crowdtensor-miner --enable-mock-llm-runtime` so it is deterministic and CPU-only. For an operator-provided local runtime, run the Miner with `--llm-runtime-cmd /path/to/wrapper` or set `CROWDTENSOR_LLM_RUNTIME_CMD=/path/to/wrapper`; the wrapper receives `prompt` and `max_tokens` arguments and should print completion text to stdout. `external_llm_infer` is read-only, validates `external_llm_infer_v1` prompt hashes and `external_llm_results`, records `request_count`, `completion_count`, `output_chars`, `adapter_kind`, `model_id`, and `requests_per_second`, and keeps raw `output_text` out of `/state` and admin result ledger summaries.
+OpenAI-compatible HTTP adapter smoke:
+
+```bash
+python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908
+```
+
+The default smoke uses `crowdtensor-miner --enable-mock-llm-runtime` so it is deterministic and CPU-only. For an operator-provided local runtime, run the Miner with `--llm-runtime-cmd /path/to/wrapper` or set `CROWDTENSOR_LLM_RUNTIME_CMD=/path/to/wrapper`; the wrapper receives `prompt` and `max_tokens` arguments and should print completion text to stdout. For OpenAI-compatible local servers, use `--llm-runtime-url http://127.0.0.1:11434/v1/chat/completions` or `CROWDTENSOR_LLM_RUNTIME_URL=...`, with optional `--llm-runtime-api-key` / `CROWDTENSOR_LLM_RUNTIME_API_KEY`. `external_llm_infer` is read-only, validates `external_llm_infer_v1` prompt hashes and `external_llm_results`, records `request_count`, `completion_count`, `output_chars`, `adapter_kind`, `model_id`, and `requests_per_second`, and keeps raw prompts and `output_text` out of `/state` and admin result ledger summaries.
 
 Remote-style Miner readiness:
 
