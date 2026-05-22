@@ -310,6 +310,19 @@ python3 scripts/remote_demo_runbook_pack.py \
 
 The `remote_demo_runbook_v1` pack generates `operator.private.env`, `miner.private.env`, a hashed Miner registry, and public JSON/Markdown commands for a controlled `model_bundle_infer` demo. It keeps plaintext tokens out of the public artifact, includes the `remote_compute_evidence_pack.py --mode collect` command, and is checked by `scripts/remote_demo_runbook_check.py`.
 
+Safe two-machine remote acceptance:
+
+```bash
+python3 scripts/remote_demo_acceptance_pack.py \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --output-dir dist/remote-demo-acceptance
+```
+
+The `remote_demo_acceptance_v1` pack waits for the selected remote Miner to complete read-only `model_bundle_infer`, then writes `remote_compute_evidence_v1`, `support_bundle`, and a top-level acceptance JSON/Markdown report. `scripts/remote_demo_acceptance_check.py` validates the local stand-in path.
+
 `--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
 
 Core browser acceptance:

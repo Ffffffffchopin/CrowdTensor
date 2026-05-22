@@ -92,6 +92,19 @@ python3 scripts/remote_demo_runbook_pack.py \
 
 The `remote_demo_runbook_v1` artifact prepares a registry-backed Coordinator/Miner demo for `model_bundle_infer`: it writes `operator.private.env` and `miner.private.env` with `0600` permissions, stores only hashed Miner token verifiers in the registry, and keeps the public JSON/Markdown free of plaintext tokens. The generated commands include security preflight, `crowdtensord --task-lane python-cli:cpu:1:model_bundle_infer`, `crowdtensor-miner`, and `remote_compute_evidence_pack.py --mode collect`. CI validates this with `scripts/remote_demo_runbook_check.py`.
 
+After the Coordinator and remote Miner are running, collect the safe two-machine acceptance pack:
+
+```bash
+python3 scripts/remote_demo_acceptance_pack.py \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --output-dir dist/remote-demo-acceptance
+```
+
+The `remote_demo_acceptance_v1` report waits for the remote Miner to complete read-only `model_bundle_infer`, then writes `remote_compute_evidence_v1`, `support_bundle`, and a top-level JSON/Markdown summary. CI validates the local stand-in with `scripts/remote_demo_acceptance_check.py`.
+
 For optional remote and browser checks:
 
 ```bash
@@ -363,6 +376,12 @@ Run only the safe two-machine runbook generator check:
 
 ```bash
 python3 scripts/remote_demo_runbook_check.py
+```
+
+Run only the safe two-machine acceptance check:
+
+```bash
+python3 scripts/remote_demo_acceptance_check.py --port 8913
 ```
 
 Run only the security preflight:

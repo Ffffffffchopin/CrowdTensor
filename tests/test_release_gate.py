@@ -54,6 +54,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "home_compute_evidence_docs",
                 "remote_compute_evidence_docs",
                 "remote_demo_runbook_docs",
+                "remote_demo_acceptance_docs",
                 "release_materials",
                 "open_source_entrypoints",
                 "project_memory",
@@ -339,6 +340,28 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "remote_demo_runbook_docs")
         self.assertTrue(any("remote_demo_runbook_pack.py" in detail for detail in details))
         self.assertTrue(any("operator.private.env" in detail for detail in details))
+
+    def test_remote_demo_acceptance_docs_must_describe_acceptance_pack(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/remote-miner.md",
+            "docs/use-cases.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No remote demo acceptance docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "remote_demo_acceptance_docs")
+        self.assertTrue(any("remote_demo_acceptance_pack.py" in detail for detail in details))
+        self.assertTrue(any("remote_demo_acceptance_v1" in detail for detail in details))
 
     def test_release_materials_must_describe_release_flow(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

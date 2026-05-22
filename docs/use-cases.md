@@ -13,6 +13,7 @@ Today:
 - Run `scripts/home_compute_evidence_pack.py` when you need a safe, shareable `home_compute_evidence_v1` artifact with `route_decision`, `matched_capabilities`, and capped `request_trace` rows for an issue report or demo.
 - Run `scripts/remote_compute_evidence_pack.py` when you want a safe, shareable `remote_compute_evidence_v1` artifact showing a registry-backed remote-style Miner completing read-only `model_bundle_infer`.
 - Run `scripts/remote_demo_runbook_pack.py` for a safe two-machine `remote_demo_runbook_v1` with `operator.private.env`, `miner.private.env`, and a `remote_compute_evidence_pack.py --mode collect` command.
+- Run `scripts/remote_demo_acceptance_pack.py` after the two-machine demo is running to collect `remote_demo_acceptance_v1`, `remote_compute_evidence_v1`, and `support_bundle`.
 - Run the 5-minute local Coordinator/Miner demo from [Quickstart](quickstart.md).
 - Inspect how a Miner claims work, sends heartbeats, retries transient failures, and submits a validated result.
 - Run `scripts/inference_session_demo.py` for a user-facing local inference session summary.
@@ -35,6 +36,7 @@ Today:
 - Generate a safe two-machine runbook with `scripts/remote_demo_runbook_pack.py`; copy only `miner.private.env` to the remote host and keep `operator.private.env` on the Coordinator/operator side.
 - Run `scripts/remote_miner_join_check.py` and `scripts/remote_miner_readiness_check.py`.
 - Run `scripts/remote_compute_evidence_pack.py --mode collect` after a real remote Miner completes `model_bundle_infer` to collect the safe `remote_python_model_bundle_infer` evidence report.
+- Run `scripts/remote_demo_acceptance_pack.py` to wait for the real remote Miner result and collect the safe acceptance report plus `support_bundle`.
 - Use hashed token config, `/ready` preflight, retry counters, and Support Bundle diagnostics.
 
 Operator boundary:
@@ -80,6 +82,7 @@ Today:
 - `scripts/home_compute_evidence_pack.py` turns that route and session into a safe, shareable evidence pack validated by `scripts/home_compute_evidence_check.py`; runtime acceptance can skip it with `--skip-home-compute-evidence` when a CI lane only needs lower-level checks.
 - `scripts/remote_compute_evidence_pack.py` turns a registry-backed remote-style Python Miner run into `remote_compute_evidence_v1`, validated by `scripts/remote_compute_evidence_check.py`; runtime acceptance can opt in with `--include-remote-evidence`.
 - `scripts/remote_demo_runbook_pack.py` prepares the safe two-machine `remote_demo_runbook_v1` path for a controlled `model_bundle_infer` result before collecting remote evidence.
+- `scripts/remote_demo_acceptance_pack.py` validates the running safe two-machine path and emits `remote_demo_acceptance_v1` with `remote_compute_evidence_v1` and `support_bundle` summaries.
 
 Planned path:
 

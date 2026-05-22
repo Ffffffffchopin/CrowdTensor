@@ -155,6 +155,19 @@ python3 scripts/remote_compute_evidence_pack.py \
 
 `scripts/remote_compute_evidence_check.py` validates the local-loopback path. The runtime acceptance pack can opt in with `--include-remote-evidence`.
 
+After running the safe two-machine runbook on real Coordinator/Miner hosts, use the acceptance pack to wait for a completed `model_bundle_infer` result and collect shareable artifacts:
+
+```bash
+python3 scripts/remote_demo_acceptance_pack.py \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --output-dir dist/remote-demo-acceptance
+```
+
+The `remote_demo_acceptance_v1` output includes the top-level acceptance summary, `remote_compute_evidence_v1`, and a redacted `support_bundle`. `scripts/remote_demo_acceptance_check.py` validates the local stand-in path in CI.
+
 The default runtime acceptance pack keeps the remote Miner check opt-in:
 
 ```bash
