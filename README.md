@@ -252,7 +252,7 @@ python3 scripts/release_evidence_pack.py \
   --markdown-out dist/release-evidence.md
 ```
 
-The Release Evidence output records the git commit, package metadata, release gate result, security preflight result, and acceptance report summaries. CI uploads `release-evidence.json` and the Markdown companion as build artifacts.
+The Release Evidence output records the git commit, package metadata, release gate result, security preflight result, and acceptance report summaries. Runtime acceptance summaries preserve safe per-check `summary_json` fields plus top-level `diagnosis_summary` / `diagnosis_by_check` rows so release artifacts show stable triage codes without raw tokens or tensor payloads. CI uploads `release-evidence.json` and the Markdown companion as build artifacts.
 
 Build a Support Bundle for issues or remote-demo troubleshooting:
 
@@ -261,7 +261,7 @@ python3 scripts/support_bundle.py \
   --json-out /tmp/crowdtensor_support_bundle.json
 ```
 
-The Support Bundle includes doctor and release-gate summaries, optional acceptance report summaries, and safe online Coordinator summaries when `--coordinator` is provided. It redacts token, lease, idempotency, weight, and delta-shaped fields before writing output.
+The Support Bundle includes doctor and release-gate summaries, optional acceptance report summaries, runtime `diagnosis_summary` / `diagnosis_by_check` rows, and safe online Coordinator summaries when `--coordinator` is provided. It redacts token, lease, idempotency, weight, and delta-shaped fields before writing output.
 
 Some sandboxes block localhost client sockets. In that case, run unit tests inside the sandbox and run the acceptance pack in an unrestricted shell or CI job.
 

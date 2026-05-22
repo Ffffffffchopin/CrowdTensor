@@ -29,7 +29,7 @@ The project currently includes:
 - Admission and operator safety: shared Miner token, per-Miner token registry, observer token, admin token, hashed token verifiers, security preflight, redacted `/state`, aggregate `/metrics`, and safe admin ledger views.
 - Controlled remote Miner onboarding through invite generation, readiness checks, remote join checks, retry counters, and Support Bundle diagnostics.
 - Browser experiments for WebRTC tensor tunnel, browser Worker compute probe, and browser Miner bridge.
-- Release and support tooling: First-run Doctor, runtime capability matrix, matrix-guided home-compute demo, user-facing inference session demo, release gate, runtime acceptance pack, browser acceptance pack, release evidence pack, Support Bundle, changelog, release process docs, roadmap, protocol docs, use-case docs, and static site.
+- Release and support tooling: First-run Doctor, runtime capability matrix, matrix-guided home-compute demo, user-facing inference session demo, release gate, runtime acceptance pack, browser acceptance pack, release evidence pack, Support Bundle, changelog, release process docs, roadmap, protocol docs, use-case docs, and static site. Runtime acceptance emits safe per-check `summary_json` and top-level `diagnosis_summary`; release evidence and Support Bundle preserve `diagnosis_by_check` for operator triage.
 
 ## Explicit Non-Capabilities
 

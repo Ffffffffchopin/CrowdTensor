@@ -44,6 +44,24 @@ def skipped_browser_report(path: Path) -> None:
     )
 
 
+def diagnostic_runtime_report(path: Path) -> None:
+    path.write_text(
+        json.dumps({
+            "ok": True,
+            "duration_seconds": 1.0,
+            "diagnosis_summary": {
+                "codes": ["home_compute_ready"],
+                "by_check": {"home_compute_demo": ["home_compute_ready"]},
+                "failed_checks": [],
+            },
+            "checks": [
+                {"name": "home_compute_demo", "ok": True, "diagnosis_codes": ["home_compute_ready"]},
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+
 def base_args(tmp_root: Path, runtime_report: Path) -> object:
     return release_evidence_pack.parse_args([
         "--root",
@@ -83,6 +101,58 @@ class ReleaseEvidencePackTests(unittest.TestCase):
         self.assertTrue(evidence["release_status"]["ready"], evidence)
         self.assertEqual(evidence["reports"]["runtime"]["checks_total"], 2)
         self.assertTrue(evidence["reports"]["browser"]["skipped"])
+
+    def test_runtime_report_preserves_diagnosis_summary(self) -> None:
+        tmp_root = Path(self._tmp_dir())
+        runtime_report = tmp_root / "runtime.json"
+        diagnostic_runtime_report(runtime_report)
+
+        report = release_evidence_pack.load_acceptance_report(
+            str(runtime_report),
+            name="runtime",
+            required=True,
+        )
+
+        self.assertEqual(report["diagnosis_codes"], ["home_compute_ready"])
+        self.assertEqual(report["diagnosis_by_check"], {"home_compute_demo": ["home_compute_ready"]})
+        self.assertEqual(report["failed_checks"], [])
+
+    def test_runtime_report_preserves_direct_diagnosis_rows(self) -> None:
+        tmp_root = Path(self._tmp_dir())
+        runtime_report = tmp_root / "runtime.json"
+        runtime_report.write_text(
+            json.dumps({
+                "ok": True,
+                "diagnosis_codes": ["home_compute_ready"],
+                "diagnosis_by_check": {"home_compute_demo": ["home_compute_ready"]},
+                "failed_checks": [],
+                "checks": [],
+            }),
+            encoding="utf-8",
+        )
+
+        report = release_evidence_pack.load_acceptance_report(
+            str(runtime_report),
+            name="runtime",
+            required=True,
+        )
+
+        self.assertEqual(report["diagnosis_codes"], ["home_compute_ready"])
+        self.assertEqual(report["diagnosis_by_check"], {"home_compute_demo": ["home_compute_ready"]})
+
+    def test_nested_release_report_diagnosis_rows_are_aggregated(self) -> None:
+        summary = release_evidence_pack.summarize_diagnosis({
+            "reports": {
+                "runtime": {
+                    "diagnosis_codes": ["home_compute_ready"],
+                    "diagnosis_by_check": {"home_compute_demo": ["home_compute_ready"]},
+                    "failed_checks": [],
+                },
+            },
+        })
+
+        self.assertEqual(summary["codes"], ["home_compute_ready"])
+        self.assertEqual(summary["by_check"], {"runtime.home_compute_demo": ["home_compute_ready"]})
 
     def test_missing_runtime_report_blocks_release(self) -> None:
         tmp_root = Path(self._tmp_dir())
@@ -193,6 +263,27 @@ class ReleaseEvidencePackTests(unittest.TestCase):
         markdown = release_evidence_pack.render_markdown(payload)
 
         self.assertIn("runtime acceptance report is missing", markdown)
+
+    def test_markdown_mentions_diagnosis_codes(self) -> None:
+        payload = {
+            "release_status": {"status": "ready", "blocking_reasons": []},
+            "project": {"name": "crowdtensord", "version": "0.1.0a0"},
+            "git": {"commit": "abc", "branch": "main"},
+            "generated_at": "2026-05-21T00:00:00+00:00",
+            "checks": {"release_gate": {"ok": True, "total": 1, "failed": []}},
+            "reports": {
+                "runtime": {
+                    "present": True,
+                    "ok": True,
+                    "checks_total": 1,
+                    "diagnosis_codes": ["home_compute_ready"],
+                },
+            },
+        }
+
+        markdown = release_evidence_pack.render_markdown(payload)
+
+        self.assertIn("home_compute_ready", markdown)
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

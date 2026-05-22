@@ -56,6 +56,8 @@ python3 scripts/release_evidence_pack.py \
   --markdown-out dist/release-evidence.md
 ```
 
+The release evidence JSON preserves safe runtime acceptance `summary_json` rows and aggregates `diagnosis_summary` / `diagnosis_by_check` so reviewers can see stable operator triage codes beside the pass/fail state.
+
 Generate a Support Bundle for troubleshooting the candidate:
 
 ```bash
@@ -66,6 +68,8 @@ python3 scripts/support_bundle.py \
   --json-out /tmp/crowdtensor_support_bundle.json \
   --markdown-out /tmp/crowdtensor_support_bundle.md
 ```
+
+The Support Bundle includes acceptance `diagnosis_summary` / `diagnosis_by_check` when reports are provided, while still redacting token, lease, idempotency, weight, and delta-shaped fields.
 
 ## Publish
 

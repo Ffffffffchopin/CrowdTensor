@@ -102,6 +102,59 @@ def summarize_checks(report: dict[str, Any], *, label_key: str = "name") -> dict
     }
 
 
+def summarize_diagnosis(report: dict[str, Any]) -> dict[str, Any]:
+    direct_codes = report.get("diagnosis_codes") if isinstance(report, dict) else []
+    direct_by_check = report.get("diagnosis_by_check") if isinstance(report, dict) else {}
+    direct_failed = report.get("failed_checks") if isinstance(report, dict) else []
+    if direct_codes or direct_by_check or direct_failed:
+        return {
+            "codes": sorted(set(str(code) for code in direct_codes or [] if code)),
+            "by_check": {
+                str(name): [str(code) for code in codes if code]
+                for name, codes in dict(direct_by_check or {}).items()
+            },
+            "failed_checks": [str(name) for name in direct_failed or [] if name],
+        }
+    diagnosis = report.get("diagnosis_summary") if isinstance(report, dict) else {}
+    if isinstance(diagnosis, dict) and diagnosis:
+        return {
+            "codes": list(diagnosis.get("codes") or []),
+            "by_check": dict(diagnosis.get("by_check") or {}),
+            "failed_checks": list(diagnosis.get("failed_checks") or []),
+        }
+    nested_reports = report.get("reports") if isinstance(report, dict) else {}
+    if isinstance(nested_reports, dict) and nested_reports:
+        codes: list[str] = []
+        by_check: dict[str, list[str]] = {}
+        failed: list[str] = []
+        for report_name, nested_report in nested_reports.items():
+            if not isinstance(nested_report, dict):
+                continue
+            nested = summarize_diagnosis(nested_report)
+            codes.extend(nested["codes"])
+            failed.extend(f"{report_name}.{name}" for name in nested["failed_checks"])
+            for check_name, check_codes in nested["by_check"].items():
+                by_check[f"{report_name}.{check_name}"] = check_codes
+        return {"codes": sorted(set(codes)), "by_check": by_check, "failed_checks": failed}
+    checks = report.get("checks") if isinstance(report, dict) else []
+    if not isinstance(checks, list):
+        checks = []
+    by_check: dict[str, list[str]] = {}
+    codes: list[str] = []
+    failed: list[str] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        name = str(check.get("name") or "<unnamed>")
+        if check.get("ok") is not True:
+            failed.append(name)
+        check_codes = [str(code) for code in check.get("diagnosis_codes") or [] if code]
+        if check_codes:
+            by_check[name] = check_codes
+            codes.extend(check_codes)
+    return {"codes": sorted(set(codes)), "by_check": by_check, "failed_checks": failed}
+
+
 def load_acceptance_report(path: str, *, name: str, required: bool) -> dict[str, Any]:
     if not path:
         return {
@@ -143,6 +196,7 @@ def load_acceptance_report(path: str, *, name: str, required: bool) -> dict[str,
             "checks_failed": [],
         }
     summary = summarize_checks(payload)
+    diagnosis = summarize_diagnosis(payload)
     return {
         "name": name,
         "path": str(report_path),
@@ -156,6 +210,9 @@ def load_acceptance_report(path: str, *, name: str, required: bool) -> dict[str,
         "finished_at": payload.get("finished_at", ""),
         "checks_total": summary["total"],
         "checks_failed": summary["failed"],
+        "diagnosis_codes": diagnosis["codes"],
+        "diagnosis_by_check": diagnosis["by_check"],
+        "failed_checks": diagnosis["failed_checks"],
     }
 
 
@@ -289,6 +346,9 @@ def render_markdown(payload: dict[str, Any]) -> str:
         if report.get("skipped"):
             suffix = f", skipped={report.get('skip_reason', '')}"
         lines.append(f"- `{name}`: {state}, checks={report['checks_total']}{suffix}")
+        diagnosis_codes = report.get("diagnosis_codes") or []
+        if diagnosis_codes:
+            lines.append(f"  - diagnosis: `{', '.join(diagnosis_codes)}`")
     if status["blocking_reasons"]:
         lines.extend(["", "## Blocking Reasons", ""])
         lines.extend([f"- {reason}" for reason in status["blocking_reasons"]])

@@ -179,6 +179,55 @@ class SupportBundleTests(unittest.TestCase):
         self.assertNotIn("admin-secret", serialized)
         self.assertIn('"local_delta": "<redacted>"', serialized)
 
+    def test_load_json_report_preserves_diagnosis_summary(self) -> None:
+        tmp_root = Path(self._tmp_dir())
+        report_path = tmp_root / "runtime.json"
+        report_path.write_text(
+            json.dumps({
+                "ok": True,
+                "diagnosis_summary": {
+                    "codes": ["home_compute_ready"],
+                    "by_check": {"home_compute_demo": ["home_compute_ready"]},
+                    "failed_checks": [],
+                },
+                "checks": [
+                    {"name": "home_compute_demo", "ok": True, "diagnosis_codes": ["home_compute_ready"]},
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        report = support_bundle.load_json_report(str(report_path), name="runtime")
+
+        self.assertEqual(report["diagnosis_codes"], ["home_compute_ready"])
+        self.assertEqual(report["diagnosis_by_check"], {"home_compute_demo": ["home_compute_ready"]})
+        self.assertEqual(report["failed_checks"], [])
+
+    def test_load_json_report_understands_release_evidence_status_and_diagnosis(self) -> None:
+        tmp_root = Path(self._tmp_dir())
+        report_path = tmp_root / "release-evidence.json"
+        report_path.write_text(
+            json.dumps({
+                "release_status": {"ready": True, "status": "ready", "blocking_reasons": []},
+                "reports": {
+                    "runtime": {
+                        "diagnosis_codes": ["home_compute_ready"],
+                        "diagnosis_by_check": {"home_compute_demo": ["home_compute_ready"]},
+                        "failed_checks": [],
+                    },
+                },
+                "checks": {},
+            }),
+            encoding="utf-8",
+        )
+
+        report = support_bundle.load_json_report(str(report_path), name="release_evidence")
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["diagnosis_codes"], ["home_compute_ready"])
+        self.assertEqual(report["diagnosis_by_check"], {"runtime.home_compute_demo": ["home_compute_ready"]})
+
     def test_markdown_output_summarizes_reports(self) -> None:
         payload = {
             "generated_at": "2026-05-21T00:00:00+00:00",
@@ -187,13 +236,21 @@ class SupportBundleTests(unittest.TestCase):
             "doctor": {"ok": True},
             "release_gate": {"ok": True},
             "online": {"enabled": False},
-            "reports": {"runtime": {"present": True, "ok": True, "checks_total": 2}},
+            "reports": {
+                "runtime": {
+                    "present": True,
+                    "ok": True,
+                    "checks_total": 2,
+                    "diagnosis_codes": ["home_compute_ready"],
+                },
+            },
         }
 
         markdown = support_bundle.render_markdown(payload)
 
         self.assertIn("CrowdTensorD Support Bundle", markdown)
         self.assertIn("runtime", markdown)
+        self.assertIn("home_compute_ready", markdown)
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

@@ -245,6 +245,7 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "release_evidence_docs")
         self.assertTrue(any("scripts/release_evidence_pack.py" in detail for detail in details))
+        self.assertTrue(any("diagnosis_summary" in detail for detail in details))
 
     def test_doctor_docs_must_describe_first_run_diagnostics(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
@@ -272,6 +273,7 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "support_bundle_docs")
         self.assertTrue(any("scripts/support_bundle.py" in detail for detail in details))
+        self.assertTrue(any("diagnosis_by_check" in detail for detail in details))
 
     def test_home_compute_evidence_docs_must_describe_shareable_pack(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

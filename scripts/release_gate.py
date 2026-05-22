@@ -383,6 +383,8 @@ def check_release_evidence_docs(root: Path) -> dict[str, Any]:
         "--runtime-report",
         "release-evidence.json",
         "Release Evidence",
+        "diagnosis_summary",
+        "diagnosis_by_check",
     ]:
         if fragment not in combined:
             details.append(f"release evidence docs or CI must mention {fragment}")
@@ -430,6 +432,8 @@ def check_support_bundle_docs(root: Path) -> dict[str, Any]:
         "--json-out",
         "Support Bundle",
         "support_bundle",
+        "diagnosis_summary",
+        "diagnosis_by_check",
     ]:
         if fragment not in combined:
             details.append(f"support bundle docs or CI must mention {fragment}")

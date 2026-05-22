@@ -89,6 +89,59 @@ def summarize_checks(report: dict[str, Any], *, label_key: str = "name") -> dict
     }
 
 
+def summarize_diagnosis(report: dict[str, Any]) -> dict[str, Any]:
+    direct_codes = report.get("diagnosis_codes") if isinstance(report, dict) else []
+    direct_by_check = report.get("diagnosis_by_check") if isinstance(report, dict) else {}
+    direct_failed = report.get("failed_checks") if isinstance(report, dict) else []
+    if direct_codes or direct_by_check or direct_failed:
+        return {
+            "codes": sorted(set(str(code) for code in direct_codes or [] if code)),
+            "by_check": {
+                str(name): [str(code) for code in codes if code]
+                for name, codes in dict(direct_by_check or {}).items()
+            },
+            "failed_checks": [str(name) for name in direct_failed or [] if name],
+        }
+    diagnosis = report.get("diagnosis_summary") if isinstance(report, dict) else {}
+    if isinstance(diagnosis, dict) and diagnosis:
+        return {
+            "codes": list(diagnosis.get("codes") or []),
+            "by_check": dict(diagnosis.get("by_check") or {}),
+            "failed_checks": list(diagnosis.get("failed_checks") or []),
+        }
+    nested_reports = report.get("reports") if isinstance(report, dict) else {}
+    if isinstance(nested_reports, dict) and nested_reports:
+        codes: list[str] = []
+        by_check: dict[str, list[str]] = {}
+        failed: list[str] = []
+        for report_name, nested_report in nested_reports.items():
+            if not isinstance(nested_report, dict):
+                continue
+            nested = summarize_diagnosis(nested_report)
+            codes.extend(nested["codes"])
+            failed.extend(f"{report_name}.{name}" for name in nested["failed_checks"])
+            for check_name, check_codes in nested["by_check"].items():
+                by_check[f"{report_name}.{check_name}"] = check_codes
+        return {"codes": sorted(set(codes)), "by_check": by_check, "failed_checks": failed}
+    checks = report.get("checks") if isinstance(report, dict) else []
+    if not isinstance(checks, list):
+        checks = []
+    by_check: dict[str, list[str]] = {}
+    codes: list[str] = []
+    failed: list[str] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        name = str(check.get("name") or "<unnamed>")
+        if check.get("ok") is not True:
+            failed.append(name)
+        check_codes = [str(code) for code in check.get("diagnosis_codes") or [] if code]
+        if check_codes:
+            by_check[name] = check_codes
+            codes.extend(check_codes)
+    return {"codes": sorted(set(codes)), "by_check": by_check, "failed_checks": failed}
+
+
 def load_json_report(path: str, *, name: str, required: bool = False) -> dict[str, Any]:
     if not path:
         return {"name": name, "present": False, "required": required, "ok": not required}
@@ -107,17 +160,26 @@ def load_json_report(path: str, *, name: str, required: bool = False) -> dict[st
     except Exception as exc:
         raise ValueError(f"{name} report is not valid JSON: {exc}") from exc
     summary = summarize_checks(payload)
+    diagnosis = summarize_diagnosis(payload)
+    release_status = payload.get("release_status") if isinstance(payload.get("release_status"), dict) else {}
+    if release_status:
+        report_ok = bool(release_status.get("ready")) or release_status.get("status") == "ready"
+    else:
+        report_ok = bool(payload.get("ok", summary["ok"]))
     return {
         "name": name,
         "path": str(report_path),
         "present": True,
         "required": required,
-        "ok": bool(payload.get("ok", summary["ok"])),
+        "ok": report_ok,
         "skipped": bool(payload.get("skipped")),
         "skip_reason": payload.get("skip_reason", ""),
         "duration_seconds": payload.get("duration_seconds"),
         "checks_total": summary["total"],
         "checks_failed": summary["failed"],
+        "diagnosis_codes": diagnosis["codes"],
+        "diagnosis_by_check": diagnosis["by_check"],
+        "failed_checks": diagnosis["failed_checks"],
         "status": payload.get("release_status", {}).get("status", ""),
         "blocking_reasons": payload.get("release_status", {}).get("blocking_reasons", []),
     }
@@ -327,6 +389,9 @@ def render_markdown(payload: dict[str, Any]) -> str:
     for name, report in payload.get("reports", {}).items():
         state = "missing" if not report.get("present") else "ok" if report.get("ok") else "failed"
         lines.append(f"- `{name}`: {state}, checks={report.get('checks_total', 0)}")
+        diagnosis_codes = report.get("diagnosis_codes") or []
+        if diagnosis_codes:
+            lines.append(f"  - diagnosis: `{', '.join(diagnosis_codes)}`")
     lines.append("")
     return "\n".join(lines)
 

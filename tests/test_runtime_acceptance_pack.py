@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +89,92 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         self.assertEqual(passing["duration_seconds"], 1.234)
         self.assertFalse(failing["ok"])
         self.assertEqual([check["name"] for check in failing["checks"]], ["chaos", "operator"])
+        self.assertEqual(failing["diagnosis_summary"]["failed_checks"], ["operator"])
+
+    def test_build_report_aggregates_diagnosis_codes(self) -> None:
+        report = runtime_acceptance_pack.build_report(
+            "2026-05-19T00:00:00+00:00",
+            "2026-05-19T00:00:01+00:00",
+            1.0,
+            [
+                {"name": "home_compute_demo", "ok": True, "diagnosis_codes": ["home_compute_ready"]},
+                {"name": "remote_demo", "ok": False, "diagnosis_codes": ["coordinator_unreachable"]},
+            ],
+        )
+
+        self.assertEqual(
+            report["diagnosis_summary"],
+            {
+                "codes": ["coordinator_unreachable", "home_compute_ready"],
+                "by_check": {
+                    "home_compute_demo": ["home_compute_ready"],
+                    "remote_demo": ["coordinator_unreachable"],
+                },
+                "failed_checks": ["remote_demo"],
+            },
+        )
+
+    def test_parse_summary_json_keeps_safe_fields_and_diagnosis(self) -> None:
+        summary = runtime_acceptance_pack.parse_summary_json(
+            'setup line\n{"ok": true, "schema": "home_compute_evidence_v1", '
+            '"route": "local_cpu_model_bundle_infer", "request_count": 4, '
+            '"diagnosis_codes": ["home_compute_ready"], "token": "secret", "weights": [1, 2]}\n'
+        )
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["schema"], "home_compute_evidence_v1")
+        self.assertEqual(summary["route"], "local_cpu_model_bundle_infer")
+        self.assertEqual(summary["request_count"], 4)
+        self.assertEqual(summary["diagnosis_codes"], ["home_compute_ready"])
+        self.assertNotIn("token", summary)
+        self.assertNotIn("weights", summary)
+
+    def test_parse_summary_json_ignores_non_json_stdout(self) -> None:
+        self.assertIsNone(runtime_acceptance_pack.parse_summary_json("plain success\n"))
+
+    def test_run_check_extracts_summary_json_and_diagnosis_codes(self) -> None:
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout='{"ok": true, "schema": "home_compute_demo_v1", "route": "local_cpu_model_bundle_infer", "diagnosis": "home_compute_ready", "request_count": 4}\n',
+            stderr="",
+        )
+
+        with TemporaryDirectory(prefix="crowdtensor_runtime_acceptance_") as tmp_root:
+            check = {
+                "name": "home_compute_demo",
+                "port": 9910,
+                "state_dir": str(Path(tmp_root) / "state"),
+                "command": ["fake-check"],
+            }
+            with patch.object(runtime_acceptance_pack.subprocess, "run", return_value=completed):
+                result = runtime_acceptance_pack.run_check(check, timeout_seconds=1.0)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["summary_json"]["schema"], "home_compute_demo_v1")
+        self.assertEqual(result["route"], "local_cpu_model_bundle_infer")
+        self.assertEqual(result["request_count"], 4)
+        self.assertEqual(result["diagnosis_codes"], ["home_compute_ready"])
+
+    def test_run_check_extracts_failed_check_diagnosis_codes(self) -> None:
+        completed = SimpleNamespace(
+            returncode=1,
+            stdout='{"ok": false, "diagnosis": {"primary_code": "coordinator_unreachable", "severity": "error"}}\n',
+            stderr="failed",
+        )
+
+        with TemporaryDirectory(prefix="crowdtensor_runtime_acceptance_") as tmp_root:
+            check = {
+                "name": "remote_demo_acceptance",
+                "port": 9911,
+                "state_dir": str(Path(tmp_root) / "state"),
+                "command": ["fake-check"],
+            }
+            with patch.object(runtime_acceptance_pack.subprocess, "run", return_value=completed):
+                result = runtime_acceptance_pack.run_check(check, timeout_seconds=1.0)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["diagnosis_codes"], ["coordinator_unreachable"])
 
     def test_selected_checks_respects_skips_and_ports(self) -> None:
         args = acceptance_args(skip_trust=True)

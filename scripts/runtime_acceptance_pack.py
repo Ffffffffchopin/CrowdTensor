@@ -49,6 +49,97 @@ def tail_text(value: str, *, limit: int = 4000) -> str:
     return value[-limit:]
 
 
+def safe_summary_json(payload: dict[str, Any]) -> dict[str, Any]:
+    safe_keys = [
+        "ok",
+        "schema",
+        "demo",
+        "route",
+        "route_confidence",
+        "workload",
+        "workload_type",
+        "request_count",
+        "request_trace_count",
+        "requests_per_second",
+        "diagnosis",
+        "diagnosis_codes",
+    ]
+    summary = {key: payload.get(key) for key in safe_keys if key in payload}
+    for nested_key in ["selected_workload", "route_decision", "inference_summary", "wait_summary"]:
+        nested = payload.get(nested_key)
+        if isinstance(nested, dict):
+            summary[nested_key] = {
+                key: nested.get(key)
+                for key in [
+                    "name",
+                    "status",
+                    "target",
+                    "workload",
+                    "confidence",
+                    "usable_now",
+                    "request_count",
+                    "request_trace_count",
+                    "ok",
+                    "attempts",
+                    "elapsed_seconds",
+                ]
+                if key in nested
+            }
+    diagnosis = payload.get("diagnosis")
+    if isinstance(diagnosis, dict):
+        summary["diagnosis"] = {
+            key: diagnosis.get(key)
+            for key in ["primary_code", "severity", "summary"]
+            if key in diagnosis
+        }
+    return summary
+
+
+def parse_summary_json(stdout: str) -> dict[str, Any] | None:
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        return None
+    try:
+        payload = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return safe_summary_json(payload)
+
+
+def diagnosis_codes_from_summary(summary: dict[str, Any]) -> list[str]:
+    codes: list[str] = []
+    raw_codes = summary.get("diagnosis_codes")
+    if isinstance(raw_codes, list):
+        codes.extend(str(code) for code in raw_codes if code)
+    diagnosis = summary.get("diagnosis")
+    if isinstance(diagnosis, dict) and diagnosis.get("primary_code"):
+        codes.append(str(diagnosis["primary_code"]))
+    elif isinstance(diagnosis, str):
+        codes.append(diagnosis)
+    return sorted(set(codes))
+
+
+def diagnosis_summary(checks: list[dict[str, Any]]) -> dict[str, Any]:
+    by_check: dict[str, list[str]] = {}
+    failed_checks: list[str] = []
+    all_codes: list[str] = []
+    for check in checks:
+        name = str(check.get("name") or "")
+        if check.get("ok") is not True:
+            failed_checks.append(name)
+        codes = [str(code) for code in check.get("diagnosis_codes") or [] if code]
+        if codes:
+            by_check[name] = codes
+            all_codes.extend(codes)
+    return {
+        "codes": sorted(set(all_codes)),
+        "by_check": by_check,
+        "failed_checks": failed_checks,
+    }
+
+
 def check_command(
     script_name: str,
     *,
@@ -274,6 +365,15 @@ def run_check(check: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any
         "stdout": tail_text(stdout),
         "stderr": tail_text(stderr),
     })
+    summary_json = parse_summary_json(stdout)
+    if summary_json is not None:
+        result["summary_json"] = summary_json
+        codes = diagnosis_codes_from_summary(summary_json)
+        if codes:
+            result["diagnosis_codes"] = codes
+        for key in ["route", "schema", "workload", "request_count"]:
+            if key in summary_json:
+                result[key] = summary_json[key]
     if completed.returncode == 0:
         result["summary"] = stdout.strip().splitlines()[-1] if stdout.strip() else ""
     else:
@@ -287,6 +387,7 @@ def build_report(started_at: str, finished_at: str, duration_seconds: float, che
         "started_at": started_at,
         "finished_at": finished_at,
         "duration_seconds": round(duration_seconds, 3),
+        "diagnosis_summary": diagnosis_summary(checks),
         "checks": checks,
     }
 

@@ -357,7 +357,7 @@ python3 scripts/release_evidence_pack.py \
   --markdown-out dist/release-evidence.md
 ```
 
-`scripts/release_evidence_pack.py` records the current git commit, package metadata, release gate summary, security preflight summary, and acceptance report summaries. The runtime report is required. Browser and remote reports are optional by default; use `--strict-optional` when a release candidate must prove both. CI writes `release-evidence.json` and uploads it as an artifact.
+`scripts/release_evidence_pack.py` records the current git commit, package metadata, release gate summary, security preflight summary, and acceptance report summaries. It preserves safe runtime `summary_json` fields plus top-level `diagnosis_summary` and `diagnosis_by_check` rows so release artifacts carry stable operator triage codes without raw tokens or tensor payloads. The runtime report is required. Browser and remote reports are optional by default; use `--strict-optional` when a release candidate must prove both. CI writes `release-evidence.json` and uploads it as an artifact.
 
 ## Support Bundle
 
@@ -381,7 +381,7 @@ python3 scripts/support_bundle.py \
   --json-out /tmp/crowdtensor_support_bundle.json
 ```
 
-`scripts/support_bundle.py` redacts token, lease, idempotency, weight, and delta-shaped fields. Prefer sharing this bundle over raw `state/` files, raw `/state` output, shell history, or token registry files.
+`scripts/support_bundle.py` carries optional acceptance `diagnosis_summary` / `diagnosis_by_check` rows into the issue bundle, then redacts token, lease, idempotency, weight, and delta-shaped fields. Prefer sharing this bundle over raw `state/` files, raw `/state` output, shell history, or token registry files.
 
 ## Troubleshooting
 
