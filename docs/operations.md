@@ -258,7 +258,7 @@ Runtime capability matrix:
 python3 scripts/runtime_matrix.py --json
 ```
 
-The runtime capability matrix reports CPU-only baseline readiness, optional browser support, optional external LLM runtime configuration, and a hardware/runtime matrix through `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities`. GPU, Apple, AMD, browser, and remote container targets may be detected without being usable runtime adapters. `scripts/runtime_matrix_check.py` is included in the default acceptance pack and can be skipped with `--skip-runtime-matrix`. It notes whether `CROWDTENSOR_LLM_RUNTIME_URL` is configured without printing the URL, token, or API key value.
+The runtime capability matrix reports CPU-only baseline readiness, optional browser support, optional external LLM runtime configuration, and a hardware/runtime matrix through `hardware_targets`, `recommended_routes`, `matched_capabilities`, `missing_capabilities`, route `diagnosis_codes`, `operator_action`, and top-level `diagnosis_summary`. GPU, Apple, AMD, browser, and remote container targets may be detected without being usable runtime adapters. `scripts/runtime_matrix_check.py` is included in the default acceptance pack and can be skipped with `--skip-runtime-matrix`. It notes whether `CROWDTENSOR_LLM_RUNTIME_URL` is configured without printing the URL, token, or API key value.
 
 External LLM adapter contract smoke:
 

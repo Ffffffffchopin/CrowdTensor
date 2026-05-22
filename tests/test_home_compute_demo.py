@@ -62,6 +62,8 @@ class HomeComputeDemoTests(unittest.TestCase):
                     if route_ok else [],
                     "missing_capabilities": []
                     if route_ok else ["target:cpu_baseline"],
+                    "diagnosis_codes": ["cpu_baseline_ready"] if route_ok else ["cpu_baseline_blocked"],
+                    "operator_action": "run_now" if route_ok else "fix_blocker",
                     "next_command": "python3 scripts/home_compute_demo.py --json",
                 },
             ],
@@ -79,6 +81,12 @@ class HomeComputeDemoTests(unittest.TestCase):
                 "blocked": 0 if matrix_ok else 1,
                 "available_workloads": ["model_bundle_infer"] if workload_status == "available" else [],
                 "blocked_workloads": ["model_bundle_infer"] if not matrix_ok else [],
+            },
+            "diagnosis_summary": {
+                "codes": ["cpu_baseline_ready"] if route_ok else ["cpu_baseline_blocked"],
+                "by_route": {
+                    "local_cpu_model_bundle_infer": ["cpu_baseline_ready"] if route_ok else ["cpu_baseline_blocked"],
+                },
             },
         }
 
@@ -129,8 +137,11 @@ class HomeComputeDemoTests(unittest.TestCase):
         self.assertTrue(report["capability_route"]["usable_now"])
         self.assertEqual(report["route_decision"]["name"], "local_cpu_model_bundle_infer")
         self.assertEqual(report["route_decision"]["confidence"], "ready")
+        self.assertEqual(report["route_decision"]["operator_action"], "run_now")
+        self.assertIn("cpu_baseline_ready", report["route_decision"]["diagnosis_codes"])
         self.assertIn("target:cpu_baseline", report["route_decision"]["matched_capabilities"])
         self.assertEqual(report["route_decision"]["missing_capabilities"], [])
+        self.assertIn("cpu_baseline_ready", report["runtime_matrix"]["diagnosis_summary"]["codes"])
         self.assertTrue(report["runtime_matrix"]["hardware_targets"][0]["usable_now"])
         self.assertTrue(report["selected_workload"]["cpu_only"])
         self.assertEqual(report["runtime_matrix"]["host_profile"]["cpu_count"], 8)

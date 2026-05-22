@@ -47,7 +47,7 @@ Check what this machine can run:
 python3 scripts/runtime_matrix.py --json
 ```
 
-The runtime capability matrix reports CPU-only workload readiness, optional browser support, optional external LLM command/HTTP runtime configuration, and a hardware/runtime matrix with `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities`. It does not print token, URL, or API key values.
+The runtime capability matrix reports CPU-only workload readiness, optional browser support, optional external LLM command/HTTP runtime configuration, and a hardware/runtime matrix with `hardware_targets`, `recommended_routes`, `matched_capabilities`, `missing_capabilities`, route `diagnosis_codes`, `operator_action`, and top-level `diagnosis_summary`. It does not print token, URL, or API key values.
 
 Run the matrix-guided home-compute demo:
 

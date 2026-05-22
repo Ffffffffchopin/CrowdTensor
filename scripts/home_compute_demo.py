@@ -146,6 +146,8 @@ def selected_route(matrix: dict[str, Any]) -> dict[str, Any]:
         "reason": "local CPU model bundle inference route is missing from runtime matrix",
         "matched_capabilities": [],
         "missing_capabilities": ["route:local_cpu_model_bundle_infer"],
+        "diagnosis_codes": ["cpu_baseline_blocked"],
+        "operator_action": "fix_blocker",
         "next_command": "python3 scripts/runtime_matrix.py --json",
     }
 
@@ -161,6 +163,8 @@ def route_decision(route: dict[str, Any]) -> dict[str, Any]:
         "reason": route.get("reason"),
         "matched_capabilities": list(route.get("matched_capabilities") or []),
         "missing_capabilities": list(route.get("missing_capabilities") or []),
+        "diagnosis_codes": list(route.get("diagnosis_codes") or []),
+        "operator_action": route.get("operator_action"),
         "next_command": route.get("next_command"),
     }
 
@@ -402,6 +406,7 @@ def build_home_compute_report(
                 "available_workloads": summary.get("available_workloads", []),
                 "blocked_workloads": summary.get("blocked_workloads", []),
             },
+            "diagnosis_summary": matrix.get("diagnosis_summary", {}),
             "configured_runtimes": matrix.get("configured_runtimes", {}),
             "hardware_targets": [
                 {

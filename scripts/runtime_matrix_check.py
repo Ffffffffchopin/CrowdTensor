@@ -36,6 +36,13 @@ REQUIRED_TARGETS = {
     "external_llm_http",
 }
 
+OPERATOR_ACTIONS = {
+    "run_now",
+    "configure_optional_runtime",
+    "future_adapter",
+    "fix_blocker",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate CrowdTensorD runtime capability matrix output.")
@@ -78,6 +85,10 @@ def main() -> None:
             raise SystemExit(f"route must include matched_capabilities list: {route_row}")
         if not isinstance(route_row.get("missing_capabilities"), list):
             raise SystemExit(f"route must include missing_capabilities list: {route_row}")
+        if not isinstance(route_row.get("diagnosis_codes"), list):
+            raise SystemExit(f"route must include diagnosis_codes list: {route_row}")
+        if route_row.get("operator_action") not in OPERATOR_ACTIONS:
+            raise SystemExit(f"route must include valid operator_action: {route_row}")
     route = routes.get("local_cpu_model_bundle_infer")
     if (
         not route
@@ -86,6 +97,16 @@ def main() -> None:
         or route.get("confidence") != "ready"
     ):
         raise SystemExit(f"home-compute route must be usable: {route}")
+    diagnosis = matrix.get("diagnosis_summary") or {}
+    if not isinstance(diagnosis.get("codes"), list):
+        raise SystemExit(f"runtime matrix must include diagnosis_summary.codes: {diagnosis}")
+    route_codes = sorted({
+        str(code)
+        for route_row in routes.values()
+        for code in route_row.get("diagnosis_codes") or []
+    })
+    if sorted(diagnosis.get("codes") or []) != route_codes:
+        raise SystemExit(f"diagnosis summary must aggregate route codes: {diagnosis}")
     payload = json.dumps(matrix, sort_keys=True)
     for secret_fragment in ["local-runtime-key", "CROWDTENSOR_LLM_RUNTIME_API_KEY=", "Bearer "]:
         if secret_fragment in payload:
@@ -97,6 +118,7 @@ def main() -> None:
         "blocked": matrix["summary"]["blocked"],
         "cpu_required": sorted(CPU_REQUIRED),
         "hardware_targets": sorted(REQUIRED_TARGETS),
+        "diagnosis_codes": diagnosis["codes"],
         "route": route["name"],
     }, sort_keys=True))
 

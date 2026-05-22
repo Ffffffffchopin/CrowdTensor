@@ -26,6 +26,13 @@ CPU_BASELINE_WORKLOADS = [
     ("model_bundle_infer", "Read-only Swarm Inference-shaped bundle probe"),
 ]
 
+OPERATOR_ACTIONS = {
+    "run_now",
+    "configure_optional_runtime",
+    "future_adapter",
+    "fix_blocker",
+}
+
 
 def module_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
@@ -277,20 +284,30 @@ def build_recommended_routes(hardware_targets: list[dict[str, Any]], workloads: 
         for capability in target.get("supported_workloads") or []:
             if capability == workload_name:
                 matched.append(f"supported_workload:{capability}")
+        diagnosis_codes: list[str] = []
         if target_name == "cpu_baseline" and usable_now:
             matched.extend(["python_runtime", "cpu_only_contract"])
+            diagnosis_codes.append("cpu_baseline_ready")
         elif target_name == "cpu_baseline":
             missing.extend(["python_runtime", "cpu_only_contract"])
+            diagnosis_codes.append("cpu_baseline_blocked")
         if target_name in {"nvidia_cuda", "amd_rocm", "apple_metal"}:
             missing.append("runtime_adapter_not_implemented")
+            if status == "detected":
+                diagnosis_codes.append("accelerator_adapter_not_implemented")
         if target_name == "browser" and not usable_now:
             missing.append("browser_runtime")
+            diagnosis_codes.append("browser_runtime_missing")
         if target_name == "remote_container":
             missing.append("operator_networking")
         if target_name == "external_llm_command" and not usable_now:
             missing.append("command_runtime")
+            if status == "blocked":
+                diagnosis_codes.append("external_llm_command_missing")
         if target_name == "external_llm_http" and not usable_now:
             missing.append("http_runtime_url")
+        if target_name == "external_llm_http" and usable_now:
+            diagnosis_codes.append("external_llm_http_configured")
         if usable_now and status == "available":
             confidence = "ready"
         elif usable_now and status == "configured":
@@ -299,6 +316,18 @@ def build_recommended_routes(hardware_targets: list[dict[str, Any]], workloads: 
             confidence = "future"
         else:
             confidence = "blocked"
+        if usable_now:
+            operator_action = "run_now"
+        elif confidence == "blocked":
+            operator_action = "fix_blocker"
+        elif target_name in {"nvidia_cuda", "amd_rocm", "apple_metal"} and status == "detected":
+            operator_action = "future_adapter"
+        elif target_name == "remote_container":
+            operator_action = "configure_optional_runtime"
+        elif status in {"optional_missing", "detected"}:
+            operator_action = "configure_optional_runtime"
+        else:
+            operator_action = "fix_blocker"
         reason = (
             f"{target_name} can run {workload_name}"
             if usable_now else
@@ -315,9 +344,26 @@ def build_recommended_routes(hardware_targets: list[dict[str, Any]], workloads: 
             "reason": reason,
             "matched_capabilities": sorted(set(matched)),
             "missing_capabilities": sorted(set(missing)),
+            "diagnosis_codes": sorted(set(diagnosis_codes)),
+            "operator_action": operator_action,
             "next_command": next_command,
         })
     return routes
+
+
+def diagnosis_summary(routes: list[dict[str, Any]]) -> dict[str, Any]:
+    by_route: dict[str, list[str]] = {}
+    all_codes: list[str] = []
+    for route in routes:
+        codes = [str(code) for code in route.get("diagnosis_codes") or [] if code]
+        if codes:
+            name = str(route.get("name") or "<unnamed>")
+            by_route[name] = codes
+            all_codes.extend(codes)
+    return {
+        "codes": sorted(set(all_codes)),
+        "by_route": by_route,
+    }
 
 
 def build_matrix(
@@ -421,6 +467,7 @@ def build_matrix(
         source_env=source_env,
     )
     recommended_routes = build_recommended_routes(hardware_targets, workloads)
+    route_diagnosis = diagnosis_summary(recommended_routes)
     matrix = {
         "ok": not blocked,
         "host_profile": profile,
@@ -449,6 +496,7 @@ def build_matrix(
             "optional_missing_workloads": optional_missing,
             "blocked_workloads": blocked,
         },
+        "diagnosis_summary": route_diagnosis,
         "recommended_next_commands": [
             "python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json",
             "python3 scripts/runtime_acceptance_pack.py --base-port 8910 --report /tmp/crowdtensor_acceptance.json",

@@ -121,7 +121,7 @@ Check local runtime capability readiness:
 python3 scripts/runtime_matrix.py --json
 ```
 
-The runtime capability matrix is the fastest way to see which CPU-only workloads are ready, whether optional browser checks can run, whether an external LLM HTTP adapter is configured through `CROWDTENSOR_LLM_RUNTIME_URL`, and which hardware/runtime matrix routes are realistic today. It reports `hardware_profile` style host facts, `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities` without printing runtime URL, token, or API key values.
+The runtime capability matrix is the fastest way to see which CPU-only workloads are ready, whether optional browser checks can run, whether an external LLM HTTP adapter is configured through `CROWDTENSOR_LLM_RUNTIME_URL`, and which hardware/runtime matrix routes are realistic today. It reports `hardware_profile` style host facts, `hardware_targets`, `recommended_routes`, `matched_capabilities`, `missing_capabilities`, route `diagnosis_codes`, `operator_action`, and top-level `diagnosis_summary` without printing runtime URL, token, or API key values.
 
 Run the matrix-guided home-compute demo:
 

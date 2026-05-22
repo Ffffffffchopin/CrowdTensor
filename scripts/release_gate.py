@@ -752,6 +752,8 @@ def check_runtime_matrix_docs(root: Path) -> dict[str, Any]:
         "route_decision",
         "matched_capabilities",
         "missing_capabilities",
+        "diagnosis_summary",
+        "operator_action",
         "hardware_profile",
         "CROWDTENSOR_LLM_RUNTIME_URL",
         "CPU-only",

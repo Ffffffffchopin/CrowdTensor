@@ -499,6 +499,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("runtime_matrix.py" in detail for detail in details))
         self.assertTrue(any("runtime_matrix_check.py" in detail for detail in details))
         self.assertTrue(any("--skip-runtime-matrix" in detail for detail in details))
+        self.assertTrue(any("diagnosis_summary" in detail for detail in details))
+        self.assertTrue(any("operator_action" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

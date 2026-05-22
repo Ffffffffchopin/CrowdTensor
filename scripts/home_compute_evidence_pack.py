@@ -154,6 +154,7 @@ def build_evidence(
         "runtime_matrix": {
             "ok": bool(matrix.get("ok")),
             "summary": matrix.get("summary", {}),
+            "diagnosis_summary": matrix.get("diagnosis_summary", {}),
             "configured_runtimes": matrix.get("configured_runtimes", {}),
             "hardware_targets": [
                 {
@@ -228,6 +229,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Reason: {route.get('reason', '')}",
         f"- Matched capabilities: `{', '.join(route.get('matched_capabilities') or [])}`",
         f"- Missing capabilities: `{', '.join(route.get('missing_capabilities') or [])}`",
+        f"- Route diagnosis codes: `{', '.join(route.get('diagnosis_codes') or [])}`",
+        f"- Operator action: `{route.get('operator_action', '')}`",
         "",
         "## Diagnosis",
         "",

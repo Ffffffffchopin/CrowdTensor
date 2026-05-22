@@ -17,7 +17,7 @@ The current code supports:
 - `runtime_contract_v1`, workload capability matching, CPU `hardware_profile`, delta transport negotiation, validation, replay audit, result ledger, trust quarantine, and operator controls.
 - Controlled remote Miner demos with token-backed admission, hashed token config, `/ready` preflight, retries, and Support Bundle diagnostics.
 - Browser experiments for WebRTC tensor transport, Worker compute probes, and a browser Miner bridge.
-- Release tooling: runtime capability matrix, matrix-guided home-compute demo, user-facing inference session demo, external LLM adapter smoke, release gate, runtime acceptance pack, browser acceptance pack, release evidence, doctor diagnostics, security preflight, and Support Bundle. Preserve safe runtime `summary_json`, `diagnosis_summary`, and `diagnosis_by_check` across release evidence and Support Bundle outputs.
+- Release tooling: runtime capability matrix, matrix-guided home-compute demo, user-facing inference session demo, external LLM adapter smoke, release gate, runtime acceptance pack, browser acceptance pack, release evidence, doctor diagnostics, security preflight, and Support Bundle. Preserve safe runtime `summary_json`, route `diagnosis_codes`, `operator_action`, `diagnosis_summary`, and `diagnosis_by_check` across runtime, release evidence, and Support Bundle outputs.
 - Open-source entrypoints: README, ROADMAP, protocol/use-case docs, release docs, changelog, and static site.
 
 Do not describe the project as already providing production P2P, NAT traversal, real LLM inference/training, GPU pooling, WebGPU model shards, payments, staking, or hardened public-internet security.

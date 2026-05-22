@@ -45,6 +45,8 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue(check_by_id(report, "state_dir")["ok"])
         self.assertIn("runtime_matrix", report)
         self.assertGreaterEqual(report["summary"]["runtime_matrix_available"], 1)
+        self.assertIn("cpu_baseline_ready", report["summary"]["runtime_matrix_diagnosis_codes"])
+        self.assertIn("cpu_baseline_ready", report["runtime_matrix"]["diagnosis_summary"]["codes"])
         self.assertIn("model_bundle_infer", report["runtime_matrix"]["summary"]["available_workloads"])
 
     def test_strict_blocks_warnings(self) -> None:

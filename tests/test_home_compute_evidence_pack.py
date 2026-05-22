@@ -51,6 +51,8 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
                     "reason": "cpu baseline can run model_bundle_infer",
                     "matched_capabilities": ["target:cpu_baseline", "workload:model_bundle_infer"],
                     "missing_capabilities": [] if workload_status == "available" else ["target:cpu_baseline"],
+                    "diagnosis_codes": ["cpu_baseline_ready"] if workload_status == "available" else ["cpu_baseline_blocked"],
+                    "operator_action": "run_now" if workload_status == "available" else "fix_blocker",
                     "next_command": "python3 scripts/home_compute_demo.py --json",
                 },
             ],
@@ -68,6 +70,12 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
                 "blocked": 1 if workload_status == "blocked" else 0,
                 "available_workloads": ["model_bundle_infer"] if workload_status == "available" else [],
                 "blocked_workloads": ["model_bundle_infer"] if workload_status == "blocked" else [],
+            },
+            "diagnosis_summary": {
+                "codes": ["cpu_baseline_ready"] if workload_status == "available" else ["cpu_baseline_blocked"],
+                "by_route": {
+                    "local_cpu_model_bundle_infer": ["cpu_baseline_ready"] if workload_status == "available" else ["cpu_baseline_blocked"],
+                },
             },
             "recommended_next_commands": ["python3 scripts/runtime_matrix.py --json"],
         }
@@ -116,6 +124,8 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
                 "reason": "cpu baseline can run model_bundle_infer",
                 "matched_capabilities": ["target:cpu_baseline"],
                 "missing_capabilities": [],
+                "diagnosis_codes": ["cpu_baseline_ready"],
+                "operator_action": "run_now",
                 "next_command": "python3 scripts/home_compute_demo.py --json",
             },
             "inference_session": self._session(),
@@ -159,6 +169,9 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
         self.assertEqual(evidence["generated_at"], "2026-05-22T00:00:00+00:00")
         self.assertEqual(evidence["route_decision"]["name"], "local_cpu_model_bundle_infer")
         self.assertEqual(evidence["route_decision"]["confidence"], "ready")
+        self.assertEqual(evidence["route_decision"]["operator_action"], "run_now")
+        self.assertIn("cpu_baseline_ready", evidence["route_decision"]["diagnosis_codes"])
+        self.assertIn("cpu_baseline_ready", evidence["runtime_matrix"]["diagnosis_summary"]["codes"])
         self.assertEqual(evidence["inference_summary"]["request_count"], 4)
         self.assertEqual(evidence["request_trace"][0]["prompt"], "crow")
         self.assertTrue(evidence["safety"]["read_only"])
@@ -218,6 +231,7 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
         self.assertIn("local_cpu_model_bundle_infer", markdown)
         self.assertIn("## Diagnosis", markdown)
         self.assertIn("home_compute_ready", markdown)
+        self.assertIn("cpu_baseline_ready", markdown)
         self.assertIn("prompt=`crow`", markdown)
         self.assertIn("Read-only", markdown)
         self.assertIn("CPU-only demo evidence", markdown)

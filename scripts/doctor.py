@@ -274,10 +274,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "runtime_matrix_available": matrix["summary"]["available"],
             "runtime_matrix_optional_missing": matrix["summary"]["optional_missing"],
             "runtime_matrix_blocked": matrix["summary"]["blocked"],
+            "runtime_matrix_diagnosis_codes": matrix.get("diagnosis_summary", {}).get("codes", []),
         },
         "runtime_matrix": {
             "ok": matrix["ok"],
             "summary": matrix["summary"],
+            "diagnosis_summary": matrix.get("diagnosis_summary", {}),
             "configured_runtimes": matrix["configured_runtimes"],
             "recommended_next_commands": matrix["recommended_next_commands"],
         },
