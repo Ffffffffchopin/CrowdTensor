@@ -31,6 +31,7 @@ TOKEN_ENV_SCRIPTS = {
     "model_bundle_inference_smoke.py",
     "model_bundle_smoke.py",
     "operator_control_check.py",
+    "remote_compute_evidence_check.py",
     "remote_miner_readiness_check.py",
     "replay_audit_check.py",
     "runtime_contract_check.py",
@@ -156,6 +157,13 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
             "remote_miner_readiness_check.py",
             args.base_port + 18,
             args.skip_remote_miner,
+        ))
+    if args.include_remote_evidence:
+        specs.append((
+            "remote_compute_evidence",
+            "remote_compute_evidence_check.py",
+            args.base_port + 37,
+            args.skip_remote_evidence,
         ))
     for name, script_name, port, skipped in specs:
         if skipped:
@@ -303,6 +311,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-browser-chaos", action="store_true")
     parser.add_argument("--include-micro-transformer", action="store_true")
     parser.add_argument("--include-remote-miner", action="store_true")
+    parser.add_argument("--include-remote-evidence", action="store_true")
     parser.add_argument("--browser", default="")
     parser.add_argument("--headful", action="store_true")
     parser.add_argument("--browser-timeout", type=float, default=20.0)
@@ -332,6 +341,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-compressed-error-feedback", action="store_true")
     parser.add_argument("--skip-delta-transport-negotiation", action="store_true")
     parser.add_argument("--skip-remote-miner", action="store_true")
+    parser.add_argument("--skip-remote-evidence", action="store_true")
     parser.add_argument("--skip-webrtc", action="store_true")
     parser.add_argument("--skip-runtime-contract", action="store_true")
     parser.add_argument("--skip-browser-miner", action="store_true")

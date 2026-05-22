@@ -287,6 +287,18 @@ python3 scripts/runtime_acceptance_pack.py \
 
 The remote readiness smoke verifies `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm` in one long-running Python Miner session. The default runtime acceptance pack separately verifies the read-only `model_bundle_infer` Swarm Inference shaped probe and the optional `external_llm_infer` adapter contract.
 
+Remote-compute evidence for a read-only inference result:
+
+```bash
+python3 scripts/remote_compute_evidence_pack.py \
+  --port 8912 \
+  --request-count 4 \
+  --json-out /tmp/crowdtensor_remote_evidence.json \
+  --markdown-out /tmp/crowdtensor_remote_evidence.md
+```
+
+The `remote_compute_evidence_v1` report is a safe, shareable proof that a registry-backed remote-style Python Miner completed the read-only `model_bundle_infer` route `remote_python_model_bundle_infer`. It records route capabilities, safe metrics, capped `request_trace`, ledger summary, read-only status, redaction status, and hashed registry status. In a full acceptance run, add `--include-remote-evidence`; this remains opt-in because it starts an additional Coordinator/Miner pair.
+
 `--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
 
 Core browser acceptance:

@@ -52,6 +52,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "doctor_docs",
                 "support_bundle_docs",
                 "home_compute_evidence_docs",
+                "remote_compute_evidence_docs",
                 "release_materials",
                 "open_source_entrypoints",
                 "project_memory",
@@ -292,6 +293,29 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "home_compute_evidence_docs")
         self.assertTrue(any("home_compute_evidence_pack.py" in detail for detail in details))
         self.assertTrue(any("--skip-home-compute-evidence" in detail for detail in details))
+
+    def test_remote_compute_evidence_docs_must_describe_remote_pack(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/remote-miner.md",
+            "docs/use-cases.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No remote-compute evidence docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "remote_compute_evidence_docs")
+        self.assertTrue(any("remote_compute_evidence_pack.py" in detail for detail in details))
+        self.assertTrue(any("--include-remote-evidence" in detail for detail in details))
 
     def test_release_materials_must_describe_release_flow(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

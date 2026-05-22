@@ -120,6 +120,30 @@ python3 scripts/remote_miner_readiness_check.py \
 
 This readiness smoke now runs all default Python Miner workloads: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, and `model_bundle_lm`.
 
+Safe, shareable remote-compute evidence:
+
+```bash
+python3 scripts/remote_compute_evidence_pack.py \
+  --port 8912 \
+  --request-count 4 \
+  --json-out /tmp/crowdtensor_remote_evidence.json \
+  --markdown-out /tmp/crowdtensor_remote_evidence.md
+```
+
+The default `local-loopback` mode is a CI-safe remote-style rehearsal: it creates a hashed registry invite, starts a registry-backed Coordinator, runs the invited Python Miner, and emits `remote_compute_evidence_v1` for the read-only `model_bundle_infer` route `remote_python_model_bundle_infer`. For a real two-machine demo after the remote Miner has completed work, collect from the running Coordinator:
+
+```bash
+python3 scripts/remote_compute_evidence_pack.py \
+  --mode collect \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token OBSERVER_TOKEN \
+  --admin-token ADMIN_TOKEN \
+  --json-out /tmp/crowdtensor_remote_evidence.json
+```
+
+`scripts/remote_compute_evidence_check.py` validates the local-loopback path. The runtime acceptance pack can opt in with `--include-remote-evidence`.
+
 The default runtime acceptance pack keeps the remote Miner check opt-in:
 
 ```bash

@@ -11,6 +11,7 @@ Today:
 - Run `scripts/runtime_matrix.py --json` to see the local runtime capability matrix, hardware/runtime matrix, `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities` before starting services.
 - Run `scripts/home_compute_demo.py --json` for the shortest matrix-guided path from local capability discovery to a measurable CPU-only home-compute inference report with `route_decision`.
 - Run `scripts/home_compute_evidence_pack.py` when you need a safe, shareable `home_compute_evidence_v1` artifact with `route_decision`, `matched_capabilities`, and capped `request_trace` rows for an issue report or demo.
+- Run `scripts/remote_compute_evidence_pack.py` when you want a safe, shareable `remote_compute_evidence_v1` artifact showing a registry-backed remote-style Miner completing read-only `model_bundle_infer`.
 - Run the 5-minute local Coordinator/Miner demo from [Quickstart](quickstart.md).
 - Inspect how a Miner claims work, sends heartbeats, retries transient failures, and submits a validated result.
 - Run `scripts/inference_session_demo.py` for a user-facing local inference session summary.
@@ -31,6 +32,7 @@ Today:
 
 - Generate a token-backed invite with `scripts/create_miner_invite.py`.
 - Run `scripts/remote_miner_join_check.py` and `scripts/remote_miner_readiness_check.py`.
+- Run `scripts/remote_compute_evidence_pack.py --mode collect` after a real remote Miner completes `model_bundle_infer` to collect the safe `remote_python_model_bundle_infer` evidence report.
 - Use hashed token config, `/ready` preflight, retry counters, and Support Bundle diagnostics.
 
 Operator boundary:
@@ -74,6 +76,7 @@ Today:
 - The Python Miner advertises a CPU `hardware_profile`, and `scripts/inference_session_demo.py` reports aggregate `elapsed_ms`, `requests_per_second`, request count, accuracy, read-only status, and redaction status for the session.
 - `scripts/home_compute_demo.py` combines `scripts/runtime_matrix.py` with the local inference session so users can see whether their machine can run the CPU-only `local_cpu_model_bundle_infer` Swarm Inference-shaped path before a longer acceptance run, including `route_decision`, `matched_capabilities`, and `missing_capabilities`.
 - `scripts/home_compute_evidence_pack.py` turns that route and session into a safe, shareable evidence pack validated by `scripts/home_compute_evidence_check.py`; runtime acceptance can skip it with `--skip-home-compute-evidence` when a CI lane only needs lower-level checks.
+- `scripts/remote_compute_evidence_pack.py` turns a registry-backed remote-style Python Miner run into `remote_compute_evidence_v1`, validated by `scripts/remote_compute_evidence_check.py`; runtime acceptance can opt in with `--include-remote-evidence`.
 
 Planned path:
 

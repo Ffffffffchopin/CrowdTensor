@@ -25,6 +25,7 @@ def acceptance_args(**overrides):
         "include_browser_chaos": False,
         "include_micro_transformer": False,
         "include_remote_miner": False,
+        "include_remote_evidence": False,
         "browser": "",
         "headful": False,
         "browser_timeout": 20.0,
@@ -54,6 +55,7 @@ def acceptance_args(**overrides):
         "skip_compressed_error_feedback": False,
         "skip_delta_transport_negotiation": False,
         "skip_remote_miner": False,
+        "skip_remote_evidence": False,
         "skip_webrtc": False,
         "skip_runtime_contract": False,
         "skip_browser_miner": False,
@@ -380,6 +382,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             "model_bundle",
             "home_compute_demo",
             "home_compute_evidence",
+            "remote_compute_evidence",
             "model_bundle_inference",
             "inference_session_demo",
             "external_llm_inference",
@@ -501,6 +504,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             "model_bundle",
             "home_compute_demo",
             "home_compute_evidence",
+            "remote_compute_evidence",
             "model_bundle_inference",
             "inference_session_demo",
             "external_llm_inference",
@@ -542,6 +546,33 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertNotIn("remote_miner", [check["name"] for check in checks])
 
+    def test_remote_compute_evidence_is_opt_in(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_remote_evidence=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        evidence = checks[-1]
+        self.assertEqual(evidence["name"], "remote_compute_evidence")
+        self.assertEqual(evidence["port"], 9047)
+        self.assertIn("remote_compute_evidence_check.py", evidence["command"][1])
+
+        authenticated = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_remote_evidence=True, miner_token="miner-test", observer_token="observer-test"),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        remote = next(check for check in authenticated if check["name"] == "remote_compute_evidence")
+        self.assertEqual(remote.get("miner_token"), "miner-test")
+        self.assertEqual(remote.get("observer_token"), "observer-test")
+
+    def test_remote_compute_evidence_skip_removes_opt_in_check(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_remote_evidence=True, skip_remote_evidence=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertNotIn("remote_compute_evidence", [check["name"] for check in checks])
+
     def test_include_browser_adds_lightweight_browser_pack(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
             acceptance_args(include_browser=True, browser="/usr/bin/chromium", headful=True, browser_timeout=7.5),
@@ -577,6 +608,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             "model_bundle",
             "home_compute_demo",
             "home_compute_evidence",
+            "remote_compute_evidence",
             "model_bundle_inference",
             "inference_session_demo",
             "external_llm_inference",

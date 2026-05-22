@@ -69,6 +69,18 @@ python3 scripts/home_compute_evidence_pack.py \
 
 The `home_compute_evidence_v1` report wraps the runtime matrix, `route_decision`, `matched_capabilities`, safe metrics, and capped `request_trace` rows without exposing token, URL, API key, lease, idempotency, weight, or delta-shaped fields. CI validates this with `scripts/home_compute_evidence_check.py`, and runtime acceptance can skip it with `--skip-home-compute-evidence`.
 
+Build a safe, shareable remote-compute evidence pack:
+
+```bash
+python3 scripts/remote_compute_evidence_pack.py \
+  --port 8912 \
+  --request-count 4 \
+  --json-out /tmp/crowdtensor_remote_evidence.json \
+  --markdown-out /tmp/crowdtensor_remote_evidence.md
+```
+
+The `remote_compute_evidence_v1` report runs a registry-backed remote-style Python Miner through the read-only `model_bundle_infer` path, records `remote_python_model_bundle_infer`, route capabilities, safe latency/throughput, and capped `request_trace` rows, and verifies the invite registry stores only a hashed token. CI validates this with `scripts/remote_compute_evidence_check.py`; runtime acceptance can opt in with `--include-remote-evidence`.
+
 For optional remote and browser checks:
 
 ```bash
@@ -328,6 +340,12 @@ Run only the remote Miner invite/join smoke:
 
 ```bash
 python3 scripts/remote_miner_join_check.py --port 8898
+```
+
+Run only the remote-compute evidence smoke:
+
+```bash
+python3 scripts/remote_compute_evidence_check.py --port 8912
 ```
 
 Run only the security preflight:
