@@ -126,7 +126,7 @@ def build_matrix(
             workload,
             status="available" if core_ok else "blocked",
             reason=f"{label}: {core_reason}",
-            next_command="python3 scripts/inference_session_demo.py --port 8904 --request-count 4 --json"
+            next_command="python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json"
             if workload == "model_bundle_infer"
             else "python3 scripts/runtime_acceptance_pack.py --base-port 8910 --report /tmp/crowdtensor_acceptance.json",
             optional=False,
@@ -205,7 +205,7 @@ def build_matrix(
             "blocked_workloads": blocked,
         },
         "recommended_next_commands": [
-            "python3 scripts/inference_session_demo.py --port 8904 --request-count 4 --json",
+            "python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json",
             "python3 scripts/runtime_acceptance_pack.py --base-port 8910 --report /tmp/crowdtensor_acceptance.json",
             "python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908",
         ],

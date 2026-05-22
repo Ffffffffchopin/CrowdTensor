@@ -29,7 +29,7 @@ The project currently includes:
 - Admission and operator safety: shared Miner token, per-Miner token registry, observer token, admin token, hashed token verifiers, security preflight, redacted `/state`, aggregate `/metrics`, and safe admin ledger views.
 - Controlled remote Miner onboarding through invite generation, readiness checks, remote join checks, retry counters, and Support Bundle diagnostics.
 - Browser experiments for WebRTC tensor tunnel, browser Worker compute probe, and browser Miner bridge.
-- Release and support tooling: First-run Doctor, runtime capability matrix, user-facing inference session demo, release gate, runtime acceptance pack, browser acceptance pack, release evidence pack, Support Bundle, changelog, release process docs, roadmap, protocol docs, use-case docs, and static site.
+- Release and support tooling: First-run Doctor, runtime capability matrix, matrix-guided home-compute demo, user-facing inference session demo, release gate, runtime acceptance pack, browser acceptance pack, release evidence pack, Support Bundle, changelog, release process docs, roadmap, protocol docs, use-case docs, and static site.
 
 ## Explicit Non-Capabilities
 
@@ -56,7 +56,7 @@ Recommended sequence:
 1. Keep the Alpha control plane reliable, testable, and well documented.
 2. Keep README, ROADMAP, protocol docs, use cases, static site, and project memory synchronized.
 3. Keep `scripts/runtime_matrix.py` as the first open-source user diagnostic so contributors can see CPU-only readiness, optional browser support, and external LLM adapter configuration before running longer smoke tests.
-4. Expand the read-only multi-request `model_bundle_infer` probe into a useful home-compute demo that feels close to Swarm Inference, starting with small model artifacts and explicit capability matching.
+4. Keep expanding `scripts/home_compute_demo.py` as the useful home-compute demo that feels close to Swarm Inference: it should pair `scripts/runtime_matrix.py` capability matching with the read-only multi-request `model_bundle_infer` session before larger artifacts or runtime adapters are added.
 5. Keep `external_llm_infer_v1` as the narrow optional runtime adapter contract: deterministic `--enable-mock-llm-runtime` for CI, explicit `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local experiments, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
 6. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 7. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.

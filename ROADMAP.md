@@ -10,6 +10,7 @@ Status: current.
 - Deterministic CPU-only workload contracts for dense, adapter, micro LM, model bundle training, read-only model bundle inference, optional external LLM adapter inference, and browser probe tasks.
 - Admission controls, result validation, replay audit, trust quarantine, operator ledger, release gate, release evidence, and Support Bundle.
 - Runtime capability matrix so new users can inspect CPU-only readiness, optional browser support, and external LLM adapter configuration before running longer checks.
+- Matrix-guided home-compute demo that combines local capability discovery with the read-only `model_bundle_infer` inference session.
 - Controlled remote Miner demo and browser WebRTC/Worker experiments.
 
 Success signal: a contributor can run the local demo, inspect the protocol boundary, and reproduce acceptance checks without GPU access.
@@ -18,7 +19,7 @@ Success signal: a contributor can run the local demo, inspect the protocol bound
 
 Status: planned.
 
-- Expand the current read-only multi-request `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts and explicit capability matching.
+- Expand `scripts/home_compute_demo.py` around the current read-only multi-request `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts and explicit capability matching.
 - Keep the runtime capability matrix visible as the first user diagnostic while the hardware/runtime matrix expands toward CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 - Keep the measurable CPU inference session path visible with safe latency, throughput, accuracy, and Miner hardware profile summaries.
 - Keep `scripts/inference_session_demo.py` as the low-friction local demo while richer runtime adapters mature.

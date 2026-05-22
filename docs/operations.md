@@ -231,6 +231,14 @@ python3 scripts/inference_session_demo.py --port 8904 --request-count 4
 
 Use `--json` for automation. The demo reports safe session metrics, read-only status, redaction status, and Miner `hardware_profile`; it is a CPU-only Swarm Inference shaped demo, not a real LLM serving benchmark.
 
+Matrix-guided home-compute demo:
+
+```bash
+python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
+```
+
+This combines runtime capability discovery with the read-only `model_bundle_infer` inference session. It selects the CPU-only workload only when `scripts/runtime_matrix.py` reports it as available, then emits one report with host capability, selected workload, session metrics, read-only status, redaction status, and recommended next commands. `scripts/home_compute_demo_check.py` is included in the default acceptance pack and can be skipped with `--skip-home-compute-demo`.
+
 Runtime capability matrix:
 
 ```bash

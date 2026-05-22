@@ -49,6 +49,14 @@ python3 scripts/runtime_matrix.py --json
 
 The runtime capability matrix reports CPU-only workload readiness, optional browser support, and optional external LLM command/HTTP runtime configuration without printing token, URL, or API key values.
 
+Run the matrix-guided home-compute demo:
+
+```bash
+python3 scripts/home_compute_demo.py --port 8909 --request-count 4
+```
+
+This combines the runtime capability matrix with the read-only `model_bundle_infer` path and reports safe latency, throughput, `hardware_profile`, read-only, and redaction status. It is a CPU-only Swarm Inference-shaped demo, not real LLM serving or GPU pooling.
+
 For optional remote and browser checks:
 
 ```bash
@@ -279,6 +287,14 @@ python3 scripts/inference_session_demo.py --port 8904 --request-count 4
 ```
 
 Use `--json` when you need a machine-readable report for CI or issue reports.
+
+Run the matrix-guided home-compute demo:
+
+```bash
+python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
+```
+
+The home-compute demo first checks `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload when available, runs `scripts/inference_session_demo.py`, and emits one report with runtime capability, session metrics, read-only status, redaction status, and recommended next commands. CI validates this path with `scripts/home_compute_demo_check.py`; the runtime acceptance pack includes it by default and can skip it with `--skip-home-compute-demo`.
 
 Run only the optional external LLM adapter smoke:
 

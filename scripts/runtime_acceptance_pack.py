@@ -24,6 +24,7 @@ TOKEN_ENV_SCRIPTS = {
     "chaos_runner.py",
     "external_llm_http_adapter_smoke.py",
     "external_llm_inference_smoke.py",
+    "home_compute_demo_check.py",
     "micro_transformer_smoke.py",
     "inference_session_demo.py",
     "model_bundle_inference_smoke.py",
@@ -64,7 +65,7 @@ def check_command(
         "--state-dir",
         str(state_dir),
     ]
-    if script_name == "operator_control_check.py":
+    if script_name in {"operator_control_check.py", "home_compute_demo_check.py"}:
         command.extend(["--admin-token", admin_token])
     if script_name == "inference_session_demo.py":
         command.append("--json")
@@ -124,6 +125,7 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
     specs = [
         ("readiness", "readiness_check.py", args.base_port, args.skip_readiness),
         ("runtime_matrix", "runtime_matrix_check.py", args.base_port + 34, args.skip_runtime_matrix),
+        ("home_compute_demo", "home_compute_demo_check.py", args.base_port + 35, args.skip_home_compute_demo),
         ("api_contract", "api_contract_check.py", args.base_port + 1, args.skip_api_contract),
         ("chaos", "chaos_runner.py", args.base_port + 2, args.skip_chaos),
         ("trust_quarantine", "trust_quarantine_check.py", args.base_port + 3, args.skip_trust),
@@ -304,6 +306,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--browser-timeout", type=float, default=20.0)
     parser.add_argument("--skip-readiness", action="store_true")
     parser.add_argument("--skip-runtime-matrix", action="store_true")
+    parser.add_argument("--skip-home-compute-demo", action="store_true")
     parser.add_argument("--skip-api-contract", action="store_true")
     parser.add_argument("--skip-chaos", action="store_true")
     parser.add_argument("--skip-operator", action="store_true")
