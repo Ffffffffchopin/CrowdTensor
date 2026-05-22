@@ -8,7 +8,7 @@ Goal: use spare machines for open AI workloads without owning a large datacenter
 
 Today:
 
-- Run `scripts/runtime_matrix.py --json` to see the local runtime capability matrix before starting services.
+- Run `scripts/runtime_matrix.py --json` to see the local runtime capability matrix, hardware/runtime matrix, `hardware_targets`, and `recommended_routes` before starting services.
 - Run `scripts/home_compute_demo.py --json` for the shortest matrix-guided path from local capability discovery to a measurable CPU-only home-compute inference report.
 - Run the 5-minute local Coordinator/Miner demo from [Quickstart](quickstart.md).
 - Inspect how a Miner claims work, sends heartbeats, retries transient failures, and submits a validated result.
@@ -71,7 +71,7 @@ Today:
 
 - `model_bundle_infer` can verify a tiny built-in bundle prediction session through the same claim, heartbeat, result, validation, and ledger path used by other workloads.
 - The Python Miner advertises a CPU `hardware_profile`, and `scripts/inference_session_demo.py` reports aggregate `elapsed_ms`, `requests_per_second`, request count, accuracy, read-only status, and redaction status for the session.
-- `scripts/home_compute_demo.py` combines `scripts/runtime_matrix.py` with the local inference session so users can see whether their machine can run the CPU-only Swarm Inference-shaped path before a longer acceptance run.
+- `scripts/home_compute_demo.py` combines `scripts/runtime_matrix.py` with the local inference session so users can see whether their machine can run the CPU-only `local_cpu_model_bundle_infer` Swarm Inference-shaped path before a longer acceptance run.
 
 Planned path:
 

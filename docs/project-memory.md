@@ -55,8 +55,8 @@ Recommended sequence:
 
 1. Keep the Alpha control plane reliable, testable, and well documented.
 2. Keep README, ROADMAP, protocol docs, use cases, static site, and project memory synchronized.
-3. Keep `scripts/runtime_matrix.py` as the first open-source user diagnostic so contributors can see CPU-only readiness, optional browser support, and external LLM adapter configuration before running longer smoke tests.
-4. Keep expanding `scripts/home_compute_demo.py` as the useful home-compute demo that feels close to Swarm Inference: it should pair `scripts/runtime_matrix.py` capability matching with the read-only multi-request `model_bundle_infer` session before larger artifacts or runtime adapters are added.
+3. Keep `scripts/runtime_matrix.py` as the first open-source user diagnostic so contributors can see CPU-only readiness, optional browser support, external LLM adapter configuration, and the hardware/runtime matrix before running longer smoke tests.
+4. Keep expanding `scripts/home_compute_demo.py` as the useful home-compute demo that feels close to Swarm Inference: it should pair `scripts/runtime_matrix.py` `hardware_targets` / `recommended_routes` capability matching with the read-only multi-request `model_bundle_infer` session before larger artifacts or runtime adapters are added.
 5. Keep `external_llm_infer_v1` as the narrow optional runtime adapter contract: deterministic `--enable-mock-llm-runtime` for CI, explicit `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local experiments, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
 6. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 7. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.

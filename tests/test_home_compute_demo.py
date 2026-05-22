@@ -29,6 +29,30 @@ class HomeComputeDemoTests(unittest.TestCase):
                     "api_key_configured": False,
                 },
             },
+            "hardware_targets": [
+                {
+                    "name": "cpu_baseline",
+                    "status": "available" if workload_status == "available" else "blocked",
+                    "usable_now": workload_status == "available",
+                    "supported_workloads": ["model_bundle_infer"] if workload_status == "available" else [],
+                },
+                {
+                    "name": "nvidia_cuda",
+                    "status": "optional_missing",
+                    "usable_now": False,
+                    "supported_workloads": [],
+                },
+            ],
+            "recommended_routes": [
+                {
+                    "name": "local_cpu_model_bundle_infer",
+                    "target": "cpu_baseline",
+                    "workload": "model_bundle_infer",
+                    "status": "available" if workload_status == "available" else "blocked",
+                    "usable_now": workload_status == "available",
+                    "next_command": "python3 scripts/home_compute_demo.py --json",
+                },
+            ],
             "workloads": [
                 {
                     "name": "model_bundle_infer",
@@ -67,6 +91,9 @@ class HomeComputeDemoTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["demo"], "home_compute_inference_v1")
         self.assertEqual(report["selected_workload"]["name"], "model_bundle_infer")
+        self.assertEqual(report["capability_route"]["name"], "local_cpu_model_bundle_infer")
+        self.assertTrue(report["capability_route"]["usable_now"])
+        self.assertTrue(report["runtime_matrix"]["hardware_targets"][0]["usable_now"])
         self.assertTrue(report["selected_workload"]["cpu_only"])
         self.assertEqual(report["runtime_matrix"]["host_profile"]["cpu_count"], 8)
         self.assertTrue(report["safety"]["read_only"])

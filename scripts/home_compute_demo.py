@@ -34,12 +34,31 @@ def workload_status(matrix: dict[str, Any], name: str) -> dict[str, Any]:
     }
 
 
+def selected_route(matrix: dict[str, Any]) -> dict[str, Any]:
+    routes = matrix.get("recommended_routes") or []
+    for route in routes:
+        if route.get("name") == "local_cpu_model_bundle_infer":
+            return route
+    for route in routes:
+        if route.get("usable_now"):
+            return route
+    return {
+        "name": "local_cpu_model_bundle_infer",
+        "target": "cpu_baseline",
+        "workload": WORKLOAD_TYPE,
+        "status": "blocked",
+        "usable_now": False,
+        "next_command": "python3 scripts/runtime_matrix.py --json",
+    }
+
+
 def build_home_compute_report(
     *,
     matrix: dict[str, Any],
     session_report: dict[str, Any] | None,
 ) -> dict[str, Any]:
     selected = workload_status(matrix, WORKLOAD_TYPE)
+    route = selected_route(matrix)
     available = selected.get("status") in {"available", "configured"}
     session_ok = bool(session_report and session_report.get("ok"))
     read_only = bool(session_report and session_report.get("read_only"))
@@ -71,7 +90,17 @@ def build_home_compute_report(
                 "blocked_workloads": summary.get("blocked_workloads", []),
             },
             "configured_runtimes": matrix.get("configured_runtimes", {}),
+            "hardware_targets": [
+                {
+                    "name": target.get("name"),
+                    "status": target.get("status"),
+                    "usable_now": bool(target.get("usable_now")),
+                    "supported_workloads": target.get("supported_workloads", []),
+                }
+                for target in matrix.get("hardware_targets", [])
+            ],
         },
+        "capability_route": route,
         "inference_session": session_report,
         "safety": {
             "read_only": read_only,
@@ -97,6 +126,7 @@ def print_human_report(report: dict[str, Any]) -> None:
     matrix = report["runtime_matrix"]
     host = matrix["host_profile"]
     selected = report["selected_workload"]
+    route = report.get("capability_route") or {}
     session = report.get("inference_session") or {}
     print("CrowdTensor home-compute demo")
     print(f"  ok: {report['ok']}")
@@ -106,6 +136,16 @@ def print_human_report(report: dict[str, Any]) -> None:
         f"machine={host.get('machine')} cpu_count={host.get('cpu_count')}"
     )
     print(f"  selected workload: {selected['name']} ({selected['status']})")
+    print(
+        "  capability route: "
+        f"{route.get('name')} target={route.get('target')} status={route.get('status')}"
+    )
+    targets = report["runtime_matrix"].get("hardware_targets") or []
+    if targets:
+        usable = [target["name"] for target in targets if target.get("usable_now")]
+        detected = [target["name"] for target in targets if target.get("status") == "detected"]
+        print(f"  usable targets: {', '.join(usable) if usable else 'none'}")
+        print(f"  detected future targets: {', '.join(detected) if detected else 'none'}")
     if session:
         print(
             "  session: "

@@ -75,6 +75,10 @@ def _command_executable_available(command: str) -> bool:
     return shutil.which(executable) is not None
 
 
+def executable_available(command: str) -> bool:
+    return shutil.which(command) is not None
+
+
 def host_profile(root: Path) -> dict[str, Any]:
     return {
         "python": sys.version.split()[0],
@@ -86,6 +90,188 @@ def host_profile(root: Path) -> dict[str, Any]:
         "cpu_count": os.cpu_count() or 1,
         "root": str(root),
     }
+
+
+def _target(
+    name: str,
+    *,
+    status: str,
+    reason: str,
+    next_command: str,
+    optional: bool,
+    usable_now: bool,
+    supported_workloads: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "reason": reason,
+        "next_command": next_command,
+        "optional": bool(optional),
+        "usable_now": bool(usable_now),
+        "supported_workloads": supported_workloads or [],
+    }
+
+
+def build_hardware_targets(
+    *,
+    core_ok: bool,
+    profile: dict[str, Any],
+    playwright_ok: bool,
+    browser_available: bool,
+    command_configured: bool,
+    command_available: bool,
+    http_configured: bool,
+    source_env: dict[str, str],
+) -> list[dict[str, Any]]:
+    cpu_workloads = [name for name, _label in CPU_BASELINE_WORKLOADS] + ["external_llm_infer_mock"]
+    nvidia_detected = executable_available("nvidia-smi") or executable_available("nvcc")
+    amd_detected = executable_available("rocminfo") or executable_available("rocm-smi")
+    apple_detected = profile.get("os") == "Darwin" and str(profile.get("machine", "")).lower() in {"arm64", "aarch64"}
+    container_detected = (
+        Path("/.dockerenv").exists()
+        or bool(source_env.get("KAGGLE_KERNEL_RUN_TYPE"))
+        or bool(source_env.get("CROWDTENSOR_REMOTE_CONTAINER"))
+    )
+    return [
+        _target(
+            "cpu_baseline",
+            status="available" if core_ok else "blocked",
+            reason="CPU-only Coordinator/Miner workloads are ready" if core_ok else
+            "Python >=3.11, fastapi, uvicorn, or project files are missing",
+            next_command="python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json",
+            optional=False,
+            usable_now=core_ok,
+            supported_workloads=cpu_workloads if core_ok else [],
+        ),
+        _target(
+            "nvidia_cuda",
+            status="detected" if nvidia_detected else "optional_missing",
+            reason="NVIDIA tooling was detected, but no CUDA runtime adapter is implemented yet" if nvidia_detected else
+            "Install NVIDIA drivers/tooling when future CUDA adapters are available",
+            next_command="python3 scripts/runtime_matrix.py --json",
+            optional=True,
+            usable_now=False,
+        ),
+        _target(
+            "amd_rocm",
+            status="detected" if amd_detected else "optional_missing",
+            reason="ROCm tooling was detected, but no AMD runtime adapter is implemented yet" if amd_detected else
+            "Install ROCm tooling when future AMD adapters are available",
+            next_command="python3 scripts/runtime_matrix.py --json",
+            optional=True,
+            usable_now=False,
+        ),
+        _target(
+            "apple_metal",
+            status="detected" if apple_detected else "optional_missing",
+            reason="Apple Silicon was detected, but no Metal runtime adapter is implemented yet" if apple_detected else
+            "Run on Apple Silicon when future Metal adapters are available",
+            next_command="python3 scripts/runtime_matrix.py --json",
+            optional=True,
+            usable_now=False,
+        ),
+        _target(
+            "browser",
+            status="available" if playwright_ok and browser_available else "optional_missing",
+            reason="Playwright and a Chromium-compatible browser were found" if playwright_ok and browser_available else
+            "Install Playwright/browser extras to run browser-native checks",
+            next_command="python3 scripts/browser_acceptance_pack.py --allow-skip --base-port 9310",
+            optional=True,
+            usable_now=bool(playwright_ok and browser_available),
+            supported_workloads=["browser_probe"] if playwright_ok and browser_available else [],
+        ),
+        _target(
+            "remote_container",
+            status="detected" if container_detected else "optional_missing",
+            reason="Container-like environment detected; controlled remote Miner demos can run with operator networking" if container_detected else
+            "Set up a Linux container or remote host for controlled remote Miner demos",
+            next_command="python3 scripts/remote_miner_readiness_check.py --port 8895",
+            optional=True,
+            usable_now=False,
+        ),
+        _target(
+            "external_llm_command",
+            status="configured" if command_configured and command_available else (
+                "blocked" if command_configured else "optional_missing"
+            ),
+            reason="Command runtime is configured and executable" if command_configured and command_available else (
+                "Configured command executable was not found" if command_configured else
+                "Set CROWDTENSOR_LLM_RUNTIME_CMD to enable an operator-owned command runtime"
+            ),
+            next_command="crowdtensor-miner --llm-runtime-cmd /path/to/wrapper",
+            optional=True,
+            usable_now=bool(command_configured and command_available),
+            supported_workloads=["external_llm_infer"] if command_configured and command_available else [],
+        ),
+        _target(
+            "external_llm_http",
+            status="configured" if http_configured else "optional_missing",
+            reason="OpenAI-compatible HTTP endpoint is configured" if http_configured else
+            "Set CROWDTENSOR_LLM_RUNTIME_URL to enable an operator-owned HTTP runtime",
+            next_command="python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908",
+            optional=True,
+            usable_now=bool(http_configured),
+            supported_workloads=["external_llm_infer"] if http_configured else [],
+        ),
+    ]
+
+
+def build_recommended_routes(hardware_targets: list[dict[str, Any]], workloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    target_by_name = {target["name"]: target for target in hardware_targets}
+    workload_by_name = {workload["name"]: workload for workload in workloads}
+    route_specs = [
+        (
+            "local_cpu_model_bundle_infer",
+            "cpu_baseline",
+            "model_bundle_infer",
+            "python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json",
+        ),
+        (
+            "local_cpu_acceptance",
+            "cpu_baseline",
+            "diloco_train",
+            "python3 scripts/runtime_acceptance_pack.py --base-port 8910 --report /tmp/crowdtensor_acceptance.json",
+        ),
+        (
+            "browser_probe",
+            "browser",
+            "browser_probe",
+            "python3 scripts/browser_acceptance_pack.py --allow-skip --base-port 9310",
+        ),
+        (
+            "external_llm_http_adapter",
+            "external_llm_http",
+            "external_llm_infer",
+            "python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908",
+        ),
+        (
+            "external_llm_command_adapter",
+            "external_llm_command",
+            "external_llm_infer",
+            "crowdtensor-miner --llm-runtime-cmd /path/to/wrapper",
+        ),
+    ]
+    routes = []
+    for name, target_name, workload_name, next_command in route_specs:
+        target = target_by_name.get(target_name, {})
+        workload = workload_by_name.get(workload_name, {})
+        workload_ready = (
+            workload.get("status") in {"available", "configured"}
+            or workload_name in set(target.get("supported_workloads") or [])
+        )
+        status = target.get("status") or workload.get("status") or "optional_missing"
+        if target.get("usable_now") and workload_ready:
+            status = "available" if target.get("status") == "available" else "configured"
+        routes.append({
+            "name": name,
+            "target": target_name,
+            "workload": workload_name,
+            "status": status,
+            "usable_now": bool(target.get("usable_now") and workload_ready),
+            "next_command": next_command,
+        })
+    return routes
 
 
 def build_matrix(
@@ -178,6 +364,17 @@ def build_matrix(
     available = [row["name"] for row in workloads if row["status"] in {"available", "configured"}]
     optional_missing = [row["name"] for row in workloads if row["status"] == "optional_missing"]
     blocked = [row["name"] for row in workloads if row["status"] == "blocked" and not row["optional"]]
+    hardware_targets = build_hardware_targets(
+        core_ok=core_ok,
+        profile=profile,
+        playwright_ok=playwright_ok,
+        browser_available=bool(detected_browser),
+        command_configured=command_configured,
+        command_available=command_available,
+        http_configured=http_configured,
+        source_env=source_env,
+    )
+    recommended_routes = build_recommended_routes(hardware_targets, workloads)
     matrix = {
         "ok": not blocked,
         "host_profile": profile,
@@ -195,6 +392,8 @@ def build_matrix(
                 "browser_available": bool(detected_browser),
             },
         },
+        "hardware_targets": hardware_targets,
+        "recommended_routes": recommended_routes,
         "workloads": workloads,
         "summary": {
             "available": len(available),
@@ -224,6 +423,12 @@ def print_human(matrix: dict[str, Any]) -> None:
     print("  workloads:")
     for workload in matrix["workloads"]:
         print(f"    - {workload['name']}: {workload['status']} ({workload['reason']})")
+    print("  hardware targets:")
+    for target in matrix.get("hardware_targets", []):
+        print(f"    - {target['name']}: {target['status']} ({target['reason']})")
+    print("  recommended routes:")
+    for route in matrix.get("recommended_routes", []):
+        print(f"    - {route['name']}: {route['status']} -> {route['next_command']}")
     print("  recommended next commands:")
     for command in matrix["recommended_next_commands"]:
         print(f"    - {command}")

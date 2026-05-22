@@ -237,7 +237,7 @@ Matrix-guided home-compute demo:
 python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
 ```
 
-This combines runtime capability discovery with the read-only `model_bundle_infer` inference session. It selects the CPU-only workload only when `scripts/runtime_matrix.py` reports it as available, then emits one report with host capability, selected workload, session metrics, read-only status, redaction status, and recommended next commands. `scripts/home_compute_demo_check.py` is included in the default acceptance pack and can be skipped with `--skip-home-compute-demo`.
+This combines runtime capability discovery with the read-only `model_bundle_infer` inference session. It selects the CPU-only workload and `local_cpu_model_bundle_infer` route only when `scripts/runtime_matrix.py` reports it as available, then emits one report with host capability, selected workload, selected route, session metrics, read-only status, redaction status, and recommended next commands. `scripts/home_compute_demo_check.py` is included in the default acceptance pack and can be skipped with `--skip-home-compute-demo`.
 
 Runtime capability matrix:
 
@@ -245,7 +245,7 @@ Runtime capability matrix:
 python3 scripts/runtime_matrix.py --json
 ```
 
-The runtime capability matrix reports CPU-only baseline readiness, optional browser support, and optional external LLM runtime configuration. `scripts/runtime_matrix_check.py` is included in the default acceptance pack and can be skipped with `--skip-runtime-matrix`. It notes whether `CROWDTENSOR_LLM_RUNTIME_URL` is configured without printing the URL, token, or API key value.
+The runtime capability matrix reports CPU-only baseline readiness, optional browser support, optional external LLM runtime configuration, and a hardware/runtime matrix through `hardware_targets` and `recommended_routes`. GPU, Apple, AMD, browser, and remote container targets may be detected without being usable runtime adapters. `scripts/runtime_matrix_check.py` is included in the default acceptance pack and can be skipped with `--skip-runtime-matrix`. It notes whether `CROWDTENSOR_LLM_RUNTIME_URL` is configured without printing the URL, token, or API key value.
 
 External LLM adapter contract smoke:
 

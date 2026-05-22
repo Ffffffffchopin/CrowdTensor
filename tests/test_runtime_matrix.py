@@ -21,6 +21,14 @@ def workload_by_name(matrix: dict, name: str) -> dict:
     return next(row for row in matrix["workloads"] if row["name"] == name)
 
 
+def target_by_name(matrix: dict, name: str) -> dict:
+    return next(row for row in matrix["hardware_targets"] if row["name"] == name)
+
+
+def route_by_name(matrix: dict, name: str) -> dict:
+    return next(row for row in matrix["recommended_routes"] if row["name"] == name)
+
+
 class RuntimeMatrixTests(unittest.TestCase):
     def test_cpu_baseline_is_available_without_optional_runtimes(self) -> None:
         matrix = runtime_matrix.build_matrix(root=ROOT, env={})
@@ -30,6 +38,11 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertEqual(workload_by_name(matrix, "model_bundle_infer")["status"], "available")
         self.assertEqual(workload_by_name(matrix, "external_llm_infer_mock")["status"], "available")
         self.assertEqual(workload_by_name(matrix, "external_llm_infer_http")["status"], "optional_missing")
+        self.assertEqual(target_by_name(matrix, "cpu_baseline")["status"], "available")
+        self.assertTrue(target_by_name(matrix, "cpu_baseline")["usable_now"])
+        self.assertFalse(target_by_name(matrix, "nvidia_cuda")["usable_now"])
+        self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["status"], "available")
+        self.assertTrue(route_by_name(matrix, "local_cpu_model_bundle_infer")["usable_now"])
         self.assertNotIn("CROWDTENSOR_LLM_RUNTIME_API_KEY=", json.dumps(matrix, sort_keys=True))
 
     def test_http_runtime_configuration_is_reported_without_secret_value(self) -> None:
@@ -42,6 +55,10 @@ class RuntimeMatrixTests(unittest.TestCase):
         )
 
         self.assertEqual(workload_by_name(matrix, "external_llm_infer_http")["status"], "configured")
+        self.assertEqual(target_by_name(matrix, "external_llm_http")["status"], "configured")
+        self.assertTrue(target_by_name(matrix, "external_llm_http")["usable_now"])
+        self.assertEqual(route_by_name(matrix, "external_llm_http_adapter")["status"], "configured")
+        self.assertTrue(route_by_name(matrix, "external_llm_http_adapter")["usable_now"])
         self.assertTrue(matrix["configured_runtimes"]["external_llm_http"]["api_key_configured"])
         self.assertNotIn("super-secret-key", json.dumps(matrix, sort_keys=True))
 
@@ -52,6 +69,23 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertFalse(matrix["ok"])
         self.assertEqual(workload_by_name(matrix, "diloco_train")["status"], "blocked")
         self.assertIn("diloco_train", matrix["summary"]["blocked_workloads"])
+        self.assertEqual(target_by_name(matrix, "cpu_baseline")["status"], "blocked")
+        self.assertFalse(route_by_name(matrix, "local_cpu_model_bundle_infer")["usable_now"])
+
+    def test_hardware_targets_report_detected_future_paths(self) -> None:
+        with patch.object(runtime_matrix, "executable_available", side_effect=lambda name: name in {"nvidia-smi", "rocminfo"}):
+            with patch.object(runtime_matrix.platform, "system", return_value="Darwin"):
+                with patch.object(runtime_matrix.platform, "machine", return_value="arm64"):
+                    matrix = runtime_matrix.build_matrix(
+                        root=ROOT,
+                        env={"KAGGLE_KERNEL_RUN_TYPE": "Interactive"},
+                    )
+
+        self.assertEqual(target_by_name(matrix, "nvidia_cuda")["status"], "detected")
+        self.assertEqual(target_by_name(matrix, "amd_rocm")["status"], "detected")
+        self.assertEqual(target_by_name(matrix, "apple_metal")["status"], "detected")
+        self.assertEqual(target_by_name(matrix, "remote_container")["status"], "detected")
+        self.assertFalse(target_by_name(matrix, "nvidia_cuda")["usable_now"])
 
     def test_cli_json_outputs_machine_readable_matrix(self) -> None:
         completed = subprocess.run(
@@ -67,6 +101,8 @@ class RuntimeMatrixTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertTrue(payload["ok"], payload)
         self.assertIn("recommended_next_commands", payload)
+        self.assertIn("hardware_targets", payload)
+        self.assertIn("recommended_routes", payload)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,17 @@ CPU_REQUIRED = {
     "external_llm_infer_mock",
 }
 
+REQUIRED_TARGETS = {
+    "cpu_baseline",
+    "nvidia_cuda",
+    "amd_rocm",
+    "apple_metal",
+    "browser",
+    "remote_container",
+    "external_llm_command",
+    "external_llm_http",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate CrowdTensorD runtime capability matrix output.")
@@ -48,6 +59,19 @@ def main() -> None:
             raise SystemExit(f"unexpected status for {name}: {status}")
         if status == "blocked" and name != "external_llm_infer_command":
             raise SystemExit(f"{name} should be optional_missing when not configured")
+    targets = {row["name"]: row for row in matrix.get("hardware_targets", [])}
+    missing_targets = sorted(REQUIRED_TARGETS - set(targets))
+    if missing_targets:
+        raise SystemExit(f"missing hardware targets: {missing_targets}")
+    if targets["cpu_baseline"].get("status") != "available" or not targets["cpu_baseline"].get("usable_now"):
+        raise SystemExit(f"CPU baseline target must be usable: {targets['cpu_baseline']}")
+    for name, target in targets.items():
+        if target.get("status") not in {"available", "configured", "detected", "optional_missing", "blocked"}:
+            raise SystemExit(f"unexpected hardware target status for {name}: {target}")
+    routes = {row["name"]: row for row in matrix.get("recommended_routes", [])}
+    route = routes.get("local_cpu_model_bundle_infer")
+    if not route or route.get("status") not in {"available", "configured"} or not route.get("usable_now"):
+        raise SystemExit(f"home-compute route must be usable: {route}")
     payload = json.dumps(matrix, sort_keys=True)
     for secret_fragment in ["local-runtime-key", "CROWDTENSOR_LLM_RUNTIME_API_KEY=", "Bearer "]:
         if secret_fragment in payload:
@@ -58,6 +82,8 @@ def main() -> None:
         "optional_missing": matrix["summary"]["optional_missing"],
         "blocked": matrix["summary"]["blocked"],
         "cpu_required": sorted(CPU_REQUIRED),
+        "hardware_targets": sorted(REQUIRED_TARGETS),
+        "route": route["name"],
     }, sort_keys=True))
 
 

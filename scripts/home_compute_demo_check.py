@@ -75,10 +75,21 @@ def main() -> None:
     selected = report.get("selected_workload") or {}
     if selected.get("name") != "model_bundle_infer" or selected.get("status") not in {"available", "configured"}:
         raise SystemExit(f"unexpected selected workload: {selected}")
+    route = report.get("capability_route") or {}
+    if (
+        route.get("name") != "local_cpu_model_bundle_infer"
+        or route.get("target") != "cpu_baseline"
+        or route.get("workload") != "model_bundle_infer"
+        or not route.get("usable_now")
+    ):
+        raise SystemExit(f"unexpected capability route: {route}")
     matrix = report.get("runtime_matrix") or {}
     summary = matrix.get("summary") or {}
     if not matrix.get("ok") or int(summary.get("blocked", 0)) != 0:
         raise SystemExit(f"runtime matrix is not ready: {matrix}")
+    targets = {target.get("name"): target for target in matrix.get("hardware_targets", [])}
+    if not targets.get("cpu_baseline", {}).get("usable_now"):
+        raise SystemExit(f"CPU baseline target is not usable: {targets}")
     session = report.get("inference_session") or {}
     if session.get("workload_type") != "model_bundle_infer":
         raise SystemExit(f"unexpected session workload: {session}")
@@ -96,6 +107,7 @@ def main() -> None:
     print(json.dumps({
         "ok": True,
         "demo": report["demo"],
+        "route": route["name"],
         "workload": selected["name"],
         "request_count": session.get("request_count"),
         "requests_per_second": session.get("requests_per_second"),
