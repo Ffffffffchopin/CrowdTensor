@@ -34,9 +34,10 @@ Roadmap priority:
 4. Keep expanding `scripts/home_compute_demo.py` around the current read-only multi-request `model_bundle_infer` probe into a useful home-compute inference demo with explicit `hardware_targets`, `recommended_routes`, `route_decision`, capped `request_trace` summaries, and hardware/capability matching.
 5. Keep `scripts/home_compute_evidence_pack.py` and `scripts/home_compute_evidence_check.py` as the safe, shareable `home_compute_evidence_v1` layer for public issue reports and demos, preserving `route_decision`, `matched_capabilities`, and capped `request_trace` while redacting secret-shaped fields.
 6. Keep `scripts/remote_compute_evidence_pack.py` and `scripts/remote_compute_evidence_check.py` as the safe, shareable `remote_compute_evidence_v1` layer for registry-backed remote-style Python Miner demos, preserving `remote_python_model_bundle_infer`, safe metrics, capped `request_trace`, and hashed registry status.
-7. Treat `external_llm_infer_v1` as the narrow optional runtime adapter boundary: use `--enable-mock-llm-runtime` for deterministic checks, `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned command wrappers, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
-8. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
-9. Treat incentives and reputation as later protocol layers, not prerequisites for local demos.
+7. Keep `scripts/remote_demo_runbook_pack.py` and `scripts/remote_demo_runbook_check.py` as the safe two-machine `remote_demo_runbook_v1` path, preserving `operator.private.env`, `miner.private.env`, `model_bundle_infer`, and `remote_compute_evidence_pack.py --mode collect`.
+8. Treat `external_llm_infer_v1` as the narrow optional runtime adapter boundary: use `--enable-mock-llm-runtime` for deterministic checks, `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned command wrappers, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
+9. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
+10. Treat incentives and reputation as later protocol layers, not prerequisites for local demos.
 
 ## Engineering Rules
 

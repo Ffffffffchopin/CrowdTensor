@@ -299,6 +299,17 @@ python3 scripts/remote_compute_evidence_pack.py \
 
 The `remote_compute_evidence_v1` report is a safe, shareable proof that a registry-backed remote-style Python Miner completed the read-only `model_bundle_infer` route `remote_python_model_bundle_infer`. It records route capabilities, safe metrics, capped `request_trace`, ledger summary, read-only status, redaction status, and hashed registry status. In a full acceptance run, add `--include-remote-evidence`; this remains opt-in because it starts an additional Coordinator/Miner pair.
 
+Safe two-machine remote runbook:
+
+```bash
+python3 scripts/remote_demo_runbook_pack.py \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --output-dir dist/remote-demo
+```
+
+The `remote_demo_runbook_v1` pack generates `operator.private.env`, `miner.private.env`, a hashed Miner registry, and public JSON/Markdown commands for a controlled `model_bundle_infer` demo. It keeps plaintext tokens out of the public artifact, includes the `remote_compute_evidence_pack.py --mode collect` command, and is checked by `scripts/remote_demo_runbook_check.py`.
+
 `--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
 
 Core browser acceptance:

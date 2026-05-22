@@ -81,6 +81,17 @@ python3 scripts/remote_compute_evidence_pack.py \
 
 The `remote_compute_evidence_v1` report runs a registry-backed remote-style Python Miner through the read-only `model_bundle_infer` path, records `remote_python_model_bundle_infer`, route capabilities, safe latency/throughput, and capped `request_trace` rows, and verifies the invite registry stores only a hashed token. CI validates this with `scripts/remote_compute_evidence_check.py`; runtime acceptance can opt in with `--include-remote-evidence`.
 
+Build a safe two-machine remote demo runbook:
+
+```bash
+python3 scripts/remote_demo_runbook_pack.py \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --output-dir dist/remote-demo
+```
+
+The `remote_demo_runbook_v1` artifact prepares a registry-backed Coordinator/Miner demo for `model_bundle_infer`: it writes `operator.private.env` and `miner.private.env` with `0600` permissions, stores only hashed Miner token verifiers in the registry, and keeps the public JSON/Markdown free of plaintext tokens. The generated commands include security preflight, `crowdtensord --task-lane python-cli:cpu:1:model_bundle_infer`, `crowdtensor-miner`, and `remote_compute_evidence_pack.py --mode collect`. CI validates this with `scripts/remote_demo_runbook_check.py`.
+
 For optional remote and browser checks:
 
 ```bash
@@ -346,6 +357,12 @@ Run only the remote-compute evidence smoke:
 
 ```bash
 python3 scripts/remote_compute_evidence_check.py --port 8912
+```
+
+Run only the safe two-machine runbook generator check:
+
+```bash
+python3 scripts/remote_demo_runbook_check.py
 ```
 
 Run only the security preflight:

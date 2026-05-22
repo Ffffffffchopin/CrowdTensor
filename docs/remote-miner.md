@@ -6,6 +6,17 @@ Use HTTPS, a VPN, or a private network for any remote demo. Miner tokens are sen
 
 ## 1. Create a Miner Registry Entry
 
+For a safe two-machine runbook that creates the registry, private env files, and public operator commands in one step:
+
+```bash
+python3 scripts/remote_demo_runbook_pack.py \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --output-dir dist/remote-demo
+```
+
+The `remote_demo_runbook_v1` output writes `operator.private.env` for observer/admin collection and `miner.private.env` for the remote Miner. Both files are created with `0600` permissions. Only copy `miner.private.env` to the remote Miner host. The public JSON/Markdown includes the `crowdtensord` and `crowdtensor-miner` commands, the `model_bundle_infer` lane, and `remote_compute_evidence_pack.py --mode collect`, but it does not include plaintext tokens. `scripts/remote_demo_runbook_check.py` validates this path in CI.
+
 On the Coordinator host:
 
 ```bash

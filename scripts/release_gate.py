@@ -39,6 +39,8 @@ REQUIRED_FILES = [
     "scripts/remote_miner_join_check.py",
     "scripts/miner_resilience_check.py",
     "scripts/readiness_check.py",
+    "scripts/remote_demo_runbook_pack.py",
+    "scripts/remote_demo_runbook_check.py",
     "scripts/remote_compute_evidence_pack.py",
     "scripts/remote_compute_evidence_check.py",
     "scripts/runtime_matrix.py",
@@ -497,6 +499,38 @@ def check_remote_compute_evidence_docs(root: Path) -> dict[str, Any]:
     return check_result("remote_compute_evidence_docs", not details, details)
 
 
+def check_remote_demo_runbook_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/remote-miner.md",
+            "docs/use-cases.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "remote_demo_runbook_pack.py",
+        "remote_demo_runbook_check.py",
+        "remote_demo_runbook_v1",
+        "operator.private.env",
+        "miner.private.env",
+        "remote_compute_evidence_pack.py --mode collect",
+        "model_bundle_infer",
+        "safe two-machine",
+    ]:
+        if fragment not in combined:
+            details.append(f"remote demo runbook docs/CI must mention {fragment}")
+    return check_result("remote_demo_runbook_docs", not details, details)
+
+
 def check_release_materials(root: Path) -> dict[str, Any]:
     details: list[str] = []
     combined = "\n".join(
@@ -803,6 +837,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python scripts/home_compute_demo_check.py": "CI must run the home-compute demo check",
         "python scripts/home_compute_evidence_check.py": "CI must run the home-compute evidence check",
         "python scripts/remote_compute_evidence_check.py": "CI must run the remote-compute evidence check",
+        "python scripts/remote_demo_runbook_check.py": "CI must run the remote demo runbook check",
         "python scripts/support_bundle.py": "CI must build support bundle",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
@@ -844,6 +879,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_support_bundle_docs(gate_root),
         check_home_compute_evidence_docs(gate_root),
         check_remote_compute_evidence_docs(gate_root),
+        check_remote_demo_runbook_docs(gate_root),
         check_release_materials(gate_root),
         check_open_source_entrypoints(gate_root),
         check_project_memory(gate_root),

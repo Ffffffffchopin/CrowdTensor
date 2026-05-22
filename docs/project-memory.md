@@ -59,12 +59,13 @@ Recommended sequence:
 4. Keep expanding `scripts/home_compute_demo.py` as the useful home-compute demo that feels close to Swarm Inference: it should pair `scripts/runtime_matrix.py` `hardware_targets` / `recommended_routes` capability matching and `route_decision` with the read-only multi-request `model_bundle_infer` session before larger artifacts or runtime adapters are added.
 5. Keep `scripts/home_compute_evidence_pack.py` and `scripts/home_compute_evidence_check.py` as the safe, shareable `home_compute_evidence_v1` layer for public issue reports and demos, preserving `route_decision`, `matched_capabilities`, and capped `request_trace` while redacting secret-shaped fields.
 6. Keep `scripts/remote_compute_evidence_pack.py` and `scripts/remote_compute_evidence_check.py` as the safe, shareable `remote_compute_evidence_v1` layer for registry-backed remote-style Python Miner demos, preserving `remote_python_model_bundle_infer`, safe metrics, capped `request_trace`, and hashed registry status.
-7. Keep `external_llm_infer_v1` as the narrow optional runtime adapter contract: deterministic `--enable-mock-llm-runtime` for CI, explicit `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local experiments, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
-8. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
-9. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.
-10. Expand browser-native participation from WebRTC/Worker probes toward WebGPU/WebAssembly only after tensor transfer and lifecycle limits are measured.
-11. Add P2P/NAT routing after useful workloads and operator safety are proven.
-12. Treat reputation and incentives as later protocol layers built on result validation and trust history.
+7. Keep `scripts/remote_demo_runbook_pack.py` and `scripts/remote_demo_runbook_check.py` as the safe two-machine `remote_demo_runbook_v1` path for controlled remote demos, preserving `operator.private.env`, `miner.private.env`, hashed registry setup, `model_bundle_infer`, and `remote_compute_evidence_pack.py --mode collect`.
+8. Keep `external_llm_infer_v1` as the narrow optional runtime adapter contract: deterministic `--enable-mock-llm-runtime` for CI, explicit `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local experiments, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
+9. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
+10. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.
+11. Expand browser-native participation from WebRTC/Worker probes toward WebGPU/WebAssembly only after tensor transfer and lifecycle limits are measured.
+12. Add P2P/NAT routing after useful workloads and operator safety are proven.
+13. Treat reputation and incentives as later protocol layers built on result validation and trust history.
 
 ## Engineering Principles
 
@@ -131,6 +132,15 @@ python3 scripts/remote_compute_evidence_pack.py \
   --request-count 4 \
   --json-out /tmp/crowdtensor_remote_evidence.json \
   --markdown-out /tmp/crowdtensor_remote_evidence.md
+```
+
+Safe two-machine remote demo runbook:
+
+```bash
+python3 scripts/remote_demo_runbook_pack.py \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --output-dir dist/remote-demo
 ```
 
 ## Maintenance Rule
