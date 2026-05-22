@@ -821,6 +821,15 @@ class StateStoreTests(unittest.TestCase):
             self.assertFalse(row["model_bundle_updated"])
             self.assertEqual(row["validation"]["predicted_token_id"], result["predicted_token_id"])
             self.assertEqual(row["validation"]["request_count"], 1)
+            self.assertEqual(row["validation"]["request_trace_count"], 1)
+            self.assertFalse(row["validation"]["request_trace_truncated"])
+            self.assertEqual(len(row["validation"]["request_trace"]), 1)
+            self.assertIn("prompt", row["validation"]["request_trace"][0])
+            self.assertIn("top_k", row["validation"]["request_trace"][0])
+            self.assertEqual(
+                summary["tasks"][0]["validation"]["request_trace"],
+                row["validation"]["request_trace"],
+            )
             self.assertNotIn("inference_result", json.dumps(summary["tasks"], sort_keys=True))
             self.assertNotIn("inference_results", json.dumps(summary["tasks"], sort_keys=True))
 
@@ -864,6 +873,9 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(row["validation"]["request_count"], 4)
             self.assertEqual(row["validation"]["correct_count"], inner_result["correct_count"])
             self.assertEqual(row["validation"]["accuracy"], inner_result["accuracy"])
+            self.assertEqual(row["validation"]["request_trace_count"], 4)
+            self.assertFalse(row["validation"]["request_trace_truncated"])
+            self.assertEqual(len(row["validation"]["request_trace"]), 4)
             self.assertEqual(row["session_metrics"]["request_count"], 4)
             self.assertEqual(row["session_metrics"]["correct_count"], inner_result["correct_count"])
             self.assertEqual(row["session_metrics"]["accuracy"], inner_result["accuracy"])

@@ -95,6 +95,12 @@ def main() -> None:
         raise SystemExit(f"unexpected session workload: {session}")
     if int(session.get("request_count", 0)) != args.request_count:
         raise SystemExit(f"request count mismatch: {session}")
+    request_trace = session.get("request_trace") or []
+    expected_trace_count = min(args.request_count, 8)
+    if int(session.get("request_trace_count", 0)) != expected_trace_count or len(request_trace) != expected_trace_count:
+        raise SystemExit(f"request trace count mismatch: {session}")
+    if not request_trace or not request_trace[0].get("prompt") or not request_trace[0].get("top_k"):
+        raise SystemExit(f"request trace is not readable: {session}")
     if float(session.get("requests_per_second", 0.0)) <= 0.0:
         raise SystemExit(f"invalid throughput: {session}")
     safety = report.get("safety") or {}
@@ -110,6 +116,7 @@ def main() -> None:
         "route": route["name"],
         "workload": selected["name"],
         "request_count": session.get("request_count"),
+        "request_trace_count": session.get("request_trace_count"),
         "requests_per_second": session.get("requests_per_second"),
         "cpu_count": matrix.get("host_profile", {}).get("cpu_count"),
     }, sort_keys=True))

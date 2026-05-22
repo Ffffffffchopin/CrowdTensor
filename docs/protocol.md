@@ -44,7 +44,7 @@ Current workload types:
 - `cpu_lora_mock`: dependency-free adapter update mock
 - `micro_transformer_lm`: tiny analytic character language-model workload
 - `model_bundle_lm`: model-artifact-shaped contract with identity and version checks
-- `model_bundle_infer`: read-only inference-shaped model bundle probe with prediction recomputation
+- `model_bundle_infer`: read-only inference-shaped model bundle probe with prediction recomputation and capped `request_trace` summaries
 - `external_llm_infer`: optional read-only external LLM runtime adapter contract using `external_llm_infer_v1`
 - `browser_probe`: browser Worker compute probe that does not update model state
 

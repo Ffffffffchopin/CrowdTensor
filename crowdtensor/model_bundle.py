@@ -15,6 +15,7 @@ from typing import Iterable
 
 MODEL_BUNDLE_SCHEMA_VERSION = "model_bundle_lm_v1"
 MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION = "model_bundle_infer_v1"
+MODEL_BUNDLE_INFERENCE_TRACE_LIMIT = 8
 WORKLOAD_TYPE = "model_bundle_lm"
 INFERENCE_WORKLOAD_TYPE = "model_bundle_infer"
 BUNDLE_ID = "builtin-char-bundle"
@@ -360,6 +361,39 @@ def _token_text(config: dict, token_id: int) -> str:
     return str(vocab[int(token_id) % len(vocab)])
 
 
+def _decode_token_ids(config: dict, token_ids: list[int]) -> str:
+    return "".join(_token_text(config, int(token_id)) for token_id in token_ids)
+
+
+def _safe_top_k_trace(config: dict, rows: list[dict]) -> list[dict]:
+    trace = []
+    for row in rows:
+        token_id = int(row.get("token_id", 0))
+        trace.append({
+            "token_id": token_id,
+            "token": _token_text(config, token_id),
+            "probability": float(row.get("probability", 0.0)),
+        })
+    return trace
+
+
+def _safe_inference_trace(config: dict, result: dict) -> dict:
+    prompt_token_ids = [int(value) for value in result.get("prompt_token_ids", [])]
+    target_id = int(result.get("target_token_id", 0))
+    predicted_id = int(result.get("predicted_token_id", 0))
+    return {
+        "request_id": str(result.get("request_id", "")),
+        "prompt": _decode_token_ids(config, prompt_token_ids),
+        "prompt_token_ids": prompt_token_ids,
+        "target_token_id": target_id,
+        "target_token": _token_text(config, target_id),
+        "predicted_token_id": predicted_id,
+        "predicted_token": _token_text(config, predicted_id),
+        "correct": bool(result.get("correct", False)),
+        "top_k": _safe_top_k_trace(config, list(result.get("top_k") or [])),
+    }
+
+
 def _inference_requests_from_spec(spec: dict, config: dict) -> list[dict]:
     rows = spec.get("requests")
     if rows is None:
@@ -702,6 +736,10 @@ def validate_model_bundle_inference(
     first = row_validations[0]
     correct_count = sum(1 for validation in row_validations if bool(validation["correct"]))
     request_count = len(row_validations)
+    request_trace = [
+        _safe_inference_trace(current["config"], result)
+        for result in normalized_results[:MODEL_BUNDLE_INFERENCE_TRACE_LIMIT]
+    ]
     return {
         "accepted": True,
         "code": "ok",
@@ -714,6 +752,9 @@ def validate_model_bundle_inference(
         "request_count": request_count,
         "correct_count": correct_count,
         "accuracy": correct_count / request_count,
+        "request_trace": request_trace,
+        "request_trace_count": len(request_trace),
+        "request_trace_truncated": request_count > len(request_trace),
         "request_id": first["request_id"],
         "predicted_token_id": first["predicted_token_id"],
         "predicted_token": first["predicted_token"],

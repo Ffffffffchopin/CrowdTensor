@@ -154,6 +154,20 @@ def print_human_report(report: dict[str, Any]) -> None:
             f"elapsed_ms={float(session.get('elapsed_ms') or 0.0):.3f}, "
             f"requests_per_second={float(session.get('requests_per_second') or 0.0):.3f}"
         )
+        trace = session.get("request_trace") or []
+        if trace:
+            print("  trace:")
+            for row in trace:
+                print(
+                    "    "
+                    f"{row.get('request_id')} "
+                    f"prompt={row.get('prompt')!r} "
+                    f"predicted={row.get('predicted_token')!r} "
+                    f"target={row.get('target_token')!r} "
+                    f"correct={bool(row.get('correct'))}"
+                )
+            if session.get("request_trace_truncated"):
+                print(f"    ... truncated at {session.get('request_trace_count')} rows")
     print(
         "  safety: "
         f"read_only={report['safety']['read_only']} "

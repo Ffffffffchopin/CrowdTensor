@@ -129,7 +129,7 @@ Run the matrix-guided home-compute demo:
 python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
 ```
 
-This runs `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` capability route when available, then runs the local inference session demo. The report is the shortest open-source path from local capability discovery to a measurable Swarm Inference-shaped result without requiring GPU access.
+This runs `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` capability route when available, then runs the local inference session demo. The report includes safe metrics and a capped Coordinator-derived `request_trace`, making it the shortest open-source path from local capability discovery to a measurable Swarm Inference-shaped result without requiring GPU access.
 
 Run the default non-browser smoke suite:
 
@@ -147,7 +147,7 @@ Run only the local inference session demo:
 python3 scripts/inference_session_demo.py --port 8904 --request-count 4
 ```
 
-Add `--json` for a machine-readable report with `request_count`, `accuracy`, `elapsed_ms`, `requests_per_second`, read-only status, redaction status, and Miner `hardware_profile`.
+Add `--json` for a machine-readable report with `request_count`, `accuracy`, `elapsed_ms`, `requests_per_second`, `request_trace`, read-only status, redaction status, and Miner `hardware_profile`.
 
 Run only the optional external LLM adapter contract smoke:
 

@@ -165,6 +165,7 @@ def build_demo_report(
         raise RuntimeError(f"expected one {WORKLOAD_TYPE} ledger row")
     row = rows[0]
     session_metrics = row.get("session_metrics") or {}
+    request_trace = list(validation.get("request_trace") or [])
     profiles = state.get("miner_profiles") or {}
     profile = profiles.get(MINER_ID) or {}
     hardware = (profile.get("last_capabilities") or {}).get("hardware_profile") or {}
@@ -199,6 +200,9 @@ def build_demo_report(
         "requests_per_second": session_metrics.get("requests_per_second"),
         "predicted_token": validation.get("predicted_token"),
         "target_token": validation.get("target_token"),
+        "request_trace": request_trace,
+        "request_trace_count": validation.get("request_trace_count", len(request_trace)),
+        "request_trace_truncated": bool(validation.get("request_trace_truncated", False)),
         "read_only": read_only,
         "redaction_ok": redaction_ok,
         "miner": {
@@ -232,6 +236,20 @@ def print_human_report(report: dict) -> None:
         f"requests_per_second={float(report['requests_per_second'] or 0.0):.3f}"
     )
     print(f"  sample prediction: {report['predicted_token']!r} target={report['target_token']!r}")
+    trace = report.get("request_trace") or []
+    if trace:
+        print("  trace:")
+        for row in trace:
+            print(
+                "    "
+                f"{row.get('request_id')} "
+                f"prompt={row.get('prompt')!r} "
+                f"predicted={row.get('predicted_token')!r} "
+                f"target={row.get('target_token')!r} "
+                f"correct={bool(row.get('correct'))}"
+            )
+        if report.get("request_trace_truncated"):
+            print(f"    ... truncated at {report.get('request_trace_count')} rows")
     print(
         "  miner: "
         f"{report['miner']['runtime']}/{report['miner']['backend']} "

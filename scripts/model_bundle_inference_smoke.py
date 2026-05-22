@@ -189,6 +189,14 @@ def main() -> None:
             raise SystemExit(f"unexpected validation: {validation}")
         if int(validation.get("request_count", 0)) != args.request_count:
             raise SystemExit(f"expected {args.request_count} inference requests: {validation}")
+        request_trace = validation.get("request_trace") or []
+        expected_trace_count = min(args.request_count, 8)
+        if int(validation.get("request_trace_count", 0)) != expected_trace_count:
+            raise SystemExit(f"validation request_trace_count mismatch: {validation}")
+        if len(request_trace) != expected_trace_count:
+            raise SystemExit(f"validation request_trace rows mismatch: {validation}")
+        if not request_trace or not request_trace[0].get("prompt") or not request_trace[0].get("top_k"):
+            raise SystemExit(f"validation request_trace is not readable: {validation}")
         metrics = task.get("metrics", {})
         if int(metrics.get("request_count", 0)) != args.request_count:
             raise SystemExit(f"task metrics request_count mismatch: {metrics}")
@@ -218,6 +226,8 @@ def main() -> None:
             raise SystemExit(f"ledger prediction summary mismatch: {row}")
         if row.get("validation", {}).get("request_count") != args.request_count:
             raise SystemExit(f"ledger request_count mismatch: {row}")
+        if len(row.get("validation", {}).get("request_trace") or []) != expected_trace_count:
+            raise SystemExit(f"ledger request_trace mismatch: {row}")
         session_metrics = row.get("session_metrics", {})
         if int(session_metrics.get("request_count", 0)) != args.request_count:
             raise SystemExit(f"ledger session_metrics request_count mismatch: {row}")
@@ -236,6 +246,7 @@ def main() -> None:
             "ledger_rows": len(results),
             "miner_summary": miner_summary,
             "predicted_token": validation.get("predicted_token"),
+            "request_trace_count": validation.get("request_trace_count"),
             "request_count": validation.get("request_count"),
             "requests_per_second": session_metrics.get("requests_per_second"),
             "target_token": validation.get("target_token"),

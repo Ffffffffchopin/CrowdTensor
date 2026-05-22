@@ -102,6 +102,20 @@ class ModelBundleTests(unittest.TestCase):
         self.assertEqual(validation["request_count"], 4)
         self.assertEqual(validation["correct_count"], result["correct_count"])
         self.assertEqual(validation["accuracy"], result["accuracy"])
+        self.assertEqual(validation["request_trace_count"], 4)
+        self.assertFalse(validation["request_trace_truncated"])
+        self.assertEqual(len(validation["request_trace"]), 4)
+        first_trace = validation["request_trace"][0]
+        expected_prompt = "".join(
+            spec["config"]["vocab"][token_id]
+            for token_id in spec["requests"][0]["prompt_token_ids"]
+        )
+        self.assertEqual(first_trace["request_id"], "req-1")
+        self.assertEqual(first_trace["prompt_token_ids"], spec["requests"][0]["prompt_token_ids"])
+        self.assertEqual(first_trace["prompt"], expected_prompt)
+        self.assertEqual(first_trace["target_token"], validation["target_token"])
+        self.assertEqual(first_trace["predicted_token"], validation["predicted_token"])
+        self.assertEqual(len(first_trace["top_k"]), 3)
         self.assertIn("elapsed_ms", result)
         self.assertGreaterEqual(result["elapsed_ms"], 0.0)
         self.assertIn("requests_per_second", result)
@@ -109,6 +123,59 @@ class ModelBundleTests(unittest.TestCase):
         self.assertIn("predicted_token_id", validation)
         self.assertIn("top_k", result["inference_result"])
         self.assertEqual(model["model_bundle"]["version"], 0)
+
+    def test_inference_trace_is_derived_from_token_ids_not_miner_text(self) -> None:
+        model = default_model()
+        spec = model_bundle_inference_spec_for(
+            "task-text-tamper",
+            "miner-infer",
+            model["model_bundle"],
+            request_count=2,
+        )
+        result = run_model_bundle_inference(spec)
+        tampered = [dict(row) for row in result["inference_results"]]
+        tampered[0]["target_token"] = "not-the-target"
+        tampered[0]["predicted_token"] = "not-the-prediction"
+        tampered[0]["top_k"] = [
+            {**row, "token": "not-the-top-token"}
+            for row in tampered[0]["top_k"]
+        ]
+
+        validation = validate_model_bundle_inference(
+            model,
+            tampered[0],
+            inference_results=tampered,
+            expected_requests=spec["requests"],
+        )
+
+        self.assertTrue(validation["accepted"])
+        trace = validation["request_trace"][0]
+        self.assertNotEqual(trace["target_token"], "not-the-target")
+        self.assertNotEqual(trace["predicted_token"], "not-the-prediction")
+        self.assertNotEqual(trace["top_k"][0]["token"], "not-the-top-token")
+
+    def test_inference_trace_is_capped_for_large_sessions(self) -> None:
+        model = default_model()
+        spec = model_bundle_inference_spec_for(
+            "task-large-trace",
+            "miner-infer",
+            model["model_bundle"],
+            request_count=12,
+        )
+        result = run_model_bundle_inference(spec)
+
+        validation = validate_model_bundle_inference(
+            model,
+            result["inference_result"],
+            inference_results=result["inference_results"],
+            expected_requests=spec["requests"],
+        )
+
+        self.assertTrue(validation["accepted"])
+        self.assertEqual(validation["request_count"], 12)
+        self.assertEqual(validation["request_trace_count"], 8)
+        self.assertTrue(validation["request_trace_truncated"])
+        self.assertEqual(len(validation["request_trace"]), 8)
 
     def test_inference_validation_rejects_wrong_prediction(self) -> None:
         model = default_model()

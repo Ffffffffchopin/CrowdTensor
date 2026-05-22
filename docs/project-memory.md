@@ -45,7 +45,7 @@ Do not imply these are implemented:
 - hardware attestation
 - hardened public-internet security
 
-The current model bundle, measurable multi-request model bundle inference, optional `external_llm_infer_v1` adapter, and micro LM workloads are dependency-free contract rehearsals, not real LLM or GPU throughput benchmarks. `external_llm_infer` is read-only, validates `external_llm_results`, records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries, supports deterministic mock, command, and OpenAI-compatible HTTP adapters, and must keep raw prompts, raw `output_text`, runtime URLs, and API keys out of public state.
+The current model bundle, measurable multi-request model bundle inference, optional `external_llm_infer_v1` adapter, and micro LM workloads are dependency-free contract rehearsals, not real LLM or GPU throughput benchmarks. `model_bundle_infer` is read-only and exposes only Coordinator-derived capped `request_trace` summaries instead of raw `inference_results`. `external_llm_infer` is read-only, validates `external_llm_results`, records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries, supports deterministic mock, command, and OpenAI-compatible HTTP adapters, and must keep raw prompts, raw `output_text`, runtime URLs, and API keys out of public state.
 
 ## Strategic Route
 

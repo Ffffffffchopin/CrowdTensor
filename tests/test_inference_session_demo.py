@@ -26,6 +26,19 @@ class InferenceSessionDemoTests(unittest.TestCase):
                 "accuracy": 0.25,
                 "predicted_token": "e",
                 "target_token": "n",
+                "request_trace": [
+                    {
+                        "request_id": "req-1",
+                        "prompt": "crow",
+                        "prompt_token_ids": [2, 10, 9, 13],
+                        "predicted_token": "e",
+                        "target_token": "n",
+                        "correct": False,
+                        "top_k": [{"token_id": 5, "token": "e", "probability": 0.2}],
+                    },
+                ],
+                "request_trace_count": 1,
+                "request_trace_truncated": False,
             },
             "metrics": {
                 "request_count": 4,
@@ -99,6 +112,9 @@ class InferenceSessionDemoTests(unittest.TestCase):
         self.assertEqual(report["requests_per_second"], 1600.0)
         self.assertTrue(report["read_only"])
         self.assertTrue(report["redaction_ok"])
+        self.assertEqual(report["request_trace_count"], 1)
+        self.assertFalse(report["request_trace_truncated"])
+        self.assertEqual(report["request_trace"][0]["prompt"], "crow")
         self.assertEqual(report["miner"]["runtime"], "python-cli")
         self.assertEqual(report["miner"]["hardware_profile"]["cpu_count"], 8)
 

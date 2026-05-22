@@ -563,6 +563,7 @@ def check_model_bundle_inference_docs(root: Path) -> dict[str, Any]:
         "--skip-model-bundle-inference",
         "--request-count",
         "inference_results",
+        "request_trace",
         "request_count",
         "requests_per_second",
         "hardware_profile",

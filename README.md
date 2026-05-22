@@ -55,7 +55,7 @@ Run the matrix-guided home-compute demo:
 python3 scripts/home_compute_demo.py --port 8909 --request-count 4
 ```
 
-This combines the runtime capability matrix with the read-only `model_bundle_infer` path and reports safe latency, throughput, `hardware_profile`, selected capability route, read-only, and redaction status. It is a CPU-only Swarm Inference-shaped demo, not real LLM serving or GPU pooling.
+This combines the runtime capability matrix with the read-only `model_bundle_infer` path and reports safe latency, throughput, `hardware_profile`, selected capability route, a Coordinator-derived `request_trace`, read-only, and redaction status. It is a CPU-only Swarm Inference-shaped demo, not real LLM serving or GPU pooling.
 
 For optional remote and browser checks:
 
@@ -278,7 +278,7 @@ python3 scripts/model_bundle_inference_smoke.py --port 8903
 ```
 
 The inference smoke runs a read-only multi-request session by default; use `--request-count N` to change the number of prompts in the task.
-It reports safe session metrics such as `elapsed_ms`, `requests_per_second`, `request_count`, accuracy, and the Python Miner `hardware_profile` so users can inspect the CPU baseline without treating it as a real LLM or GPU benchmark.
+It reports safe session metrics such as `elapsed_ms`, `requests_per_second`, `request_count`, accuracy, a capped `request_trace`, and the Python Miner `hardware_profile` so users can inspect the CPU baseline without treating it as a real LLM or GPU benchmark.
 
 Run the user-facing local inference session demo:
 
@@ -294,7 +294,7 @@ Run the matrix-guided home-compute demo:
 python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
 ```
 
-The home-compute demo first checks `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` route when available, runs `scripts/inference_session_demo.py`, and emits one report with runtime capability, session metrics, read-only status, redaction status, `hardware_targets`, `recommended_routes`, and recommended next commands. CI validates this path with `scripts/home_compute_demo_check.py`; the runtime acceptance pack includes it by default and can skip it with `--skip-home-compute-demo`.
+The home-compute demo first checks `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` route when available, runs `scripts/inference_session_demo.py`, and emits one report with runtime capability, session metrics, capped `request_trace` rows, read-only status, redaction status, `hardware_targets`, `recommended_routes`, and recommended next commands. CI validates this path with `scripts/home_compute_demo_check.py`; the runtime acceptance pack includes it by default and can skip it with `--skip-home-compute-demo`.
 
 Run only the optional external LLM adapter smoke:
 

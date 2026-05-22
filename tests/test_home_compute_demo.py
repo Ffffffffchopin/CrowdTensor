@@ -78,6 +78,18 @@ class HomeComputeDemoTests(unittest.TestCase):
             "accuracy": 0.25,
             "elapsed_ms": 2.5,
             "requests_per_second": 1600.0,
+            "request_trace": [
+                {
+                    "request_id": "req-1",
+                    "prompt": "crow",
+                    "predicted_token": "e",
+                    "target_token": "n",
+                    "correct": False,
+                    "top_k": [{"token_id": 5, "token": "e", "probability": 0.2}],
+                },
+            ],
+            "request_trace_count": 1,
+            "request_trace_truncated": False,
             "read_only": read_only,
             "redaction_ok": redaction_ok,
         }
@@ -96,6 +108,8 @@ class HomeComputeDemoTests(unittest.TestCase):
         self.assertTrue(report["runtime_matrix"]["hardware_targets"][0]["usable_now"])
         self.assertTrue(report["selected_workload"]["cpu_only"])
         self.assertEqual(report["runtime_matrix"]["host_profile"]["cpu_count"], 8)
+        self.assertEqual(report["inference_session"]["request_trace_count"], 1)
+        self.assertEqual(report["inference_session"]["request_trace"][0]["prompt"], "crow")
         self.assertTrue(report["safety"]["read_only"])
         self.assertTrue(report["safety"]["redaction_ok"])
 
