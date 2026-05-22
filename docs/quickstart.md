@@ -129,7 +129,7 @@ Run the matrix-guided home-compute demo:
 python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
 ```
 
-This runs `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` capability route when available, then runs the local inference session demo. The report includes `route_decision`, safe metrics, and a capped Coordinator-derived `request_trace`, making it the shortest open-source path from local capability discovery to a measurable Swarm Inference-shaped result without requiring GPU access.
+This runs `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` capability route when available, then runs the local inference session demo. The report includes `route_decision`, safe metrics, a capped Coordinator-derived `request_trace`, and stable `diagnosis_codes` such as `home_compute_ready`, `runtime_matrix_blocked`, `workload_unavailable`, `cpu_route_unavailable`, `session_failed`, and `trace_missing`, making it the shortest open-source path from local capability discovery to a measurable Swarm Inference-shaped result without requiring GPU access.
 
 Build a safe, shareable home-compute evidence pack:
 
@@ -141,7 +141,7 @@ python3 scripts/home_compute_evidence_pack.py \
   --markdown-out /tmp/crowdtensor_home_evidence.md
 ```
 
-The `home_compute_evidence_v1` artifact wraps the runtime matrix, `route_decision`, `matched_capabilities`, safe metrics, capped `request_trace` rows, and runtime acceptance summary if `--runtime-report` is provided. It is intended for demos and issue reports, so it redacts token, URL, API key, lease, idempotency, weight, and delta-shaped fields.
+The `home_compute_evidence_v1` artifact wraps the runtime matrix, `route_decision`, `matched_capabilities`, safe metrics, capped `request_trace` rows, `diagnosis_codes`, and runtime acceptance summary if `--runtime-report` is provided. It is intended for demos and issue reports, so it redacts token, URL, API key, lease, idempotency, weight, and delta-shaped fields.
 
 Run the default non-browser smoke suite:
 

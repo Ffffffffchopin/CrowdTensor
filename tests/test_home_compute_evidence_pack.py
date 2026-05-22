@@ -124,6 +124,25 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
                 "redaction_ok": True,
                 "raw_payloads_exposed": False,
             },
+            "diagnosis": {
+                "primary_code": "home_compute_ready",
+                "severity": "info",
+                "summary": "Home-compute demo completed on the local CPU route.",
+                "details": {},
+                "next_steps": ["Share the home-compute evidence report."],
+                "observed": {},
+            },
+            "diagnosis_codes": ["home_compute_ready"],
+            "diagnoses": [
+                {
+                    "primary_code": "home_compute_ready",
+                    "severity": "info",
+                    "summary": "Home-compute demo completed on the local CPU route.",
+                    "details": {},
+                    "next_steps": ["Share the home-compute evidence report."],
+                    "observed": {},
+                },
+            ],
             "recommended_next_commands": ["python3 scripts/home_compute_demo.py --json"],
         }
 
@@ -144,6 +163,8 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
         self.assertEqual(evidence["request_trace"][0]["prompt"], "crow")
         self.assertTrue(evidence["safety"]["read_only"])
         self.assertTrue(evidence["runtime_acceptance"]["present"])
+        self.assertEqual(evidence["diagnosis"]["primary_code"], "home_compute_ready")
+        self.assertEqual(evidence["diagnosis_codes"], ["home_compute_ready"])
         encoded = json.dumps(evidence, sort_keys=True)
         self.assertNotIn("super-secret-key", encoded)
         self.assertIn("<redacted>", encoded)
@@ -161,6 +182,8 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
         self.assertEqual(evidence["route_decision"]["name"], "local_cpu_model_bundle_infer")
         self.assertEqual(evidence["route_decision"]["confidence"], "ready")
         self.assertFalse(evidence["inference_summary"]["present"])
+        self.assertEqual(evidence["diagnosis"]["primary_code"], "demo_skipped")
+        self.assertEqual(evidence["diagnosis_codes"], ["demo_skipped"])
 
     def test_load_runtime_report_summarizes_failures(self) -> None:
         path = Path("/tmp/crowdtensor_home_compute_evidence_runtime.json")
@@ -193,6 +216,8 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
 
         self.assertIn("# CrowdTensor Home Compute Evidence", markdown)
         self.assertIn("local_cpu_model_bundle_infer", markdown)
+        self.assertIn("## Diagnosis", markdown)
+        self.assertIn("home_compute_ready", markdown)
         self.assertIn("prompt=`crow`", markdown)
         self.assertIn("Read-only", markdown)
         self.assertIn("CPU-only demo evidence", markdown)

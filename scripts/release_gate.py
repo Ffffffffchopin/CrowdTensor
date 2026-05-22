@@ -462,6 +462,9 @@ def check_home_compute_evidence_docs(root: Path) -> dict[str, Any]:
         "route_decision",
         "request_trace",
         "matched_capabilities",
+        "diagnosis_codes",
+        "home_compute_ready",
+        "runtime_matrix_blocked",
         "safe, shareable",
     ]:
         if fragment not in combined:

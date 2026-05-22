@@ -105,6 +105,30 @@ def fallback_route_decision(matrix: dict[str, Any]) -> dict[str, Any]:
     return home_compute_demo.route_decision(home_compute_demo.selected_route(matrix))
 
 
+def evidence_diagnosis(
+    *,
+    matrix: dict[str, Any],
+    home_report: dict[str, Any] | None,
+    route: dict[str, Any],
+) -> dict[str, Any]:
+    if home_report is not None and home_report.get("diagnosis"):
+        return {
+            "primary": home_report.get("diagnosis"),
+            "codes": list(home_report.get("diagnosis_codes") or []),
+            "all": list(home_report.get("diagnoses") or [home_report.get("diagnosis")]),
+        }
+    selected = home_compute_demo.workload_status(matrix, home_compute_demo.WORKLOAD_TYPE)
+    safety = {"read_only": None, "redaction_ok": None, "raw_payloads_exposed": False}
+    return home_compute_demo.diagnose_home_compute(
+        matrix=matrix,
+        selected=selected,
+        route=route,
+        session_report=None,
+        safety=safety,
+        demo_skipped=True,
+    )
+
+
 def build_evidence(
     *,
     matrix: dict[str, Any],
@@ -116,6 +140,7 @@ def build_evidence(
     session = report.get("inference_session") if isinstance(report.get("inference_session"), dict) else None
     route = report.get("route_decision") or report.get("capability_route") or fallback_route_decision(matrix)
     safety = report.get("safety") or {}
+    diagnosis = evidence_diagnosis(matrix=matrix, home_report=home_report, route=route)
     evidence = {
         "schema": EVIDENCE_SCHEMA,
         "generated_at": generated_at or utc_now(),
@@ -145,6 +170,9 @@ def build_evidence(
         "route_decision": route,
         "inference_summary": inference_summary(session),
         "request_trace": list((session or {}).get("request_trace") or []),
+        "diagnosis": diagnosis["primary"],
+        "diagnosis_codes": diagnosis["codes"],
+        "diagnoses": diagnosis["all"],
         "safety": {
             "read_only": safety.get("read_only"),
             "redaction_ok": safety.get("redaction_ok"),
@@ -183,6 +211,7 @@ def build_from_args(args: argparse.Namespace) -> dict[str, Any]:
 def render_markdown(payload: dict[str, Any]) -> str:
     route = payload.get("route_decision") or {}
     summary = payload.get("inference_summary") or {}
+    diagnosis = payload.get("diagnosis") or {}
     safety = payload.get("safety") or {}
     lines = [
         "# CrowdTensor Home Compute Evidence",
@@ -200,6 +229,20 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Matched capabilities: `{', '.join(route.get('matched_capabilities') or [])}`",
         f"- Missing capabilities: `{', '.join(route.get('missing_capabilities') or [])}`",
         "",
+        "## Diagnosis",
+        "",
+        f"- Primary code: `{diagnosis.get('primary_code')}`",
+        f"- Severity: `{diagnosis.get('severity')}`",
+        f"- Summary: {diagnosis.get('summary', '')}",
+        f"- Diagnosis codes: `{', '.join(payload.get('diagnosis_codes') or [])}`",
+        "",
+        "### Next Steps",
+        "",
+    ]
+    for step in diagnosis.get("next_steps") or []:
+        lines.append(f"- {step}")
+    lines.extend([
+        "",
         "## Inference Session",
         "",
         f"- Requests: `{summary.get('request_count')}`",
@@ -211,7 +254,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         "",
         "## Trace",
         "",
-    ]
+    ])
     for row in payload.get("request_trace") or []:
         lines.append(
             f"- `{row.get('request_id')}` prompt=`{row.get('prompt')}` "

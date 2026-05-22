@@ -71,6 +71,11 @@ def main() -> None:
         raise SystemExit(f"home-compute evidence failed: {json.dumps(evidence, sort_keys=True)}")
     if evidence.get("schema") != "home_compute_evidence_v1":
         raise SystemExit(f"unexpected evidence schema: {evidence.get('schema')}")
+    diagnosis = evidence.get("diagnosis") or {}
+    if diagnosis.get("primary_code") != "home_compute_ready":
+        raise SystemExit(f"unexpected evidence diagnosis: {diagnosis}")
+    if evidence.get("diagnosis_codes") != ["home_compute_ready"]:
+        raise SystemExit(f"unexpected evidence diagnosis codes: {evidence.get('diagnosis_codes')}")
 
     route = evidence.get("route_decision") or {}
     if (
@@ -130,6 +135,7 @@ def main() -> None:
         "request_trace_count": summary.get("request_trace_count"),
         "requests_per_second": summary.get("requests_per_second"),
         "cpu_count": evidence.get("host_profile", {}).get("cpu_count"),
+        "diagnosis": diagnosis.get("primary_code"),
     }, sort_keys=True))
 
 

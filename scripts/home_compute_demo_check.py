@@ -72,6 +72,11 @@ def main() -> None:
         raise SystemExit(f"home-compute demo failed: {json.dumps(report, sort_keys=True)}")
     if report.get("demo") != "home_compute_inference_v1":
         raise SystemExit(f"unexpected demo id: {report.get('demo')}")
+    diagnosis = report.get("diagnosis") or {}
+    if diagnosis.get("primary_code") != "home_compute_ready":
+        raise SystemExit(f"unexpected home-compute diagnosis: {diagnosis}")
+    if report.get("diagnosis_codes") != ["home_compute_ready"]:
+        raise SystemExit(f"unexpected home-compute diagnosis codes: {report.get('diagnosis_codes')}")
     selected = report.get("selected_workload") or {}
     if selected.get("name") != "model_bundle_infer" or selected.get("status") not in {"available", "configured"}:
         raise SystemExit(f"unexpected selected workload: {selected}")
@@ -133,6 +138,7 @@ def main() -> None:
         "request_trace_count": session.get("request_trace_count"),
         "requests_per_second": session.get("requests_per_second"),
         "cpu_count": matrix.get("host_profile", {}).get("cpu_count"),
+        "diagnosis": diagnosis.get("primary_code"),
     }, sort_keys=True))
 
 

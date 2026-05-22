@@ -237,7 +237,7 @@ Matrix-guided home-compute demo:
 python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
 ```
 
-This combines runtime capability discovery with the read-only `model_bundle_infer` inference session. It selects the CPU-only workload and `local_cpu_model_bundle_infer` route only when `scripts/runtime_matrix.py` reports it as available, then emits one report with host capability, selected workload, selected route, `route_decision`, session metrics, capped `request_trace` rows, read-only status, redaction status, and recommended next commands. `scripts/home_compute_demo_check.py` is included in the default acceptance pack and can be skipped with `--skip-home-compute-demo`.
+This combines runtime capability discovery with the read-only `model_bundle_infer` inference session. It selects the CPU-only workload and `local_cpu_model_bundle_infer` route only when `scripts/runtime_matrix.py` reports it as available, then emits one report with host capability, selected workload, selected route, `route_decision`, session metrics, capped `request_trace` rows, read-only status, redaction status, stable `diagnosis_codes` such as `home_compute_ready`, `runtime_matrix_blocked`, `workload_unavailable`, `cpu_route_unavailable`, `session_failed`, and `trace_missing`, and recommended next commands. `scripts/home_compute_demo_check.py` is included in the default acceptance pack and can be skipped with `--skip-home-compute-demo`.
 
 Safe, shareable home-compute evidence pack:
 
@@ -250,7 +250,7 @@ python3 scripts/home_compute_evidence_pack.py \
   --markdown-out /tmp/crowdtensor_home_evidence.md
 ```
 
-The `home_compute_evidence_v1` report is the preferred operator artifact for showing the current home-compute path. It combines the runtime matrix, selected workload, `route_decision`, `matched_capabilities`, capped `request_trace`, safety flags, and optional runtime acceptance summary into a safe, shareable JSON/Markdown pair. It redacts token, URL, API key, lease, idempotency, weight, and delta-shaped fields. `scripts/home_compute_evidence_check.py` is included in the default acceptance pack and can be skipped with `--skip-home-compute-evidence`.
+The `home_compute_evidence_v1` report is the preferred operator artifact for showing the current home-compute path. It combines the runtime matrix, selected workload, `route_decision`, `matched_capabilities`, capped `request_trace`, `diagnosis_codes`, safety flags, and optional runtime acceptance summary into a safe, shareable JSON/Markdown pair. It redacts token, URL, API key, lease, idempotency, weight, and delta-shaped fields. `scripts/home_compute_evidence_check.py` is included in the default acceptance pack and can be skipped with `--skip-home-compute-evidence`.
 
 Runtime capability matrix:
 

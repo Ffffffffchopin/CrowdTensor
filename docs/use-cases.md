@@ -9,8 +9,8 @@ Goal: use spare machines for open AI workloads without owning a large datacenter
 Today:
 
 - Run `scripts/runtime_matrix.py --json` to see the local runtime capability matrix, hardware/runtime matrix, `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities` before starting services.
-- Run `scripts/home_compute_demo.py --json` for the shortest matrix-guided path from local capability discovery to a measurable CPU-only home-compute inference report with `route_decision`.
-- Run `scripts/home_compute_evidence_pack.py` when you need a safe, shareable `home_compute_evidence_v1` artifact with `route_decision`, `matched_capabilities`, and capped `request_trace` rows for an issue report or demo.
+- Run `scripts/home_compute_demo.py --json` for the shortest matrix-guided path from local capability discovery to a measurable CPU-only home-compute inference report with `route_decision` and `diagnosis_codes` such as `home_compute_ready` and `runtime_matrix_blocked`.
+- Run `scripts/home_compute_evidence_pack.py` when you need a safe, shareable `home_compute_evidence_v1` artifact with `route_decision`, `matched_capabilities`, `diagnosis_codes`, and capped `request_trace` rows for an issue report or demo.
 - Run `scripts/remote_compute_evidence_pack.py` when you want a safe, shareable `remote_compute_evidence_v1` artifact showing a registry-backed remote-style Miner completing read-only `model_bundle_infer`.
 - Run `scripts/remote_demo_runbook_pack.py` for a safe two-machine `remote_demo_runbook_v1` with `operator.private.env`, `miner.private.env`, and a `remote_compute_evidence_pack.py --mode collect` command.
 - Run `scripts/remote_demo_acceptance_pack.py` after the two-machine demo is running to collect `remote_demo_acceptance_v1`, `remote_compute_evidence_v1`, `support_bundle`, and `diagnosis_codes` such as `coordinator_unreachable`, `observer_auth_failed`, and `artifact_collection_failed`.

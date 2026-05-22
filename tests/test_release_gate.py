@@ -295,6 +295,7 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "home_compute_evidence_docs")
         self.assertTrue(any("home_compute_evidence_pack.py" in detail for detail in details))
         self.assertTrue(any("--skip-home-compute-evidence" in detail for detail in details))
+        self.assertTrue(any("home_compute_ready" in detail for detail in details))
 
     def test_remote_compute_evidence_docs_must_describe_remote_pack(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
