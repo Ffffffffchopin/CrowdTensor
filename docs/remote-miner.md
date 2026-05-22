@@ -166,7 +166,7 @@ python3 scripts/remote_demo_acceptance_pack.py \
   --output-dir dist/remote-demo-acceptance
 ```
 
-The `remote_demo_acceptance_v1` output includes the top-level acceptance summary, `remote_compute_evidence_v1`, and a redacted `support_bundle`. `scripts/remote_demo_acceptance_check.py` validates the local stand-in path in CI.
+The `remote_demo_acceptance_v1` output includes the top-level acceptance summary, `remote_compute_evidence_v1`, a redacted `support_bundle`, and stable `diagnosis_codes` for operator triage: `coordinator_unreachable`, `observer_auth_failed`, `admin_auth_failed`, `miner_not_seen`, `task_lane_missing`, `workload_not_advertised`, `no_accepted_result`, `validation_failed`, `request_count_mismatch`, `artifact_collection_failed`, and `acceptance_ready`. `scripts/remote_demo_acceptance_check.py` validates the local stand-in path in CI.
 
 The default runtime acceptance pack keeps the remote Miner check opt-in:
 

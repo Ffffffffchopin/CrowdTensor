@@ -556,6 +556,10 @@ def check_remote_demo_acceptance_docs(root: Path) -> dict[str, Any]:
         "remote_demo_acceptance_v1",
         "remote_compute_evidence_v1",
         "support_bundle",
+        "diagnosis_codes",
+        "coordinator_unreachable",
+        "observer_auth_failed",
+        "artifact_collection_failed",
         "model_bundle_infer",
         "safe two-machine",
     ]:

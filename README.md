@@ -103,7 +103,7 @@ python3 scripts/remote_demo_acceptance_pack.py \
   --output-dir dist/remote-demo-acceptance
 ```
 
-The `remote_demo_acceptance_v1` report waits for the remote Miner to complete read-only `model_bundle_infer`, then writes `remote_compute_evidence_v1`, `support_bundle`, and a top-level JSON/Markdown summary. CI validates the local stand-in with `scripts/remote_demo_acceptance_check.py`.
+The `remote_demo_acceptance_v1` report waits for the remote Miner to complete read-only `model_bundle_infer`, then writes `remote_compute_evidence_v1`, `support_bundle`, and a top-level JSON/Markdown summary. It also emits stable `diagnosis_codes` for operator triage, including `coordinator_unreachable`, `observer_auth_failed`, `admin_auth_failed`, `miner_not_seen`, `task_lane_missing`, `workload_not_advertised`, `no_accepted_result`, `validation_failed`, `request_count_mismatch`, `artifact_collection_failed`, and `acceptance_ready`. CI validates the local stand-in with `scripts/remote_demo_acceptance_check.py`.
 
 For optional remote and browser checks:
 

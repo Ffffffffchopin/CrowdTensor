@@ -362,6 +362,7 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "remote_demo_acceptance_docs")
         self.assertTrue(any("remote_demo_acceptance_pack.py" in detail for detail in details))
         self.assertTrue(any("remote_demo_acceptance_v1" in detail for detail in details))
+        self.assertTrue(any("coordinator_unreachable" in detail for detail in details))
 
     def test_release_materials_must_describe_release_flow(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

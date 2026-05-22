@@ -13,7 +13,7 @@ Today:
 - Run `scripts/home_compute_evidence_pack.py` when you need a safe, shareable `home_compute_evidence_v1` artifact with `route_decision`, `matched_capabilities`, and capped `request_trace` rows for an issue report or demo.
 - Run `scripts/remote_compute_evidence_pack.py` when you want a safe, shareable `remote_compute_evidence_v1` artifact showing a registry-backed remote-style Miner completing read-only `model_bundle_infer`.
 - Run `scripts/remote_demo_runbook_pack.py` for a safe two-machine `remote_demo_runbook_v1` with `operator.private.env`, `miner.private.env`, and a `remote_compute_evidence_pack.py --mode collect` command.
-- Run `scripts/remote_demo_acceptance_pack.py` after the two-machine demo is running to collect `remote_demo_acceptance_v1`, `remote_compute_evidence_v1`, and `support_bundle`.
+- Run `scripts/remote_demo_acceptance_pack.py` after the two-machine demo is running to collect `remote_demo_acceptance_v1`, `remote_compute_evidence_v1`, `support_bundle`, and `diagnosis_codes` such as `coordinator_unreachable`, `observer_auth_failed`, and `artifact_collection_failed`.
 - Run the 5-minute local Coordinator/Miner demo from [Quickstart](quickstart.md).
 - Inspect how a Miner claims work, sends heartbeats, retries transient failures, and submits a validated result.
 - Run `scripts/inference_session_demo.py` for a user-facing local inference session summary.

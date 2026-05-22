@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -27,6 +28,109 @@ import support_bundle  # noqa: E402
 ACCEPTANCE_SCHEMA = "remote_demo_acceptance_v1"
 WORKLOAD_TYPE = "model_bundle_infer"
 ROUTE_NAME = "remote_python_model_bundle_infer"
+DIAGNOSIS_ORDER = [
+    "coordinator_unreachable",
+    "observer_auth_failed",
+    "admin_auth_failed",
+    "miner_not_seen",
+    "task_lane_missing",
+    "workload_not_advertised",
+    "no_accepted_result",
+    "validation_failed",
+    "request_count_mismatch",
+    "artifact_collection_failed",
+    "acceptance_ready",
+]
+DIAGNOSIS_LIBRARY = {
+    "acceptance_ready": {
+        "severity": "info",
+        "summary": "Remote demo acceptance completed.",
+        "next_steps": [
+            "Share the generated acceptance report, remote compute evidence, and support bundle.",
+            "Use the same command against the real two-machine Coordinator and Miner before public claims.",
+        ],
+    },
+    "coordinator_unreachable": {
+        "severity": "error",
+        "summary": "The Coordinator health endpoint is not reachable.",
+        "next_steps": [
+            "Verify the Coordinator process is running and listening on the expected host and port.",
+            "Check firewall, tunnel, TLS, and VPN settings before rerunning the acceptance pack.",
+        ],
+    },
+    "observer_auth_failed": {
+        "severity": "error",
+        "summary": "The observer token was rejected by the Coordinator state endpoint.",
+        "next_steps": [
+            "Regenerate or recopy the operator private environment file.",
+            "Pass the correct CROWDTENSOR_OBSERVER_TOKEN value without exposing it in logs.",
+        ],
+    },
+    "admin_auth_failed": {
+        "severity": "error",
+        "summary": "The admin token was rejected by the Coordinator result ledger endpoint.",
+        "next_steps": [
+            "Regenerate or recopy the operator private environment file.",
+            "Pass the correct CROWDTENSOR_ADMIN_TOKEN value without exposing it in logs.",
+        ],
+    },
+    "miner_not_seen": {
+        "severity": "warning",
+        "summary": "The Coordinator is reachable but the selected Miner profile is absent.",
+        "next_steps": [
+            "Start the remote Miner with the exact miner id used by the acceptance command.",
+            "Check the Miner invite, registry hash, network path, and claim logs.",
+        ],
+    },
+    "task_lane_missing": {
+        "severity": "warning",
+        "summary": "No visible python-cli/cpu model_bundle_infer task lane is configured.",
+        "next_steps": [
+            "Start the Coordinator with --task-lane python-cli:cpu:1:model_bundle_infer.",
+            "Confirm /ready shows a model_bundle_infer lane before starting the remote Miner.",
+        ],
+    },
+    "workload_not_advertised": {
+        "severity": "warning",
+        "summary": "The selected Miner does not advertise model_bundle_infer support.",
+        "next_steps": [
+            "Run the Miner with model bundle inference enabled.",
+            "Confirm the Miner profile lists model_bundle_infer in supported_workloads.",
+        ],
+    },
+    "no_accepted_result": {
+        "severity": "warning",
+        "summary": "No accepted model_bundle_infer result exists for the selected Miner yet.",
+        "next_steps": [
+            "Keep the acceptance pack running until the Miner claims, computes, and submits a result.",
+            "Inspect Miner logs for claim failures, lease expiry, or validation rejection.",
+        ],
+    },
+    "validation_failed": {
+        "severity": "error",
+        "summary": "The accepted result failed model_bundle_infer validation.",
+        "next_steps": [
+            "Inspect the validation code and model bundle inference trace in the evidence pack.",
+            "Rerun the remote demo after fixing the Miner runtime or bundle configuration.",
+        ],
+    },
+    "request_count_mismatch": {
+        "severity": "error",
+        "summary": "The accepted result used a different request count than the acceptance command.",
+        "next_steps": [
+            "Rerun the acceptance pack and evidence collection with the same --request-count value.",
+            "Check whether stale ledger rows from an earlier run are being selected.",
+        ],
+    },
+    "artifact_collection_failed": {
+        "severity": "error",
+        "summary": "Remote result acceptance passed, but evidence or support bundle collection failed.",
+        "next_steps": [
+            "Inspect the acceptance report artifact summary and rerun the evidence pack manually.",
+            "Collect a support bundle after verifying observer and admin access.",
+        ],
+    },
+}
 
 
 def utc_now() -> str:
@@ -49,8 +153,101 @@ def request_json(
         headers["x-crowdtensor-admin-token"] = admin_token
     request = Request(f"{base_url.rstrip('/')}{path}", headers=headers, method=method)
     with urlopen(request, timeout=timeout) as response:
-        raw = response.read().decode("utf-8")
+        raw = response.read().decode("utf-8", errors="replace")
         return json.loads(raw) if raw else {}
+
+
+def http_detail(body: str) -> str:
+    if not body:
+        return ""
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body[:300]
+    detail = payload.get("detail") if isinstance(payload, dict) else payload
+    if isinstance(detail, (dict, list)):
+        return json.dumps(support_bundle.sanitize(detail), sort_keys=True)[:300]
+    return str(detail)[:300]
+
+
+def request_json_observed(
+    endpoint: str,
+    method: str,
+    base_url: str,
+    path: str,
+    *,
+    observer_token: str = "",
+    admin_token: str = "",
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    headers: dict[str, str] = {}
+    if observer_token:
+        headers["x-crowdtensor-observer-token"] = observer_token
+    if admin_token:
+        headers["x-crowdtensor-admin-token"] = admin_token
+    request = Request(f"{base_url.rstrip('/')}{path}", headers=headers, method=method)
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            payload = json.loads(raw) if raw else {}
+            return {
+                "endpoint": endpoint,
+                "path": path,
+                "ok": 200 <= response.status < 300,
+                "status": response.status,
+                "json": payload,
+            }
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return {
+            "endpoint": endpoint,
+            "path": path,
+            "ok": False,
+            "status": exc.code,
+            "error": "http_error",
+            "detail": http_detail(body),
+        }
+    except json.JSONDecodeError as exc:
+        return {
+            "endpoint": endpoint,
+            "path": path,
+            "ok": False,
+            "status": None,
+            "error": "invalid_json",
+            "detail": str(exc)[:300],
+        }
+    except (OSError, URLError) as exc:
+        return {
+            "endpoint": endpoint,
+            "path": path,
+            "ok": False,
+            "status": None,
+            "error": type(exc).__name__,
+            "detail": str(exc)[:300],
+        }
+
+
+def observation_digest(response: dict[str, Any]) -> dict[str, Any]:
+    digest = {
+        "endpoint": response.get("endpoint"),
+        "path": response.get("path"),
+        "ok": bool(response.get("ok")),
+        "status": response.get("status"),
+    }
+    for key in ["error", "detail"]:
+        if response.get(key):
+            digest[key] = response.get(key)
+    return digest
+
+
+def response_payload(response: dict[str, Any]) -> dict[str, Any]:
+    payload = response.get("json")
+    return payload if isinstance(payload, dict) else {}
+
+
+def response_public_payload(response: dict[str, Any]) -> dict[str, Any]:
+    payload = response_payload(response)
+    return payload if response.get("ok") and payload else observation_digest(response)
 
 
 def admin_results_url(miner_id: str, limit: int) -> str:
@@ -84,6 +281,31 @@ def latest_result(results: dict[str, Any]) -> dict[str, Any] | None:
 
 def miner_profile(state: dict[str, Any], miner_id: str) -> dict[str, Any]:
     return (state.get("miner_profiles") or {}).get(miner_id) or {}
+
+
+def model_bundle_lane_visible(ready: dict[str, Any], state: dict[str, Any]) -> bool:
+    lanes: list[dict[str, Any]] = []
+    for source in [ready, state]:
+        source_lanes = source.get("task_lanes") if isinstance(source, dict) else []
+        if isinstance(source_lanes, list):
+            lanes.extend(lane for lane in source_lanes if isinstance(lane, dict))
+    for lane in lanes:
+        if (
+            lane.get("runtime") == "python-cli"
+            and lane.get("backend") == "cpu"
+            and lane.get("workload_type") == WORKLOAD_TYPE
+        ):
+            return True
+    counts = state.get("task_counts_by_lane") if isinstance(state, dict) else {}
+    if isinstance(counts, dict):
+        for lane_key in counts:
+            if (
+                "python-cli" in str(lane_key)
+                and "cpu" in str(lane_key)
+                and WORKLOAD_TYPE in str(lane_key)
+            ):
+                return True
+    return False
 
 
 def readiness_summary(
@@ -151,27 +373,51 @@ def readiness_summary(
 
 
 def collect_status(args: argparse.Namespace) -> dict[str, Any]:
-    health = request_json("GET", args.coordinator_url, "/health", timeout=args.http_timeout)
-    ready = request_json("GET", args.coordinator_url, "/ready", timeout=args.http_timeout)
-    state = request_json(
+    health_response = request_json_observed(
+        "health",
+        "GET",
+        args.coordinator_url,
+        "/health",
+        timeout=args.http_timeout,
+    )
+    ready_response = request_json_observed(
+        "ready",
+        "GET",
+        args.coordinator_url,
+        "/ready",
+        timeout=args.http_timeout,
+    )
+    state_response = request_json_observed(
+        "state",
         "GET",
         args.coordinator_url,
         "/state",
         observer_token=args.observer_token,
         timeout=args.http_timeout,
     )
-    results = request_json(
+    results_response = request_json_observed(
+        "admin_results",
         "GET",
         args.coordinator_url,
         admin_results_url(args.miner_id, args.admin_results_limit),
         admin_token=args.admin_token,
         timeout=args.http_timeout,
     )
+    health = response_public_payload(health_response)
+    ready = response_public_payload(ready_response)
+    state = response_payload(state_response)
+    results = response_payload(results_response)
     return {
         "health": health,
         "ready": ready,
         "state": state,
         "results": results,
+        "observations": {
+            "health": observation_digest(health_response),
+            "ready": observation_digest(ready_response),
+            "state": observation_digest(state_response),
+            "admin_results": observation_digest(results_response),
+        },
         "summary": readiness_summary(
             state=state,
             results=results,
@@ -342,6 +588,242 @@ def failure_digest(wait: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def endpoint_observations(status: dict[str, Any]) -> dict[str, Any]:
+    observations = status.get("observations")
+    if isinstance(observations, dict) and observations:
+        return observations
+    observed: dict[str, Any] = {}
+    for key in ["health", "ready"]:
+        payload = status.get(key)
+        if isinstance(payload, dict):
+            observed[key] = {
+                "endpoint": key,
+                "ok": payload.get("ok"),
+                "status": payload.get("status"),
+            }
+    return observed
+
+
+def status_observed_digest(status: dict[str, Any]) -> dict[str, Any]:
+    summary = status.get("summary") or {}
+    return {
+        "endpoints": endpoint_observations(status),
+        "ready": summary.get("ready"),
+        "matched_capabilities": summary.get("matched_capabilities", []),
+        "missing_capabilities": summary.get("missing_capabilities", []),
+        "task_id": summary.get("task_id"),
+        "accepted_results": summary.get("accepted_results"),
+        "task_counts": summary.get("task_counts", {}),
+    }
+
+
+def diagnosis_payload(
+    code: str,
+    *,
+    details: dict[str, Any] | None = None,
+    observed: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    template = DIAGNOSIS_LIBRARY[code]
+    return {
+        "primary_code": code,
+        "severity": template["severity"],
+        "summary": template["summary"],
+        "details": details or {},
+        "next_steps": list(template["next_steps"]),
+        "observed": observed or {},
+    }
+
+
+def append_diagnosis(
+    diagnoses: list[dict[str, Any]],
+    code: str,
+    *,
+    status: dict[str, Any],
+    details: dict[str, Any] | None = None,
+) -> None:
+    if any(item.get("primary_code") == code for item in diagnoses):
+        return
+    diagnoses.append(diagnosis_payload(code, details=details, observed=status_observed_digest(status)))
+
+
+def sorted_diagnoses(diagnoses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    order = {code: index for index, code in enumerate(DIAGNOSIS_ORDER)}
+    return sorted(diagnoses, key=lambda item: order.get(str(item.get("primary_code")), len(order)))
+
+
+def artifact_failure_details(artifacts: dict[str, Any] | None) -> dict[str, Any]:
+    artifacts = artifacts or {}
+    evidence = artifacts.get("evidence") or {}
+    support = artifacts.get("support_bundle") or {}
+    return {
+        "evidence_ok": bool(evidence.get("ok")),
+        "support_bundle_ok": bool(support.get("ok")),
+        "evidence_path": evidence.get("path"),
+        "support_bundle_path": support.get("path"),
+    }
+
+
+def diagnose_acceptance(
+    *,
+    args: argparse.Namespace,
+    wait: dict[str, Any],
+    artifacts: dict[str, Any] | None,
+) -> dict[str, Any]:
+    status = wait.get("status") or {}
+    observations = endpoint_observations(status)
+    health_observation = observations.get("health") or {}
+    state_observation = observations.get("state") or {}
+    results_observation = observations.get("admin_results") or {}
+    state = status.get("state") if isinstance(status.get("state"), dict) else {}
+    ready = status.get("ready") if isinstance(status.get("ready"), dict) else {}
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    task = completed_task_for(state, args.miner_id)
+    row = latest_result(results)
+    validation = (task or {}).get("validation") or (row or {}).get("validation") or {}
+    profile = miner_profile(state, args.miner_id)
+    capabilities = profile.get("last_capabilities") or {}
+    workloads = capabilities.get("supported_workloads") or []
+    diagnoses: list[dict[str, Any]] = []
+
+    if (
+        not status
+        or (health_observation and health_observation.get("ok") is False and health_observation.get("status") is None)
+    ):
+        append_diagnosis(
+            diagnoses,
+            "coordinator_unreachable",
+            status=status,
+            details={
+                "health": health_observation,
+                "recent_errors": wait.get("errors", [])[-3:],
+            },
+        )
+
+    if state_observation.get("status") in {401, 403}:
+        append_diagnosis(
+            diagnoses,
+            "observer_auth_failed",
+            status=status,
+            details={
+                "state_status": state_observation.get("status"),
+                "state_detail": state_observation.get("detail", ""),
+            },
+        )
+
+    if results_observation.get("status") in {401, 403}:
+        append_diagnosis(
+            diagnoses,
+            "admin_auth_failed",
+            status=status,
+            details={
+                "admin_results_status": results_observation.get("status"),
+                "admin_results_detail": results_observation.get("detail", ""),
+            },
+        )
+
+    state_available = bool(state) and state_observation.get("ok", True) is not False
+    ready_available = bool(ready) and observations.get("ready", {}).get("ok", True) is not False
+    if state_available and not profile:
+        known_miners = sorted((state.get("miner_profiles") or {}).keys())
+        append_diagnosis(
+            diagnoses,
+            "miner_not_seen",
+            status=status,
+            details={
+                "miner_id": args.miner_id,
+                "known_miners": known_miners[:10],
+                "known_miner_count": len(known_miners),
+            },
+        )
+
+    if (state_available or ready_available) and not task and not row and not model_bundle_lane_visible(ready, state):
+        append_diagnosis(
+            diagnoses,
+            "task_lane_missing",
+            status=status,
+            details={
+                "expected_lane": f"python-cli:cpu:1:{WORKLOAD_TYPE}",
+                "ready_task_lanes": ready.get("task_lanes", []),
+                "state_task_lanes": state.get("task_lanes", []),
+            },
+        )
+
+    if profile and WORKLOAD_TYPE not in workloads:
+        append_diagnosis(
+            diagnoses,
+            "workload_not_advertised",
+            status=status,
+            details={
+                "miner_id": args.miner_id,
+                "supported_workloads": list(workloads),
+            },
+        )
+
+    if profile and not (task and row):
+        ledger_rows = results.get("results") if isinstance(results.get("results"), list) else []
+        append_diagnosis(
+            diagnoses,
+            "no_accepted_result",
+            status=status,
+            details={
+                "miner_id": args.miner_id,
+                "task_counts": state.get("task_counts", {}),
+                "accepted_results": state.get("accepted_results"),
+                "ledger_row_count": len(ledger_rows),
+            },
+        )
+
+    if (task or row) and validation.get("code") != "ok":
+        append_diagnosis(
+            diagnoses,
+            "validation_failed",
+            status=status,
+            details={"validation": support_bundle.sanitize(validation)},
+        )
+
+    if validation and int(validation.get("request_count") or 0) != int(args.request_count):
+        append_diagnosis(
+            diagnoses,
+            "request_count_mismatch",
+            status=status,
+            details={
+                "expected_request_count": int(args.request_count),
+                "actual_request_count": validation.get("request_count"),
+                "validation": support_bundle.sanitize(validation),
+            },
+        )
+
+    if wait.get("ok") and artifacts and (
+        not artifacts.get("evidence", {}).get("ok")
+        or not artifacts.get("support_bundle", {}).get("ok")
+    ):
+        append_diagnosis(
+            diagnoses,
+            "artifact_collection_failed",
+            status=status,
+            details=artifact_failure_details(artifacts),
+        )
+
+    if not diagnoses:
+        append_diagnosis(
+            diagnoses,
+            "acceptance_ready",
+            status=status,
+            details={
+                "miner_id": args.miner_id,
+                "workload_type": WORKLOAD_TYPE,
+                "route": ROUTE_NAME,
+            },
+        )
+
+    diagnoses = sorted_diagnoses(diagnoses)
+    return {
+        "primary": diagnoses[0],
+        "all": diagnoses,
+        "codes": [str(item.get("primary_code")) for item in diagnoses],
+    }
+
+
 def build_report(
     *,
     args: argparse.Namespace,
@@ -357,6 +839,7 @@ def build_report(
     )
     evidence_summary = (artifacts or {}).get("evidence", {}).get("summary", {})
     support_summary = (artifacts or {}).get("support_bundle", {}).get("summary", {})
+    diagnosis = diagnose_acceptance(args=args, wait=wait, artifacts=artifacts)
     report = {
         "schema": ACCEPTANCE_SCHEMA,
         "generated_at": generated_at or utc_now(),
@@ -372,6 +855,9 @@ def build_report(
             "status": (wait.get("status") or {}).get("summary", {}),
             "failure": None if wait.get("ok") else failure_digest(wait),
         },
+        "diagnosis": diagnosis["primary"],
+        "diagnosis_codes": diagnosis["codes"],
+        "diagnoses": diagnosis["all"],
         "evidence_summary": evidence_summary,
         "support_bundle_summary": support_summary,
         "artifacts": {
@@ -402,6 +888,7 @@ def build_report(
 
 def render_markdown(payload: dict[str, Any]) -> str:
     wait = payload.get("wait_summary") or {}
+    diagnosis = payload.get("diagnosis") or {}
     evidence = payload.get("evidence_summary") or {}
     support = payload.get("support_bundle_summary") or {}
     artifacts = payload.get("artifacts") or {}
@@ -420,6 +907,20 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Attempts: `{wait.get('attempts')}`",
         f"- Elapsed seconds: `{wait.get('elapsed_seconds')}`",
         "",
+        "## Diagnosis",
+        "",
+        f"- Primary code: `{diagnosis.get('primary_code')}`",
+        f"- Severity: `{diagnosis.get('severity')}`",
+        f"- Summary: {diagnosis.get('summary', '')}",
+        f"- Diagnosis codes: `{', '.join(payload.get('diagnosis_codes') or [])}`",
+        "",
+        "### Next Steps",
+        "",
+    ]
+    for step in diagnosis.get("next_steps") or []:
+        lines.append(f"- {step}")
+    lines.extend([
+        "",
         "## Evidence",
         "",
         f"- Schema: `{evidence.get('schema')}`",
@@ -437,7 +938,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         "",
         "## Artifacts",
         "",
-    ]
+    ])
     for key, value in artifacts.items():
         lines.append(f"- `{key}`: `{value}`")
     if wait.get("failure"):
