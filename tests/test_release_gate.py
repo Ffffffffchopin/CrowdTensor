@@ -55,6 +55,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "open_source_entrypoints",
                 "project_memory",
                 "model_bundle_inference_docs",
+                "runtime_matrix_docs",
                 "external_llm_inference_docs",
                 "dockerfile",
                 "compose",
@@ -376,6 +377,30 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("--llm-runtime-url" in detail for detail in details))
         self.assertTrue(any("--skip-external-llm-inference" in detail for detail in details))
         self.assertTrue(any("--skip-external-llm-http-adapter" in detail for detail in details))
+
+    def test_runtime_matrix_docs_must_describe_user_capability_path(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/use-cases.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No runtime matrix docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "runtime_matrix_docs")
+        self.assertTrue(any("runtime_matrix.py" in detail for detail in details))
+        self.assertTrue(any("runtime_matrix_check.py" in detail for detail in details))
+        self.assertTrue(any("--skip-runtime-matrix" in detail for detail in details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

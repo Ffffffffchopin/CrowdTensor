@@ -23,6 +23,7 @@ for path in [ROOT, SCRIPTS_DIR]:
         sys.path.insert(0, str(path))
 
 import security_preflight  # noqa: E402
+import runtime_matrix  # noqa: E402
 
 
 def severity_rank(severity: str) -> int:
@@ -241,6 +242,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     state_dir = Path(args.state_dir)
     if not state_dir.is_absolute():
         state_dir = root / state_dir
+    matrix = runtime_matrix.build_matrix(root=root, browser_path=args.browser_path)
 
     checks: list[dict[str, Any]] = [
         check_python_version(),
@@ -269,6 +271,15 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "strict": bool(args.strict),
             "remote_demo": bool(args.remote_demo),
             "browser": bool(args.browser),
+            "runtime_matrix_available": matrix["summary"]["available"],
+            "runtime_matrix_optional_missing": matrix["summary"]["optional_missing"],
+            "runtime_matrix_blocked": matrix["summary"]["blocked"],
+        },
+        "runtime_matrix": {
+            "ok": matrix["ok"],
+            "summary": matrix["summary"],
+            "configured_runtimes": matrix["configured_runtimes"],
+            "recommended_next_commands": matrix["recommended_next_commands"],
         },
         "environment": {
             "python": sys.version.split()[0],

@@ -231,6 +231,14 @@ python3 scripts/inference_session_demo.py --port 8904 --request-count 4
 
 Use `--json` for automation. The demo reports safe session metrics, read-only status, redaction status, and Miner `hardware_profile`; it is a CPU-only Swarm Inference shaped demo, not a real LLM serving benchmark.
 
+Runtime capability matrix:
+
+```bash
+python3 scripts/runtime_matrix.py --json
+```
+
+The runtime capability matrix reports CPU-only baseline readiness, optional browser support, and optional external LLM runtime configuration. `scripts/runtime_matrix_check.py` is included in the default acceptance pack and can be skipped with `--skip-runtime-matrix`. It notes whether `CROWDTENSOR_LLM_RUNTIME_URL` is configured without printing the URL, token, or API key value.
+
 External LLM adapter contract smoke:
 
 ```bash

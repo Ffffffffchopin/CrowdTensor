@@ -39,6 +39,8 @@ REQUIRED_FILES = [
     "scripts/remote_miner_join_check.py",
     "scripts/miner_resilience_check.py",
     "scripts/readiness_check.py",
+    "scripts/runtime_matrix.py",
+    "scripts/runtime_matrix_check.py",
     "scripts/doctor.py",
     "scripts/support_bundle.py",
     "scripts/hash_token.py",
@@ -567,6 +569,38 @@ def check_model_bundle_inference_docs(root: Path) -> dict[str, Any]:
     return check_result("model_bundle_inference_docs", not details, details)
 
 
+def check_runtime_matrix_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/use-cases.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "runtime_matrix.py",
+        "runtime_matrix_check.py",
+        "--skip-runtime-matrix",
+        "runtime capability matrix",
+        "hardware_profile",
+        "CROWDTENSOR_LLM_RUNTIME_URL",
+        "CPU-only",
+    ]:
+        if fragment not in combined:
+            details.append(f"runtime matrix docs/CI must mention {fragment}")
+    return check_result("runtime_matrix_docs", not details, details)
+
+
 def check_external_llm_inference_docs(root: Path) -> dict[str, Any]:
     details: list[str] = []
     combined = "\n".join(
@@ -683,6 +717,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python -m py_compile": "CI must compile Python entrypoints",
         "python scripts/release_gate.py --json": "CI must run the release gate",
         "python scripts/doctor.py --json": "CI must run first-run doctor",
+        "python scripts/runtime_matrix_check.py": "CI must run the runtime matrix check",
         "python scripts/support_bundle.py": "CI must build support bundle",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
@@ -726,6 +761,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_open_source_entrypoints(gate_root),
         check_project_memory(gate_root),
         check_model_bundle_inference_docs(gate_root),
+        check_runtime_matrix_docs(gate_root),
         check_external_llm_inference_docs(gate_root),
         check_dockerfile(gate_root),
         check_compose(gate_root),

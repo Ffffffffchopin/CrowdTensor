@@ -123,6 +123,7 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
     checks: list[dict[str, Any]] = []
     specs = [
         ("readiness", "readiness_check.py", args.base_port, args.skip_readiness),
+        ("runtime_matrix", "runtime_matrix_check.py", args.base_port + 34, args.skip_runtime_matrix),
         ("api_contract", "api_contract_check.py", args.base_port + 1, args.skip_api_contract),
         ("chaos", "chaos_runner.py", args.base_port + 2, args.skip_chaos),
         ("trust_quarantine", "trust_quarantine_check.py", args.base_port + 3, args.skip_trust),
@@ -302,6 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--headful", action="store_true")
     parser.add_argument("--browser-timeout", type=float, default=20.0)
     parser.add_argument("--skip-readiness", action="store_true")
+    parser.add_argument("--skip-runtime-matrix", action="store_true")
     parser.add_argument("--skip-api-contract", action="store_true")
     parser.add_argument("--skip-chaos", action="store_true")
     parser.add_argument("--skip-operator", action="store_true")

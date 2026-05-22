@@ -43,6 +43,9 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(report["summary"]["errors"], 0)
         self.assertTrue(check_by_id(report, "python_version")["ok"])
         self.assertTrue(check_by_id(report, "state_dir")["ok"])
+        self.assertIn("runtime_matrix", report)
+        self.assertGreaterEqual(report["summary"]["runtime_matrix_available"], 1)
+        self.assertIn("model_bundle_infer", report["runtime_matrix"]["summary"]["available_workloads"])
 
     def test_strict_blocks_warnings(self) -> None:
         tmp_root = Path(self._tmp_dir())

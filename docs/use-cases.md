@@ -8,6 +8,7 @@ Goal: use spare machines for open AI workloads without owning a large datacenter
 
 Today:
 
+- Run `scripts/runtime_matrix.py --json` to see the local runtime capability matrix before starting services.
 - Run the 5-minute local Coordinator/Miner demo from [Quickstart](quickstart.md).
 - Inspect how a Miner claims work, sends heartbeats, retries transient failures, and submits a validated result.
 - Run `scripts/inference_session_demo.py` for a user-facing local inference session summary.

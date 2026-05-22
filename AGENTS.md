@@ -17,7 +17,7 @@ The current code supports:
 - `runtime_contract_v1`, workload capability matching, CPU `hardware_profile`, delta transport negotiation, validation, replay audit, result ledger, trust quarantine, and operator controls.
 - Controlled remote Miner demos with token-backed admission, hashed token config, `/ready` preflight, retries, and Support Bundle diagnostics.
 - Browser experiments for WebRTC tensor transport, Worker compute probes, and a browser Miner bridge.
-- Release tooling: user-facing inference session demo, external LLM adapter smoke, release gate, runtime acceptance pack, browser acceptance pack, release evidence, doctor diagnostics, security preflight, and Support Bundle.
+- Release tooling: runtime capability matrix, user-facing inference session demo, external LLM adapter smoke, release gate, runtime acceptance pack, browser acceptance pack, release evidence, doctor diagnostics, security preflight, and Support Bundle.
 - Open-source entrypoints: README, ROADMAP, protocol/use-case docs, release docs, changelog, and static site.
 
 Do not describe the project as already providing production P2P, NAT traversal, real LLM inference/training, GPU pooling, WebGPU model shards, payments, staking, or hardened public-internet security.
@@ -30,10 +30,11 @@ Roadmap priority:
 
 1. Preserve Alpha reliability and operator trust.
 2. Make the project easy for strangers to understand and run.
-3. Expand the current read-only multi-request `model_bundle_infer` probe into a useful home-compute inference demo with explicit hardware/capability matching.
-4. Treat `external_llm_infer_v1` as the narrow optional runtime adapter boundary: use `--enable-mock-llm-runtime` for deterministic checks, `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned command wrappers, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
-5. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
-5. Treat incentives and reputation as later protocol layers, not prerequisites for local demos.
+3. Keep `scripts/runtime_matrix.py` and `scripts/runtime_matrix_check.py` as the first runtime capability matrix for new users.
+4. Expand the current read-only multi-request `model_bundle_infer` probe into a useful home-compute inference demo with explicit hardware/capability matching.
+5. Treat `external_llm_infer_v1` as the narrow optional runtime adapter boundary: use `--enable-mock-llm-runtime` for deterministic checks, `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned command wrappers, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
+6. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
+7. Treat incentives and reputation as later protocol layers, not prerequisites for local demos.
 
 ## Engineering Rules
 

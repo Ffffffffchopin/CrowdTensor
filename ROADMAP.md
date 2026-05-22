@@ -9,6 +9,7 @@ Status: current.
 - Fault-tolerant Coordinator/Miner loop with task leases, heartbeats, timeout requeue, stale result rejection, and checkpoint recovery.
 - Deterministic CPU-only workload contracts for dense, adapter, micro LM, model bundle training, read-only model bundle inference, optional external LLM adapter inference, and browser probe tasks.
 - Admission controls, result validation, replay audit, trust quarantine, operator ledger, release gate, release evidence, and Support Bundle.
+- Runtime capability matrix so new users can inspect CPU-only readiness, optional browser support, and external LLM adapter configuration before running longer checks.
 - Controlled remote Miner demo and browser WebRTC/Worker experiments.
 
 Success signal: a contributor can run the local demo, inspect the protocol boundary, and reproduce acceptance checks without GPU access.
@@ -18,6 +19,7 @@ Success signal: a contributor can run the local demo, inspect the protocol bound
 Status: planned.
 
 - Expand the current read-only multi-request `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts and explicit capability matching.
+- Keep the runtime capability matrix visible as the first user diagnostic while the hardware/runtime matrix expands toward CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 - Keep the measurable CPU inference session path visible with safe latency, throughput, accuracy, and Miner hardware profile summaries.
 - Keep `scripts/inference_session_demo.py` as the low-friction local demo while richer runtime adapters mature.
 - Use `external_llm_infer_v1` as the first narrow optional adapter contract: deterministic `--enable-mock-llm-runtime` for CI, operator-owned `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD`, OpenAI-compatible `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for local servers, and read-only validation of `external_llm_results` before any production serving claims.

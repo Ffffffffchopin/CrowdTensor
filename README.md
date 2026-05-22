@@ -41,6 +41,14 @@ Run the First-run Doctor before starting services:
 python3 scripts/doctor.py --json
 ```
 
+Check what this machine can run:
+
+```bash
+python3 scripts/runtime_matrix.py --json
+```
+
+The runtime capability matrix reports CPU-only workload readiness, optional browser support, and optional external LLM command/HTTP runtime configuration without printing token, URL, or API key values.
+
 For optional remote and browser checks:
 
 ```bash
@@ -98,6 +106,7 @@ The Compose file uses local demo tokens by default. Copy `.env.example` to `.env
 - **Coordinator / Miner loop**: task claim, heartbeat, result submission, and bounded long-running Miner sessions.
 - **Fault tolerance**: lease timeout requeue, stale result rejection, checkpoint recovery, and append-only event replay.
 - **Runtime contracts**: deterministic CPU-only `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, `model_bundle_infer`, and optional `external_llm_infer` workloads.
+- **Runtime capability matrix**: `scripts/runtime_matrix.py` and `scripts/runtime_matrix_check.py` summarize local `hardware_profile`, CPU-only baseline readiness, optional browser support, and `CROWDTENSOR_LLM_RUNTIME_URL` adapter configuration.
 - **Validation**: finite-value checks, shape checks, norm/loss gates, and optional deterministic replay audit.
 - **Trust controls**: workload-scoped Miner scoring, quarantine, admin trust overrides, and redacted event tails.
 - **Result traceability**: admin result ledger for accepted/rejected outcomes, validation, audit, model impact, and Miner score summaries.
@@ -136,6 +145,7 @@ python3 scripts/runtime_acceptance_pack.py \
 It runs the core smoke checks sequentially:
 
 - readiness/profile
+- runtime capability matrix
 - API contract
 - chaos recovery
 - trust quarantine
