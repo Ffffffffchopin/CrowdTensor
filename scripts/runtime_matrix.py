@@ -263,12 +263,58 @@ def build_recommended_routes(hardware_targets: list[dict[str, Any]], workloads: 
         status = target.get("status") or workload.get("status") or "optional_missing"
         if target.get("usable_now") and workload_ready:
             status = "available" if target.get("status") == "available" else "configured"
+        usable_now = bool(target.get("usable_now") and workload_ready)
+        matched = []
+        missing = []
+        if target.get("usable_now"):
+            matched.append(f"target:{target_name}")
+        else:
+            missing.append(f"target:{target_name}")
+        if workload_ready:
+            matched.append(f"workload:{workload_name}")
+        else:
+            missing.append(f"workload:{workload_name}")
+        for capability in target.get("supported_workloads") or []:
+            if capability == workload_name:
+                matched.append(f"supported_workload:{capability}")
+        if target_name == "cpu_baseline" and usable_now:
+            matched.extend(["python_runtime", "cpu_only_contract"])
+        elif target_name == "cpu_baseline":
+            missing.extend(["python_runtime", "cpu_only_contract"])
+        if target_name in {"nvidia_cuda", "amd_rocm", "apple_metal"}:
+            missing.append("runtime_adapter_not_implemented")
+        if target_name == "browser" and not usable_now:
+            missing.append("browser_runtime")
+        if target_name == "remote_container":
+            missing.append("operator_networking")
+        if target_name == "external_llm_command" and not usable_now:
+            missing.append("command_runtime")
+        if target_name == "external_llm_http" and not usable_now:
+            missing.append("http_runtime_url")
+        if usable_now and status == "available":
+            confidence = "ready"
+        elif usable_now and status == "configured":
+            confidence = "configured"
+        elif status in {"detected", "optional_missing"}:
+            confidence = "future"
+        else:
+            confidence = "blocked"
+        reason = (
+            f"{target_name} can run {workload_name}"
+            if usable_now else
+            f"{target_name} cannot run {workload_name}: "
+            f"{target.get('reason') or workload.get('reason') or 'capability is missing'}"
+        )
         routes.append({
             "name": name,
             "target": target_name,
             "workload": workload_name,
             "status": status,
-            "usable_now": bool(target.get("usable_now") and workload_ready),
+            "usable_now": usable_now,
+            "confidence": confidence,
+            "reason": reason,
+            "matched_capabilities": sorted(set(matched)),
+            "missing_capabilities": sorted(set(missing)),
             "next_command": next_command,
         })
     return routes
@@ -428,7 +474,10 @@ def print_human(matrix: dict[str, Any]) -> None:
         print(f"    - {target['name']}: {target['status']} ({target['reason']})")
     print("  recommended routes:")
     for route in matrix.get("recommended_routes", []):
-        print(f"    - {route['name']}: {route['status']} -> {route['next_command']}")
+        print(
+            f"    - {route['name']}: {route['status']} "
+            f"confidence={route.get('confidence')} -> {route['next_command']}"
+        )
     print("  recommended next commands:")
     for command in matrix["recommended_next_commands"]:
         print(f"    - {command}")

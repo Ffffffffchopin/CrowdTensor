@@ -43,6 +43,9 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertFalse(target_by_name(matrix, "nvidia_cuda")["usable_now"])
         self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["status"], "available")
         self.assertTrue(route_by_name(matrix, "local_cpu_model_bundle_infer")["usable_now"])
+        self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["confidence"], "ready")
+        self.assertIn("python_runtime", route_by_name(matrix, "local_cpu_model_bundle_infer")["matched_capabilities"])
+        self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["missing_capabilities"], [])
         self.assertNotIn("CROWDTENSOR_LLM_RUNTIME_API_KEY=", json.dumps(matrix, sort_keys=True))
 
     def test_http_runtime_configuration_is_reported_without_secret_value(self) -> None:
@@ -59,6 +62,8 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertTrue(target_by_name(matrix, "external_llm_http")["usable_now"])
         self.assertEqual(route_by_name(matrix, "external_llm_http_adapter")["status"], "configured")
         self.assertTrue(route_by_name(matrix, "external_llm_http_adapter")["usable_now"])
+        self.assertEqual(route_by_name(matrix, "external_llm_http_adapter")["confidence"], "configured")
+        self.assertIn("target:external_llm_http", route_by_name(matrix, "external_llm_http_adapter")["matched_capabilities"])
         self.assertTrue(matrix["configured_runtimes"]["external_llm_http"]["api_key_configured"])
         self.assertNotIn("super-secret-key", json.dumps(matrix, sort_keys=True))
 
@@ -86,6 +91,12 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertEqual(target_by_name(matrix, "apple_metal")["status"], "detected")
         self.assertEqual(target_by_name(matrix, "remote_container")["status"], "detected")
         self.assertFalse(target_by_name(matrix, "nvidia_cuda")["usable_now"])
+
+        route = route_by_name(matrix, "browser_probe")
+        self.assertIn(route["confidence"], {"ready", "future"})
+        self.assertIn("reason", route)
+        self.assertIn("matched_capabilities", route)
+        self.assertIn("missing_capabilities", route)
 
     def test_cli_json_outputs_machine_readable_matrix(self) -> None:
         completed = subprocess.run(

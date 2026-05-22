@@ -30,8 +30,8 @@ Roadmap priority:
 
 1. Preserve Alpha reliability and operator trust.
 2. Make the project easy for strangers to understand and run.
-3. Keep `scripts/runtime_matrix.py` and `scripts/runtime_matrix_check.py` as the first runtime capability matrix and hardware/runtime matrix for new users.
-4. Keep expanding `scripts/home_compute_demo.py` around the current read-only multi-request `model_bundle_infer` probe into a useful home-compute inference demo with explicit `hardware_targets`, `recommended_routes`, capped `request_trace` summaries, and hardware/capability matching.
+3. Keep `scripts/runtime_matrix.py` and `scripts/runtime_matrix_check.py` as the first runtime capability matrix and hardware/runtime matrix for new users, including `matched_capabilities` and `missing_capabilities` route explanations.
+4. Keep expanding `scripts/home_compute_demo.py` around the current read-only multi-request `model_bundle_infer` probe into a useful home-compute inference demo with explicit `hardware_targets`, `recommended_routes`, `route_decision`, capped `request_trace` summaries, and hardware/capability matching.
 5. Treat `external_llm_infer_v1` as the narrow optional runtime adapter boundary: use `--enable-mock-llm-runtime` for deterministic checks, `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned command wrappers, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
 6. Grow toward remote Miners, browser-native participation, optional GPU/runtime adapters, and then P2P/NAT routing.
 7. Treat incentives and reputation as later protocol layers, not prerequisites for local demos.

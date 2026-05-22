@@ -50,6 +50,14 @@ class HomeComputeDemoTests(unittest.TestCase):
                     "workload": "model_bundle_infer",
                     "status": "available" if workload_status == "available" else "blocked",
                     "usable_now": workload_status == "available",
+                    "confidence": "ready" if workload_status == "available" else "blocked",
+                    "reason": "cpu baseline can run model_bundle_infer"
+                    if workload_status == "available" else
+                    "cpu baseline is blocked",
+                    "matched_capabilities": ["target:cpu_baseline", "workload:model_bundle_infer"]
+                    if workload_status == "available" else [],
+                    "missing_capabilities": []
+                    if workload_status == "available" else ["target:cpu_baseline"],
                     "next_command": "python3 scripts/home_compute_demo.py --json",
                 },
             ],
@@ -105,6 +113,10 @@ class HomeComputeDemoTests(unittest.TestCase):
         self.assertEqual(report["selected_workload"]["name"], "model_bundle_infer")
         self.assertEqual(report["capability_route"]["name"], "local_cpu_model_bundle_infer")
         self.assertTrue(report["capability_route"]["usable_now"])
+        self.assertEqual(report["route_decision"]["name"], "local_cpu_model_bundle_infer")
+        self.assertEqual(report["route_decision"]["confidence"], "ready")
+        self.assertIn("target:cpu_baseline", report["route_decision"]["matched_capabilities"])
+        self.assertEqual(report["route_decision"]["missing_capabilities"], [])
         self.assertTrue(report["runtime_matrix"]["hardware_targets"][0]["usable_now"])
         self.assertTrue(report["selected_workload"]["cpu_only"])
         self.assertEqual(report["runtime_matrix"]["host_profile"]["cpu_count"], 8)
@@ -122,6 +134,8 @@ class HomeComputeDemoTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("error", report)
         self.assertEqual(report["selected_workload"]["status"], "blocked")
+        self.assertEqual(report["route_decision"]["confidence"], "blocked")
+        self.assertIn("target:cpu_baseline", report["route_decision"]["missing_capabilities"])
         self.assertIsNone(report["inference_session"])
         self.assertFalse(report["safety"]["raw_payloads_exposed"])
 

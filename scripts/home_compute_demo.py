@@ -48,7 +48,26 @@ def selected_route(matrix: dict[str, Any]) -> dict[str, Any]:
         "workload": WORKLOAD_TYPE,
         "status": "blocked",
         "usable_now": False,
+        "confidence": "blocked",
+        "reason": "local CPU model bundle inference route is missing from runtime matrix",
+        "matched_capabilities": [],
+        "missing_capabilities": ["route:local_cpu_model_bundle_infer"],
         "next_command": "python3 scripts/runtime_matrix.py --json",
+    }
+
+
+def route_decision(route: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": route.get("name"),
+        "target": route.get("target"),
+        "workload": route.get("workload"),
+        "status": route.get("status"),
+        "usable_now": bool(route.get("usable_now")),
+        "confidence": route.get("confidence", "blocked"),
+        "reason": route.get("reason"),
+        "matched_capabilities": list(route.get("matched_capabilities") or []),
+        "missing_capabilities": list(route.get("missing_capabilities") or []),
+        "next_command": route.get("next_command"),
     }
 
 
@@ -101,6 +120,7 @@ def build_home_compute_report(
             ],
         },
         "capability_route": route,
+        "route_decision": route_decision(route),
         "inference_session": session_report,
         "safety": {
             "read_only": read_only,
@@ -127,6 +147,7 @@ def print_human_report(report: dict[str, Any]) -> None:
     host = matrix["host_profile"]
     selected = report["selected_workload"]
     route = report.get("capability_route") or {}
+    decision = report.get("route_decision") or {}
     session = report.get("inference_session") or {}
     print("CrowdTensor home-compute demo")
     print(f"  ok: {report['ok']}")
@@ -138,8 +159,17 @@ def print_human_report(report: dict[str, Any]) -> None:
     print(f"  selected workload: {selected['name']} ({selected['status']})")
     print(
         "  capability route: "
-        f"{route.get('name')} target={route.get('target')} status={route.get('status')}"
+        f"{route.get('name')} target={route.get('target')} "
+        f"status={route.get('status')} confidence={decision.get('confidence')}"
     )
+    if decision.get("reason"):
+        print(f"  route reason: {decision.get('reason')}")
+    matched = decision.get("matched_capabilities") or []
+    missing = decision.get("missing_capabilities") or []
+    if matched:
+        print(f"  matched capabilities: {', '.join(matched)}")
+    if missing:
+        print(f"  missing capabilities: {', '.join(missing)}")
     targets = report["runtime_matrix"].get("hardware_targets") or []
     if targets:
         usable = [target["name"] for target in targets if target.get("usable_now")]

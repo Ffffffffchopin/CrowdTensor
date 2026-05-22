@@ -83,6 +83,19 @@ def main() -> None:
         or not route.get("usable_now")
     ):
         raise SystemExit(f"unexpected capability route: {route}")
+    decision = report.get("route_decision") or {}
+    if (
+        decision.get("name") != route.get("name")
+        or decision.get("target") != route.get("target")
+        or decision.get("workload") != route.get("workload")
+        or decision.get("confidence") != "ready"
+        or not decision.get("reason")
+    ):
+        raise SystemExit(f"unexpected route decision: {decision}")
+    if "target:cpu_baseline" not in (decision.get("matched_capabilities") or []):
+        raise SystemExit(f"route decision missing CPU target match: {decision}")
+    if decision.get("missing_capabilities"):
+        raise SystemExit(f"home-compute route should not miss capabilities: {decision}")
     matrix = report.get("runtime_matrix") or {}
     summary = matrix.get("summary") or {}
     if not matrix.get("ok") or int(summary.get("blocked", 0)) != 0:
@@ -114,6 +127,7 @@ def main() -> None:
         "ok": True,
         "demo": report["demo"],
         "route": route["name"],
+        "route_confidence": decision.get("confidence"),
         "workload": selected["name"],
         "request_count": session.get("request_count"),
         "request_trace_count": session.get("request_trace_count"),

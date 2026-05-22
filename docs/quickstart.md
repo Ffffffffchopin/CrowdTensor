@@ -121,7 +121,7 @@ Check local runtime capability readiness:
 python3 scripts/runtime_matrix.py --json
 ```
 
-The runtime capability matrix is the fastest way to see which CPU-only workloads are ready, whether optional browser checks can run, whether an external LLM HTTP adapter is configured through `CROWDTENSOR_LLM_RUNTIME_URL`, and which hardware/runtime matrix routes are realistic today. It reports `hardware_profile` style host facts, `hardware_targets`, and `recommended_routes` without printing runtime URL, token, or API key values.
+The runtime capability matrix is the fastest way to see which CPU-only workloads are ready, whether optional browser checks can run, whether an external LLM HTTP adapter is configured through `CROWDTENSOR_LLM_RUNTIME_URL`, and which hardware/runtime matrix routes are realistic today. It reports `hardware_profile` style host facts, `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities` without printing runtime URL, token, or API key values.
 
 Run the matrix-guided home-compute demo:
 
@@ -129,7 +129,7 @@ Run the matrix-guided home-compute demo:
 python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
 ```
 
-This runs `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` capability route when available, then runs the local inference session demo. The report includes safe metrics and a capped Coordinator-derived `request_trace`, making it the shortest open-source path from local capability discovery to a measurable Swarm Inference-shaped result without requiring GPU access.
+This runs `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` capability route when available, then runs the local inference session demo. The report includes `route_decision`, safe metrics, and a capped Coordinator-derived `request_trace`, making it the shortest open-source path from local capability discovery to a measurable Swarm Inference-shaped result without requiring GPU access.
 
 Run the default non-browser smoke suite:
 

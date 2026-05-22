@@ -19,8 +19,8 @@ Success signal: a contributor can run the local demo, inspect the protocol bound
 
 Status: planned.
 
-- Expand `scripts/home_compute_demo.py` around the current read-only multi-request `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts, capped `request_trace` summaries, and explicit capability matching.
-- Keep the runtime capability matrix visible as the first user diagnostic while `hardware_targets` and `recommended_routes` expand the hardware/runtime matrix toward CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
+- Expand `scripts/home_compute_demo.py` around the current read-only multi-request `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts, `route_decision`, capped `request_trace` summaries, and explicit capability matching.
+- Keep the runtime capability matrix visible as the first user diagnostic while `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities` expand the hardware/runtime matrix toward CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 - Keep the measurable CPU inference session path visible with safe latency, throughput, accuracy, and Miner hardware profile summaries.
 - Keep `scripts/inference_session_demo.py` as the low-friction local demo while richer runtime adapters mature.
 - Use `external_llm_infer_v1` as the first narrow optional adapter contract: deterministic `--enable-mock-llm-runtime` for CI, operator-owned `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD`, OpenAI-compatible `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for local servers, and read-only validation of `external_llm_results` before any production serving claims.

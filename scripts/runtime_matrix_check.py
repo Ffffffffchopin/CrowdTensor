@@ -69,8 +69,22 @@ def main() -> None:
         if target.get("status") not in {"available", "configured", "detected", "optional_missing", "blocked"}:
             raise SystemExit(f"unexpected hardware target status for {name}: {target}")
     routes = {row["name"]: row for row in matrix.get("recommended_routes", [])}
+    for name, route_row in routes.items():
+        if route_row.get("confidence") not in {"ready", "configured", "future", "blocked"}:
+            raise SystemExit(f"unexpected route confidence for {name}: {route_row}")
+        if not route_row.get("reason"):
+            raise SystemExit(f"route must include reason: {route_row}")
+        if not isinstance(route_row.get("matched_capabilities"), list):
+            raise SystemExit(f"route must include matched_capabilities list: {route_row}")
+        if not isinstance(route_row.get("missing_capabilities"), list):
+            raise SystemExit(f"route must include missing_capabilities list: {route_row}")
     route = routes.get("local_cpu_model_bundle_infer")
-    if not route or route.get("status") not in {"available", "configured"} or not route.get("usable_now"):
+    if (
+        not route
+        or route.get("status") not in {"available", "configured"}
+        or not route.get("usable_now")
+        or route.get("confidence") != "ready"
+    ):
         raise SystemExit(f"home-compute route must be usable: {route}")
     payload = json.dumps(matrix, sort_keys=True)
     for secret_fragment in ["local-runtime-key", "CROWDTENSOR_LLM_RUNTIME_API_KEY=", "Bearer "]:
