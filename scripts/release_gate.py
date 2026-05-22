@@ -43,6 +43,8 @@ REQUIRED_FILES = [
     "scripts/runtime_matrix_check.py",
     "scripts/home_compute_demo.py",
     "scripts/home_compute_demo_check.py",
+    "scripts/home_compute_evidence_pack.py",
+    "scripts/home_compute_evidence_check.py",
     "scripts/doctor.py",
     "scripts/support_bundle.py",
     "scripts/hash_token.py",
@@ -428,6 +430,39 @@ def check_support_bundle_docs(root: Path) -> dict[str, Any]:
     return check_result("support_bundle_docs", not details, details)
 
 
+def check_home_compute_evidence_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/use-cases.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "home_compute_evidence_pack.py",
+        "home_compute_evidence_check.py",
+        "home_compute_evidence_v1",
+        "--skip-home-compute-evidence",
+        "route_decision",
+        "request_trace",
+        "matched_capabilities",
+        "safe, shareable",
+    ]:
+        if fragment not in combined:
+            details.append(f"home-compute evidence docs/CI must mention {fragment}")
+    return check_result("home_compute_evidence_docs", not details, details)
+
+
 def check_release_materials(root: Path) -> dict[str, Any]:
     details: list[str] = []
     combined = "\n".join(
@@ -732,6 +767,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python scripts/doctor.py --json": "CI must run first-run doctor",
         "python scripts/runtime_matrix_check.py": "CI must run the runtime matrix check",
         "python scripts/home_compute_demo_check.py": "CI must run the home-compute demo check",
+        "python scripts/home_compute_evidence_check.py": "CI must run the home-compute evidence check",
         "python scripts/support_bundle.py": "CI must build support bundle",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
@@ -771,6 +807,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_release_evidence_docs(gate_root),
         check_doctor_docs(gate_root),
         check_support_bundle_docs(gate_root),
+        check_home_compute_evidence_docs(gate_root),
         check_release_materials(gate_root),
         check_open_source_entrypoints(gate_root),
         check_project_memory(gate_root),

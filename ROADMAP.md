@@ -20,6 +20,7 @@ Success signal: a contributor can run the local demo, inspect the protocol bound
 Status: planned.
 
 - Expand `scripts/home_compute_demo.py` around the current read-only multi-request `model_bundle_infer` probe into the first user-facing Swarm Inference shaped workload, starting with small model artifacts, `route_decision`, capped `request_trace` summaries, and explicit capability matching.
+- Keep `scripts/home_compute_evidence_pack.py` as the safe, shareable `home_compute_evidence_v1` artifact for demos and issue reports, with `scripts/home_compute_evidence_check.py` in acceptance and `--skip-home-compute-evidence` available for lanes that only need lower-level checks.
 - Keep the runtime capability matrix visible as the first user diagnostic while `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities` expand the hardware/runtime matrix toward CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
 - Keep the measurable CPU inference session path visible with safe latency, throughput, accuracy, and Miner hardware profile summaries.
 - Keep `scripts/inference_session_demo.py` as the low-friction local demo while richer runtime adapters mature.

@@ -28,6 +28,8 @@ jobs:
         run: python scripts/runtime_matrix_check.py
       - name: Home-compute demo
         run: python scripts/home_compute_demo_check.py --port 8909
+      - name: Home-compute evidence
+        run: python scripts/home_compute_evidence_check.py --port 8911
       - name: Support Bundle
         run: python scripts/support_bundle.py --json-out /tmp/crowdtensor_support_bundle.json
       - name: Security preflight

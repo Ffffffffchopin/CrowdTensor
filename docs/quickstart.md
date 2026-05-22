@@ -131,6 +131,18 @@ python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
 
 This runs `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` capability route when available, then runs the local inference session demo. The report includes `route_decision`, safe metrics, and a capped Coordinator-derived `request_trace`, making it the shortest open-source path from local capability discovery to a measurable Swarm Inference-shaped result without requiring GPU access.
 
+Build a safe, shareable home-compute evidence pack:
+
+```bash
+python3 scripts/home_compute_evidence_pack.py \
+  --port 8911 \
+  --request-count 4 \
+  --json-out /tmp/crowdtensor_home_evidence.json \
+  --markdown-out /tmp/crowdtensor_home_evidence.md
+```
+
+The `home_compute_evidence_v1` artifact wraps the runtime matrix, `route_decision`, `matched_capabilities`, safe metrics, capped `request_trace` rows, and runtime acceptance summary if `--runtime-report` is provided. It is intended for demos and issue reports, so it redacts token, URL, API key, lease, idempotency, weight, and delta-shaped fields.
+
 Run the default non-browser smoke suite:
 
 ```bash
@@ -139,7 +151,7 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_acceptance.json
 ```
 
-The default suite includes `scripts/runtime_matrix_check.py`, `scripts/home_compute_demo_check.py`, the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`), read-only multi-request `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`), user-facing inference session demo (`scripts/inference_session_demo.py`), optional external LLM mock/command adapter smoke (`scripts/external_llm_inference_smoke.py`), and OpenAI-compatible HTTP adapter smoke (`scripts/external_llm_http_adapter_smoke.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks. Use `--skip-runtime-matrix`, `--skip-home-compute-demo`, `--skip-external-llm-inference`, or `--skip-external-llm-http-adapter` if you need to omit those adapter checks.
+The default suite includes `scripts/runtime_matrix_check.py`, `scripts/home_compute_demo_check.py`, `scripts/home_compute_evidence_check.py`, the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`), read-only multi-request `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`), user-facing inference session demo (`scripts/inference_session_demo.py`), optional external LLM mock/command adapter smoke (`scripts/external_llm_inference_smoke.py`), and OpenAI-compatible HTTP adapter smoke (`scripts/external_llm_http_adapter_smoke.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks. Use `--skip-runtime-matrix`, `--skip-home-compute-demo`, `--skip-home-compute-evidence`, `--skip-external-llm-inference`, or `--skip-external-llm-http-adapter` if you need to omit those adapter checks.
 
 Run only the local inference session demo:
 

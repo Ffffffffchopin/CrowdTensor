@@ -57,6 +57,18 @@ python3 scripts/home_compute_demo.py --port 8909 --request-count 4
 
 This combines the runtime capability matrix with the read-only `model_bundle_infer` path and reports safe latency, throughput, `hardware_profile`, selected capability route, `route_decision`, a Coordinator-derived `request_trace`, read-only, and redaction status. It is a CPU-only Swarm Inference-shaped demo, not real LLM serving or GPU pooling.
 
+Build a safe, shareable evidence pack for issue reports or demos:
+
+```bash
+python3 scripts/home_compute_evidence_pack.py \
+  --port 8911 \
+  --request-count 4 \
+  --json-out /tmp/crowdtensor_home_evidence.json \
+  --markdown-out /tmp/crowdtensor_home_evidence.md
+```
+
+The `home_compute_evidence_v1` report wraps the runtime matrix, `route_decision`, `matched_capabilities`, safe metrics, and capped `request_trace` rows without exposing token, URL, API key, lease, idempotency, weight, or delta-shaped fields. CI validates this with `scripts/home_compute_evidence_check.py`, and runtime acceptance can skip it with `--skip-home-compute-evidence`.
+
 For optional remote and browser checks:
 
 ```bash
@@ -295,6 +307,8 @@ python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json
 ```
 
 The home-compute demo first checks `scripts/runtime_matrix.py`, selects the CPU-only `model_bundle_infer` workload and `local_cpu_model_bundle_infer` route when available, runs `scripts/inference_session_demo.py`, and emits one report with runtime capability, `route_decision`, session metrics, capped `request_trace` rows, read-only status, redaction status, `hardware_targets`, `recommended_routes`, `matched_capabilities`, `missing_capabilities`, and recommended next commands. CI validates this path with `scripts/home_compute_demo_check.py`; the runtime acceptance pack includes it by default and can skip it with `--skip-home-compute-demo`.
+
+For a safe, shareable artifact, run `scripts/home_compute_evidence_pack.py --port 8911 --request-count 4 --json-out /tmp/crowdtensor_home_evidence.json --markdown-out /tmp/crowdtensor_home_evidence.md`. The `home_compute_evidence_v1` evidence pack preserves the route, metrics, and capped trace while redacting secret-shaped fields; CI validates it with `scripts/home_compute_evidence_check.py`, and the runtime acceptance pack can skip it with `--skip-home-compute-evidence`.
 
 Run only the optional external LLM adapter smoke:
 

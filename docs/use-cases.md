@@ -10,6 +10,7 @@ Today:
 
 - Run `scripts/runtime_matrix.py --json` to see the local runtime capability matrix, hardware/runtime matrix, `hardware_targets`, `recommended_routes`, `matched_capabilities`, and `missing_capabilities` before starting services.
 - Run `scripts/home_compute_demo.py --json` for the shortest matrix-guided path from local capability discovery to a measurable CPU-only home-compute inference report with `route_decision`.
+- Run `scripts/home_compute_evidence_pack.py` when you need a safe, shareable `home_compute_evidence_v1` artifact with `route_decision`, `matched_capabilities`, and capped `request_trace` rows for an issue report or demo.
 - Run the 5-minute local Coordinator/Miner demo from [Quickstart](quickstart.md).
 - Inspect how a Miner claims work, sends heartbeats, retries transient failures, and submits a validated result.
 - Run `scripts/inference_session_demo.py` for a user-facing local inference session summary.
@@ -72,6 +73,7 @@ Today:
 - `model_bundle_infer` can verify a tiny built-in bundle prediction session through the same claim, heartbeat, result, validation, and ledger path used by other workloads.
 - The Python Miner advertises a CPU `hardware_profile`, and `scripts/inference_session_demo.py` reports aggregate `elapsed_ms`, `requests_per_second`, request count, accuracy, read-only status, and redaction status for the session.
 - `scripts/home_compute_demo.py` combines `scripts/runtime_matrix.py` with the local inference session so users can see whether their machine can run the CPU-only `local_cpu_model_bundle_infer` Swarm Inference-shaped path before a longer acceptance run, including `route_decision`, `matched_capabilities`, and `missing_capabilities`.
+- `scripts/home_compute_evidence_pack.py` turns that route and session into a safe, shareable evidence pack validated by `scripts/home_compute_evidence_check.py`; runtime acceptance can skip it with `--skip-home-compute-evidence` when a CI lane only needs lower-level checks.
 
 Planned path:
 
