@@ -38,6 +38,14 @@ crowdtensor home-infer --scenario-id route-baseline --json
 
 The `crowdtensor/cli.py` wrapper emits `home_inference_cli_v1`, writes `home_compute_evidence_v1` JSON/Markdown under `dist/home-infer`, and summarizes the CPU-only `model_bundle_infer` route, fixed `model_bundle_inference_scenario_v1` scenario, capped `request_trace`, `diagnosis_codes`, and read-only/redaction status. Built-in scenarios include `route-baseline`, `gradient-safety`, and `mixed-prompts`. It is not production Swarm Inference and does not accept arbitrary prompts.
 
+For a safe local LLM runtime proof, run:
+
+```bash
+crowdtensor llm-infer --mock --json
+```
+
+This emits `llm_inference_cli_v1` and writes `external_llm_evidence_v1` JSON/Markdown under `dist/llm-infer`. The default mock path is deterministic. Operators can pass `--llm-runtime-cmd /path/to/wrapper` or `--llm-runtime-url http://127.0.0.1:11434/v1/chat/completions` when they own the runtime. Reports keep raw prompts, `output_text`, runtime URL, and API key out of public artifacts.
+
 When repeated demos or tests create temporary files, inspect cleanup candidates first:
 
 ```bash
@@ -183,7 +191,7 @@ python3 scripts/demo_manifest_pack.py \
   --request-count 4
 ```
 
-The `demo_manifest_v1` output writes `demo_manifest.json` / `demo_manifest.md` and indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries. It stays local-loopback and CPU-only by default. Validate the full path with `scripts/demo_manifest_check.py`.
+The `demo_manifest_v1` output writes `demo_manifest.json` / `demo_manifest.md` and indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `external_llm_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries. It stays local-loopback and CPU-only by default; the external LLM section uses deterministic mock evidence and keeps raw prompts, `output_text`, runtime URL, and API key out of the manifest. Validate the full path with `scripts/demo_manifest_check.py`.
 
 Run the default non-browser smoke suite:
 
@@ -193,7 +201,7 @@ python3 scripts/runtime_acceptance_pack.py \
   --report /tmp/crowdtensor_acceptance.json
 ```
 
-The default suite includes `scripts/runtime_matrix_check.py`, `scripts/home_compute_demo_check.py`, `scripts/home_compute_evidence_check.py`, the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`), read-only multi-request `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`), user-facing inference session demo (`scripts/inference_session_demo.py`), admin-created read-only inference session API check (`scripts/admin_inference_session_check.py`), optional external LLM mock/command adapter smoke (`scripts/external_llm_inference_smoke.py`), and OpenAI-compatible HTTP adapter smoke (`scripts/external_llm_http_adapter_smoke.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks. Use `--skip-runtime-matrix`, `--skip-home-compute-demo`, `--skip-home-compute-evidence`, `--skip-admin-inference-session`, `--skip-external-llm-inference`, or `--skip-external-llm-http-adapter` if you need to omit those adapter checks.
+The default suite includes `scripts/runtime_matrix_check.py`, `scripts/home_compute_demo_check.py`, `scripts/home_compute_evidence_check.py`, the CPU-only `model_bundle_lm` contract smoke (`scripts/model_bundle_smoke.py`), read-only multi-request `model_bundle_infer` smoke (`scripts/model_bundle_inference_smoke.py`), user-facing inference session demo (`scripts/inference_session_demo.py`), admin-created read-only inference session API check (`scripts/admin_inference_session_check.py`), optional external LLM mock/command adapter smoke (`scripts/external_llm_inference_smoke.py`), OpenAI-compatible HTTP adapter smoke (`scripts/external_llm_http_adapter_smoke.py`), and safe external LLM evidence check (`scripts/external_llm_evidence_check.py`) alongside dense, adapter, micro LM, auth, audit, and operator checks. Use `--skip-runtime-matrix`, `--skip-home-compute-demo`, `--skip-home-compute-evidence`, `--skip-admin-inference-session`, `--skip-external-llm-inference`, `--skip-external-llm-http-adapter`, or `--skip-external-llm-evidence` if you need to omit those adapter checks.
 
 Run only the local inference session demo:
 
@@ -236,6 +244,14 @@ python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 89
 ```
 
 These smokes exercise `external_llm_infer_v1`, validate `external_llm_results`, and check that the read-only ledger exposes `completion_count`, `output_chars`, and `adapter_kind` without leaking raw prompts or `output_text`. To use a local runtime wrapper instead of the mock, start a Miner with `--llm-runtime-cmd /path/to/wrapper` or `CROWDTENSOR_LLM_RUNTIME_CMD=/path/to/wrapper`; the wrapper receives `prompt` and `max_tokens` arguments. To use an OpenAI-compatible local server, start a Miner with `--llm-runtime-url http://127.0.0.1:11434/v1/chat/completions` or `CROWDTENSOR_LLM_RUNTIME_URL=...`, plus optional `--llm-runtime-api-key` / `CROWDTENSOR_LLM_RUNTIME_API_KEY`.
+
+For a shareable evidence artifact:
+
+```bash
+python3 scripts/external_llm_evidence_check.py --port 8919
+```
+
+The check drives `scripts/external_llm_evidence_pack.py` through the deterministic mock runtime and verifies `external_llm_evidence_v1`, `external_llm_evidence_ready`, read-only status, and redaction.
 
 Run the same suite with local auth enabled inside checks that support shared auth env vars:
 

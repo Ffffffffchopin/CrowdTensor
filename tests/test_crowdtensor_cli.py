@@ -329,6 +329,128 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "home_inference_cli_v1")
 
+    def test_llm_infer_wraps_external_llm_evidence_and_redacts_runtime_secrets(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("external_llm_evidence_pack.py", command[1])
+            (output_dir / "external_llm_evidence.json").write_text("{}", encoding="utf-8")
+            (output_dir / "external_llm_evidence.md").write_text("# LLM Evidence\n", encoding="utf-8")
+            return completed({
+                "ok": True,
+                "schema": "external_llm_evidence_v1",
+                "diagnosis_codes": ["external_llm_evidence_ready"],
+                "adapter": {
+                    "kind": "http_openai_chat",
+                    "model_id": "local-model",
+                    "operator_owned_runtime": True,
+                },
+                "summary": {
+                    "request_count": 3,
+                    "completion_count": 3,
+                    "output_chars": 128,
+                    "requests_per_second": 12.5,
+                },
+            })
+
+        args = cli.parse_args([
+            "llm-infer",
+            "--output-dir",
+            str(output_dir),
+            "--port",
+            "9019",
+            "--request-count",
+            "3",
+            "--llm-runtime-url",
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "--llm-runtime-api-key",
+            "secret-api-key",
+            "--llm-runtime-model-id",
+            "local-model",
+        ])
+
+        summary = cli.build_llm_inference(args, runner=fake_runner)
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "llm_inference_cli_v1")
+        self.assertEqual(summary["evidence_schema"], "external_llm_evidence_v1")
+        self.assertEqual(summary["adapter"]["kind"], "http_openai_chat")
+        self.assertEqual(summary["inference"]["completion_count"], 3)
+        self.assertEqual(summary["diagnosis_codes"], ["external_llm_evidence_ready"])
+        self.assertTrue(summary["artifacts"]["external_llm_evidence_json"]["present"])
+        self.assertTrue((output_dir / "llm_inference_cli_summary.json").is_file())
+        self.assertTrue(any("--llm-runtime-url" in command for command in calls))
+        self.assertNotIn("secret-api-key", serialized)
+        self.assertNotIn("http://127.0.0.1:11434", serialized)
+
+    def test_llm_infer_rejects_conflicting_runtime_modes(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args([
+                "llm-infer",
+                "--llm-runtime-cmd",
+                "/bin/echo",
+                "--llm-runtime-url",
+                "http://127.0.0.1:11434/v1/chat/completions",
+            ])
+
+    def test_main_llm_infer_json_outputs_summary(self) -> None:
+        summary = {"schema": "llm_inference_cli_v1", "ok": True}
+        with patch.object(cli, "build_llm_inference", return_value=summary), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["llm-infer", "--mock", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "llm_inference_cli_v1")
+
+    def test_release_ready_wraps_readiness_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("release_readiness_pack.py", command[1])
+            return completed({
+                "ok": True,
+                "schema": "release_readiness_v1",
+                "release_status": {
+                    "ready": True,
+                    "status": "ready",
+                    "diagnosis_codes": ["release_ready"],
+                },
+            })
+
+        args = cli.parse_args([
+            "release-ready",
+            "--output-dir",
+            str(output_dir),
+            "--base-port",
+            "9024",
+            "--request-count",
+            "4",
+            "--allow-dirty",
+        ])
+
+        report = cli.build_release_ready(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "release_readiness_v1")
+        self.assertIn("release_ready", report["release_status"]["diagnosis_codes"])
+        self.assertTrue(any("--allow-dirty" in command for command in calls))
+
+    def test_main_release_ready_json_outputs_report(self) -> None:
+        report = {"schema": "release_readiness_v1", "ok": True}
+        with patch.object(cli, "build_release_ready", return_value=report), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["release-ready", "--allow-dirty", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "release_readiness_v1")
+
     def test_remote_runbook_wraps_pack_and_writes_safe_summary(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []

@@ -46,6 +46,8 @@ REQUIRED_FILES = [
     "scripts/remote_demo_acceptance_check.py",
     "scripts/demo_manifest_pack.py",
     "scripts/demo_manifest_check.py",
+    "scripts/release_readiness_pack.py",
+    "scripts/release_readiness_check.py",
     "scripts/remote_compute_evidence_pack.py",
     "scripts/remote_compute_evidence_check.py",
     "scripts/multi_miner_scenario_sweep.py",
@@ -74,6 +76,8 @@ REQUIRED_FILES = [
     "scripts/admin_inference_session_check.py",
     "scripts/external_llm_inference_smoke.py",
     "scripts/external_llm_http_adapter_smoke.py",
+    "scripts/external_llm_evidence_pack.py",
+    "scripts/external_llm_evidence_check.py",
     "docs/api.md",
     "docs/protocol.md",
     "docs/project-memory.md",
@@ -404,6 +408,40 @@ def check_release_evidence_docs(root: Path) -> dict[str, Any]:
     return check_result("release_evidence_docs", not details, details)
 
 
+def check_release_readiness_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "crowdtensor release-ready",
+        "release_readiness_v1",
+        "scripts/release_readiness_pack.py",
+        "scripts/release_readiness_check.py",
+        "--allow-dirty",
+        "git_dirty",
+        "demo_manifest_v1",
+        "release gate",
+        "not production",
+        "crowdtensor/cli.py",
+    ]:
+        if fragment not in combined:
+            details.append(f"release readiness docs/CI must mention {fragment}")
+    return check_result("release_readiness_docs", not details, details)
+
+
 def check_doctor_docs(root: Path) -> dict[str, Any]:
     details: list[str] = []
     combined = "\n".join(
@@ -625,6 +663,7 @@ def check_demo_manifest_docs(root: Path) -> dict[str, Any]:
         "Demo Manifest",
         "runtime_matrix.json",
         "remote_compute_evidence_v1",
+        "external_llm_evidence_v1",
         "support_bundle",
         "remote_compute_observability_v1",
         "latest output artifact",
@@ -1042,8 +1081,14 @@ def check_external_llm_inference_docs(root: Path) -> dict[str, Any]:
         "external_llm_infer_v1",
         "external_llm_inference_smoke.py",
         "external_llm_http_adapter_smoke.py",
+        "external_llm_evidence_pack.py",
+        "external_llm_evidence_check.py",
+        "external_llm_evidence_v1",
+        "crowdtensor llm-infer",
+        "llm_inference_cli_v1",
         "--skip-external-llm-inference",
         "--skip-external-llm-http-adapter",
+        "--skip-external-llm-evidence",
         "--enable-mock-llm-runtime",
         "--llm-runtime-cmd",
         "--llm-runtime-url",
@@ -1132,6 +1177,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python -m pip install -e .[dev]": "CI must install the dev package",
         "python -m py_compile": "CI must compile Python entrypoints",
         "python scripts/release_gate.py --json": "CI must run the release gate",
+        "python scripts/release_readiness_check.py --allow-dirty": "CI must run the release readiness check",
         "python scripts/doctor.py --json": "CI must run first-run doctor",
         "python scripts/runtime_matrix_check.py": "CI must run the runtime matrix check",
         "python scripts/home_compute_demo_check.py": "CI must run the home-compute demo check",
@@ -1178,6 +1224,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_security_preflight_docs(gate_root),
         check_browser_acceptance_docs(gate_root),
         check_release_evidence_docs(gate_root),
+        check_release_readiness_docs(gate_root),
         check_doctor_docs(gate_root),
         check_support_bundle_docs(gate_root),
         check_home_compute_evidence_docs(gate_root),

@@ -22,6 +22,8 @@ jobs:
         run: python -m py_compile coordinator.py miner_cli.py scripts/*.py crowdtensor/*.py
       - name: Release gate
         run: python scripts/release_gate.py --json
+      - name: Release readiness
+        run: python scripts/release_readiness_check.py --allow-dirty
       - name: First-run Doctor
         run: python scripts/doctor.py --json
       - name: Local proof CLI
@@ -76,6 +78,9 @@ jobs:
       - name: External LLM HTTP adapter smoke
         if: matrix.python-version == '3.12'
         run: python scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908
+      - name: External LLM evidence
+        if: matrix.python-version == '3.12'
+        run: python scripts/external_llm_evidence_check.py --port 8919
       - name: Runtime acceptance
         if: matrix.python-version == '3.12'
         run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json

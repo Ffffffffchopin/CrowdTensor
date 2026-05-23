@@ -30,6 +30,7 @@ CLEANUP_SCHEMA = "cleanup_report_v1"
 REMOTE_RUNBOOK_CLI_SCHEMA = "remote_runbook_cli_v1"
 REMOTE_ACCEPTANCE_CLI_SCHEMA = "remote_acceptance_cli_v1"
 HOME_INFERENCE_CLI_SCHEMA = "home_inference_cli_v1"
+LLM_INFERENCE_CLI_SCHEMA = "llm_inference_cli_v1"
 SECRET_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
     "CROWDTENSOR_OBSERVER_TOKEN",
@@ -37,6 +38,8 @@ SECRET_FRAGMENTS = (
     "lease_token",
     "idempotency_key",
     "inference_results",
+    "external_llm_results",
+    "output_text",
     "Bearer ",
 )
 CLEANUP_TMP_DIR_PATTERNS = (
@@ -661,6 +664,172 @@ def build_home_inference(args: argparse.Namespace, *, runner: Runner = subproces
     return summary
 
 
+def build_llm_inference(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    evidence_json = output_dir / "external_llm_evidence.json"
+    evidence_md = output_dir / "external_llm_evidence.md"
+    summary_json = output_dir / "llm_inference_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "external_llm_evidence_pack.py"),
+        "--port",
+        str(args.port),
+        "--request-count",
+        str(args.request_count),
+        "--llm-runtime-model-id",
+        args.llm_runtime_model_id,
+        "--llm-runtime-timeout",
+        str(args.llm_runtime_timeout),
+        "--json-out",
+        str(evidence_json),
+        "--markdown-out",
+        str(evidence_md),
+    ]
+    if args.mock:
+        command.append("--mock")
+    if args.llm_runtime_cmd:
+        command.extend(["--llm-runtime-cmd", args.llm_runtime_cmd])
+    if args.llm_runtime_url:
+        command.extend(["--llm-runtime-url", args.llm_runtime_url])
+    if args.llm_runtime_api_key:
+        command.extend(["--llm-runtime-api-key", args.llm_runtime_api_key])
+    secret_values = [args.llm_runtime_url, args.llm_runtime_api_key]
+    step, payload = run_json_step(
+        "external_llm_evidence",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+        redact_secrets=secret_values,
+    )
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    adapter = payload.get("adapter") if isinstance(payload.get("adapter"), dict) else {}
+    llm_summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    artifacts = {
+        "external_llm_evidence_json": artifact_entry(
+            evidence_json,
+            output_dir,
+            kind="external_llm_evidence",
+            schema=str(payload.get("schema") or "external_llm_evidence_v1"),
+            ok=payload.get("ok") if payload else None,
+        ),
+        "external_llm_evidence_markdown": artifact_entry(
+            evidence_md,
+            output_dir,
+            kind="external_llm_evidence_markdown",
+        ),
+        "llm_inference_cli_summary": {
+            "kind": "llm_inference_cli_summary",
+            "path": "llm_inference_cli_summary.json",
+            "present": True,
+            "schema": LLM_INFERENCE_CLI_SCHEMA,
+        },
+    }
+    summary = {
+        "schema": LLM_INFERENCE_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "port": args.port,
+        "request_count": args.request_count,
+        "step": step,
+        "evidence_schema": payload.get("schema") or "external_llm_evidence_v1",
+        "adapter": {
+            "kind": adapter.get("kind"),
+            "model_id": adapter.get("model_id"),
+            "operator_owned_runtime": adapter.get("operator_owned_runtime"),
+        },
+        "inference": {
+            "request_count": llm_summary.get("request_count"),
+            "completion_count": llm_summary.get("completion_count"),
+            "output_chars": llm_summary.get("output_chars"),
+            "requests_per_second": llm_summary.get("requests_per_second"),
+        },
+        "diagnosis_codes": diagnosis_codes(payload),
+        "artifacts": artifacts,
+        "safety": {
+            "captured_output_redacted": True,
+            "summary_excludes_raw_external_llm_payloads": True,
+            "runtime_url_redacted": True,
+            "api_credential_redacted": True,
+            "read_only_workload": "external_llm_infer",
+            "not_production": True,
+        },
+        "limitations": [
+            "Local external_llm_infer proof; not production LLM serving",
+            "Uses fixed claim-time prompts; not an arbitrary public prompt API",
+            "Does not provide GPU pooling, WebGPU shards, P2P routing, or incentives",
+        ],
+        "recommended_next_commands": [
+            "python3 scripts/external_llm_evidence_check.py --port 8919",
+            "python3 scripts/runtime_acceptance_pack.py --base-port 8910 --report /tmp/crowdtensor_acceptance.json",
+        ],
+    }
+    summary = sanitize(redact_values(summary, secret_values))
+    encoded = json.dumps(summary, sort_keys=True)
+    if any(secret and secret in encoded for secret in secret_values):
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+    leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_release_ready(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "release_readiness_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--host",
+        args.host,
+        "--base-port",
+        str(args.base_port),
+        "--request-count",
+        str(args.request_count),
+        "--external-llm-request-count",
+        str(args.external_llm_request_count),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+    ]
+    if args.allow_dirty:
+        command.append("--allow-dirty")
+    if args.skip_external_llm_evidence:
+        command.append("--skip-external-llm-evidence")
+    if args.runtime_report:
+        command.extend(["--runtime-report", args.runtime_report])
+    if args.browser_report:
+        command.extend(["--browser-report", args.browser_report])
+    if args.remote_report:
+        command.extend(["--remote-report", args.remote_report])
+    step, payload = run_json_step(
+        "release_readiness",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    if payload:
+        return sanitize(payload)
+    return sanitize({
+        "schema": "release_readiness_v1",
+        "ok": False,
+        "release_status": {
+            "ready": False,
+            "status": "blocked",
+            "blocking_reasons": [step.get("error") or "release readiness command failed"],
+            "diagnosis_codes": ["release_readiness_failed"],
+        },
+        "step": step,
+    })
+
+
 def build_remote_runbook(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -917,6 +1086,42 @@ def print_home_inference(summary: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_llm_inference(summary: dict[str, Any]) -> None:
+    print("CrowdTensor LLM inference")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')}")
+    print(f"  output: {summary.get('output_dir')}")
+    adapter = summary.get("adapter") or {}
+    print(f"  adapter: {adapter.get('kind')} model={adapter.get('model_id')}")
+    inference = summary.get("inference") or {}
+    print(
+        "  inference: "
+        f"requests={inference.get('request_count')} "
+        f"completions={inference.get('completion_count')} "
+        f"chars={inference.get('output_chars')} "
+        f"rps={inference.get('requests_per_second')}"
+    )
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_release_ready(report: dict[str, Any]) -> None:
+    status = report.get("release_status") or {}
+    git = report.get("git") or {}
+    print("CrowdTensor release readiness")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  status: {status.get('status')}")
+    print(f"  branch: {git.get('branch')} commit={git.get('commit')}")
+    print(f"  dirty: {git.get('dirty')} status_count={git.get('status_count')}")
+    print(f"  diagnosis: {', '.join(status.get('diagnosis_codes') or [])}")
+    for reason in status.get("blocking_reasons") or []:
+        print(f"  blocker: {reason}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_remote_cli_report(report: dict[str, Any], *, title: str) -> None:
     print(title)
     print(f"  ok: {report.get('ok')}")
@@ -960,6 +1165,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     home.add_argument("--timeout-seconds", type=int, default=180)
     home.add_argument("--runtime-report", default="")
     home.add_argument("--json", action="store_true")
+    llm = subparsers.add_parser(
+        "llm-infer",
+        help="Run a local external_llm_infer proof against mock or operator-owned LLM runtime.",
+    )
+    llm.add_argument("--output-dir", default="dist/llm-infer")
+    llm.add_argument("--port", type=int, default=8919)
+    llm.add_argument("--request-count", type=int, default=3)
+    llm.add_argument("--timeout-seconds", type=int, default=180)
+    llm.add_argument("--mock", action="store_true", help="use the deterministic built-in mock runtime")
+    llm.add_argument("--llm-runtime-cmd", default="")
+    llm.add_argument("--llm-runtime-url", default="")
+    llm.add_argument("--llm-runtime-api-key", default="")
+    llm.add_argument("--llm-runtime-model-id", default="external-llm-runtime")
+    llm.add_argument("--llm-runtime-timeout", type=float, default=30.0)
+    llm.add_argument("--json", action="store_true")
+    release_ready = subparsers.add_parser(
+        "release-ready",
+        help="Build the Alpha maintainer release readiness report.",
+    )
+    release_ready.add_argument("--output-dir", default="dist/release-readiness")
+    release_ready.add_argument("--host", default="127.0.0.1")
+    release_ready.add_argument("--base-port", type=int, default=8924)
+    release_ready.add_argument("--request-count", type=int, default=4)
+    release_ready.add_argument("--external-llm-request-count", type=int, default=3)
+    release_ready.add_argument("--timeout-seconds", type=int, default=180)
+    release_ready.add_argument("--allow-dirty", action="store_true")
+    release_ready.add_argument("--skip-external-llm-evidence", action="store_true")
+    release_ready.add_argument("--runtime-report", default="")
+    release_ready.add_argument("--browser-report", default="")
+    release_ready.add_argument("--remote-report", default="")
+    release_ready.add_argument("--json", action="store_true")
     runbook = subparsers.add_parser(
         "remote-runbook",
         help="Build a safe controlled two-machine remote demo runbook through the user CLI.",
@@ -990,11 +1226,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote.add_argument("--no-create-session", dest="create_session", action="store_false")
     remote.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if args.command in {"local-proof", "home-infer", "remote-runbook", "remote-acceptance"}:
+    if args.command in {"local-proof", "home-infer", "llm-infer", "release-ready", "remote-runbook", "remote-acceptance"}:
         if args.request_count < 1:
             raise SystemExit("--request-count must be at least 1")
         if args.timeout_seconds < 1:
             raise SystemExit("--timeout-seconds must be at least 1")
+    if args.command == "release-ready":
+        if args.base_port < 1:
+            raise SystemExit("--base-port must be positive")
+        if args.external_llm_request_count < 1:
+            raise SystemExit("--external-llm-request-count must be at least 1")
+    if args.command == "llm-infer":
+        if args.llm_runtime_cmd and args.llm_runtime_url:
+            raise SystemExit("--llm-runtime-cmd and --llm-runtime-url are mutually exclusive")
+        if args.llm_runtime_timeout <= 0:
+            raise SystemExit("--llm-runtime-timeout must be positive")
     if args.command == "remote-acceptance":
         if args.remote_timeout_seconds < 0:
             raise SystemExit("--remote-timeout-seconds must be non-negative")
@@ -1029,6 +1275,20 @@ def main(argv: list[str] | None = None) -> None:
         else:
             print_home_inference(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "llm-infer":
+        summary = build_llm_inference(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_llm_inference(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "release-ready":
+        report = build_release_ready(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_release_ready(report)
+        raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "remote-runbook":
         summary = build_remote_runbook(args)
         if args.json:

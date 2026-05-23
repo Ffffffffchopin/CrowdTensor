@@ -153,13 +153,43 @@ class DemoManifestPackTests(unittest.TestCase):
             },
         }
 
+    def _external_llm_evidence(self) -> dict:
+        return {
+            "schema": "external_llm_evidence_v1",
+            "ok": True,
+            "route": {
+                "name": "local_external_llm_infer",
+                "runtime": "python-cli",
+                "backend": "cpu",
+                "workload": "external_llm_infer",
+            },
+            "adapter": {
+                "kind": "mock",
+                "model_id": "mock-external-llm",
+                "operator_owned_runtime": False,
+            },
+            "summary": {
+                "request_count": 3,
+                "completion_count": 3,
+                "output_chars": 128,
+                "requests_per_second": 1000.0,
+            },
+            "diagnosis_codes": ["external_llm_evidence_ready"],
+            "safety": {
+                "read_only": True,
+                "redaction_ok": True,
+                "raw_payloads_exposed": False,
+            },
+        }
+
     def test_build_manifest_summarizes_safe_artifacts(self) -> None:
         output_dir = Path(self._tmp_dir())
         runtime_json = output_dir / "runtime_matrix.json"
         remote_json = output_dir / "remote_compute_evidence.json"
+        external_json = output_dir / "external_llm_evidence.json"
         support_json = output_dir / "support_bundle.json"
         manifest_md = output_dir / "demo_manifest.md"
-        for path in [runtime_json, remote_json, support_json, manifest_md]:
+        for path in [runtime_json, remote_json, external_json, support_json, manifest_md]:
             path.write_text("{}", encoding="utf-8")
         artifacts = {
             "runtime_matrix": demo_manifest_pack.artifact_entry(
@@ -173,6 +203,13 @@ class DemoManifestPackTests(unittest.TestCase):
                 path=remote_json,
                 kind="remote_compute_evidence",
                 schema="remote_compute_evidence_v1",
+                ok=True,
+            ),
+            "external_llm_evidence_json": demo_manifest_pack.artifact_entry(
+                output_dir=output_dir,
+                path=external_json,
+                kind="external_llm_evidence",
+                schema="external_llm_evidence_v1",
                 ok=True,
             ),
             "support_bundle_json": demo_manifest_pack.artifact_entry(
@@ -194,6 +231,7 @@ class DemoManifestPackTests(unittest.TestCase):
             request_count=4,
             runtime=self._runtime_matrix(),
             remote_evidence=self._remote_evidence(),
+            external_llm_evidence=self._external_llm_evidence(),
             support=self._support_bundle(),
             artifacts=artifacts,
             generated_at="2026-05-22T00:00:00+00:00",
@@ -210,6 +248,18 @@ class DemoManifestPackTests(unittest.TestCase):
             "remote_compute_observability_v1",
         )
         self.assertEqual(
+            manifest["summaries"]["external_llm_evidence"]["route"]["name"],
+            "local_external_llm_infer",
+        )
+        self.assertEqual(
+            manifest["summaries"]["external_llm_evidence"]["adapter"]["kind"],
+            "mock",
+        )
+        self.assertEqual(
+            manifest["summaries"]["external_llm_evidence"]["inference"]["completion_count"],
+            3,
+        )
+        self.assertEqual(
             manifest["summaries"]["support_bundle"]["remote_report"]["observability_summaries"][0]["schema"],
             "remote_compute_observability_v1",
         )
@@ -218,6 +268,24 @@ class DemoManifestPackTests(unittest.TestCase):
         encoded = json.dumps(manifest, sort_keys=True)
         self.assertNotIn("lease_token", encoded)
         self.assertNotIn("idempotency_key", encoded)
+        self.assertNotIn("external_llm_results", encoded)
+        self.assertNotIn("output_text", encoded)
+
+    def test_build_manifest_can_skip_external_llm_evidence(self) -> None:
+        manifest = demo_manifest_pack.build_manifest(
+            output_dir=Path(self._tmp_dir()),
+            mode="local-loopback",
+            request_count=4,
+            runtime=self._runtime_matrix(),
+            remote_evidence=self._remote_evidence(),
+            external_llm_evidence=None,
+            support=self._support_bundle(),
+            artifacts={},
+            generated_at="2026-05-22T00:00:00+00:00",
+        )
+
+        self.assertTrue(manifest["ok"])
+        self.assertEqual(manifest["summaries"]["external_llm_evidence"], {"skipped": True})
 
     def test_markdown_renders_manifest_sections(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -227,6 +295,7 @@ class DemoManifestPackTests(unittest.TestCase):
             request_count=4,
             runtime=self._runtime_matrix(),
             remote_evidence=self._remote_evidence(),
+            external_llm_evidence=self._external_llm_evidence(),
             support=self._support_bundle(),
             artifacts={
                 "runtime_matrix": {
@@ -245,18 +314,21 @@ class DemoManifestPackTests(unittest.TestCase):
         self.assertIn("demo_manifest_v1", markdown)
         self.assertIn("remote_python_model_bundle_infer", markdown)
         self.assertIn("remote_compute_observability_v1", markdown)
+        self.assertIn("External LLM Evidence", markdown)
+        self.assertIn("local_external_llm_infer", markdown)
         self.assertIn("runtime_matrix.json", markdown)
 
     def test_manifest_marks_secret_like_payload_unsafe(self) -> None:
-        remote = self._remote_evidence()
-        remote["miner"]["miner_id"] = "demo-manifest-token"
+        external = self._external_llm_evidence()
+        external["adapter"]["model_id"] = "external_llm_results"
 
         manifest = demo_manifest_pack.build_manifest(
             output_dir=Path(self._tmp_dir()),
             mode="local-loopback",
             request_count=4,
             runtime=self._runtime_matrix(),
-            remote_evidence=remote,
+            remote_evidence=self._remote_evidence(),
+            external_llm_evidence=external,
             support=self._support_bundle(),
             artifacts={},
             generated_at="2026-05-22T00:00:00+00:00",

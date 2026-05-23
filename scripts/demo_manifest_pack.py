@@ -18,6 +18,7 @@ for path in [ROOT, SCRIPTS_DIR]:
         sys.path.insert(0, str(path))
 
 import remote_compute_evidence_pack  # noqa: E402
+import external_llm_evidence_pack  # noqa: E402
 import runtime_matrix  # noqa: E402
 import support_bundle  # noqa: E402
 
@@ -33,6 +34,8 @@ SECRET_FRAGMENTS = (
     "lease_token",
     "idempotency_key",
     "inference_results",
+    "external_llm_results",
+    "output_text",
     "Bearer ",
     DEFAULT_INVITE_TOKEN,
 )
@@ -167,6 +170,40 @@ def remote_evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def external_llm_evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
+    route = evidence.get("route") if isinstance(evidence.get("route"), dict) else {}
+    adapter = evidence.get("adapter") if isinstance(evidence.get("adapter"), dict) else {}
+    summary = evidence.get("summary") if isinstance(evidence.get("summary"), dict) else {}
+    safety = evidence.get("safety") if isinstance(evidence.get("safety"), dict) else {}
+    return {
+        "ok": bool(evidence.get("ok")),
+        "schema": evidence.get("schema"),
+        "route": {
+            "name": route.get("name"),
+            "workload": route.get("workload"),
+            "runtime": route.get("runtime"),
+            "backend": route.get("backend"),
+        },
+        "adapter": {
+            "kind": adapter.get("kind"),
+            "model_id": adapter.get("model_id"),
+            "operator_owned_runtime": adapter.get("operator_owned_runtime"),
+        },
+        "inference": {
+            "request_count": summary.get("request_count"),
+            "completion_count": summary.get("completion_count"),
+            "output_chars": summary.get("output_chars"),
+            "requests_per_second": summary.get("requests_per_second"),
+        },
+        "diagnosis_codes": list(evidence.get("diagnosis_codes") or []),
+        "safety": {
+            "read_only": safety.get("read_only"),
+            "redaction_ok": safety.get("redaction_ok"),
+            "raw_payloads_exposed": safety.get("raw_payloads_exposed"),
+        },
+    }
+
+
 def support_summary(bundle: dict[str, Any]) -> dict[str, Any]:
     reports = bundle.get("reports") if isinstance(bundle.get("reports"), dict) else {}
     remote = reports.get("remote") if isinstance(reports.get("remote"), dict) else {}
@@ -196,24 +233,37 @@ def build_manifest(
     request_count: int,
     runtime: dict[str, Any],
     remote_evidence: dict[str, Any],
+    external_llm_evidence: dict[str, Any] | None,
     support: dict[str, Any],
     artifacts: dict[str, dict[str, Any]],
     generated_at: str | None = None,
 ) -> dict[str, Any]:
+    external_ok = True if external_llm_evidence is None else bool(external_llm_evidence.get("ok"))
     manifest = {
         "schema": MANIFEST_SCHEMA,
         "generated_at": generated_at or utc_now(),
         "mode": mode,
-        "ok": bool(runtime.get("ok") and remote_evidence.get("ok") and (support.get("release_gate") or {}).get("ok")),
+        "ok": bool(
+            runtime.get("ok")
+            and remote_evidence.get("ok")
+            and external_ok
+            and (support.get("release_gate") or {}).get("ok")
+        ),
         "output_dir_name": output_dir.name,
         "artifacts": artifacts,
         "summaries": {
             "runtime_matrix": runtime_summary(runtime),
             "remote_compute_evidence": remote_evidence_summary(remote_evidence),
+            "external_llm_evidence": (
+                {"skipped": True}
+                if external_llm_evidence is None
+                else external_llm_evidence_summary(external_llm_evidence)
+            ),
             "support_bundle": support_summary(support),
         },
         "recommended_next_commands": [
             "python3 scripts/demo_manifest_check.py --base-port 8914",
+            "crowdtensor llm-infer --mock --json",
             "python3 scripts/remote_demo_runbook_pack.py --coordinator-url https://YOUR_COORDINATOR_HOST --miner-id remote-linux-1 --output-dir dist/remote-demo",
             "python3 scripts/remote_demo_acceptance_pack.py --coordinator-url https://YOUR_COORDINATOR_HOST --miner-id remote-linux-1 --observer-token \"$CROWDTENSOR_OBSERVER_TOKEN\" --admin-token \"$CROWDTENSOR_ADMIN_TOKEN\" --output-dir dist/remote-demo-acceptance",
         ],
@@ -233,9 +283,13 @@ def build_manifest(
 def render_markdown(payload: dict[str, Any]) -> str:
     runtime = (payload.get("summaries") or {}).get("runtime_matrix") or {}
     remote = (payload.get("summaries") or {}).get("remote_compute_evidence") or {}
+    external = (payload.get("summaries") or {}).get("external_llm_evidence") or {}
     support = (payload.get("summaries") or {}).get("support_bundle") or {}
     route = remote.get("route") or {}
     inference = remote.get("inference") or {}
+    external_route = external.get("route") or {}
+    external_adapter = external.get("adapter") or {}
+    external_inference = external.get("inference") or {}
     lines = [
         "# CrowdTensor Demo Manifest",
         "",
@@ -258,6 +312,15 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Requests: `{inference.get('request_count')}`",
         f"- Requests/sec: `{inference.get('requests_per_second')}`",
         f"- Observability: `{(remote.get('observability') or {}).get('schema')}`",
+        "",
+        "## External LLM Evidence",
+        "",
+        f"- OK: `{external.get('ok')}`",
+        f"- Route: `{external_route.get('name')}`",
+        f"- Adapter: `{external_adapter.get('kind')}`",
+        f"- Requests: `{external_inference.get('request_count')}`",
+        f"- Completions: `{external_inference.get('completion_count')}`",
+        f"- Output chars: `{external_inference.get('output_chars')}`",
         "",
         "## Support Bundle",
         "",
@@ -310,6 +373,31 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
     remote_compute_evidence_pack.write_json(remote_payload, str(remote_json))
     remote_compute_evidence_pack.write_markdown(remote_payload, str(remote_md))
 
+    external_payload = None
+    external_json = output_dir / "external_llm_evidence.json"
+    external_md = output_dir / "external_llm_evidence.md"
+    if not args.skip_external_llm_evidence:
+        external_args = external_llm_evidence_pack.parse_args([
+            "--host",
+            args.host,
+            "--port",
+            str(args.external_llm_port),
+            "--request-count",
+            str(args.external_llm_request_count),
+            "--miner-id",
+            args.external_llm_miner_id,
+            "--admin-token",
+            args.admin_token,
+            "--mock",
+            "--json-out",
+            str(external_json),
+            "--markdown-out",
+            str(external_md),
+        ])
+        external_payload = external_llm_evidence_pack.run_loopback(external_args)
+        external_llm_evidence_pack.write_json(external_payload, str(external_json))
+        external_llm_evidence_pack.write_markdown(external_payload, str(external_md))
+
     support_args = support_bundle.parse_args([
         "--root",
         str(ROOT),
@@ -347,6 +435,18 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
             path=remote_md,
             kind="remote_compute_evidence_markdown",
         ),
+        "external_llm_evidence_json": artifact_entry(
+            output_dir=output_dir,
+            path=external_json,
+            kind="external_llm_evidence",
+            schema=str((external_payload or {}).get("schema") or "external_llm_evidence_v1"),
+            ok=(external_payload or {}).get("ok") if external_payload is not None else None,
+        ),
+        "external_llm_evidence_markdown": artifact_entry(
+            output_dir=output_dir,
+            path=external_md,
+            kind="external_llm_evidence_markdown",
+        ),
         "support_bundle_json": artifact_entry(
             output_dir=output_dir,
             path=support_json,
@@ -370,6 +470,7 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
         request_count=args.request_count,
         runtime=runtime_payload,
         remote_evidence=remote_payload,
+        external_llm_evidence=external_payload,
         support=support_payload,
         artifacts=artifacts,
     )
@@ -388,6 +489,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8914)
     parser.add_argument("--state-dir", default="")
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--external-llm-port", type=int, default=0)
+    parser.add_argument("--external-llm-request-count", type=int, default=3)
+    parser.add_argument("--external-llm-miner-id", default="demo-manifest-external-llm-miner")
+    parser.add_argument("--skip-external-llm-evidence", action="store_true")
     parser.add_argument("--miner-id", default=DEFAULT_MINER_ID)
     parser.add_argument("--observer-token", default=DEFAULT_OBSERVER_TOKEN)
     parser.add_argument("--admin-token", default=DEFAULT_ADMIN_TOKEN)
@@ -395,6 +500,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.request_count < 1:
         raise SystemExit("--request-count must be at least 1")
+    if args.external_llm_request_count < 1:
+        raise SystemExit("--external-llm-request-count must be at least 1")
+    if args.external_llm_port < 1:
+        args.external_llm_port = args.port + 1
     return args
 
 

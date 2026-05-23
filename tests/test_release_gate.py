@@ -49,6 +49,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "security_preflight_docs",
                 "browser_acceptance_docs",
                 "release_evidence_docs",
+                "release_readiness_docs",
                 "doctor_docs",
                 "support_bundle_docs",
                 "home_compute_evidence_docs",
@@ -254,6 +255,29 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("scripts/release_evidence_pack.py" in detail for detail in details))
         self.assertTrue(any("diagnosis_summary" in detail for detail in details))
 
+    def test_release_readiness_docs_must_describe_maintainer_gate(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No release readiness docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "release_readiness_docs")
+        self.assertTrue(any("crowdtensor release-ready" in detail for detail in details))
+        self.assertTrue(any("release_readiness_v1" in detail for detail in details))
+        self.assertTrue(any("--allow-dirty" in detail for detail in details))
+
     def test_doctor_docs_must_describe_first_run_diagnostics(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
         (tmp_root / "README.md").write_text("No doctor docs here.\n", encoding="utf-8")
@@ -397,6 +421,7 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "demo_manifest_docs")
         self.assertTrue(any("demo_manifest_pack.py" in detail for detail in details))
         self.assertTrue(any("demo_manifest_v1" in detail for detail in details))
+        self.assertTrue(any("external_llm_evidence_v1" in detail for detail in details))
         self.assertTrue(any("latest output artifact" in detail for detail in details))
 
     def test_local_proof_docs_must_describe_one_command_entrypoint(self) -> None:
@@ -642,11 +667,14 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "external_llm_inference_docs")
         self.assertTrue(any("external_llm_infer" in detail for detail in details))
         self.assertTrue(any("external_llm_http_adapter_smoke.py" in detail for detail in details))
+        self.assertTrue(any("external_llm_evidence_pack.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor llm-infer" in detail for detail in details))
         self.assertTrue(any("--enable-mock-llm-runtime" in detail for detail in details))
         self.assertTrue(any("--llm-runtime-cmd" in detail for detail in details))
         self.assertTrue(any("--llm-runtime-url" in detail for detail in details))
         self.assertTrue(any("--skip-external-llm-inference" in detail for detail in details))
         self.assertTrue(any("--skip-external-llm-http-adapter" in detail for detail in details))
+        self.assertTrue(any("--skip-external-llm-evidence" in detail for detail in details))
 
     def test_runtime_matrix_docs_must_describe_user_capability_path(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

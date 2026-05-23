@@ -2,6 +2,16 @@
 
 This document collects common commands for local Alpha operation.
 
+## Release Readiness
+
+```bash
+crowdtensor release-ready --json
+```
+
+The `crowdtensor/cli.py` release readiness entrypoint wraps `scripts/release_readiness_pack.py`, emits `release_readiness_v1`, and writes JSON/Markdown under `dist/release-readiness`. It aggregates Git metadata, the release gate, security preflight, and `demo_manifest_v1`, then reports blocker diagnosis codes such as `git_dirty`, `release_gate_failed`, and `demo_manifest_failed`.
+
+Dirty worktrees block by default so maintainers do not accidentally tag a mixed checkout. Use `--allow-dirty` only for development smoke checks, including `scripts/release_readiness_check.py --allow-dirty` in CI. Missing runtime, browser, or remote acceptance reports are warnings unless provided and failing. This is not production Swarm Inference readiness; it is an Alpha maintainer gate for the current CPU-only repository state.
+
 ## One-Command Local Proof
 
 ```bash
@@ -19,6 +29,12 @@ crowdtensor home-infer --scenario-id route-baseline --json
 ```
 
 The home inference command emits `home_inference_cli_v1` and writes `home_compute_evidence_v1` artifacts under `dist/home-infer`. It wraps `scripts/home_compute_evidence_pack.py`, runs the CPU-only read-only `model_bundle_infer` route, and summarizes `route_decision`, fixed `model_bundle_inference_scenario_v1` metadata, `diagnosis_codes`, safe `request_trace` count, throughput, read-only status, redaction status, and generated artifact paths.
+
+```bash
+crowdtensor llm-infer --mock --json
+```
+
+The LLM inference command emits `llm_inference_cli_v1` and writes `external_llm_evidence_v1` artifacts under `dist/llm-infer`. It runs the read-only `external_llm_infer` contract against the deterministic mock runtime by default, or against an explicit operator-owned `--llm-runtime-cmd` / `--llm-runtime-url`. It reports adapter kind, model id, request count, completion count, output chars, throughput, and diagnosis codes while keeping raw prompts, `output_text`, runtime URL, API key, lease token, and idempotency material out of public artifacts.
 
 Built-in scenario IDs are `route-baseline`, `gradient-safety`, and `mixed-prompts`. Use this after `crowdtensor local-proof` when a new user needs a compact, shareable proof that their machine can run the current Swarm Inference-shaped contract. It is not production Swarm Inference, not arbitrary prompt serving, and not a real LLM/GPU/P2P path.
 
@@ -318,6 +334,19 @@ python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 89
 
 The default smoke uses `crowdtensor-miner --enable-mock-llm-runtime` so it is deterministic and CPU-only. For an operator-provided local runtime, run the Miner with `--llm-runtime-cmd /path/to/wrapper` or set `CROWDTENSOR_LLM_RUNTIME_CMD=/path/to/wrapper`; the wrapper receives `prompt` and `max_tokens` arguments and should print completion text to stdout. For OpenAI-compatible local servers, use `--llm-runtime-url http://127.0.0.1:11434/v1/chat/completions` or `CROWDTENSOR_LLM_RUNTIME_URL=...`, with optional `--llm-runtime-api-key` / `CROWDTENSOR_LLM_RUNTIME_API_KEY`. `external_llm_infer` is read-only, validates `external_llm_infer_v1` prompt hashes and `external_llm_results`, records `request_count`, `completion_count`, `output_chars`, `adapter_kind`, `model_id`, and `requests_per_second`, and keeps raw prompts and `output_text` out of `/state` and admin result ledger summaries.
 
+Safe external LLM evidence artifact:
+
+```bash
+python3 scripts/external_llm_evidence_pack.py \
+  --mock \
+  --port 8919 \
+  --request-count 3 \
+  --json-out /tmp/crowdtensor_external_llm_evidence.json \
+  --markdown-out /tmp/crowdtensor_external_llm_evidence.md
+```
+
+`external_llm_evidence_v1` is the shareable proof layer for `external_llm_infer`: it records the local route, adapter summary, ledger row count, read-only status, redaction status, and `external_llm_evidence_ready`. Validate it with `scripts/external_llm_evidence_check.py --port 8919`; skip the runtime acceptance check with `--skip-external-llm-evidence` only when the lane intentionally omits local external LLM evidence.
+
 Remote-style Miner readiness:
 
 ```bash
@@ -363,7 +392,7 @@ python3 scripts/demo_manifest_pack.py \
   --request-count 4
 ```
 
-`scripts/demo_manifest_pack.py` produces the `demo_manifest_v1` latest output artifact for operator handoff. It writes `runtime_matrix.json`, `remote_compute_evidence_v1`, `support_bundle`, `demo_manifest.json`, and `demo_manifest.md` under one output directory, then summarizes `remote_compute_observability_v1` without embedding raw state, tokens, leases, idempotency material, or tensor payloads. Validate the path with `scripts/demo_manifest_check.py --base-port 8914`.
+`scripts/demo_manifest_pack.py` produces the `demo_manifest_v1` latest output artifact for operator handoff. It writes `runtime_matrix.json`, `remote_compute_evidence_v1`, `external_llm_evidence_v1`, `support_bundle`, `demo_manifest.json`, and `demo_manifest.md` under one output directory, then summarizes `remote_compute_observability_v1` and deterministic mock external LLM evidence without embedding raw state, raw prompts, `output_text`, runtime URL, API key, tokens, leases, idempotency material, or tensor payloads. Validate the path with `scripts/demo_manifest_check.py --base-port 8914`.
 
 Safe two-machine remote runbook:
 
@@ -477,7 +506,7 @@ python3 scripts/demo_manifest_pack.py \
   --request-count 4
 ```
 
-The Demo Manifest is not a production release claim; it is a compact, safe index of the current CPU-only runtime matrix, remote-compute evidence, and support bundle outputs.
+The Demo Manifest is not a production release claim; it is a compact, safe index of the current CPU-only runtime matrix, remote-compute evidence, external LLM evidence, and support bundle outputs.
 
 ## Troubleshooting
 

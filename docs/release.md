@@ -18,6 +18,14 @@ python3 scripts/doctor.py --json
 python3 scripts/security_preflight.py --json
 ```
 
+Build the maintainer readiness report before running longer acceptance:
+
+```bash
+crowdtensor release-ready --json
+```
+
+The command emits `release_readiness_v1` by wrapping `scripts/release_readiness_pack.py`. It combines Git metadata, the release gate, security preflight, and `demo_manifest_v1`, then blocks on diagnosis such as `git_dirty`, `release_gate_failed`, or `demo_manifest_failed`. Dirty worktrees block by default; `scripts/release_readiness_check.py --allow-dirty` is reserved for CI/development smoke validation and does not mean a dirty tree is tag-ready. The report is not production Swarm Inference readiness; it is an Alpha repository release gate for maintainers.
+
 ## Verification
 
 Run compile and unit checks:
@@ -80,7 +88,7 @@ python3 scripts/demo_manifest_pack.py \
   --request-count 4
 ```
 
-The `demo_manifest_v1` JSON/Markdown indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries without expanding the project scope beyond the CPU-only local-loopback demo.
+The `demo_manifest_v1` JSON/Markdown indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `external_llm_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries without expanding the project scope beyond the CPU-only local-loopback demo. The external LLM evidence section uses deterministic mock evidence by default and does not claim public prompt serving.
 
 ## Publish
 

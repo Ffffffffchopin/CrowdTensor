@@ -43,6 +43,7 @@ DEFAULT_CHECK_NAMES = [
     "inference_session_client",
     "external_llm_inference",
     "external_llm_http_adapter",
+    "external_llm_evidence",
     "admin_inference_session",
 ]
 
@@ -73,6 +74,7 @@ DEFAULT_PORTS = [
     9049,
     9042,
     9043,
+    9052,
     9048,
 ]
 
@@ -92,6 +94,7 @@ TOKEN_AWARE_NAMES = {
     "inference_session_demo",
     "external_llm_inference",
     "external_llm_http_adapter",
+    "external_llm_evidence",
 }
 
 
@@ -129,6 +132,7 @@ def acceptance_args(**overrides):
         "skip_admin_inference_session": False,
         "skip_external_llm_inference": False,
         "skip_external_llm_http_adapter": False,
+        "skip_external_llm_evidence": False,
         "skip_result_idempotency": False,
         "skip_result_ledger": False,
         "skip_miner_resilience": False,
@@ -213,6 +217,27 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
         self.assertEqual(summary["diagnosis_codes"], ["home_compute_ready"])
         self.assertNotIn("token", summary)
         self.assertNotIn("weights", summary)
+
+    def test_parse_summary_json_keeps_external_llm_safe_fields(self) -> None:
+        summary = runtime_acceptance_pack.parse_summary_json(
+            'setup line\n{"ok": true, "schema": "external_llm_evidence_v1", '
+            '"route": "local_external_llm_infer", "adapter_kind": "mock", '
+            '"request_count": 3, "completion_count": 3, "output_chars": 128, '
+            '"diagnosis_codes": ["external_llm_evidence_ready"], '
+            '"output_text": "raw", "llm_runtime_api_key": "secret"}\n'
+        )
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["schema"], "external_llm_evidence_v1")
+        self.assertEqual(summary["route"], "local_external_llm_infer")
+        self.assertEqual(summary["adapter_kind"], "mock")
+        self.assertEqual(summary["request_count"], 3)
+        self.assertEqual(summary["completion_count"], 3)
+        self.assertEqual(summary["output_chars"], 128)
+        self.assertEqual(summary["diagnosis_codes"], ["external_llm_evidence_ready"])
+        self.assertNotIn("output_text", summary)
+        self.assertNotIn("llm_runtime_api_key", summary)
 
     def test_parse_summary_json_ignores_non_json_stdout(self) -> None:
         self.assertIsNone(runtime_acceptance_pack.parse_summary_json("plain success\n"))
@@ -499,6 +524,22 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
         self.assertNotIn("external_llm_http_adapter", [check["name"] for check in skipped])
+
+    def test_external_llm_evidence_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        evidence = next(check for check in checks if check["name"] == "external_llm_evidence")
+        self.assertEqual(evidence["port"], 9052)
+        self.assertIn("external_llm_evidence_check.py", evidence["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_external_llm_evidence=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("external_llm_evidence", [check["name"] for check in skipped])
 
     def test_result_idempotency_check_is_default_and_skippable(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
@@ -891,6 +932,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
                 "inference_session_client",
                 "external_llm_inference",
                 "external_llm_http_adapter",
+                "external_llm_evidence",
                 "admin_inference_session",
                 "runtime_contract",
                 "browser_miner",

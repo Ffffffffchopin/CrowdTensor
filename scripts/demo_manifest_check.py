@@ -20,6 +20,8 @@ SECRET_FRAGMENTS = (
     "lease_token",
     "idempotency_key",
     "inference_results",
+    "external_llm_results",
+    "output_text",
     "Bearer ",
 )
 
@@ -30,9 +32,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-port", type=int, default=8914)
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--external-llm-request-count", type=int, default=3)
+    parser.add_argument("--skip-external-llm-evidence", action="store_true")
     args = parser.parse_args()
     if args.request_count < 1:
         raise SystemExit("--request-count must be at least 1")
+    if args.external_llm_request_count < 1:
+        raise SystemExit("--external-llm-request-count must be at least 1")
     return args
 
 
@@ -70,7 +76,11 @@ def main() -> None:
             str(args.base_port),
             "--request-count",
             str(args.request_count),
+            "--external-llm-request-count",
+            str(args.external_llm_request_count),
         ]
+        if args.skip_external_llm_evidence:
+            command.append("--skip-external-llm-evidence")
         completed = subprocess.run(
             command,
             cwd=ROOT,
@@ -104,6 +114,8 @@ def main() -> None:
             "support_bundle_markdown",
             "demo_manifest_markdown",
         ]
+        if not args.skip_external_llm_evidence:
+            required.extend(["external_llm_evidence_json", "external_llm_evidence_markdown"])
         for name in required:
             artifact = artifacts.get(name) or {}
             relative = Path(str(artifact.get("path") or ""))
@@ -117,10 +129,15 @@ def main() -> None:
         summaries = manifest.get("summaries") or {}
         runtime = summaries.get("runtime_matrix") or {}
         remote = summaries.get("remote_compute_evidence") or {}
+        external = summaries.get("external_llm_evidence") or {}
         support = summaries.get("support_bundle") or {}
         route = remote.get("route") or {}
         inference = remote.get("inference") or {}
         observability = remote.get("observability") or {}
+        external_route = external.get("route") or {}
+        external_adapter = external.get("adapter") or {}
+        external_inference = external.get("inference") or {}
+        external_safety = external.get("safety") or {}
         remote_report = support.get("remote_report") or {}
         if runtime.get("ok") is not True:
             raise SystemExit(f"runtime matrix summary is not ok: {runtime}")
@@ -136,6 +153,26 @@ def main() -> None:
             raise SystemExit(f"support bundle summary is invalid: {support}")
         if not remote_report.get("observability_summaries"):
             raise SystemExit(f"support bundle did not preserve remote observability: {support}")
+        if args.skip_external_llm_evidence:
+            if external.get("skipped") is not True:
+                raise SystemExit(f"external LLM evidence skip summary is invalid: {external}")
+        else:
+            if external.get("ok") is not True or external.get("schema") != "external_llm_evidence_v1":
+                raise SystemExit(f"external LLM evidence summary is invalid: {external}")
+            if external_route.get("name") != "local_external_llm_infer":
+                raise SystemExit(f"external LLM route is invalid: {external_route}")
+            if external_adapter.get("kind") != "mock":
+                raise SystemExit(f"external LLM adapter is invalid: {external_adapter}")
+            if int(external_inference.get("request_count") or 0) != args.external_llm_request_count:
+                raise SystemExit(f"external LLM request count mismatch: {external_inference}")
+            if int(external_inference.get("completion_count") or 0) != args.external_llm_request_count:
+                raise SystemExit(f"external LLM completion count mismatch: {external_inference}")
+            if int(external_inference.get("output_chars") or 0) <= 0:
+                raise SystemExit(f"external LLM output summary is invalid: {external_inference}")
+            if "external_llm_evidence_ready" not in (external.get("diagnosis_codes") or []):
+                raise SystemExit(f"external LLM diagnosis is invalid: {external}")
+            if external_safety.get("read_only") is not True or external_safety.get("redaction_ok") is not True:
+                raise SystemExit(f"external LLM safety summary is invalid: {external_safety}")
 
         encoded = json.dumps(manifest, sort_keys=True)
         for fragment in SECRET_FRAGMENTS:
@@ -150,6 +187,8 @@ def main() -> None:
             "request_count": inference.get("request_count"),
             "requests_per_second": inference.get("requests_per_second"),
             "observability_schema": observability.get("schema"),
+            "external_llm_schema": external.get("schema"),
+            "external_llm_adapter": external_adapter.get("kind"),
             "artifact_count": len(artifacts),
         }, sort_keys=True))
     finally:

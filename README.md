@@ -41,6 +41,14 @@ Run the First-run Doctor before starting services:
 python3 scripts/doctor.py --json
 ```
 
+For maintainer release readiness before pushing or tagging:
+
+```bash
+crowdtensor release-ready --json
+```
+
+The `crowdtensor/cli.py` entrypoint wraps `scripts/release_readiness_pack.py` and emits `release_readiness_v1` under `dist/release-readiness`. It checks Git metadata, the release gate, security preflight, and `demo_manifest_v1`, then reports blocker diagnosis such as `git_dirty`, `release_gate_failed`, or `demo_manifest_failed`. Dirty worktrees block by default; use `--allow-dirty` only for development smoke checks such as `scripts/release_readiness_check.py --allow-dirty`. This is not production readiness for Swarm Inference; it is an Alpha maintainer gate for the current CPU-only public repository state.
+
 For the shortest one-command local proof, run:
 
 ```bash
@@ -56,6 +64,14 @@ crowdtensor home-infer --scenario-id route-baseline --json
 ```
 
 The `crowdtensor/cli.py` wrapper emits `home_inference_cli_v1` and writes `home_compute_evidence_v1` JSON/Markdown under `dist/home-infer`. It runs the CPU-only `model_bundle_infer` path, summarizes the selected route, fixed `model_bundle_inference_scenario_v1` scenario, safe `request_trace`, `diagnosis_codes`, read-only/redaction status, and artifact paths. Built-in scenarios include `route-baseline`, `gradient-safety`, and `mixed-prompts`; this is not production Swarm Inference, arbitrary prompt serving, or real LLM serving.
+
+To produce a safe proof that CrowdTensor can route fixed prompt work to an operator-owned local LLM runtime:
+
+```bash
+crowdtensor llm-infer --mock --json
+```
+
+The `llm_inference_cli_v1` wrapper writes `external_llm_evidence_v1` JSON/Markdown under `dist/llm-infer`. It uses the read-only `external_llm_infer` contract with deterministic mock by default, or an explicit `--llm-runtime-cmd` / `--llm-runtime-url` runtime when the operator provides one. Reports include adapter kind, model id, request/completion count, output chars, throughput, and `external_llm_evidence_ready` without exposing raw prompts, `output_text`, runtime URL, API key, lease token, or idempotency material. This is fixed-prompt local runtime evidence, not public arbitrary prompt serving.
 
 Inspect generated caches and temporary artifacts before deleting them:
 
@@ -131,7 +147,7 @@ python3 scripts/demo_manifest_pack.py \
   --request-count 4
 ```
 
-The `demo_manifest_v1` artifact indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries in one safe JSON/Markdown pair. It is the recommended handoff artifact for showing what this checkout can run today. CI validates the path with `scripts/demo_manifest_check.py`.
+The `demo_manifest_v1` artifact indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `external_llm_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries in one safe JSON/Markdown pair. It is the recommended handoff artifact for showing what this checkout can run today. The external LLM entry uses deterministic mock evidence by default and does not expose raw prompts, `output_text`, runtime URL, or API key. CI validates the path with `scripts/demo_manifest_check.py`.
 
 Build a safe two-machine remote demo runbook:
 
@@ -437,6 +453,19 @@ python3 scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 89
 ```
 
 The `external_llm_infer` workload uses the `external_llm_infer_v1` schema. It is read-only and validates `external_llm_results` against claim-time prompt hashes before recording safe `request_count`, `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries. The smoke path uses `crowdtensor-miner --enable-mock-llm-runtime` for deterministic CI. Operators can opt into a local command adapter with `--llm-runtime-cmd` or `CROWDTENSOR_LLM_RUNTIME_CMD`; the command receives `prompt` and `max_tokens` arguments. Operators can also opt into an OpenAI-compatible chat completions endpoint with `--llm-runtime-url` or `CROWDTENSOR_LLM_RUNTIME_URL`, plus optional `--llm-runtime-api-key` / `CROWDTENSOR_LLM_RUNTIME_API_KEY`. Runtime URLs and API keys are never advertised in Miner capabilities. Raw prompts and `output_text` are kept out of `/state` and admin ledger summaries.
+
+Build a safe external LLM evidence artifact:
+
+```bash
+python3 scripts/external_llm_evidence_pack.py \
+  --mock \
+  --port 8919 \
+  --request-count 3 \
+  --json-out /tmp/crowdtensor_external_llm_evidence.json \
+  --markdown-out /tmp/crowdtensor_external_llm_evidence.md
+```
+
+Validate the default mock path with `scripts/external_llm_evidence_check.py`; runtime acceptance includes it by default and can skip it with `--skip-external-llm-evidence`.
 
 Run only the remote Miner invite/join smoke:
 

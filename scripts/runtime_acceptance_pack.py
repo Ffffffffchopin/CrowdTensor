@@ -23,6 +23,7 @@ TOKEN_ENV_SCRIPTS = {
     "capability_ledger_check.py",
     "chaos_runner.py",
     "external_llm_http_adapter_smoke.py",
+    "external_llm_evidence_check.py",
     "external_llm_inference_smoke.py",
     "home_compute_demo_check.py",
     "home_compute_evidence_check.py",
@@ -59,7 +60,10 @@ def safe_summary_json(payload: dict[str, Any]) -> dict[str, Any]:
         "route_confidence",
         "workload",
         "workload_type",
+        "adapter_kind",
         "request_count",
+        "completion_count",
+        "output_chars",
         "request_trace_count",
         "requests_per_second",
         "execution_mode",
@@ -275,6 +279,7 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         ("inference_session_client", "inference_session_client_check.py", args.base_port + 39, args.skip_inference_session_client),
         ("external_llm_inference", "external_llm_inference_smoke.py", args.base_port + 32, args.skip_external_llm_inference),
         ("external_llm_http_adapter", "external_llm_http_adapter_smoke.py", args.base_port + 33, args.skip_external_llm_http_adapter),
+        ("external_llm_evidence", "external_llm_evidence_check.py", args.base_port + 42, args.skip_external_llm_evidence),
         ("admin_inference_session", "admin_inference_session_check.py", args.base_port + 38, args.skip_admin_inference_session),
     ]
     if args.include_remote_miner:
@@ -427,7 +432,7 @@ def run_check(check: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any
         codes = diagnosis_codes_from_summary(summary_json)
         if codes:
             result["diagnosis_codes"] = codes
-        for key in ["route", "schema", "workload", "request_count"]:
+        for key in ["route", "schema", "workload", "request_count", "adapter_kind", "completion_count", "output_chars"]:
             if key in summary_json:
                 result[key] = summary_json[key]
     if completed.returncode == 0:
@@ -491,6 +496,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-admin-inference-session", action="store_true")
     parser.add_argument("--skip-external-llm-inference", action="store_true")
     parser.add_argument("--skip-external-llm-http-adapter", action="store_true")
+    parser.add_argument("--skip-external-llm-evidence", action="store_true")
     parser.add_argument("--skip-result-idempotency", action="store_true")
     parser.add_argument("--skip-result-ledger", action="store_true")
     parser.add_argument("--skip-miner-resilience", action="store_true")
