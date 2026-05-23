@@ -68,7 +68,7 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path, registry_path: 
         "--backlog",
         "0",
         "--task-lane",
-        "python-cli:cpu:1:model_bundle_infer",
+        "python-cli:cpu:0:model_bundle_infer",
         "--miner-token-registry",
         str(registry_path),
         "--observer-token",
@@ -94,10 +94,12 @@ def stop_process(proc: subprocess.Popen | None) -> None:
         proc.wait(timeout=5)
 
 
-def run_invited_miner(args: argparse.Namespace, invite: dict) -> None:
+def start_invited_miner(args: argparse.Namespace, invite: dict, log_dir: Path) -> subprocess.Popen:
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
     env["CROWDTENSOR_MINER_TOKEN"] = invite["env"]["CROWDTENSOR_MINER_TOKEN"]
+    stdout = (log_dir / "miner_stdout.log").open("w", encoding="utf-8")
+    stderr = (log_dir / "miner_stderr.log").open("w", encoding="utf-8")
     command = [
         sys.executable,
         str(ROOT / "miner_cli.py"),
@@ -105,7 +107,10 @@ def run_invited_miner(args: argparse.Namespace, invite: dict) -> None:
         args.base_url,
         "--miner-id",
         invite["miner_id"],
-        "--once",
+        "--max-tasks",
+        "1",
+        "--max-runtime-seconds",
+        str(args.acceptance_timeout),
         "--compute-seconds",
         "0.2",
         "--heartbeat-interval",
@@ -113,13 +118,25 @@ def run_invited_miner(args: argparse.Namespace, invite: dict) -> None:
         "--idle-sleep",
         "0.2",
     ]
-    completed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=args.miner_timeout)
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "invited miner failed\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )
+    proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=stdout, stderr=stderr)
+    proc._crowdtensor_stdout = stdout  # type: ignore[attr-defined]
+    proc._crowdtensor_stderr = stderr  # type: ignore[attr-defined]
+    return proc
+
+
+def close_process_logs(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    for name in ("_crowdtensor_stdout", "_crowdtensor_stderr"):
+        handle = getattr(proc, name, None)
+        if handle is not None and not handle.closed:
+            handle.close()
+
+
+def tail_text(path: Path, limit: int = 2000) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
 def run_acceptance(args: argparse.Namespace, output_dir: Path) -> dict:
@@ -136,12 +153,15 @@ def run_acceptance(args: argparse.Namespace, output_dir: Path) -> dict:
         ADMIN_TOKEN,
         "--request-count",
         str(args.request_count),
+        "--scenario-id",
+        args.scenario_id,
         "--timeout-seconds",
         "20",
         "--poll-interval",
         "0.2",
         "--output-dir",
         str(output_dir),
+        "--create-session",
     ]
     completed = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=args.acceptance_timeout)
     if completed.returncode != 0:
@@ -161,6 +181,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8913)
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default="route-baseline")
     parser.add_argument("--startup-timeout", type=float, default=10.0)
     parser.add_argument("--miner-timeout", type=float, default=30.0)
     parser.add_argument("--acceptance-timeout", type=float, default=90.0)
@@ -174,9 +195,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="crowdtensor_remote_acceptance_") as temp:
         state_dir = Path(temp) / "state"
         output_dir = Path(temp) / "acceptance"
+        log_dir = Path(temp) / "logs"
         registry_path = state_dir / "miner_registry.json"
         state_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
         coordinator = None
+        miner = None
         try:
             invite = create_invite(
                 registry_path=registry_path,
@@ -187,10 +211,44 @@ def main() -> None:
                 replace=True,
             )
             coordinator = start_coordinator(args, state_dir, registry_path)
-            run_invited_miner(args, invite)
-            report = run_acceptance(args, output_dir)
+            miner = start_invited_miner(args, invite, log_dir)
+            try:
+                report = run_acceptance(args, output_dir)
+            except Exception as exc:
+                stop_process(miner)
+                close_process_logs(miner)
+                raise RuntimeError(
+                    f"{exc}\n"
+                    f"miner stdout tail:\n{tail_text(log_dir / 'miner_stdout.log')}\n"
+                    f"miner stderr tail:\n{tail_text(log_dir / 'miner_stderr.log')}"
+                ) from exc
+            try:
+                miner.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            close_process_logs(miner)
             if report.get("schema") != "remote_demo_acceptance_v1" or not report.get("ok"):
                 raise SystemExit(f"unexpected acceptance report: {json.dumps(report, sort_keys=True)}")
+            session = report.get("session_request") or {}
+            if not session.get("created") or session.get("schema") != "inference_session_request_v1":
+                raise SystemExit(f"acceptance did not create an admin inference session: {session}")
+            observed_queue = (report.get("observability_summary") or {}).get("work_queue") or {}
+            if observed_queue.get("task_id") != session.get("task_id"):
+                raise SystemExit(f"acceptance did not complete the created task: {observed_queue} session={session}")
+            observability = report.get("observability_summary") or {}
+            if observability.get("schema") != "remote_demo_observability_v1":
+                raise SystemExit(f"missing remote demo observability summary: {observability}")
+            availability = observability.get("availability") or {}
+            observed_inference = observability.get("inference") or {}
+            observed_artifacts = observability.get("artifacts") or {}
+            if not availability.get("health_ok") or not availability.get("state_ok"):
+                raise SystemExit(f"acceptance observability did not capture healthy endpoints: {availability}")
+            if int(observed_inference.get("request_count", 0)) != args.request_count:
+                raise SystemExit(f"acceptance observability request count mismatch: {observed_inference}")
+            if observed_inference.get("scenario_id") != args.scenario_id or observed_inference.get("scenario_matches") is not True:
+                raise SystemExit(f"acceptance observability scenario mismatch: {observed_inference}")
+            if float(observed_inference.get("requests_per_second", 0.0)) <= 0.0:
+                raise SystemExit(f"acceptance observability throughput is invalid: {observed_inference}")
             evidence_path = output_dir / "remote_compute_evidence.json"
             support_path = output_dir / "support_bundle.json"
             if not evidence_path.is_file() or not support_path.is_file():
@@ -199,6 +257,14 @@ def main() -> None:
             support = json.loads(support_path.read_text(encoding="utf-8"))
             if evidence.get("schema") != "remote_compute_evidence_v1" or not evidence.get("ok"):
                 raise SystemExit(f"unexpected evidence artifact: {json.dumps(evidence, sort_keys=True)}")
+            evidence_summary = evidence.get("inference_summary") or {}
+            if evidence_summary.get("scenario_id") != args.scenario_id or evidence_summary.get("scenario_matches") is not True:
+                raise SystemExit(f"unexpected evidence scenario: {evidence_summary}")
+            evidence_observability = evidence.get("observability_summary") or {}
+            if evidence_observability.get("schema") != "remote_compute_observability_v1":
+                raise SystemExit(f"unexpected evidence observability: {evidence_observability}")
+            if observed_artifacts.get("evidence_observability_schema") != "remote_compute_observability_v1":
+                raise SystemExit(f"acceptance did not summarize evidence observability: {observed_artifacts}")
             if not (support.get("online") or {}).get("enabled"):
                 raise SystemExit(f"support bundle did not collect online data: {json.dumps(support, sort_keys=True)}")
             encoded = json.dumps(report, sort_keys=True) + evidence_path.read_text(encoding="utf-8")
@@ -210,10 +276,16 @@ def main() -> None:
                 "schema": report["schema"],
                 "miner_id": report.get("miner_id"),
                 "route": report.get("route"),
+                "scenario_id": (report.get("scenario") or {}).get("scenario_id"),
+                "task_id": session.get("task_id"),
+                "observability_schema": observability.get("schema"),
                 "evidence_schema": evidence.get("schema"),
+                "evidence_observability_schema": evidence_observability.get("schema"),
                 "support_online": (support.get("online") or {}).get("enabled"),
             }, sort_keys=True))
         finally:
+            stop_process(miner)
+            close_process_logs(miner)
             stop_process(coordinator)
 
 

@@ -155,6 +155,115 @@ def summarize_diagnosis(report: dict[str, Any]) -> dict[str, Any]:
     return {"codes": sorted(set(codes)), "by_check": by_check, "failed_checks": failed}
 
 
+def safe_observability_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    schema = summary.get("schema")
+    if schema == "remote_compute_observability_v1":
+        route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
+        miner = summary.get("miner") if isinstance(summary.get("miner"), dict) else {}
+        work_queue = summary.get("work_queue") if isinstance(summary.get("work_queue"), dict) else {}
+        inference = summary.get("inference") if isinstance(summary.get("inference"), dict) else {}
+        safety = summary.get("safety") if isinstance(summary.get("safety"), dict) else {}
+        return {
+            "schema": schema,
+            "route": {
+                "name": route.get("name"),
+                "confidence": route.get("confidence"),
+                "usable_now": route.get("usable_now"),
+                "matched_capabilities": list(route.get("matched_capabilities") or []),
+                "missing_capabilities": list(route.get("missing_capabilities") or []),
+            },
+            "miner": {
+                "runtime": miner.get("runtime"),
+                "backend": miner.get("backend"),
+                "accepted": miner.get("accepted"),
+                "rejected": miner.get("rejected"),
+            },
+            "work_queue": {
+                "task_counts": work_queue.get("task_counts", {}),
+                "accepted_results": work_queue.get("accepted_results"),
+                "rejected_results": work_queue.get("rejected_results"),
+                "ledger_rows": work_queue.get("ledger_rows"),
+            },
+            "inference": {
+                "ok": inference.get("ok"),
+                "request_count": inference.get("request_count"),
+                "expected_request_count": inference.get("expected_request_count"),
+                "request_trace_count": inference.get("request_trace_count"),
+                "accuracy": inference.get("accuracy"),
+                "elapsed_ms": inference.get("elapsed_ms"),
+                "requests_per_second": inference.get("requests_per_second"),
+            },
+            "safety": {
+                "read_only": safety.get("read_only"),
+                "redaction_ok": safety.get("redaction_ok"),
+                "registry_hashed": safety.get("registry_hashed"),
+                "raw_payloads_exposed": safety.get("raw_payloads_exposed"),
+            },
+        }
+    if schema == "remote_demo_observability_v1":
+        availability = summary.get("availability") if isinstance(summary.get("availability"), dict) else {}
+        work_queue = summary.get("work_queue") if isinstance(summary.get("work_queue"), dict) else {}
+        miner = summary.get("miner") if isinstance(summary.get("miner"), dict) else {}
+        inference = summary.get("inference") if isinstance(summary.get("inference"), dict) else {}
+        artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+        return {
+            "schema": schema,
+            "route": summary.get("route"),
+            "miner_id": summary.get("miner_id"),
+            "availability": {
+                "health_ok": availability.get("health_ok"),
+                "ready_ok": availability.get("ready_ok"),
+                "state_ok": availability.get("state_ok"),
+                "admin_results_ok": availability.get("admin_results_ok"),
+                "acceptance_ready": availability.get("acceptance_ready"),
+                "attempts": availability.get("attempts"),
+                "elapsed_seconds": availability.get("elapsed_seconds"),
+            },
+            "work_queue": {
+                "task_counts": work_queue.get("task_counts", {}),
+                "accepted_results": work_queue.get("accepted_results"),
+                "task_id": work_queue.get("task_id"),
+            },
+            "miner": {
+                "runtime": miner.get("runtime"),
+                "backend": miner.get("backend"),
+                "accepted": miner.get("accepted"),
+                "rejected": miner.get("rejected"),
+                "supported_workloads": list(miner.get("supported_workloads") or []),
+            },
+            "inference": {
+                "ok": inference.get("ok"),
+                "request_count": inference.get("request_count"),
+                "request_trace_count": inference.get("request_trace_count"),
+                "accuracy": inference.get("accuracy"),
+                "requests_per_second": inference.get("requests_per_second"),
+            },
+            "artifacts": {
+                "evidence_ok": artifacts.get("evidence_ok"),
+                "support_bundle_ok": artifacts.get("support_bundle_ok"),
+                "evidence_observability_schema": artifacts.get("evidence_observability_schema"),
+                "support_online_enabled": artifacts.get("support_online_enabled"),
+            },
+            "diagnosis_codes": list(summary.get("diagnosis_codes") or []),
+        }
+    return {}
+
+
+def summarize_observability(report: dict[str, Any]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    summary = report.get("observability_summary") if isinstance(report, dict) else {}
+    if isinstance(summary, dict):
+        safe = safe_observability_summary(summary)
+        if safe:
+            summaries.append(safe)
+    nested_reports = report.get("reports") if isinstance(report, dict) else {}
+    if isinstance(nested_reports, dict):
+        for nested_report in nested_reports.values():
+            if isinstance(nested_report, dict):
+                summaries.extend(summarize_observability(nested_report))
+    return summaries
+
+
 def load_acceptance_report(path: str, *, name: str, required: bool) -> dict[str, Any]:
     if not path:
         return {
@@ -197,6 +306,7 @@ def load_acceptance_report(path: str, *, name: str, required: bool) -> dict[str,
         }
     summary = summarize_checks(payload)
     diagnosis = summarize_diagnosis(payload)
+    observability = summarize_observability(payload)
     return {
         "name": name,
         "path": str(report_path),
@@ -213,6 +323,7 @@ def load_acceptance_report(path: str, *, name: str, required: bool) -> dict[str,
         "diagnosis_codes": diagnosis["codes"],
         "diagnosis_by_check": diagnosis["by_check"],
         "failed_checks": diagnosis["failed_checks"],
+        "observability_summaries": observability,
     }
 
 
@@ -349,6 +460,15 @@ def render_markdown(payload: dict[str, Any]) -> str:
         diagnosis_codes = report.get("diagnosis_codes") or []
         if diagnosis_codes:
             lines.append(f"  - diagnosis: `{', '.join(diagnosis_codes)}`")
+        for observed in report.get("observability_summaries") or []:
+            inference = observed.get("inference") or {}
+            availability = observed.get("availability") or {}
+            route = observed.get("route") or {}
+            route_name = route.get("name") if isinstance(route, dict) else route
+            detail = f"requests={inference.get('request_count')}, rps={inference.get('requests_per_second')}"
+            if availability:
+                detail += f", health={availability.get('health_ok')}, state={availability.get('state_ok')}"
+            lines.append(f"  - observability `{observed.get('schema')}` route=`{route_name}` {detail}")
     if status["blocking_reasons"]:
         lines.extend(["", "## Blocking Reasons", ""])
         lines.extend([f"- {reason}" for reason in status["blocking_reasons"]])

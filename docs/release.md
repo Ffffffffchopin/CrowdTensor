@@ -56,7 +56,7 @@ python3 scripts/release_evidence_pack.py \
   --markdown-out dist/release-evidence.md
 ```
 
-The release evidence JSON preserves safe runtime acceptance `summary_json` rows and aggregates `diagnosis_summary` / `diagnosis_by_check` so reviewers can see stable operator triage codes beside the pass/fail state.
+The release evidence JSON preserves safe runtime acceptance `summary_json` rows, aggregates `diagnosis_summary` / `diagnosis_by_check`, and carries remote `observability_summaries` such as `remote_compute_observability_v1` and `remote_demo_observability_v1` so reviewers can see stable operator triage and remote-demo observability beside the pass/fail state.
 
 Generate a Support Bundle for troubleshooting the candidate:
 
@@ -69,7 +69,18 @@ python3 scripts/support_bundle.py \
   --markdown-out /tmp/crowdtensor_support_bundle.md
 ```
 
-The Support Bundle includes acceptance `diagnosis_summary` / `diagnosis_by_check` when reports are provided, while still redacting token, lease, idempotency, weight, and delta-shaped fields.
+The Support Bundle includes acceptance `diagnosis_summary` / `diagnosis_by_check` and safe remote `observability_summaries` when reports are provided, while still redacting token, lease, idempotency, weight, and delta-shaped fields.
+
+Generate a local-loopback Demo Manifest when reviewers need one latest output artifact for this checkout:
+
+```bash
+python3 scripts/demo_manifest_pack.py \
+  --output-dir dist/demo-manifest \
+  --port 8914 \
+  --request-count 4
+```
+
+The `demo_manifest_v1` JSON/Markdown indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries without expanding the project scope beyond the CPU-only local-loopback demo.
 
 ## Publish
 

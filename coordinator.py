@@ -16,6 +16,7 @@ from crowdtensor.protocol import (
     LeaseConflict,
     NoTaskAvailable,
     ResultRejected,
+    WORKLOAD_MODEL_BUNDLE_INFER,
 )
 from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_SIGN_COMPRESSED_EF,
@@ -351,6 +352,12 @@ def create_app(
         mode: str = Field(min_length=1)
         reason: str = ""
 
+    class InferenceSessionRequest(BaseModel):
+        request_count: int = Field(default=4, ge=1, le=8)
+        scenario_id: str = ""
+        runtime: str = "python-cli"
+        backend: str = "cpu"
+
     def require_admin(token: str | None) -> None:
         if not configured_admin_token:
             raise HTTPException(status_code=403, detail="admin token is not configured")
@@ -490,6 +497,7 @@ def create_app(
         status: str = Query(default="any"),
         miner_id: str = Query(default=""),
         workload_type: str = Query(default=""),
+        task_id: str = Query(default=""),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
         require_admin(x_crowdtensor_admin_token)
@@ -500,14 +508,39 @@ def create_app(
                     status=status,
                     miner_id=miner_id,
                     workload_type=workload_type,
+                    task_id=task_id,
                 ),
                 "limit": min(500, max(0, int(limit))),
                 "status": status,
                 "miner_id": miner_id,
                 "workload_type": workload_type,
+                "task_id": task_id,
             }
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/admin/inference-sessions")
+    def admin_inference_sessions(
+        request: InferenceSessionRequest,
+        x_crowdtensor_admin_token: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(x_crowdtensor_admin_token)
+        try:
+            session = store.create_readonly_inference_task(
+                request_count=request.request_count,
+                scenario_id=request.scenario_id,
+                required_runtime=request.runtime,
+                required_backend=request.backend,
+                required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            **session,
+            "workload_type": WORKLOAD_MODEL_BUNDLE_INFER,
+            "result_query": f"/admin/results?task_id={session['task_id']}&workload_type={WORKLOAD_MODEL_BUNDLE_INFER}",
+            "claim_requirements": session["task_requirements"],
+        }
 
     @app.post("/admin/trust-overrides")
     def admin_trust_overrides(

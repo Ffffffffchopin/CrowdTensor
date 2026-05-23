@@ -37,6 +37,7 @@ browser = [
 ]
 
 [project.scripts]
+crowdtensor = "crowdtensor.cli:main"
 crowdtensord = "coordinator:main"
 crowdtensor-miner = "miner_cli:main"
 

@@ -198,6 +198,7 @@ def observed_summary(
             "ok": (session_report or {}).get("ok"),
             "request_count": (session_report or {}).get("request_count"),
             "request_trace_count": (session_report or {}).get("request_trace_count"),
+            "scenario_id": (session_report or {}).get("scenario_id"),
         },
         "expected_request_count": expected_request_count,
         "safety": safety,
@@ -391,6 +392,12 @@ def build_home_compute_report(
             "reason": selected.get("reason"),
             "cpu_only": bool(selected.get("cpu_only", True)),
         },
+        "scenario": {
+            "scenario_schema": (session_report or {}).get("scenario_schema"),
+            "scenario_id": (session_report or {}).get("scenario_id"),
+            "scenario_description": (session_report or {}).get("scenario_description"),
+            "scenario_request_count": (session_report or {}).get("scenario_request_count"),
+        },
         "runtime_matrix": {
             "ok": bool(matrix.get("ok")),
             "host_profile": {
@@ -462,6 +469,9 @@ def print_human_report(report: dict[str, Any]) -> None:
         f"machine={host.get('machine')} cpu_count={host.get('cpu_count')}"
     )
     print(f"  selected workload: {selected['name']} ({selected['status']})")
+    scenario = report.get("scenario") or {}
+    if scenario.get("scenario_id"):
+        print(f"  scenario: {scenario.get('scenario_id')} ({scenario.get('scenario_schema')})")
     print(
         "  capability route: "
         f"{route.get('name')} target={route.get('target')} "
@@ -522,6 +532,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--state-dir", default="")
     parser.add_argument("--lease-seconds", type=float, default=10.0)
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default="")
     parser.add_argument("--startup-timeout", type=float, default=10.0)
     parser.add_argument("--miner-timeout", type=float, default=30.0)
     parser.add_argument("--admin-token", default="local-admin")

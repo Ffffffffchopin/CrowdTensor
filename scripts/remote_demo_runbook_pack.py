@@ -21,6 +21,11 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 from crowdtensor.auth import hash_token  # noqa: E402
+from crowdtensor.model_bundle import (  # noqa: E402
+    DEFAULT_INFERENCE_SCENARIO_ID,
+    inference_scenario_summary,
+    normalize_inference_scenario_id,
+)
 from create_miner_invite import create_invite  # noqa: E402
 import support_bundle  # noqa: E402
 
@@ -107,6 +112,7 @@ def build_commands(args: argparse.Namespace, *, observer_hash: str, admin_hash: 
         f"--coordinator-url {coordinator_url} "
         f"--miner-id {args.miner_id} "
         f"--request-count {args.request_count} "
+        f"--scenario-id {args.scenario_id} "
         "--observer-token \"$CROWDTENSOR_OBSERVER_TOKEN\" "
         "--admin-token \"$CROWDTENSOR_ADMIN_TOKEN\" "
         "--json-out /tmp/crowdtensor_remote_evidence.json "
@@ -140,6 +146,7 @@ def build_runbook(
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     commands = build_commands(args, observer_hash=observer_hash, admin_hash=admin_hash)
+    scenario = inference_scenario_summary(args.scenario_id)
     payload = {
         "schema": RUNBOOK_SCHEMA,
         "generated_at": generated_at or utc_now(),
@@ -151,6 +158,10 @@ def build_runbook(
             "port": args.port,
             "workload_type": WORKLOAD_TYPE,
             "request_count": args.request_count,
+            "scenario_schema": scenario.get("scenario_schema"),
+            "scenario_id": scenario.get("scenario_id"),
+            "scenario_description": scenario.get("scenario_description"),
+            "scenario_request_count": scenario.get("scenario_request_count"),
             "route": "remote_python_model_bundle_infer",
         },
         "files": {
@@ -177,6 +188,7 @@ def build_runbook(
             "Start the Coordinator with the model_bundle_infer task lane.",
             "Start the remote Miner with the generated Miner command.",
             "After at least one accepted result, collect remote_compute_evidence_v1.",
+            f"Keep --scenario-id {args.scenario_id} consistent across acceptance and evidence collection.",
         ],
         "safety": {
             "public_artifact_redacted": True,
@@ -211,6 +223,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Workload: `{demo.get('workload_type', '')}`",
         f"- Route: `{demo.get('route', '')}`",
         f"- Request count: `{demo.get('request_count')}`",
+        f"- Scenario: `{demo.get('scenario_id')}`",
+        f"- Scenario schema: `{demo.get('scenario_schema')}`",
         "",
         "## Files",
         "",
@@ -292,6 +306,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--miner-id", default="remote-linux-1")
     parser.add_argument("--label", default="remote demo miner")
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default=DEFAULT_INFERENCE_SCENARIO_ID)
     parser.add_argument("--backlog", type=int, default=1)
     parser.add_argument("--max-tasks", type=int, default=1)
     parser.add_argument("--lease-seconds", type=float, default=15.0)
@@ -307,6 +322,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.request_count < 1:
         raise SystemExit("--request-count must be at least 1")
+    args.scenario_id = normalize_inference_scenario_id(args.scenario_id) or DEFAULT_INFERENCE_SCENARIO_ID
     if args.backlog < 1:
         raise SystemExit("--backlog must be at least 1")
     if args.max_tasks < 1:

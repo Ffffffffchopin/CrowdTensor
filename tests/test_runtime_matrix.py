@@ -40,13 +40,21 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertEqual(workload_by_name(matrix, "external_llm_infer_http")["status"], "optional_missing")
         self.assertEqual(target_by_name(matrix, "cpu_baseline")["status"], "available")
         self.assertTrue(target_by_name(matrix, "cpu_baseline")["usable_now"])
+        self.assertEqual(target_by_name(matrix, "cpu_baseline")["operator_action"], "run_now")
+        self.assertIn("cpu_baseline_ready", target_by_name(matrix, "cpu_baseline")["diagnosis_codes"])
+        self.assertIn("python_runtime", target_by_name(matrix, "cpu_baseline")["matched_capabilities"])
+        self.assertEqual(target_by_name(matrix, "cpu_baseline")["missing_capabilities"], [])
         self.assertFalse(target_by_name(matrix, "nvidia_cuda")["usable_now"])
+        self.assertEqual(target_by_name(matrix, "nvidia_cuda")["operator_action"], "configure_optional_runtime")
+        self.assertIn("nvidia_cuda_optional_missing", target_by_name(matrix, "nvidia_cuda")["diagnosis_codes"])
         self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["status"], "available")
         self.assertTrue(route_by_name(matrix, "local_cpu_model_bundle_infer")["usable_now"])
         self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["confidence"], "ready")
         self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["operator_action"], "run_now")
         self.assertIn("cpu_baseline_ready", route_by_name(matrix, "local_cpu_model_bundle_infer")["diagnosis_codes"])
         self.assertIn("cpu_baseline_ready", matrix["diagnosis_summary"]["codes"])
+        self.assertIn("cpu_baseline_ready", matrix["hardware_diagnosis_summary"]["codes"])
+        self.assertGreaterEqual(matrix["hardware_diagnosis_summary"]["status_counts"]["available"], 1)
         self.assertIn("python_runtime", route_by_name(matrix, "local_cpu_model_bundle_infer")["matched_capabilities"])
         self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["missing_capabilities"], [])
         self.assertNotIn("CROWDTENSOR_LLM_RUNTIME_API_KEY=", json.dumps(matrix, sort_keys=True))
@@ -63,6 +71,9 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertEqual(workload_by_name(matrix, "external_llm_infer_http")["status"], "configured")
         self.assertEqual(target_by_name(matrix, "external_llm_http")["status"], "configured")
         self.assertTrue(target_by_name(matrix, "external_llm_http")["usable_now"])
+        self.assertEqual(target_by_name(matrix, "external_llm_http")["operator_action"], "run_now")
+        self.assertIn("external_llm_http_configured", target_by_name(matrix, "external_llm_http")["diagnosis_codes"])
+        self.assertIn("http_runtime_url", target_by_name(matrix, "external_llm_http")["matched_capabilities"])
         self.assertEqual(route_by_name(matrix, "external_llm_http_adapter")["status"], "configured")
         self.assertTrue(route_by_name(matrix, "external_llm_http_adapter")["usable_now"])
         self.assertEqual(route_by_name(matrix, "external_llm_http_adapter")["confidence"], "configured")
@@ -83,6 +94,9 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertFalse(route_by_name(matrix, "local_cpu_model_bundle_infer")["usable_now"])
         self.assertEqual(route_by_name(matrix, "local_cpu_model_bundle_infer")["operator_action"], "fix_blocker")
         self.assertIn("cpu_baseline_blocked", route_by_name(matrix, "local_cpu_model_bundle_infer")["diagnosis_codes"])
+        self.assertEqual(target_by_name(matrix, "cpu_baseline")["operator_action"], "fix_blocker")
+        self.assertIn("cpu_baseline_blocked", target_by_name(matrix, "cpu_baseline")["diagnosis_codes"])
+        self.assertIn("python_runtime", target_by_name(matrix, "cpu_baseline")["missing_capabilities"])
 
     def test_hardware_targets_report_detected_future_paths(self) -> None:
         with patch.object(runtime_matrix, "executable_available", side_effect=lambda name: name in {"nvidia-smi", "rocminfo"}):
@@ -98,6 +112,16 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertEqual(target_by_name(matrix, "apple_metal")["status"], "detected")
         self.assertEqual(target_by_name(matrix, "remote_container")["status"], "detected")
         self.assertFalse(target_by_name(matrix, "nvidia_cuda")["usable_now"])
+        self.assertEqual(target_by_name(matrix, "nvidia_cuda")["operator_action"], "future_adapter")
+        self.assertIn("nvidia_cuda_detected_future_adapter", target_by_name(matrix, "nvidia_cuda")["diagnosis_codes"])
+        self.assertIn("nvidia_tooling", target_by_name(matrix, "nvidia_cuda")["matched_capabilities"])
+        self.assertIn("runtime_adapter_not_implemented", target_by_name(matrix, "nvidia_cuda")["missing_capabilities"])
+        self.assertEqual(target_by_name(matrix, "amd_rocm")["operator_action"], "future_adapter")
+        self.assertIn("amd_rocm_detected_future_adapter", target_by_name(matrix, "amd_rocm")["diagnosis_codes"])
+        self.assertEqual(target_by_name(matrix, "apple_metal")["operator_action"], "future_adapter")
+        self.assertIn("apple_metal_detected_future_adapter", target_by_name(matrix, "apple_metal")["diagnosis_codes"])
+        self.assertIn("remote_container_detected", target_by_name(matrix, "remote_container")["diagnosis_codes"])
+        self.assertIn("nvidia_cuda_detected_future_adapter", matrix["hardware_diagnosis_summary"]["codes"])
 
         route = route_by_name(matrix, "browser_probe")
         self.assertIn(route["confidence"], {"ready", "future"})
@@ -117,6 +141,9 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertEqual(route["status"], "blocked")
         self.assertEqual(route["operator_action"], "fix_blocker")
         self.assertIn("external_llm_command_missing", route["diagnosis_codes"])
+        self.assertEqual(target_by_name(matrix, "external_llm_command")["operator_action"], "fix_blocker")
+        self.assertIn("external_llm_command_missing", target_by_name(matrix, "external_llm_command")["diagnosis_codes"])
+        self.assertIn("command_runtime", target_by_name(matrix, "external_llm_command")["missing_capabilities"])
 
     def test_browser_missing_gets_stable_diagnosis(self) -> None:
         with patch.object(runtime_matrix, "module_available", side_effect=lambda name: False if name == "playwright" else True):
@@ -126,6 +153,9 @@ class RuntimeMatrixTests(unittest.TestCase):
 
         self.assertEqual(route["operator_action"], "configure_optional_runtime")
         self.assertIn("browser_runtime_missing", route["diagnosis_codes"])
+        self.assertEqual(target_by_name(matrix, "browser")["operator_action"], "configure_optional_runtime")
+        self.assertIn("browser_runtime_missing", target_by_name(matrix, "browser")["diagnosis_codes"])
+        self.assertIn("playwright", target_by_name(matrix, "browser")["missing_capabilities"])
 
     def test_cli_json_outputs_machine_readable_matrix(self) -> None:
         completed = subprocess.run(
@@ -142,6 +172,7 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertTrue(payload["ok"], payload)
         self.assertIn("recommended_next_commands", payload)
         self.assertIn("hardware_targets", payload)
+        self.assertIn("hardware_diagnosis_summary", payload)
         self.assertIn("recommended_routes", payload)
 
 

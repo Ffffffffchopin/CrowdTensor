@@ -16,6 +16,84 @@ runtime_acceptance_pack = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(runtime_acceptance_pack)
 
+DEFAULT_CHECK_NAMES = [
+    "readiness",
+    "runtime_matrix",
+    "home_compute_demo",
+    "home_compute_evidence",
+    "api_contract",
+    "chaos",
+    "trust_quarantine",
+    "replay_audit",
+    "operator_control",
+    "micro_transformer",
+    "model_bundle",
+    "result_idempotency",
+    "result_ledger",
+    "miner_resilience",
+    "miner_auth",
+    "observer_auth",
+    "miner_registry_auth",
+    "token_hash_auth",
+    "outer_optimizer",
+    "compressed_error_feedback",
+    "delta_transport_negotiation",
+    "model_bundle_inference",
+    "inference_session_demo",
+    "inference_session_client",
+    "external_llm_inference",
+    "external_llm_http_adapter",
+    "admin_inference_session",
+]
+
+DEFAULT_PORTS = [
+    9010,
+    9044,
+    9045,
+    9046,
+    9011,
+    9012,
+    9013,
+    9014,
+    9015,
+    9016,
+    9017,
+    9018,
+    9019,
+    9020,
+    9021,
+    9022,
+    9023,
+    9024,
+    9025,
+    9026,
+    9027,
+    9040,
+    9041,
+    9049,
+    9042,
+    9043,
+    9048,
+]
+
+TOKEN_AWARE_NAMES = {
+    "chaos",
+    "trust_quarantine",
+    "replay_audit",
+    "operator_control",
+    "micro_transformer",
+    "model_bundle",
+    "home_compute_demo",
+    "home_compute_evidence",
+    "remote_compute_evidence",
+    "multi_miner_scenario_sweep",
+    "multi_miner_requeue",
+    "model_bundle_inference",
+    "inference_session_demo",
+    "external_llm_inference",
+    "external_llm_http_adapter",
+}
+
 
 def acceptance_args(**overrides):
     values = {
@@ -29,6 +107,8 @@ def acceptance_args(**overrides):
         "include_micro_transformer": False,
         "include_remote_miner": False,
         "include_remote_evidence": False,
+        "include_multi_miner_sweep": False,
+        "include_multi_miner_requeue": False,
         "browser": "",
         "headful": False,
         "browser_timeout": 20.0,
@@ -45,6 +125,8 @@ def acceptance_args(**overrides):
         "skip_model_bundle": False,
         "skip_model_bundle_inference": False,
         "skip_inference_session_demo": False,
+        "skip_inference_session_client": False,
+        "skip_admin_inference_session": False,
         "skip_external_llm_inference": False,
         "skip_external_llm_http_adapter": False,
         "skip_result_idempotency": False,
@@ -59,6 +141,8 @@ def acceptance_args(**overrides):
         "skip_delta_transport_negotiation": False,
         "skip_remote_miner": False,
         "skip_remote_evidence": False,
+        "skip_multi_miner_sweep": False,
+        "skip_multi_miner_requeue": False,
         "skip_webrtc": False,
         "skip_runtime_contract": False,
         "skip_browser_miner": False,
@@ -181,8 +265,8 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         checks = runtime_acceptance_pack.selected_checks(args, Path("/tmp/crowdtensor_acceptance_test"))
 
-        self.assertEqual([check["name"] for check in checks], ["readiness", "runtime_matrix", "home_compute_demo", "home_compute_evidence", "api_contract", "chaos", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference", "external_llm_http_adapter"])
-        self.assertEqual([check["port"] for check in checks], [9010, 9044, 9045, 9046, 9011, 9012, 9014, 9015, 9016, 9017, 9018, 9019, 9020, 9021, 9022, 9023, 9024, 9025, 9026, 9027, 9040, 9041, 9042, 9043])
+        self.assertEqual([check["name"] for check in checks], [name for name in DEFAULT_CHECK_NAMES if name != "trust_quarantine"])
+        self.assertEqual([check["port"] for check in checks], [port for name, port in zip(DEFAULT_CHECK_NAMES, DEFAULT_PORTS) if name != "trust_quarantine"])
         operator = next(check for check in checks if check["name"] == "operator_control")
         self.assertIn("--admin-token", operator["command"])
         self.assertIn("admin-test", operator["command"])
@@ -195,10 +279,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        self.assertEqual(
-            [check["name"] for check in checks],
-            ["readiness", "runtime_matrix", "home_compute_demo", "home_compute_evidence", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference", "external_llm_http_adapter"],
-        )
+        self.assertEqual([check["name"] for check in checks], DEFAULT_CHECK_NAMES)
 
     def test_readiness_check_is_default_and_skippable(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
@@ -290,10 +371,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        self.assertEqual(
-            [check["name"] for check in checks],
-            ["readiness", "runtime_matrix", "home_compute_demo", "home_compute_evidence", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference", "external_llm_http_adapter"],
-        )
+        self.assertEqual([check["name"] for check in checks], DEFAULT_CHECK_NAMES)
         micro = next(check for check in checks if check["name"] == "micro_transformer")
         self.assertEqual(micro["port"], 9016)
         self.assertIn("micro_transformer_smoke.py", micro["command"][1])
@@ -304,10 +382,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        self.assertEqual(
-            [check["name"] for check in checks],
-            ["readiness", "runtime_matrix", "home_compute_demo", "home_compute_evidence", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference", "external_llm_http_adapter"],
-        )
+        self.assertEqual([check["name"] for check in checks], [name for name in DEFAULT_CHECK_NAMES if name != "micro_transformer"])
 
 
     def test_model_bundle_check_is_default_and_skippable(self) -> None:
@@ -358,6 +433,40 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
         self.assertNotIn("inference_session_demo", [check["name"] for check in skipped])
+
+    def test_inference_session_client_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        client = next(check for check in checks if check["name"] == "inference_session_client")
+        self.assertEqual(client["port"], 9049)
+        self.assertIn("inference_session_client_check.py", client["command"][1])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_inference_session_client=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("inference_session_client", [check["name"] for check in skipped])
+
+    def test_admin_inference_session_check_is_default_and_skippable(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        admin_session = next(check for check in checks if check["name"] == "admin_inference_session")
+        self.assertEqual(admin_session["port"], 9048)
+        self.assertIn("admin_inference_session_check.py", admin_session["command"][1])
+        self.assertIn("--admin-token", admin_session["command"])
+        self.assertIn("admin-test", admin_session["command"])
+
+        skipped = runtime_acceptance_pack.selected_checks(
+            acceptance_args(skip_admin_inference_session=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+        self.assertNotIn("admin_inference_session", [check["name"] for check in skipped])
 
     def test_external_llm_inference_check_is_default_and_skippable(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
@@ -462,23 +571,8 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        token_aware_names = {
-            "chaos",
-            "trust_quarantine",
-            "replay_audit",
-            "operator_control",
-            "micro_transformer",
-            "model_bundle",
-            "home_compute_demo",
-            "home_compute_evidence",
-            "remote_compute_evidence",
-            "model_bundle_inference",
-            "inference_session_demo",
-            "external_llm_inference",
-            "external_llm_http_adapter",
-        }
         for check in checks:
-            expected = "miner-test" if check["name"] in token_aware_names else ""
+            expected = "miner-test" if check["name"] in TOKEN_AWARE_NAMES else ""
             self.assertEqual(check.get("miner_token"), expected)
         self.assertTrue(all("miner-test" not in check["command"] for check in checks))
 
@@ -584,23 +678,8 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        token_aware_names = {
-            "chaos",
-            "trust_quarantine",
-            "replay_audit",
-            "operator_control",
-            "micro_transformer",
-            "model_bundle",
-            "home_compute_demo",
-            "home_compute_evidence",
-            "remote_compute_evidence",
-            "model_bundle_inference",
-            "inference_session_demo",
-            "external_llm_inference",
-            "external_llm_http_adapter",
-        }
         for check in checks:
-            expected = "observer-test" if check["name"] in token_aware_names else ""
+            expected = "observer-test" if check["name"] in TOKEN_AWARE_NAMES else ""
             self.assertEqual(check.get("observer_token"), expected)
         self.assertTrue(all("observer-test" not in check["command"] for check in checks))
 
@@ -610,10 +689,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        self.assertEqual(
-            [check["name"] for check in checks],
-            ["readiness", "runtime_matrix", "home_compute_demo", "home_compute_evidence", "api_contract", "chaos", "trust_quarantine", "replay_audit", "operator_control", "micro_transformer", "model_bundle", "result_idempotency", "result_ledger", "miner_resilience", "miner_auth", "observer_auth", "miner_registry_auth", "token_hash_auth", "outer_optimizer", "compressed_error_feedback", "delta_transport_negotiation", "model_bundle_inference", "inference_session_demo", "external_llm_inference", "external_llm_http_adapter", "remote_miner"],
-        )
+        self.assertEqual([check["name"] for check in checks], DEFAULT_CHECK_NAMES + ["remote_miner"])
         self.assertEqual(checks[-1]["port"], 9028)
         self.assertIn("remote_miner_readiness_check.py", checks[-1]["command"][1])
 
@@ -641,8 +717,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        evidence = checks[-1]
-        self.assertEqual(evidence["name"], "remote_compute_evidence")
+        evidence = next(check for check in checks if check["name"] == "remote_compute_evidence")
         self.assertEqual(evidence["port"], 9047)
         self.assertIn("remote_compute_evidence_check.py", evidence["command"][1])
 
@@ -662,13 +737,59 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
 
         self.assertNotIn("remote_compute_evidence", [check["name"] for check in checks])
 
+    def test_multi_miner_scenario_sweep_is_opt_in(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_multi_miner_sweep=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        sweep = next(check for check in checks if check["name"] == "multi_miner_scenario_sweep")
+        self.assertEqual(sweep["port"], 9050)
+        self.assertIn("multi_miner_scenario_sweep_check.py", sweep["command"][1])
+        self.assertIn("--execution-mode", sweep["command"])
+        self.assertIn("concurrent", sweep["command"])
+        self.assertIn("--json-out", sweep["command"])
+        self.assertTrue(any(item.endswith("multi_miner_scenario_sweep.json") for item in sweep["command"]))
+
+    def test_multi_miner_scenario_sweep_skip_removes_opt_in_check(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_multi_miner_sweep=True, skip_multi_miner_sweep=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertNotIn("multi_miner_scenario_sweep", [check["name"] for check in checks])
+
+    def test_multi_miner_requeue_is_opt_in(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_multi_miner_requeue=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        requeue = next(check for check in checks if check["name"] == "multi_miner_requeue")
+        self.assertEqual(requeue["port"], 9051)
+        self.assertIn("multi_miner_scenario_sweep_check.py", requeue["command"][1])
+        self.assertIn("--execution-mode", requeue["command"])
+        self.assertIn("concurrent", requeue["command"])
+        self.assertIn("--failure-mode", requeue["command"])
+        self.assertIn("kill-after-claim", requeue["command"])
+        self.assertIn("--json-out", requeue["command"])
+        self.assertTrue(any(item.endswith("multi_miner_requeue.json") for item in requeue["command"]))
+
+    def test_multi_miner_requeue_skip_removes_opt_in_check(self) -> None:
+        checks = runtime_acceptance_pack.selected_checks(
+            acceptance_args(include_multi_miner_requeue=True, skip_multi_miner_requeue=True),
+            Path("/tmp/crowdtensor_acceptance_test"),
+        )
+
+        self.assertNotIn("multi_miner_requeue", [check["name"] for check in checks])
+
     def test_include_browser_adds_lightweight_browser_pack(self) -> None:
         checks = runtime_acceptance_pack.selected_checks(
             acceptance_args(include_browser=True, browser="/usr/bin/chromium", headful=True, browser_timeout=7.5),
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        browser_checks = checks[25:]
+        browser_checks = checks[len(DEFAULT_CHECK_NAMES):]
         self.assertEqual(
             [check["name"] for check in browser_checks],
             ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger"],
@@ -688,20 +809,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        token_aware_names = {
-            "chaos",
-            "trust_quarantine",
-            "replay_audit",
-            "operator_control",
-            "micro_transformer",
-            "model_bundle",
-            "home_compute_demo",
-            "home_compute_evidence",
-            "remote_compute_evidence",
-            "model_bundle_inference",
-            "inference_session_demo",
-            "external_llm_inference",
-            "external_llm_http_adapter",
+        token_aware_names = TOKEN_AWARE_NAMES | {
             "runtime_contract",
             "browser_miner",
             "browser_probe",
@@ -719,7 +827,7 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
             Path("/tmp/crowdtensor_acceptance_test"),
         )
 
-        browser_checks = checks[25:]
+        browser_checks = checks[len(DEFAULT_CHECK_NAMES):]
         self.assertEqual(
             [check["name"] for check in browser_checks],
             ["webrtc", "runtime_contract", "browser_miner", "browser_probe", "capability_ledger", "browser_chaos"],
@@ -780,8 +888,10 @@ class RuntimeAcceptancePackTests(unittest.TestCase):
                 "delta_transport_negotiation",
                 "model_bundle_inference",
                 "inference_session_demo",
+                "inference_session_client",
                 "external_llm_inference",
                 "external_llm_http_adapter",
+                "admin_inference_session",
                 "runtime_contract",
                 "browser_miner",
             ],

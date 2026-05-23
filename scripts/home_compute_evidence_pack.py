@@ -68,6 +68,10 @@ def inference_summary(session_report: dict[str, Any] | None) -> dict[str, Any]:
         "present": bool(session_report),
         "ok": session.get("ok"),
         "workload_type": session.get("workload_type"),
+        "scenario_schema": session.get("scenario_schema"),
+        "scenario_id": session.get("scenario_id"),
+        "scenario_description": session.get("scenario_description"),
+        "scenario_request_count": session.get("scenario_request_count"),
         "request_count": session.get("request_count"),
         "correct_count": session.get("correct_count"),
         "accuracy": session.get("accuracy"),
@@ -168,6 +172,7 @@ def build_evidence(
             "recommended_routes": matrix.get("recommended_routes", []),
         },
         "selected_workload": report.get("selected_workload") or fallback_workload(matrix),
+        "scenario": report.get("scenario") or {},
         "route_decision": route,
         "inference_summary": inference_summary(session),
         "request_trace": list((session or {}).get("request_trace") or []),
@@ -212,6 +217,7 @@ def build_from_args(args: argparse.Namespace) -> dict[str, Any]:
 def render_markdown(payload: dict[str, Any]) -> str:
     route = payload.get("route_decision") or {}
     summary = payload.get("inference_summary") or {}
+    scenario = payload.get("scenario") or {}
     diagnosis = payload.get("diagnosis") or {}
     safety = payload.get("safety") or {}
     lines = [
@@ -248,6 +254,9 @@ def render_markdown(payload: dict[str, Any]) -> str:
         "",
         "## Inference Session",
         "",
+        f"- Scenario: `{scenario.get('scenario_id') or summary.get('scenario_id')}`",
+        f"- Scenario schema: `{scenario.get('scenario_schema') or summary.get('scenario_schema')}`",
+        f"- Scenario description: {scenario.get('scenario_description') or summary.get('scenario_description') or ''}",
         f"- Requests: `{summary.get('request_count')}`",
         f"- Accuracy: `{summary.get('accuracy')}`",
         f"- Elapsed ms: `{summary.get('elapsed_ms')}`",
@@ -307,6 +316,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--state-dir", default="")
     parser.add_argument("--lease-seconds", type=float, default=10.0)
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default="")
     parser.add_argument("--startup-timeout", type=float, default=10.0)
     parser.add_argument("--miner-timeout", type=float, default=30.0)
     parser.add_argument("--admin-token", default="local-admin")

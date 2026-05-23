@@ -108,6 +108,10 @@ def _target(
     optional: bool,
     usable_now: bool,
     supported_workloads: list[str] | None = None,
+    diagnosis_codes: list[str] | None = None,
+    operator_action: str = "configure_optional_runtime",
+    matched_capabilities: list[str] | None = None,
+    missing_capabilities: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -117,6 +121,10 @@ def _target(
         "optional": bool(optional),
         "usable_now": bool(usable_now),
         "supported_workloads": supported_workloads or [],
+        "diagnosis_codes": sorted(set(diagnosis_codes or [])),
+        "operator_action": operator_action,
+        "matched_capabilities": sorted(set(matched_capabilities or [])),
+        "missing_capabilities": sorted(set(missing_capabilities or [])),
     }
 
 
@@ -150,6 +158,10 @@ def build_hardware_targets(
             optional=False,
             usable_now=core_ok,
             supported_workloads=cpu_workloads if core_ok else [],
+            diagnosis_codes=["cpu_baseline_ready"] if core_ok else ["cpu_baseline_blocked"],
+            operator_action="run_now" if core_ok else "fix_blocker",
+            matched_capabilities=["python_runtime", "cpu_only_contract"] if core_ok else [],
+            missing_capabilities=[] if core_ok else ["python_runtime", "cpu_only_contract"],
         ),
         _target(
             "nvidia_cuda",
@@ -159,6 +171,10 @@ def build_hardware_targets(
             next_command="python3 scripts/runtime_matrix.py --json",
             optional=True,
             usable_now=False,
+            diagnosis_codes=["nvidia_cuda_detected_future_adapter"] if nvidia_detected else ["nvidia_cuda_optional_missing"],
+            operator_action="future_adapter" if nvidia_detected else "configure_optional_runtime",
+            matched_capabilities=["nvidia_tooling"] if nvidia_detected else [],
+            missing_capabilities=["runtime_adapter_not_implemented"] if nvidia_detected else ["nvidia_tooling", "runtime_adapter_not_implemented"],
         ),
         _target(
             "amd_rocm",
@@ -168,6 +184,10 @@ def build_hardware_targets(
             next_command="python3 scripts/runtime_matrix.py --json",
             optional=True,
             usable_now=False,
+            diagnosis_codes=["amd_rocm_detected_future_adapter"] if amd_detected else ["amd_rocm_optional_missing"],
+            operator_action="future_adapter" if amd_detected else "configure_optional_runtime",
+            matched_capabilities=["amd_tooling"] if amd_detected else [],
+            missing_capabilities=["runtime_adapter_not_implemented"] if amd_detected else ["amd_tooling", "runtime_adapter_not_implemented"],
         ),
         _target(
             "apple_metal",
@@ -177,6 +197,10 @@ def build_hardware_targets(
             next_command="python3 scripts/runtime_matrix.py --json",
             optional=True,
             usable_now=False,
+            diagnosis_codes=["apple_metal_detected_future_adapter"] if apple_detected else ["apple_metal_optional_missing"],
+            operator_action="future_adapter" if apple_detected else "configure_optional_runtime",
+            matched_capabilities=["apple_silicon"] if apple_detected else [],
+            missing_capabilities=["runtime_adapter_not_implemented"] if apple_detected else ["apple_silicon", "runtime_adapter_not_implemented"],
         ),
         _target(
             "browser",
@@ -187,6 +211,14 @@ def build_hardware_targets(
             optional=True,
             usable_now=bool(playwright_ok and browser_available),
             supported_workloads=["browser_probe"] if playwright_ok and browser_available else [],
+            diagnosis_codes=["browser_runtime_ready"] if playwright_ok and browser_available else ["browser_runtime_missing"],
+            operator_action="run_now" if playwright_ok and browser_available else "configure_optional_runtime",
+            matched_capabilities=["playwright", "browser_runtime"] if playwright_ok and browser_available else (
+                ["playwright"] if playwright_ok else []
+            ),
+            missing_capabilities=[] if playwright_ok and browser_available else (
+                ["browser_runtime"] if playwright_ok else ["playwright", "browser_runtime"]
+            ),
         ),
         _target(
             "remote_container",
@@ -196,6 +228,10 @@ def build_hardware_targets(
             next_command="python3 scripts/remote_miner_readiness_check.py --port 8895",
             optional=True,
             usable_now=False,
+            diagnosis_codes=["remote_container_detected"] if container_detected else ["remote_container_optional_missing"],
+            operator_action="configure_optional_runtime",
+            matched_capabilities=["container_environment"] if container_detected else [],
+            missing_capabilities=["operator_networking"] if container_detected else ["container_environment", "operator_networking"],
         ),
         _target(
             "external_llm_command",
@@ -210,6 +246,14 @@ def build_hardware_targets(
             optional=True,
             usable_now=bool(command_configured and command_available),
             supported_workloads=["external_llm_infer"] if command_configured and command_available else [],
+            diagnosis_codes=["external_llm_command_configured"] if command_configured and command_available else (
+                ["external_llm_command_missing"] if command_configured else ["external_llm_command_optional_missing"]
+            ),
+            operator_action="run_now" if command_configured and command_available else (
+                "fix_blocker" if command_configured else "configure_optional_runtime"
+            ),
+            matched_capabilities=["command_runtime"] if command_configured and command_available else [],
+            missing_capabilities=[] if command_configured and command_available else ["command_runtime"],
         ),
         _target(
             "external_llm_http",
@@ -220,6 +264,10 @@ def build_hardware_targets(
             optional=True,
             usable_now=bool(http_configured),
             supported_workloads=["external_llm_infer"] if http_configured else [],
+            diagnosis_codes=["external_llm_http_configured"] if http_configured else ["external_llm_http_optional_missing"],
+            operator_action="run_now" if http_configured else "configure_optional_runtime",
+            matched_capabilities=["http_runtime_url"] if http_configured else [],
+            missing_capabilities=[] if http_configured else ["http_runtime_url"],
         ),
     ]
 
@@ -366,6 +414,25 @@ def diagnosis_summary(routes: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def hardware_diagnosis_summary(hardware_targets: list[dict[str, Any]]) -> dict[str, Any]:
+    by_target: dict[str, list[str]] = {}
+    all_codes: list[str] = []
+    status_counts: dict[str, int] = {}
+    for target in hardware_targets:
+        status = str(target.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        codes = [str(code) for code in target.get("diagnosis_codes") or [] if code]
+        if codes:
+            name = str(target.get("name") or "<unnamed>")
+            by_target[name] = codes
+            all_codes.extend(codes)
+    return {
+        "codes": sorted(set(all_codes)),
+        "by_target": by_target,
+        "status_counts": status_counts,
+    }
+
+
 def build_matrix(
     *,
     root: Path = ROOT,
@@ -468,6 +535,7 @@ def build_matrix(
     )
     recommended_routes = build_recommended_routes(hardware_targets, workloads)
     route_diagnosis = diagnosis_summary(recommended_routes)
+    target_diagnosis = hardware_diagnosis_summary(hardware_targets)
     matrix = {
         "ok": not blocked,
         "host_profile": profile,
@@ -497,6 +565,7 @@ def build_matrix(
             "blocked_workloads": blocked,
         },
         "diagnosis_summary": route_diagnosis,
+        "hardware_diagnosis_summary": target_diagnosis,
         "recommended_next_commands": [
             "python3 scripts/home_compute_demo.py --port 8909 --request-count 4 --json",
             "python3 scripts/runtime_acceptance_pack.py --base-port 8910 --report /tmp/crowdtensor_acceptance.json",

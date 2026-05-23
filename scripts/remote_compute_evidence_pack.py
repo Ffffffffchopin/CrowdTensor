@@ -25,6 +25,11 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 from create_miner_invite import create_invite  # noqa: E402
+from crowdtensor.model_bundle import (  # noqa: E402
+    DEFAULT_INFERENCE_SCENARIO_ID,
+    inference_scenario_summary,
+    normalize_inference_scenario_id,
+)
 import support_bundle  # noqa: E402
 
 
@@ -96,7 +101,7 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path, registry_path: 
         "--backlog",
         "0",
         "--task-lane",
-        f"python-cli:cpu:1:{WORKLOAD_TYPE}",
+        f"python-cli:cpu:0:{WORKLOAD_TYPE}",
         "--miner-token-registry",
         str(registry_path),
         "--observer-token",
@@ -181,23 +186,38 @@ def admin_results(
     miner_id: str,
     workload_type: str,
     limit: int = 10,
+    task_id: str = "",
 ) -> dict[str, Any]:
-    query = urlencode({
+    query_params = {
         "status": "accepted",
-        "miner_id": miner_id,
         "workload_type": workload_type,
         "limit": limit,
-    })
+    }
+    if task_id:
+        query_params["task_id"] = task_id
+    else:
+        query_params["miner_id"] = miner_id
+    query = urlencode(query_params)
     return request_json("GET", base_url, f"/admin/results?{query}", admin_token=admin_token)
 
 
-def completed_task_for(state: dict[str, Any], miner_id: str) -> dict[str, Any] | None:
+def create_inference_session(args: argparse.Namespace) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        args.base_url,
+        "/admin/inference-sessions",
+        payload={"request_count": args.request_count, "scenario_id": args.scenario_id},
+        admin_token=args.admin_token,
+    )
+
+
+def completed_task_for(state: dict[str, Any], miner_id: str, *, task_id: str = "") -> dict[str, Any] | None:
     completed = [
         task for task in state.get("tasks", [])
         if (
             task.get("status") == "completed"
             and task.get("workload_type") == WORKLOAD_TYPE
-            and task.get("miner_id") == miner_id
+            and (task.get("task_id") == task_id if task_id else task.get("miner_id") == miner_id)
         )
     ]
     return completed[-1] if completed else None
@@ -271,15 +291,26 @@ def build_inference_summary(
     task: dict[str, Any] | None,
     row: dict[str, Any] | None,
     request_count: int,
+    scenario_id: str,
 ) -> dict[str, Any]:
     validation = (task or {}).get("validation") or (row or {}).get("validation") or {}
     metrics = (row or {}).get("session_metrics") or (task or {}).get("metrics") or {}
+    expected_scenario = inference_scenario_summary(scenario_id)
+    actual_scenario_id = str(validation.get("scenario_id") or "")
+    expected_scenario_id = expected_scenario.get("scenario_id")
+    scenario_matches = bool(expected_scenario_id and actual_scenario_id == expected_scenario_id)
     return {
         "present": bool(task and row),
         "ok": validation.get("code") == "ok",
         "workload_type": WORKLOAD_TYPE if task or row else None,
         "request_count": validation.get("request_count"),
         "expected_request_count": request_count,
+        "scenario_schema": validation.get("scenario_schema") or expected_scenario.get("scenario_schema"),
+        "scenario_id": actual_scenario_id or expected_scenario_id,
+        "scenario_description": validation.get("scenario_description") or expected_scenario.get("scenario_description"),
+        "scenario_request_count": validation.get("scenario_request_count") or expected_scenario.get("scenario_request_count"),
+        "expected_scenario_id": expected_scenario_id,
+        "scenario_matches": scenario_matches,
         "correct_count": validation.get("correct_count"),
         "accuracy": validation.get("accuracy"),
         "elapsed_ms": metrics.get("elapsed_ms"),
@@ -288,6 +319,63 @@ def build_inference_summary(
         "request_trace_truncated": bool(validation.get("request_trace_truncated", False)),
         "predicted_token": validation.get("predicted_token"),
         "target_token": validation.get("target_token"),
+    }
+
+
+def build_observability_summary(
+    *,
+    mode: str,
+    route: dict[str, Any],
+    profile: dict[str, Any],
+    state: dict[str, Any],
+    ledger: dict[str, Any],
+    summary: dict[str, Any],
+    safety: dict[str, Any],
+    miner_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "schema": "remote_compute_observability_v1",
+        "mode": mode,
+        "route": {
+            "name": route.get("name"),
+            "confidence": route.get("confidence"),
+            "usable_now": route.get("usable_now"),
+            "matched_capabilities": list(route.get("matched_capabilities") or []),
+            "missing_capabilities": list(route.get("missing_capabilities") or []),
+        },
+        "miner": {
+            "runtime": profile.get("runtime"),
+            "backend": profile.get("backend"),
+            "accepted": profile.get("accepted"),
+            "rejected": profile.get("rejected"),
+            "summary_accepted_tasks": (miner_summary or {}).get("accepted_tasks"),
+            "summary_rejected_tasks": (miner_summary or {}).get("rejected_tasks"),
+        },
+        "work_queue": {
+            "task_counts": state.get("task_counts", {}),
+            "accepted_results": state.get("accepted_results"),
+            "rejected_results": state.get("rejected_results"),
+            "ledger_rows": len(ledger.get("results") or []),
+        },
+        "inference": {
+            "ok": summary.get("ok"),
+            "request_count": summary.get("request_count"),
+            "expected_request_count": summary.get("expected_request_count"),
+            "scenario_schema": summary.get("scenario_schema"),
+            "scenario_id": summary.get("scenario_id"),
+            "expected_scenario_id": summary.get("expected_scenario_id"),
+            "scenario_matches": summary.get("scenario_matches"),
+            "request_trace_count": summary.get("request_trace_count"),
+            "accuracy": summary.get("accuracy"),
+            "elapsed_ms": summary.get("elapsed_ms"),
+            "requests_per_second": summary.get("requests_per_second"),
+        },
+        "safety": {
+            "read_only": safety.get("read_only"),
+            "redaction_ok": safety.get("redaction_ok"),
+            "registry_hashed": safety.get("registry_hashed"),
+            "raw_payloads_exposed": safety.get("raw_payloads_exposed"),
+        },
     }
 
 
@@ -314,9 +402,13 @@ def build_evidence(
     request_count: int,
     invite: dict[str, Any] | None = None,
     registry_path: Path | None = None,
+    scenario_id: str = DEFAULT_INFERENCE_SCENARIO_ID,
+    task_id: str = "",
     generated_at: str | None = None,
 ) -> dict[str, Any]:
-    task = completed_task_for(state, miner_id)
+    scenario_id = normalize_inference_scenario_id(scenario_id) or DEFAULT_INFERENCE_SCENARIO_ID
+    scenario = inference_scenario_summary(scenario_id)
+    task = completed_task_for(state, miner_id, task_id=task_id)
     row = latest_ledger_row(ledger)
     profile = (state.get("miner_profiles") or {}).get(miner_id) or {}
     validation = (task or {}).get("validation") or (row or {}).get("validation") or {}
@@ -334,11 +426,33 @@ def build_evidence(
         "remote-evidence-token",
     ])
     read_only = read_only_ok(state, row)
-    summary = build_inference_summary(task=task, row=row, request_count=request_count)
+    summary = build_inference_summary(
+        task=task,
+        row=row,
+        request_count=request_count,
+        scenario_id=scenario_id,
+    )
+    safety = {
+        "read_only": read_only,
+        "redaction_ok": redaction_ok,
+        "raw_payloads_exposed": not redaction_ok,
+        "registry_hashed": registry_hashed,
+    }
+    observability = build_observability_summary(
+        mode=mode,
+        route=route,
+        profile=profile,
+        state=state,
+        ledger=ledger,
+        summary=summary,
+        safety=safety,
+        miner_summary=miner_summary,
+    )
     ok = bool(
         route.get("usable_now")
         and summary.get("ok")
         and int(summary.get("request_count") or 0) == int(request_count)
+        and summary.get("scenario_matches")
         and float(summary.get("requests_per_second") or 0.0) > 0.0
         and read_only
         and redaction_ok
@@ -374,12 +488,18 @@ def build_evidence(
         "workload": {
             "type": WORKLOAD_TYPE,
             "request_count": request_count,
+            "scenario_schema": scenario.get("scenario_schema"),
+            "scenario_id": scenario.get("scenario_id"),
+            "scenario_description": scenario.get("scenario_description"),
+            "scenario_request_count": scenario.get("scenario_request_count"),
             "task_id": (task or {}).get("task_id"),
+            "expected_task_id": task_id,
             "bundle_id": ((state.get("model") or {}).get("model_bundle") or {}).get("bundle_id"),
             "bundle_version": ((state.get("model") or {}).get("model_bundle") or {}).get("version"),
         },
         "route_decision": route,
         "inference_summary": summary,
+        "observability_summary": observability,
         "request_trace": trace,
         "ledger_summary": {
             "rows": len(ledger.get("results") or []),
@@ -388,12 +508,7 @@ def build_evidence(
             "model_updated": bool((row or {}).get("model_updated")),
             "model_bundle_updated": bool((row or {}).get("model_bundle_updated")),
         },
-        "safety": {
-            "read_only": read_only,
-            "redaction_ok": redaction_ok,
-            "raw_payloads_exposed": not redaction_ok,
-            "registry_hashed": registry_hashed,
-        },
+        "safety": safety,
         "recommended_next_commands": [
             "python3 scripts/remote_compute_evidence_check.py --port 8912",
             "python3 scripts/runtime_acceptance_pack.py --include-remote-evidence --base-port 8910",
@@ -428,6 +543,10 @@ def run_local_loopback(args: argparse.Namespace) -> dict[str, Any]:
             replace=True,
         )
         coordinator = start_coordinator(args, state_dir, registry_path)
+        session = create_inference_session(args)
+        task_id = str(session.get("task_id") or "")
+        if not task_id:
+            raise RuntimeError(f"admin inference session did not return task_id: {session}")
         miner_summary = run_invited_miner(args, invite)
         state = request_json("GET", args.base_url, "/state", observer_token=args.observer_token)
         ledger = admin_results(
@@ -435,6 +554,7 @@ def run_local_loopback(args: argparse.Namespace) -> dict[str, Any]:
             admin_token=args.admin_token,
             miner_id=args.miner_id,
             workload_type=WORKLOAD_TYPE,
+            task_id=task_id,
         )
         return build_evidence(
             mode="local-loopback",
@@ -446,6 +566,8 @@ def run_local_loopback(args: argparse.Namespace) -> dict[str, Any]:
             request_count=args.request_count,
             invite=invite,
             registry_path=registry_path,
+            scenario_id=args.scenario_id,
+            task_id=task_id,
         )
     finally:
         stop_process(coordinator)
@@ -469,12 +591,17 @@ def run_collect(args: argparse.Namespace) -> dict[str, Any]:
         ledger=ledger,
         miner_summary=None,
         request_count=args.request_count,
+        scenario_id=args.scenario_id,
     )
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
     route = payload.get("route_decision") or {}
     summary = payload.get("inference_summary") or {}
+    observability = payload.get("observability_summary") or {}
+    observed_queue = observability.get("work_queue") or {}
+    observed_inference = observability.get("inference") or {}
+    observed_safety = observability.get("safety") or {}
     miner = payload.get("miner") or {}
     profile = miner.get("profile") or {}
     safety = payload.get("safety") or {}
@@ -504,9 +631,24 @@ def render_markdown(payload: dict[str, Any]) -> str:
         "## Inference",
         "",
         f"- Requests: `{summary.get('request_count')}`",
+        f"- Scenario: `{summary.get('scenario_id')}`",
+        f"- Scenario schema: `{summary.get('scenario_schema')}`",
+        f"- Scenario matches: `{summary.get('scenario_matches')}`",
         f"- Accuracy: `{summary.get('accuracy')}`",
         f"- Elapsed ms: `{summary.get('elapsed_ms')}`",
         f"- Requests/sec: `{summary.get('requests_per_second')}`",
+        "",
+        "## Observability",
+        "",
+        f"- Schema: `{observability.get('schema')}`",
+        f"- Route usable now: `{(observability.get('route') or {}).get('usable_now')}`",
+        f"- Accepted results: `{observed_queue.get('accepted_results')}`",
+        f"- Rejected results: `{observed_queue.get('rejected_results')}`",
+        f"- Ledger rows: `{observed_queue.get('ledger_rows')}`",
+        f"- Request trace count: `{observed_inference.get('request_trace_count')}`",
+        f"- Requests/sec: `{observed_inference.get('requests_per_second')}`",
+        f"- Read-only: `{observed_safety.get('read_only')}`",
+        f"- Redaction OK: `{observed_safety.get('redaction_ok')}`",
         "",
         "## Trace",
         "",
@@ -563,6 +705,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--miner-id", default=DEFAULT_MINER_ID)
     parser.add_argument("--lease-seconds", type=float, default=10.0)
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default=DEFAULT_INFERENCE_SCENARIO_ID)
     parser.add_argument("--compute-seconds", type=float, default=0.2)
     parser.add_argument("--heartbeat-interval", type=float, default=0.1)
     parser.add_argument("--startup-timeout", type=float, default=10.0)
@@ -575,6 +718,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.request_count < 1:
         raise SystemExit("--request-count must be at least 1")
+    args.scenario_id = normalize_inference_scenario_id(args.scenario_id) or DEFAULT_INFERENCE_SCENARIO_ID
     args.base_url = f"http://{args.host}:{args.port}"
     if args.mode == "collect" and not args.coordinator_url:
         raise SystemExit("--coordinator-url is required in collect mode")

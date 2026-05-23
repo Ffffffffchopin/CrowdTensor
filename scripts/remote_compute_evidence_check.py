@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8912)
     parser.add_argument("--state-dir", default="")
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default="route-baseline")
     parser.add_argument("--miner-id", default="remote-evidence-miner")
     parser.add_argument("--admin-token", default="remote-evidence-admin")
     parser.add_argument("--observer-token", default="remote-evidence-observer")
@@ -41,6 +42,8 @@ def main() -> None:
         str(args.port),
         "--request-count",
         str(args.request_count),
+        "--scenario-id",
+        args.scenario_id,
         "--miner-id",
         args.miner_id,
         "--admin-token",
@@ -101,11 +104,33 @@ def main() -> None:
         raise SystemExit(f"unexpected inference workload: {summary}")
     if int(summary.get("request_count", 0)) != args.request_count:
         raise SystemExit(f"request count mismatch: {summary}")
+    if summary.get("scenario_id") != args.scenario_id or summary.get("scenario_matches") is not True:
+        raise SystemExit(f"scenario mismatch: {summary}")
     expected_trace_count = min(args.request_count, 8)
     if int(summary.get("request_trace_count", 0)) != expected_trace_count:
         raise SystemExit(f"request trace count mismatch: {summary}")
     if float(summary.get("requests_per_second", 0.0)) <= 0.0:
         raise SystemExit(f"invalid throughput: {summary}")
+
+    observability = evidence.get("observability_summary") or {}
+    if observability.get("schema") != "remote_compute_observability_v1":
+        raise SystemExit(f"missing remote-compute observability summary: {observability}")
+    observed_route = observability.get("route") or {}
+    observed_queue = observability.get("work_queue") or {}
+    observed_inference = observability.get("inference") or {}
+    observed_safety = observability.get("safety") or {}
+    if observed_route.get("name") != route.get("name") or observed_route.get("usable_now") is not True:
+        raise SystemExit(f"unexpected observed route: {observed_route}")
+    if int(observed_queue.get("accepted_results", 0)) < 1 or int(observed_queue.get("ledger_rows", 0)) < 1:
+        raise SystemExit(f"observability queue did not capture accepted work: {observed_queue}")
+    if int(observed_inference.get("request_count", 0)) != args.request_count:
+        raise SystemExit(f"observability request count mismatch: {observed_inference}")
+    if observed_inference.get("scenario_id") != args.scenario_id or observed_inference.get("scenario_matches") is not True:
+        raise SystemExit(f"observability scenario mismatch: {observed_inference}")
+    if float(observed_inference.get("requests_per_second", 0.0)) <= 0.0:
+        raise SystemExit(f"observability throughput is invalid: {observed_inference}")
+    if not observed_safety.get("read_only") or not observed_safety.get("redaction_ok"):
+        raise SystemExit(f"observability safety is invalid: {observed_safety}")
 
     request_trace = evidence.get("request_trace") or []
     if len(request_trace) != expected_trace_count:
@@ -139,8 +164,10 @@ def main() -> None:
         "route": route["name"],
         "route_confidence": route.get("confidence"),
         "request_count": summary.get("request_count"),
+        "scenario_id": summary.get("scenario_id"),
         "request_trace_count": summary.get("request_trace_count"),
         "requests_per_second": summary.get("requests_per_second"),
+        "observability_schema": observability.get("schema"),
         "registry_hashed": invite.get("registry_hashed"),
     }, sort_keys=True))
 

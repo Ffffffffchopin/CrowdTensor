@@ -22,6 +22,7 @@ REQUIRED_FILES = [
     "ROADMAP.md",
     "LICENSE",
     "pyproject.toml",
+    "crowdtensor/cli.py",
     "requirements.txt",
     "Dockerfile",
     "compose.yaml",
@@ -43,8 +44,12 @@ REQUIRED_FILES = [
     "scripts/remote_demo_runbook_check.py",
     "scripts/remote_demo_acceptance_pack.py",
     "scripts/remote_demo_acceptance_check.py",
+    "scripts/demo_manifest_pack.py",
+    "scripts/demo_manifest_check.py",
     "scripts/remote_compute_evidence_pack.py",
     "scripts/remote_compute_evidence_check.py",
+    "scripts/multi_miner_scenario_sweep.py",
+    "scripts/multi_miner_scenario_sweep_check.py",
     "scripts/runtime_matrix.py",
     "scripts/runtime_matrix_check.py",
     "scripts/home_compute_demo.py",
@@ -64,6 +69,9 @@ REQUIRED_FILES = [
     "scripts/model_bundle_smoke.py",
     "scripts/model_bundle_inference_smoke.py",
     "scripts/inference_session_demo.py",
+    "scripts/inference_session_client.py",
+    "scripts/inference_session_client_check.py",
+    "scripts/admin_inference_session_check.py",
     "scripts/external_llm_inference_smoke.py",
     "scripts/external_llm_http_adapter_smoke.py",
     "docs/api.md",
@@ -122,6 +130,8 @@ def check_pyproject(root: Path) -> dict[str, Any]:
         details.append("project.scripts.crowdtensord must point to coordinator:main")
     if scripts.get("crowdtensor-miner") != "miner_cli:main":
         details.append("project.scripts.crowdtensor-miner must point to miner_cli:main")
+    if scripts.get("crowdtensor") != "crowdtensor.cli:main":
+        details.append("project.scripts.crowdtensor must point to crowdtensor.cli:main")
 
     build_requires = [str(req).lower() for req in payload.get("build-system", {}).get("requires", [])]
     if not any(req.startswith("setuptools") for req in build_requires):
@@ -385,6 +395,9 @@ def check_release_evidence_docs(root: Path) -> dict[str, Any]:
         "Release Evidence",
         "diagnosis_summary",
         "diagnosis_by_check",
+        "observability_summaries",
+        "remote_compute_observability_v1",
+        "remote_demo_observability_v1",
     ]:
         if fragment not in combined:
             details.append(f"release evidence docs or CI must mention {fragment}")
@@ -434,6 +447,9 @@ def check_support_bundle_docs(root: Path) -> dict[str, Any]:
         "support_bundle",
         "diagnosis_summary",
         "diagnosis_by_check",
+        "observability_summaries",
+        "remote_compute_observability_v1",
+        "remote_demo_observability_v1",
     ]:
         if fragment not in combined:
             details.append(f"support bundle docs or CI must mention {fragment}")
@@ -498,6 +514,7 @@ def check_remote_compute_evidence_docs(root: Path) -> dict[str, Any]:
         "remote_compute_evidence_pack.py",
         "remote_compute_evidence_check.py",
         "remote_compute_evidence_v1",
+        "remote_compute_observability_v1",
         "--include-remote-evidence",
         "remote_python_model_bundle_infer",
         "model_bundle_infer",
@@ -532,6 +549,8 @@ def check_remote_demo_runbook_docs(root: Path) -> dict[str, Any]:
         "operator.private.env",
         "miner.private.env",
         "remote_compute_evidence_pack.py --mode collect",
+        "--scenario-id route-baseline",
+        "model_bundle_inference_scenario_v1",
         "model_bundle_infer",
         "safe two-machine",
     ]:
@@ -561,6 +580,13 @@ def check_remote_demo_acceptance_docs(root: Path) -> dict[str, Any]:
         "remote_demo_acceptance_pack.py",
         "remote_demo_acceptance_check.py",
         "remote_demo_acceptance_v1",
+        "remote_demo_observability_v1",
+        "--create-session",
+        "POST /admin/inference-sessions",
+        "--scenario-id route-baseline",
+        "model_bundle_inference_scenario_v1",
+        "scenario match",
+        "session_create_failed",
         "remote_compute_evidence_v1",
         "support_bundle",
         "diagnosis_codes",
@@ -573,6 +599,167 @@ def check_remote_demo_acceptance_docs(root: Path) -> dict[str, Any]:
         if fragment not in combined:
             details.append(f"remote demo acceptance docs/CI must mention {fragment}")
     return check_result("remote_demo_acceptance_docs", not details, details)
+
+
+def check_demo_manifest_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "demo_manifest_pack.py",
+        "demo_manifest_check.py",
+        "demo_manifest_v1",
+        "Demo Manifest",
+        "runtime_matrix.json",
+        "remote_compute_evidence_v1",
+        "support_bundle",
+        "remote_compute_observability_v1",
+        "latest output artifact",
+        "local-loopback",
+    ]:
+        if fragment not in combined:
+            details.append(f"demo manifest docs/CI must mention {fragment}")
+    return check_result("demo_manifest_docs", not details, details)
+
+
+def check_local_proof_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "crowdtensor local-proof",
+        "local_proof_summary_v1",
+        "crowdtensor/cli.py",
+        "Demo Manifest",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+    ]:
+        if fragment not in combined:
+            details.append(f"local proof CLI docs/CI must mention {fragment}")
+    return check_result("local_proof_docs", not details, details)
+
+
+def check_cleanup_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "CHANGELOG.md",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "crowdtensor clean-artifacts",
+        "cleanup_report_v1",
+        "--apply",
+        "--include-reports",
+        "dry-run",
+        "__pycache__",
+        "does not delete state",
+    ]:
+        if fragment not in combined:
+            details.append(f"cleanup docs must mention {fragment}")
+    return check_result("cleanup_docs", not details, details)
+
+
+def check_remote_cli_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "crowdtensor remote-runbook",
+        "crowdtensor remote-acceptance",
+        "remote_runbook_cli_v1",
+        "remote_acceptance_cli_v1",
+        "--create-session",
+        "token redaction",
+        "not production",
+        "not P2P",
+        "crowdtensor/cli.py",
+    ]:
+        if fragment not in combined:
+            details.append(f"remote CLI docs must mention {fragment}")
+    return check_result("remote_cli_docs", not details, details)
+
+
+def check_home_inference_cli_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "crowdtensor home-infer",
+        "home_inference_cli_v1",
+        "home_compute_evidence_v1",
+        "model_bundle_inference_scenario_v1",
+        "route-baseline",
+        "request_trace",
+        "model_bundle_infer",
+        "read-only",
+        "arbitrary prompt",
+        "not production Swarm Inference",
+        "crowdtensor/cli.py",
+    ]:
+        if fragment not in combined:
+            details.append(f"home inference CLI docs must mention {fragment}")
+    return check_result("home_inference_cli_docs", not details, details)
 
 
 def check_release_materials(root: Path) -> dict[str, Any]:
@@ -722,6 +909,71 @@ def check_model_bundle_inference_docs(root: Path) -> dict[str, Any]:
     return check_result("model_bundle_inference_docs", not details, details)
 
 
+def check_admin_inference_session_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/api.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "POST /admin/inference-sessions",
+        "admin_inference_session_check.py",
+        "inference_session_request_v1",
+        "task_id",
+        "model_bundle_infer",
+        "read-only",
+        "--skip-admin-inference-session",
+    ]:
+        if fragment not in combined:
+            details.append(f"admin inference session docs/CI must mention {fragment}")
+    return check_result("admin_inference_session_docs", not details, details)
+
+
+def check_inference_session_client_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/api.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "inference_session_client.py",
+        "inference_session_client_check.py",
+        "inference_session_client_v1",
+        "session_client_ready",
+        "--skip-inference-session-client",
+        "POST /admin/inference-sessions",
+        "task_id",
+        "read-only",
+    ]:
+        if fragment not in combined:
+            details.append(f"inference session client docs/CI must mention {fragment}")
+    return check_result("inference_session_client_docs", not details, details)
+
+
 def check_runtime_matrix_docs(root: Path) -> dict[str, Any]:
     details: list[str] = []
     combined = "\n".join(
@@ -753,6 +1005,8 @@ def check_runtime_matrix_docs(root: Path) -> dict[str, Any]:
         "matched_capabilities",
         "missing_capabilities",
         "diagnosis_summary",
+        "hardware_diagnosis_summary",
+        "diagnosis_codes",
         "operator_action",
         "hardware_profile",
         "CROWDTENSOR_LLM_RUNTIME_URL",
@@ -893,6 +1147,8 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "delta_transport_negotiation_check.py": "CI must run the delta transport negotiation smoke through runtime acceptance",
         "model_bundle_smoke.py": "CI must run the model bundle smoke through runtime acceptance",
         "model_bundle_inference_smoke.py": "CI must run the model bundle inference smoke through runtime acceptance",
+        "inference_session_client_check.py": "CI must run the inference session client check through runtime acceptance",
+        "admin_inference_session_check.py": "CI must run the admin inference session check through runtime acceptance",
         "external_llm_inference_smoke.py": "CI must run the external LLM inference smoke through runtime acceptance",
         "external_llm_http_adapter_smoke.py": "CI must run the external LLM HTTP adapter smoke through runtime acceptance",
         "release_evidence_pack.py": "CI must build release evidence",
@@ -928,10 +1184,17 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_remote_compute_evidence_docs(gate_root),
         check_remote_demo_runbook_docs(gate_root),
         check_remote_demo_acceptance_docs(gate_root),
+        check_demo_manifest_docs(gate_root),
+        check_local_proof_docs(gate_root),
+        check_cleanup_docs(gate_root),
+        check_remote_cli_docs(gate_root),
+        check_home_inference_cli_docs(gate_root),
         check_release_materials(gate_root),
         check_open_source_entrypoints(gate_root),
         check_project_memory(gate_root),
         check_model_bundle_inference_docs(gate_root),
+        check_admin_inference_session_docs(gate_root),
+        check_inference_session_client_docs(gate_root),
         check_runtime_matrix_docs(gate_root),
         check_external_llm_inference_docs(gate_root),
         check_dockerfile(gate_root),

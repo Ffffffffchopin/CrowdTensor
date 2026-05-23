@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8909)
     parser.add_argument("--state-dir", default="")
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default="")
     parser.add_argument("--admin-token", default="local-admin")
     add_miner_token_arg(parser)
     add_observer_token_arg(parser)
@@ -45,6 +46,8 @@ def main() -> None:
         str(args.port),
         "--request-count",
         str(args.request_count),
+        "--scenario-id",
+        args.scenario_id,
         "--admin-token",
         args.admin_token,
     ]
@@ -101,6 +104,8 @@ def main() -> None:
         raise SystemExit(f"runtime matrix is not ready in evidence: {matrix}")
 
     summary = evidence.get("inference_summary") or {}
+    if args.scenario_id and summary.get("scenario_id") != args.scenario_id:
+        raise SystemExit(f"scenario_id mismatch: {summary}")
     if summary.get("workload_type") != "model_bundle_infer":
         raise SystemExit(f"unexpected inference workload: {summary}")
     if int(summary.get("request_count", 0)) != args.request_count:
@@ -134,6 +139,7 @@ def main() -> None:
         "request_count": summary.get("request_count"),
         "request_trace_count": summary.get("request_trace_count"),
         "requests_per_second": summary.get("requests_per_second"),
+        "scenario_id": summary.get("scenario_id"),
         "cpu_count": evidence.get("host_profile", {}).get("cpu_count"),
         "diagnosis": diagnosis.get("primary_code"),
     }, sort_keys=True))

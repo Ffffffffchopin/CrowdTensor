@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--coordinator-url", default="http://127.0.0.1:8787")
     parser.add_argument("--miner-id", default="remote-runbook-miner")
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default="route-baseline")
     return parser.parse_args()
 
 
@@ -45,6 +46,8 @@ def main() -> None:
             args.miner_id,
             "--request-count",
             str(args.request_count),
+            "--scenario-id",
+            args.scenario_id,
             "--miner-token",
             "runbook-miner-secret",
             "--observer-token",
@@ -119,6 +122,8 @@ def main() -> None:
                 raise SystemExit(f"coordinator command missing {fragment}: {coordinator_command}")
         if "remote_compute_evidence_pack.py --mode collect" not in collect_command:
             raise SystemExit(f"collect command missing evidence collect mode: {collect_command}")
+        if f"--scenario-id {args.scenario_id}" not in collect_command:
+            raise SystemExit(f"collect command missing scenario id: {collect_command}")
         if "--observer-token \"$CROWDTENSOR_OBSERVER_TOKEN\"" not in collect_command:
             raise SystemExit(f"collect command must read observer token from operator env: {collect_command}")
         if ". ./miner.private.env" not in miner_command or args.miner_id not in miner_command:
@@ -129,6 +134,7 @@ def main() -> None:
             "schema": runbook["schema"],
             "miner_id": runbook.get("miner", {}).get("miner_id"),
             "route": runbook.get("demo", {}).get("route"),
+            "scenario_id": runbook.get("demo", {}).get("scenario_id"),
             "registry_hashed": runbook.get("safety", {}).get("registry_hashed"),
             "operator_env_mode": "0600",
             "miner_env_mode": "0600",

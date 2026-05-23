@@ -34,6 +34,7 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
             miner_id="remote-a",
             label="remote demo miner",
             request_count=4,
+            scenario_id="route-baseline",
             backlog=1,
             max_tasks=1,
             lease_seconds=15.0,
@@ -61,10 +62,12 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
             self.assertEqual(payload["schema"], "remote_demo_runbook_v1")
             self.assertEqual(payload["demo"]["route"], "remote_python_model_bundle_infer")
             self.assertEqual(payload["demo"]["workload_type"], "model_bundle_infer")
+            self.assertEqual(payload["demo"]["scenario_id"], "route-baseline")
             self.assertTrue(payload["safety"]["registry_hashed"])
             self.assertIn("--task-lane python-cli:cpu:1:model_bundle_infer", payload["commands"]["start_coordinator"])
             self.assertIn("--backlog 0", payload["commands"]["start_coordinator"])
             self.assertIn("remote_compute_evidence_pack.py --mode collect", payload["commands"]["collect_remote_evidence"])
+            self.assertIn("--scenario-id route-baseline", payload["commands"]["collect_remote_evidence"])
             self.assertIn("--coordinator https://coordinator.example", payload["commands"]["collect_support_bundle"])
 
             registry = json.loads((tmp / "miner_registry.json").read_text(encoding="utf-8"))
@@ -99,6 +102,8 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
                 "workload_type": "model_bundle_infer",
                 "route": "remote_python_model_bundle_infer",
                 "request_count": 4,
+                "scenario_schema": "model_bundle_inference_scenario_v1",
+                "scenario_id": "route-baseline",
             },
             "files": {
                 "registry": "state/miner_registry.json",
@@ -125,6 +130,7 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
 
         self.assertIn("# CrowdTensor Remote Demo Runbook", markdown)
         self.assertIn("remote_python_model_bundle_infer", markdown)
+        self.assertIn("Scenario: `route-baseline`", markdown)
         self.assertIn("start_coordinator", markdown)
         self.assertIn("Registry hashed", markdown)
 

@@ -75,6 +75,14 @@ def main() -> None:
     for name, target in targets.items():
         if target.get("status") not in {"available", "configured", "detected", "optional_missing", "blocked"}:
             raise SystemExit(f"unexpected hardware target status for {name}: {target}")
+        if not isinstance(target.get("matched_capabilities"), list):
+            raise SystemExit(f"hardware target must include matched_capabilities list: {target}")
+        if not isinstance(target.get("missing_capabilities"), list):
+            raise SystemExit(f"hardware target must include missing_capabilities list: {target}")
+        if not isinstance(target.get("diagnosis_codes"), list):
+            raise SystemExit(f"hardware target must include diagnosis_codes list: {target}")
+        if target.get("operator_action") not in OPERATOR_ACTIONS:
+            raise SystemExit(f"hardware target must include valid operator_action: {target}")
     routes = {row["name"]: row for row in matrix.get("recommended_routes", [])}
     for name, route_row in routes.items():
         if route_row.get("confidence") not in {"ready", "configured", "future", "blocked"}:
@@ -107,6 +115,16 @@ def main() -> None:
     })
     if sorted(diagnosis.get("codes") or []) != route_codes:
         raise SystemExit(f"diagnosis summary must aggregate route codes: {diagnosis}")
+    hardware_diagnosis = matrix.get("hardware_diagnosis_summary") or {}
+    if not isinstance(hardware_diagnosis.get("codes"), list):
+        raise SystemExit(f"runtime matrix must include hardware_diagnosis_summary.codes: {hardware_diagnosis}")
+    target_codes = sorted({
+        str(code)
+        for target in targets.values()
+        for code in target.get("diagnosis_codes") or []
+    })
+    if sorted(hardware_diagnosis.get("codes") or []) != target_codes:
+        raise SystemExit(f"hardware diagnosis summary must aggregate target codes: {hardware_diagnosis}")
     payload = json.dumps(matrix, sort_keys=True)
     for secret_fragment in ["local-runtime-key", "CROWDTENSOR_LLM_RUNTIME_API_KEY=", "Bearer "]:
         if secret_fragment in payload:
@@ -119,6 +137,7 @@ def main() -> None:
         "cpu_required": sorted(CPU_REQUIRED),
         "hardware_targets": sorted(REQUIRED_TARGETS),
         "diagnosis_codes": diagnosis["codes"],
+        "hardware_diagnosis_codes": hardware_diagnosis["codes"],
         "route": route["name"],
     }, sort_keys=True))
 

@@ -24,6 +24,10 @@ class InferenceSessionDemoTests(unittest.TestCase):
                 "request_count": 4,
                 "correct_count": 1,
                 "accuracy": 0.25,
+                "scenario_schema": "model_bundle_inference_scenario_v1",
+                "scenario_id": "route-baseline",
+                "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+                "scenario_request_count": 8,
                 "predicted_token": "e",
                 "target_token": "n",
                 "request_trace": [
@@ -109,6 +113,8 @@ class InferenceSessionDemoTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["task_id"], "task-demo")
         self.assertEqual(report["request_count"], 4)
+        self.assertEqual(report["scenario_id"], "route-baseline")
+        self.assertEqual(report["scenario_schema"], "model_bundle_inference_scenario_v1")
         self.assertEqual(report["requests_per_second"], 1600.0)
         self.assertTrue(report["read_only"])
         self.assertTrue(report["redaction_ok"])

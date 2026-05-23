@@ -2,6 +2,42 @@
 
 This document collects common commands for local Alpha operation.
 
+## One-Command Local Proof
+
+```bash
+crowdtensor local-proof --json
+```
+
+The `crowdtensor/cli.py` user entrypoint emits `local_proof_summary_v1` and writes artifacts under `dist/local-proof`. It runs Doctor, the runtime matrix, the CPU-only read-only home-compute demo, and the Demo Manifest path as a single local proof for a checkout. Use it before longer acceptance runs when a new operator needs one concise artifact.
+
+This command is not production Swarm Inference, not arbitrary prompt serving, and not a GPU/P2P/WebGPU path. It only proves the current local Alpha control-plane route.
+
+## Home Inference Proof
+
+```bash
+crowdtensor home-infer --scenario-id route-baseline --json
+```
+
+The home inference command emits `home_inference_cli_v1` and writes `home_compute_evidence_v1` artifacts under `dist/home-infer`. It wraps `scripts/home_compute_evidence_pack.py`, runs the CPU-only read-only `model_bundle_infer` route, and summarizes `route_decision`, fixed `model_bundle_inference_scenario_v1` metadata, `diagnosis_codes`, safe `request_trace` count, throughput, read-only status, redaction status, and generated artifact paths.
+
+Built-in scenario IDs are `route-baseline`, `gradient-safety`, and `mixed-prompts`. Use this after `crowdtensor local-proof` when a new user needs a compact, shareable proof that their machine can run the current Swarm Inference-shaped contract. It is not production Swarm Inference, not arbitrary prompt serving, and not a real LLM/GPU/P2P path.
+
+## Artifact Cleanup
+
+```bash
+crowdtensor clean-artifacts --json
+```
+
+The cleanup command emits `cleanup_report_v1` and defaults to dry-run. It reports generated `__pycache__` / `.pyc` caches and old CrowdTensor temporary directories such as local proof or demo manifest scratch outputs.
+
+After reviewing the report:
+
+```bash
+crowdtensor clean-artifacts --apply --json
+```
+
+Reports are protected by default: `/tmp/crowdtensor_*.json` and `/tmp/crowdtensor_*.md` are only eligible when `--include-reports` is passed. The cleanup path does not delete state, source files, release artifacts, private env files, symlinks, or paths outside the repo and `/tmp`.
+
 ## Start Coordinator
 
 ```bash
@@ -231,6 +267,14 @@ python3 scripts/inference_session_demo.py --port 8904 --request-count 4
 
 Use `--json` for automation. The demo reports safe session metrics, a capped Coordinator-derived `request_trace`, read-only status, redaction status, and Miner `hardware_profile`; it is a CPU-only Swarm Inference shaped demo, not a real LLM serving benchmark.
 
+Admin-created read-only inference session API:
+
+```bash
+python3 scripts/admin_inference_session_check.py --port 8915 --request-count 4
+```
+
+This smoke validates `POST /admin/inference-sessions` with `schema=inference_session_request_v1`. The endpoint creates a bounded CPU `model_bundle_infer` task and returns a `task_id` plus a `GET /admin/results?task_id=<task_id>&workload_type=model_bundle_infer` query path for safe result inspection. It is read-only: dense model and model bundle versions do not advance, and raw `inference_results`, lease tokens, and idempotency material remain out of operator JSON. The default runtime acceptance pack includes `scripts/admin_inference_session_check.py`; use `--skip-admin-inference-session` only when this service-shaped API boundary is intentionally out of scope for a local run.
+
 Matrix-guided home-compute demo:
 
 ```bash
@@ -258,7 +302,7 @@ Runtime capability matrix:
 python3 scripts/runtime_matrix.py --json
 ```
 
-The runtime capability matrix reports CPU-only baseline readiness, optional browser support, optional external LLM runtime configuration, and a hardware/runtime matrix through `hardware_targets`, `recommended_routes`, `matched_capabilities`, `missing_capabilities`, route `diagnosis_codes`, `operator_action`, and top-level `diagnosis_summary`. GPU, Apple, AMD, browser, and remote container targets may be detected without being usable runtime adapters. `scripts/runtime_matrix_check.py` is included in the default acceptance pack and can be skipped with `--skip-runtime-matrix`. It notes whether `CROWDTENSOR_LLM_RUNTIME_URL` is configured without printing the URL, token, or API key value.
+The runtime capability matrix reports CPU-only baseline readiness, optional browser support, optional external LLM runtime configuration, and a hardware/runtime matrix through `hardware_targets`, `recommended_routes`, `matched_capabilities`, `missing_capabilities`, target and route `diagnosis_codes`, `operator_action`, top-level `diagnosis_summary`, and `hardware_diagnosis_summary`. GPU, Apple, AMD, browser, and remote container targets may be detected without being usable runtime adapters. `scripts/runtime_matrix_check.py` is included in the default acceptance pack and can be skipped with `--skip-runtime-matrix`. It notes whether `CROWDTENSOR_LLM_RUNTIME_URL` is configured without printing the URL, token, or API key value.
 
 External LLM adapter contract smoke:
 
@@ -297,31 +341,72 @@ python3 scripts/remote_compute_evidence_pack.py \
   --markdown-out /tmp/crowdtensor_remote_evidence.md
 ```
 
-The `remote_compute_evidence_v1` report is a safe, shareable proof that a registry-backed remote-style Python Miner completed the read-only `model_bundle_infer` route `remote_python_model_bundle_infer`. It records route capabilities, safe metrics, capped `request_trace`, ledger summary, read-only status, redaction status, and hashed registry status. In a full acceptance run, add `--include-remote-evidence`; this remains opt-in because it starts an additional Coordinator/Miner pair.
+The `remote_compute_evidence_v1` report is a safe, shareable proof that a registry-backed remote-style Python Miner completed the read-only `model_bundle_infer` route `remote_python_model_bundle_infer`. It records route capabilities, safe metrics, capped `request_trace`, ledger summary, read-only status, redaction status, hashed registry status, and `remote_compute_observability_v1` for route, queue, inference, and safety visibility. In a full acceptance run, add `--include-remote-evidence`; this remains opt-in because it starts an additional Coordinator/Miner pair.
+
+Controlled local multi-Miner scenario sweep:
+
+```bash
+python3 scripts/multi_miner_scenario_sweep_check.py \
+  --port 8916 \
+  --execution-mode concurrent \
+  --scenario-ids route-baseline,gradient-safety,mixed-prompts
+```
+
+`scripts/multi_miner_scenario_sweep.py` starts a local Coordinator with no preload backlog, creates one read-only `POST /admin/inference-sessions` task per fixed `model_bundle_inference_scenario_v1`, and can start one registry-backed Python Miner identity per task concurrently. The resulting `multi_miner_scenario_sweep_v1` artifact records `local_multi_miner_model_bundle_infer`, scenario match status, per-session safe latency/throughput, Miner distribution, `lease_summary`, `process_summary`, `multi_miner_scenario_sweep_observability_v1`, read-only status, redaction status, hashed registry status, and `multi_miner_concurrent_ready` diagnostics in concurrent mode. Add `--failure-mode kill-after-claim` to terminate one claimed task before upload, observe lease timeout requeue, and require a rescue Miner to complete the same `task_id` with `multi_miner_requeue_ready`. Add `--include-multi-miner-sweep` to runtime acceptance for the happy path and `--include-multi-miner-requeue` for the failure path. This remains local loopback evidence, not P2P, NAT traversal, production throughput scaling, GPU pooling, or production Swarm Inference.
+
+Local-loopback Demo Manifest:
+
+```bash
+python3 scripts/demo_manifest_pack.py \
+  --output-dir dist/demo-manifest \
+  --port 8914 \
+  --request-count 4
+```
+
+`scripts/demo_manifest_pack.py` produces the `demo_manifest_v1` latest output artifact for operator handoff. It writes `runtime_matrix.json`, `remote_compute_evidence_v1`, `support_bundle`, `demo_manifest.json`, and `demo_manifest.md` under one output directory, then summarizes `remote_compute_observability_v1` without embedding raw state, tokens, leases, idempotency material, or tensor payloads. Validate the path with `scripts/demo_manifest_check.py --base-port 8914`.
 
 Safe two-machine remote runbook:
 
 ```bash
-python3 scripts/remote_demo_runbook_pack.py \
+crowdtensor remote-runbook \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
-  --output-dir dist/remote-demo
+  --scenario-id route-baseline \
+  --output-dir dist/remote-demo \
+  --json
 ```
 
-The `remote_demo_runbook_v1` pack generates `operator.private.env`, `miner.private.env`, a hashed Miner registry, and public JSON/Markdown commands for a controlled `model_bundle_infer` demo. It keeps plaintext tokens out of the public artifact, includes the `remote_compute_evidence_pack.py --mode collect` command, and is checked by `scripts/remote_demo_runbook_check.py`.
+The `crowdtensor/cli.py` operator wrapper emits `remote_runbook_cli_v1`, then delegates to `scripts/remote_demo_runbook_pack.py`. The underlying `remote_demo_runbook_v1` pack generates `operator.private.env`, `miner.private.env`, a hashed Miner registry, and public JSON/Markdown commands for a controlled `model_bundle_infer` demo. It keeps plaintext tokens out of the public artifact, includes the `remote_compute_evidence_pack.py --mode collect --scenario-id route-baseline` command, and records the fixed `model_bundle_inference_scenario_v1` scenario used by acceptance. It is checked by `scripts/remote_demo_runbook_check.py`.
+
+If you intentionally reuse the same output directory and `miner_id`, pass `--replace` to rotate the generated Miner entry in that runbook registry.
 
 Safe two-machine remote acceptance:
 
 ```bash
-python3 scripts/remote_demo_acceptance_pack.py \
+crowdtensor remote-acceptance \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
   --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
   --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
-  --output-dir dist/remote-demo-acceptance
+  --create-session \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-demo-acceptance \
+  --json
 ```
 
-The `remote_demo_acceptance_v1` pack waits for the selected remote Miner to complete read-only `model_bundle_infer`, then writes `remote_compute_evidence_v1`, `support_bundle`, and a top-level acceptance JSON/Markdown report. Its `diagnosis_codes` give operators stable next-step triage for `coordinator_unreachable`, `observer_auth_failed`, `admin_auth_failed`, `miner_not_seen`, `task_lane_missing`, `workload_not_advertised`, `no_accepted_result`, `validation_failed`, `request_count_mismatch`, `artifact_collection_failed`, and `acceptance_ready`. `scripts/remote_demo_acceptance_check.py` validates the local stand-in path.
+The `crowdtensor/cli.py` operator wrapper emits `remote_acceptance_cli_v1`, applies token redaction to captured stdout/stderr tails, then delegates to `scripts/remote_demo_acceptance_pack.py`. The recommended mode uses `--create-session`: the pack calls `POST /admin/inference-sessions` with `request_count` and `scenario_id`, receives a `task_id`, and waits for that specific read-only `model_bundle_infer` result before collecting artifacts. Use `--no-create-session` only for the older wait-only flow against an already completed result. The `remote_demo_acceptance_v1` pack writes `remote_compute_evidence_v1`, `support_bundle`, `remote_demo_observability_v1`, selected `model_bundle_inference_scenario_v1` metadata, scenario match status, and a top-level acceptance JSON/Markdown report. Its `diagnosis_codes` give operators stable next-step triage for `coordinator_unreachable`, `observer_auth_failed`, `admin_auth_failed`, `session_create_failed`, `miner_not_seen`, `task_lane_missing`, `workload_not_advertised`, `no_accepted_result`, `validation_failed`, `request_count_mismatch`, `artifact_collection_failed`, and `acceptance_ready`. This controlled path is not production Swarm Inference and not P2P routing. `scripts/remote_demo_acceptance_check.py` validates the local stand-in path.
+
+Lightweight inference session client for an already running Coordinator:
+
+```bash
+python3 scripts/inference_session_client.py \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --request-count 4 \
+  --json
+```
+
+`scripts/inference_session_client.py` is the direct operator/user entrypoint for the same read-only `POST /admin/inference-sessions` API. Its `inference_session_client_v1` output creates one CPU `model_bundle_infer` task, waits for the exact returned `task_id` in `/admin/results`, and returns safe validation, request count, throughput, and `session_client_ready` diagnostics. It reports `coordinator_unreachable`, `admin_auth_failed`, `session_create_failed`, `session_timeout`, `validation_failed`, and `request_count_mismatch` without printing raw tokens, leases, idempotency material, raw state, or raw `inference_results`. The local acceptance check is `scripts/inference_session_client_check.py`; skip it with `--skip-inference-session-client` only when a lane intentionally omits the user-facing client path.
 
 `--miner-token` and `--observer-token` are passed only to checks that explicitly support shared auth env vars. Auth-specific smoke tests keep their own local tokens so they can validate rejection paths deterministically.
 
@@ -357,7 +442,7 @@ python3 scripts/release_evidence_pack.py \
   --markdown-out dist/release-evidence.md
 ```
 
-`scripts/release_evidence_pack.py` records the current git commit, package metadata, release gate summary, security preflight summary, and acceptance report summaries. It preserves safe runtime `summary_json` fields plus top-level `diagnosis_summary` and `diagnosis_by_check` rows so release artifacts carry stable operator triage codes without raw tokens or tensor payloads. The runtime report is required. Browser and remote reports are optional by default; use `--strict-optional` when a release candidate must prove both. CI writes `release-evidence.json` and uploads it as an artifact.
+`scripts/release_evidence_pack.py` records the current git commit, package metadata, release gate summary, security preflight summary, and acceptance report summaries. It preserves safe runtime `summary_json` fields, top-level `diagnosis_summary` and `diagnosis_by_check` rows, and remote `observability_summaries` such as `remote_compute_observability_v1` and `remote_demo_observability_v1`, so release artifacts carry stable operator triage and remote-demo observability without raw tokens or tensor payloads. The runtime report is required. Browser and remote reports are optional by default; use `--strict-optional` when a release candidate must prove both. CI writes `release-evidence.json` and uploads it as an artifact.
 
 ## Support Bundle
 
@@ -381,7 +466,18 @@ python3 scripts/support_bundle.py \
   --json-out /tmp/crowdtensor_support_bundle.json
 ```
 
-`scripts/support_bundle.py` carries optional acceptance `diagnosis_summary` / `diagnosis_by_check` rows into the issue bundle, then redacts token, lease, idempotency, weight, and delta-shaped fields. Prefer sharing this bundle over raw `state/` files, raw `/state` output, shell history, or token registry files.
+`scripts/support_bundle.py` carries optional acceptance `diagnosis_summary` / `diagnosis_by_check` rows and safe remote `observability_summaries` into the issue bundle, then redacts token, lease, idempotency, weight, and delta-shaped fields. Prefer sharing this bundle over raw `state/` files, raw `/state` output, shell history, or token registry files.
+
+For a single local-loopback handoff artifact, generate the Demo Manifest before or after release evidence:
+
+```bash
+python3 scripts/demo_manifest_pack.py \
+  --output-dir dist/demo-manifest \
+  --port 8914 \
+  --request-count 4
+```
+
+The Demo Manifest is not a production release claim; it is a compact, safe index of the current CPU-only runtime matrix, remote-compute evidence, and support bundle outputs.
 
 ## Troubleshooting
 

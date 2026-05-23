@@ -61,6 +61,10 @@ class RemoteComputeEvidencePackTests(unittest.TestCase):
                     "validation": {
                         "code": "ok",
                         "request_count": 4,
+                        "scenario_schema": "model_bundle_inference_scenario_v1",
+                        "scenario_id": "route-baseline",
+                        "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+                        "scenario_request_count": 8,
                         "correct_count": 1,
                         "accuracy": 0.25,
                         "predicted_token": "e",
@@ -100,6 +104,10 @@ class RemoteComputeEvidencePackTests(unittest.TestCase):
                     "validation": {
                         "code": "ok",
                         "request_count": 4,
+                        "scenario_schema": "model_bundle_inference_scenario_v1",
+                        "scenario_id": "route-baseline",
+                        "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+                        "scenario_request_count": 8,
                         "correct_count": 1,
                         "accuracy": 0.25,
                         "predicted_token": "e",
@@ -147,6 +155,17 @@ class RemoteComputeEvidencePackTests(unittest.TestCase):
         self.assertIn("runtime:python-cli", evidence["route_decision"]["matched_capabilities"])
         self.assertIn("backend:cpu", evidence["route_decision"]["matched_capabilities"])
         self.assertEqual(evidence["inference_summary"]["request_count"], 4)
+        self.assertEqual(evidence["inference_summary"]["scenario_id"], "route-baseline")
+        self.assertTrue(evidence["inference_summary"]["scenario_matches"])
+        self.assertEqual(evidence["observability_summary"]["schema"], "remote_compute_observability_v1")
+        self.assertTrue(evidence["observability_summary"]["route"]["usable_now"])
+        self.assertEqual(evidence["observability_summary"]["work_queue"]["accepted_results"], 1)
+        self.assertEqual(evidence["observability_summary"]["work_queue"]["ledger_rows"], 1)
+        self.assertEqual(evidence["observability_summary"]["inference"]["request_trace_count"], 1)
+        self.assertEqual(evidence["observability_summary"]["inference"]["scenario_id"], "route-baseline")
+        self.assertTrue(evidence["observability_summary"]["inference"]["scenario_matches"])
+        self.assertEqual(evidence["observability_summary"]["inference"]["requests_per_second"], 1600.0)
+        self.assertTrue(evidence["observability_summary"]["safety"]["read_only"])
         self.assertEqual(evidence["request_trace"][0]["prompt"], "crow")
         self.assertTrue(evidence["safety"]["read_only"])
         self.assertTrue(evidence["safety"]["redaction_ok"])
@@ -172,7 +191,33 @@ class RemoteComputeEvidencePackTests(unittest.TestCase):
         self.assertFalse(evidence["ok"])
         self.assertIsNone(evidence["invite"]["registry_hashed"])
         self.assertIn("completed_result", evidence["route_decision"]["missing_capabilities"])
+        self.assertIn("completed_result", evidence["observability_summary"]["route"]["missing_capabilities"])
+        self.assertEqual(evidence["observability_summary"]["work_queue"]["ledger_rows"], 0)
         self.assertFalse(evidence["inference_summary"]["present"])
+
+    def test_build_evidence_rejects_scenario_mismatch(self) -> None:
+        state = self._state()
+        state["tasks"][0]["validation"]["scenario_id"] = "mixed-prompts"
+        ledger = self._ledger()
+        ledger["results"][0]["validation"]["scenario_id"] = "mixed-prompts"
+
+        evidence = remote_compute_evidence_pack.build_evidence(
+            mode="local-loopback",
+            base_url="http://127.0.0.1:8912",
+            miner_id="remote-a",
+            state=state,
+            ledger=ledger,
+            miner_summary={"accepted_tasks": 1},
+            request_count=4,
+            invite={"token_hash": "sha256:abc"},
+            scenario_id="route-baseline",
+            generated_at="2026-05-22T00:00:00+00:00",
+        )
+
+        self.assertFalse(evidence["ok"])
+        self.assertEqual(evidence["inference_summary"]["scenario_id"], "mixed-prompts")
+        self.assertEqual(evidence["inference_summary"]["expected_scenario_id"], "route-baseline")
+        self.assertFalse(evidence["inference_summary"]["scenario_matches"])
 
     def test_markdown_renders_remote_sections(self) -> None:
         evidence = remote_compute_evidence_pack.build_evidence(
@@ -192,6 +237,9 @@ class RemoteComputeEvidencePackTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Remote Compute Evidence", markdown)
         self.assertIn("remote-a", markdown)
         self.assertIn("remote_python_model_bundle_infer", markdown)
+        self.assertIn("## Observability", markdown)
+        self.assertIn("remote_compute_observability_v1", markdown)
+        self.assertIn("Scenario: `route-baseline`", markdown)
         self.assertIn("prompt=`crow`", markdown)
         self.assertIn("Registry hashed", markdown)
 

@@ -100,6 +100,7 @@ Query parameters:
 
 - `limit`: `0..500`, default `50`
 - `status`: `any`, `accepted`, or `rejected`
+- `task_id`: optional exact task filter
 - `miner_id`: optional exact Miner ID filter
 - `workload_type`: optional exact workload filter
 
@@ -134,10 +135,65 @@ Response:
   "results": [],
   "limit": 50,
   "status": "any",
+  "task_id": "",
   "miner_id": "",
   "workload_type": ""
 }
 ```
+
+### `POST /admin/inference-sessions`
+
+Creates one admin-controlled, read-only `model_bundle_infer` task. Requires `x-crowdtensor-admin-token`.
+
+This is the current service-shaped API for asking the Coordinator to enqueue a bounded local CPU inference session and then inspect the accepted result by `task_id`. It is not an OpenAI-compatible chat API, does not accept arbitrary prompts, and does not start real LLM serving. The created task is constrained to `runtime=python-cli`, `backend=cpu`, `schema=inference_session_request_v1`, and a `request_count` between `1` and `8`.
+
+Request:
+
+```json
+{
+  "request_count": 4,
+  "runtime": "python-cli",
+  "backend": "cpu"
+}
+```
+
+Response:
+
+```json
+{
+  "schema": "inference_session_request_v1",
+  "accepted": true,
+  "task_id": "task-id",
+  "status": "queued",
+  "workload_type": "model_bundle_infer",
+  "request_count": 4,
+  "task_requirements": {
+    "runtime": "python-cli",
+    "backend": "cpu",
+    "protocol_version": "runtime_contract_v1"
+  },
+  "result_query": "/admin/results?task_id=task-id&workload_type=model_bundle_infer",
+  "claim_requirements": {
+    "runtime": "python-cli",
+    "backend": "cpu",
+    "protocol_version": "runtime_contract_v1"
+  }
+}
+```
+
+After a compatible Miner completes the task, query `GET /admin/results?task_id=<task_id>&workload_type=model_bundle_infer&status=accepted` to retrieve the safe session summary. The ledger row remains read-only: `model_updated=false`, `model_bundle_updated=false`, raw `inference_results`, lease tokens, and idempotency material are not exposed.
+
+The supported user-facing client for this API is:
+
+```bash
+python3 scripts/inference_session_client.py \
+  --coordinator-url http://127.0.0.1:8787 \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --request-count 4 \
+  --json
+```
+
+It emits `schema=inference_session_client_v1`, waits for the exact returned `task_id`, and reports `session_client_ready` on success. It is only a thin client over the admin session API; it does not add arbitrary prompts, real LLM serving, GPU execution, P2P routing, or a new wire contract. CI validates the path with `scripts/inference_session_client_check.py`, and runtime acceptance can skip it with `--skip-inference-session-client`.
 
 ### `POST /admin/trust-overrides`
 

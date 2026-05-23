@@ -9,13 +9,16 @@ Use HTTPS, a VPN, or a private network for any remote demo. Miner tokens are sen
 For a safe two-machine runbook that creates the registry, private env files, and public operator commands in one step:
 
 ```bash
-python3 scripts/remote_demo_runbook_pack.py \
+crowdtensor remote-runbook \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
-  --output-dir dist/remote-demo
+  --output-dir dist/remote-demo \
+  --json
 ```
 
-The `remote_demo_runbook_v1` output writes `operator.private.env` for observer/admin collection and `miner.private.env` for the remote Miner. Both files are created with `0600` permissions. Only copy `miner.private.env` to the remote Miner host. The public JSON/Markdown includes the `crowdtensord` and `crowdtensor-miner` commands, the `model_bundle_infer` lane, and `remote_compute_evidence_pack.py --mode collect`, but it does not include plaintext tokens. `scripts/remote_demo_runbook_check.py` validates this path in CI.
+The `crowdtensor/cli.py` wrapper emits `remote_runbook_cli_v1` and delegates to `scripts/remote_demo_runbook_pack.py`. The `remote_demo_runbook_v1` output writes `operator.private.env` for observer/admin collection and `miner.private.env` for the remote Miner. Both files are created with `0600` permissions. Only copy `miner.private.env` to the remote Miner host. The public JSON/Markdown includes the `crowdtensord` and `crowdtensor-miner` commands, the `model_bundle_infer` lane, and `remote_compute_evidence_pack.py --mode collect`, but it does not include plaintext tokens. `scripts/remote_demo_runbook_check.py` validates this path in CI.
+
+When rerunning the same runbook directory with the same `miner_id`, add `--replace` so the generated registry rotates that Miner entry instead of failing on the existing invite.
 
 On the Coordinator host:
 
@@ -141,7 +144,7 @@ python3 scripts/remote_compute_evidence_pack.py \
   --markdown-out /tmp/crowdtensor_remote_evidence.md
 ```
 
-The default `local-loopback` mode is a CI-safe remote-style rehearsal: it creates a hashed registry invite, starts a registry-backed Coordinator, runs the invited Python Miner, and emits `remote_compute_evidence_v1` for the read-only `model_bundle_infer` route `remote_python_model_bundle_infer`. For a real two-machine demo after the remote Miner has completed work, collect from the running Coordinator:
+The default `local-loopback` mode is a CI-safe remote-style rehearsal: it creates a hashed registry invite, starts a registry-backed Coordinator, runs the invited Python Miner, and emits `remote_compute_evidence_v1` plus `remote_compute_observability_v1` for the read-only `model_bundle_infer` route `remote_python_model_bundle_infer`. For a real two-machine demo after the remote Miner has completed work, collect from the running Coordinator:
 
 ```bash
 python3 scripts/remote_compute_evidence_pack.py \
@@ -155,18 +158,21 @@ python3 scripts/remote_compute_evidence_pack.py \
 
 `scripts/remote_compute_evidence_check.py` validates the local-loopback path. The runtime acceptance pack can opt in with `--include-remote-evidence`.
 
-After running the safe two-machine runbook on real Coordinator/Miner hosts, use the acceptance pack to wait for a completed `model_bundle_infer` result and collect shareable artifacts:
+After running the safe two-machine runbook on real Coordinator/Miner hosts, use the acceptance pack to create a bounded read-only session, wait for the returned `task_id`, and collect shareable artifacts:
 
 ```bash
-python3 scripts/remote_demo_acceptance_pack.py \
+crowdtensor remote-acceptance \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
   --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
   --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
-  --output-dir dist/remote-demo-acceptance
+  --create-session \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-demo-acceptance \
+  --json
 ```
 
-The `remote_demo_acceptance_v1` output includes the top-level acceptance summary, `remote_compute_evidence_v1`, a redacted `support_bundle`, and stable `diagnosis_codes` for operator triage: `coordinator_unreachable`, `observer_auth_failed`, `admin_auth_failed`, `miner_not_seen`, `task_lane_missing`, `workload_not_advertised`, `no_accepted_result`, `validation_failed`, `request_count_mismatch`, `artifact_collection_failed`, and `acceptance_ready`. `scripts/remote_demo_acceptance_check.py` validates the local stand-in path in CI.
+The `crowdtensor/cli.py` wrapper emits `remote_acceptance_cli_v1`, applies token redaction to captured output, and delegates to `scripts/remote_demo_acceptance_pack.py`. With `--create-session`, the acceptance pack calls `POST /admin/inference-sessions`, queues one read-only `model_bundle_infer` task for the selected `model_bundle_inference_scenario_v1`, and waits for the returned `task_id` so stale accepted rows from earlier runs cannot satisfy the demo. The `remote_demo_acceptance_v1` output includes the top-level acceptance summary, `remote_compute_evidence_v1`, `remote_demo_observability_v1`, scenario match status, a redacted `support_bundle`, and stable `diagnosis_codes` for operator triage: `coordinator_unreachable`, `observer_auth_failed`, `admin_auth_failed`, `session_create_failed`, `miner_not_seen`, `task_lane_missing`, `workload_not_advertised`, `no_accepted_result`, `validation_failed`, `request_count_mismatch`, `artifact_collection_failed`, and `acceptance_ready`. This is not production Swarm Inference and not P2P routing. `scripts/remote_demo_acceptance_check.py` validates the local stand-in path in CI.
 
 The default runtime acceptance pack keeps the remote Miner check opt-in:
 

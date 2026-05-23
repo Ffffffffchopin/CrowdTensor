@@ -29,7 +29,13 @@ The project currently includes:
 - Admission and operator safety: shared Miner token, per-Miner token registry, observer token, admin token, hashed token verifiers, security preflight, redacted `/state`, aggregate `/metrics`, and safe admin ledger views.
 - Controlled remote Miner onboarding through invite generation, readiness checks, remote join checks, retry counters, and Support Bundle diagnostics.
 - Browser experiments for WebRTC tensor tunnel, browser Worker compute probe, and browser Miner bridge.
-- Release and support tooling: First-run Doctor, runtime capability matrix, matrix-guided home-compute demo, user-facing inference session demo, release gate, runtime acceptance pack, browser acceptance pack, release evidence pack, Support Bundle, changelog, release process docs, roadmap, protocol docs, use-case docs, and static site. Runtime acceptance emits safe per-check `summary_json` and top-level `diagnosis_summary`; release evidence and Support Bundle preserve `diagnosis_by_check` for operator triage.
+- Release and support tooling: First-run Doctor, runtime capability matrix, matrix-guided home-compute demo, user-facing inference session demo, `inference_session_client_v1`, admin-created read-only inference session API check, release gate, runtime acceptance pack, browser acceptance pack, release evidence pack, Support Bundle, changelog, release process docs, roadmap, protocol docs, use-case docs, and static site. Runtime acceptance emits safe per-check `summary_json` and top-level `diagnosis_summary`; release evidence and Support Bundle preserve `diagnosis_by_check` plus safe remote `observability_summaries` for operator triage.
+- One-command local proof: `crowdtensor local-proof` in `crowdtensor/cli.py` emits `local_proof_summary_v1` by chaining Doctor, runtime matrix, the CPU-only read-only home-compute demo, and the Demo Manifest path. It is not production Swarm Inference; it is a user-facing local proof artifact.
+- Home inference proof CLI: `crowdtensor home-infer` emits `home_inference_cli_v1`, wraps `scripts/home_compute_evidence_pack.py`, and writes `home_compute_evidence_v1` JSON/Markdown with the CPU-only `model_bundle_infer` route, fixed `model_bundle_inference_scenario_v1` metadata, capped `request_trace`, `diagnosis_codes`, read-only status, and redaction status. Built-in scenario IDs are `route-baseline`, `gradient-safety`, and `mixed-prompts`; it is not production Swarm Inference or arbitrary prompt serving.
+- Safe artifact cleanup: `crowdtensor clean-artifacts` emits `cleanup_report_v1`, defaults to dry-run, removes generated `__pycache__` / `.pyc` caches and old CrowdTensor temp directories only with `--apply`, keeps reports unless `--include-reports` is used, and does not delete state, source files, release artifacts, or private env material.
+- Remote demo operator CLI: `crowdtensor remote-runbook` emits `remote_runbook_cli_v1` and wraps `scripts/remote_demo_runbook_pack.py`; `crowdtensor remote-acceptance` emits `remote_acceptance_cli_v1`, defaults to `--create-session`, wraps `scripts/remote_demo_acceptance_pack.py`, carries fixed `model_bundle_inference_scenario_v1` scenarios such as `route-baseline`, and applies token redaction to captured command output. These are controlled two-machine helpers, not production Swarm Inference and not P2P routing.
+- Local multi-Miner scenario sweep: `scripts/multi_miner_scenario_sweep.py` and `scripts/multi_miner_scenario_sweep_check.py` emit `multi_miner_scenario_sweep_v1` and `multi_miner_scenario_sweep_observability_v1` by creating three read-only `POST /admin/inference-sessions` tasks for `route-baseline`, `gradient-safety`, and `mixed-prompts`, then running separate registry-backed Python Miner identities through `local_multi_miner_model_bundle_infer`. The check defaults to `--execution-mode concurrent`, starts all Miner processes together, verifies scenario matches, distinct Miner distribution, `lease_summary` one-result-per-task uniqueness, `process_summary`, read-only/redaction/hashed-registry safety, and `multi_miner_concurrent_ready`; `--failure-mode kill-after-claim` terminates one claimed Miner before upload, observes lease timeout requeue, requires a rescue Miner to complete the same `task_id`, and emits `multi_miner_requeue_ready`. Runtime acceptance can opt in with `--include-multi-miner-sweep` and `--include-multi-miner-requeue`. This is local lease-race and requeue evidence, not P2P routing, production throughput scaling, GPU pooling, or production Swarm Inference.
+- Demo Manifest tooling: `scripts/demo_manifest_pack.py` and `scripts/demo_manifest_check.py` produce `demo_manifest_v1`, the current latest output artifact for local-loopback handoff. It indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries without claiming GPU, P2P, WebGPU, or production Swarm Inference readiness.
 
 ## Explicit Non-Capabilities
 
@@ -45,7 +51,7 @@ Do not imply these are implemented:
 - hardware attestation
 - hardened public-internet security
 
-The current model bundle, measurable multi-request model bundle inference, optional `external_llm_infer_v1` adapter, and micro LM workloads are dependency-free contract rehearsals, not real LLM or GPU throughput benchmarks. `model_bundle_infer` is read-only and exposes only Coordinator-derived capped `request_trace` summaries instead of raw `inference_results`. `external_llm_infer` is read-only, validates `external_llm_results`, records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries, supports deterministic mock, command, and OpenAI-compatible HTTP adapters, and must keep raw prompts, raw `output_text`, runtime URLs, and API keys out of public state.
+The current model bundle, measurable multi-request model bundle inference, admin-created `POST /admin/inference-sessions` route with `schema=inference_session_request_v1`, `scripts/inference_session_client.py` with `schema=inference_session_client_v1`, optional `external_llm_infer_v1` adapter, and micro LM workloads are dependency-free contract rehearsals, not real LLM or GPU throughput benchmarks. `model_bundle_infer` is read-only and exposes only Coordinator-derived capped `request_trace` summaries instead of raw `inference_results`; admin-created sessions must be inspected through `GET /admin/results?task_id=<task_id>&workload_type=model_bundle_infer` and must remain read-only. `inference_session_client.py` is only a thin user-facing client over that API; `session_client_ready` means the existing CPU read-only result was accepted, not that arbitrary prompt serving exists. `external_llm_infer` is read-only, validates `external_llm_results`, records safe `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries, supports deterministic mock, command, and OpenAI-compatible HTTP adapters, and must keep raw prompts, raw `output_text`, runtime URLs, and API keys out of public state.
 
 ## Strategic Route
 
@@ -55,18 +61,26 @@ Recommended sequence:
 
 1. Keep the Alpha control plane reliable, testable, and well documented.
 2. Keep README, ROADMAP, protocol docs, use cases, static site, and project memory synchronized.
-3. Keep `scripts/runtime_matrix.py` as the first open-source user diagnostic so contributors can see CPU-only readiness, optional browser support, external LLM adapter configuration, `matched_capabilities`, `missing_capabilities`, route `diagnosis_codes`, `operator_action`, top-level `diagnosis_summary`, and the hardware/runtime matrix before running longer smoke tests.
-4. Keep expanding `scripts/home_compute_demo.py` as the useful home-compute demo that feels close to Swarm Inference: it should pair `scripts/runtime_matrix.py` `hardware_targets` / `recommended_routes` capability matching and `route_decision` with the read-only multi-request `model_bundle_infer` session and stable `diagnosis_codes` such as `home_compute_ready` and `runtime_matrix_blocked` before larger artifacts or runtime adapters are added.
-5. Keep `scripts/home_compute_evidence_pack.py` and `scripts/home_compute_evidence_check.py` as the safe, shareable `home_compute_evidence_v1` layer for public issue reports and demos, preserving `route_decision`, `matched_capabilities`, `diagnosis_codes`, and capped `request_trace` while redacting secret-shaped fields.
-6. Keep `scripts/remote_compute_evidence_pack.py` and `scripts/remote_compute_evidence_check.py` as the safe, shareable `remote_compute_evidence_v1` layer for registry-backed remote-style Python Miner demos, preserving `remote_python_model_bundle_infer`, safe metrics, capped `request_trace`, and hashed registry status.
-7. Keep `scripts/remote_demo_runbook_pack.py` and `scripts/remote_demo_runbook_check.py` as the safe two-machine `remote_demo_runbook_v1` path for controlled remote demos, preserving `operator.private.env`, `miner.private.env`, hashed registry setup, `model_bundle_infer`, and `remote_compute_evidence_pack.py --mode collect`.
-8. Keep `scripts/remote_demo_acceptance_pack.py` and `scripts/remote_demo_acceptance_check.py` as the safe two-machine `remote_demo_acceptance_v1` path that waits for `model_bundle_infer`, then collects `remote_compute_evidence_v1`, `support_bundle`, and stable `diagnosis_codes` such as `coordinator_unreachable`, `observer_auth_failed`, and `artifact_collection_failed`.
-9. Keep `external_llm_infer_v1` as the narrow optional runtime adapter contract: deterministic `--enable-mock-llm-runtime` for CI, explicit `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local experiments, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
-10. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
-11. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.
-12. Expand browser-native participation from WebRTC/Worker probes toward WebGPU/WebAssembly only after tensor transfer and lifecycle limits are measured.
-13. Add P2P/NAT routing after useful workloads and operator safety are proven.
-14. Treat reputation and incentives as later protocol layers built on result validation and trust history.
+3. Keep `scripts/runtime_matrix.py` as the first open-source user diagnostic so contributors can see CPU-only readiness, optional browser support, external LLM adapter configuration, `matched_capabilities`, `missing_capabilities`, target and route `diagnosis_codes`, `operator_action`, top-level `diagnosis_summary`, `hardware_diagnosis_summary`, and the hardware/runtime matrix before running longer smoke tests.
+4. Keep `crowdtensor local-proof` as the shortest user-facing local proof, preserving `local_proof_summary_v1`, Doctor, runtime matrix, CPU-only read-only home-compute demo, Demo Manifest output, and explicit non-production Swarm Inference boundaries.
+5. Keep `crowdtensor home-infer` as the shortest shareable local read-only inference proof, preserving `home_inference_cli_v1`, `home_compute_evidence_v1`, `model_bundle_infer`, fixed `model_bundle_inference_scenario_v1` scenarios, capped `request_trace`, `diagnosis_codes`, and explicit not production Swarm Inference boundaries.
+6. Keep `crowdtensor clean-artifacts` as the safe maintenance path for repeated agent runs, preserving `cleanup_report_v1`, dry-run default, `--apply`, `--include-reports`, and the rule that cleanup does not delete state or source files.
+7. Keep `crowdtensor remote-runbook` and `crowdtensor remote-acceptance` as the operator-facing wrappers for the controlled two-machine path, preserving `remote_runbook_cli_v1`, `remote_acceptance_cli_v1`, fixed scenario propagation, token redaction, default `--create-session`, and explicit not production / not P2P boundaries.
+8. Keep expanding `scripts/home_compute_demo.py` as the useful home-compute demo that feels close to Swarm Inference: it should pair `scripts/runtime_matrix.py` `hardware_targets` / `recommended_routes` capability matching and `route_decision` with the read-only multi-request `model_bundle_infer` session and stable `diagnosis_codes` such as `home_compute_ready` and `runtime_matrix_blocked` before larger artifacts or runtime adapters are added.
+9. Keep `scripts/home_compute_evidence_pack.py` and `scripts/home_compute_evidence_check.py` as the safe, shareable `home_compute_evidence_v1` layer for public issue reports and demos, preserving `route_decision`, `matched_capabilities`, `diagnosis_codes`, and capped `request_trace` while redacting secret-shaped fields.
+10. Keep `scripts/inference_session_client.py` and `scripts/inference_session_client_check.py` as the narrow user-facing client path for a running Coordinator, preserving `inference_session_client_v1`, `session_client_ready`, `POST /admin/inference-sessions`, `task_id` filtering, `model_bundle_infer`, read-only semantics, and `--skip-inference-session-client` acceptance control.
+11. Keep `scripts/admin_inference_session_check.py` as the narrow service-shaped API acceptance path for `POST /admin/inference-sessions`, preserving `inference_session_request_v1`, `task_id` filtering, `model_bundle_infer`, read-only semantics, and `--skip-admin-inference-session` acceptance control.
+12. Keep `scripts/remote_compute_evidence_pack.py` and `scripts/remote_compute_evidence_check.py` as the safe, shareable `remote_compute_evidence_v1` layer for registry-backed remote-style Python Miner demos, preserving `remote_python_model_bundle_infer`, `remote_compute_observability_v1`, fixed `model_bundle_inference_scenario_v1` metadata and scenario match status, safe metrics, capped `request_trace`, and hashed registry status.
+13. Keep `scripts/remote_demo_runbook_pack.py` and `scripts/remote_demo_runbook_check.py` as the safe two-machine `remote_demo_runbook_v1` path for controlled remote demos, preserving `operator.private.env`, `miner.private.env`, hashed registry setup, `model_bundle_infer`, `--scenario-id route-baseline`, and `remote_compute_evidence_pack.py --mode collect`.
+14. Keep `scripts/remote_demo_acceptance_pack.py` and `scripts/remote_demo_acceptance_check.py` as the safe two-machine `remote_demo_acceptance_v1` path that can use `--create-session` to call `POST /admin/inference-sessions` with `scenario_id`, wait for the returned `task_id`, verify scenario match, then collect `remote_compute_evidence_v1`, `remote_demo_observability_v1`, `support_bundle`, and stable `diagnosis_codes` such as `coordinator_unreachable`, `observer_auth_failed`, `session_create_failed`, and `artifact_collection_failed`.
+15. Keep `scripts/multi_miner_scenario_sweep.py` and `scripts/multi_miner_scenario_sweep_check.py` as the controlled local multi-Miner lease-race and failure-requeue proof, preserving `multi_miner_scenario_sweep_v1`, `multi_miner_scenario_sweep_observability_v1`, three fixed scenarios, distinct Miner identities, `local_multi_miner_model_bundle_infer`, concurrent mode by default in the check, `lease_summary`, `process_summary`, `requeue_summary`, read-only/redaction/hashed-registry safety, `multi_miner_concurrent_ready`, `multi_miner_requeue_ready`, and `--include-multi-miner-sweep` / `--include-multi-miner-requeue` opt-in coverage.
+16. Keep `scripts/demo_manifest_pack.py` and `scripts/demo_manifest_check.py` as the latest output artifact entrypoint for local-loopback handoff. The manifest should combine runtime matrix, remote-compute evidence, and support bundle summaries while staying CPU-only and safe by default.
+17. Keep `external_llm_infer_v1` as the narrow optional runtime adapter contract: deterministic `--enable-mock-llm-runtime` for CI, explicit `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for operator-owned local experiments, and `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for OpenAI-compatible local servers.
+18. Add hardware/runtime matrices for CPU, NVIDIA, AMD, Apple Silicon, browser, and remote container paths.
+19. Introduce optional GPU/runtime adapters without making the control plane depend on one framework.
+20. Expand browser-native participation from WebRTC/Worker probes toward WebGPU/WebAssembly only after tensor transfer and lifecycle limits are measured.
+21. Add P2P/NAT routing after useful workloads and operator safety are proven.
+22. Treat reputation and incentives as later protocol layers built on result validation and trust history.
 
 ## Engineering Principles
 
@@ -138,21 +152,33 @@ python3 scripts/remote_compute_evidence_pack.py \
 Safe two-machine remote demo runbook:
 
 ```bash
-python3 scripts/remote_demo_runbook_pack.py \
+crowdtensor remote-runbook \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
-  --output-dir dist/remote-demo
+  --output-dir dist/remote-demo \
+  --json
 ```
 
 Safe two-machine remote demo acceptance pack:
 
 ```bash
-python3 scripts/remote_demo_acceptance_pack.py \
+crowdtensor remote-acceptance \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
   --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
   --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
-  --output-dir dist/remote-demo-acceptance
+  --create-session \
+  --output-dir dist/remote-demo-acceptance \
+  --json
+```
+
+Demo Manifest latest output artifact:
+
+```bash
+python3 scripts/demo_manifest_pack.py \
+  --output-dir dist/demo-manifest \
+  --port 8914 \
+  --request-count 4
 ```
 
 ## Maintenance Rule

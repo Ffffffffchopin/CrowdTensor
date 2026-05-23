@@ -84,7 +84,7 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path) -> subprocess.P
         "--backlog",
         "0",
         "--task-lane",
-        f"python-cli:cpu:1:{WORKLOAD_TYPE}",
+        f"python-cli:cpu:{0 if args.scenario_id else 1}:{WORKLOAD_TYPE}",
     ]
     if args.admin_token:
         command.extend(["--admin-token", args.admin_token])
@@ -191,6 +191,10 @@ def build_demo_report(
         ),
         "task_id": task.get("task_id"),
         "workload_type": WORKLOAD_TYPE,
+        "scenario_schema": validation.get("scenario_schema"),
+        "scenario_id": validation.get("scenario_id"),
+        "scenario_description": validation.get("scenario_description"),
+        "scenario_request_count": validation.get("scenario_request_count"),
         "bundle_id": bundle.get("bundle_id"),
         "bundle_version": bundle.get("version"),
         "request_count": validation.get("request_count"),
@@ -267,6 +271,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state-dir", default="")
     parser.add_argument("--lease-seconds", type=float, default=10.0)
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default="")
     parser.add_argument("--startup-timeout", type=float, default=10.0)
     parser.add_argument("--miner-timeout", type=float, default=30.0)
     parser.add_argument("--admin-token", default="local-admin")
@@ -292,6 +297,14 @@ def run_demo(args: argparse.Namespace) -> dict:
     coordinator = None
     try:
         coordinator = start_coordinator(args, state_dir)
+        if args.scenario_id:
+            request_json(
+                "POST",
+                args.base_url,
+                "/admin/inference-sessions",
+                {"request_count": args.request_count, "scenario_id": args.scenario_id},
+                admin_token=args.admin_token,
+            )
         miner_summary = run_miner(args)
         state = request_json("GET", args.base_url, "/state")
         ledger = admin_results(args, status="accepted", workload_type=WORKLOAD_TYPE)

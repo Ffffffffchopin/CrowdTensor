@@ -15,6 +15,7 @@ from typing import Iterable
 
 MODEL_BUNDLE_SCHEMA_VERSION = "model_bundle_lm_v1"
 MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION = "model_bundle_infer_v1"
+MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION = "model_bundle_inference_scenario_v1"
 MODEL_BUNDLE_INFERENCE_TRACE_LIMIT = 8
 WORKLOAD_TYPE = "model_bundle_lm"
 INFERENCE_WORKLOAD_TYPE = "model_bundle_infer"
@@ -29,6 +30,27 @@ DEFAULT_OUTER_LR = 0.65
 DEFAULT_OUTER_MOMENTUM = 0.7
 DEFAULT_MAX_DELTA_NORM = 4.0
 DEFAULT_MAX_LOSS_DELTA = 1.0
+DEFAULT_INFERENCE_SCENARIO_ID = "route-baseline"
+MODEL_BUNDLE_INFERENCE_SCENARIOS = {
+    "route-baseline": {
+        "scenario_id": "route-baseline",
+        "scenario_schema": MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION,
+        "description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+        "sample_offsets": [0, 1, 2, 3, 4, 5, 6, 7],
+    },
+    "gradient-safety": {
+        "scenario_id": "gradient-safety",
+        "scenario_schema": MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION,
+        "description": "Fixed prompts around gradient-safety wording in the built-in corpus.",
+        "sample_offsets": [25, 26, 27, 28, 29, 30, 31, 32],
+    },
+    "mixed-prompts": {
+        "scenario_id": "mixed-prompts",
+        "scenario_schema": MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION,
+        "description": "Fixed mixed offsets across the built-in corpus for repeatable demo variety.",
+        "sample_offsets": [0, 6, 12, 18, 24, 30, 3, 15],
+    },
+}
 
 
 def _stable_offset(*parts: object) -> int:
@@ -167,31 +189,39 @@ def model_bundle_inference_spec_for(
     model: dict,
     *,
     request_count: int = 1,
+    scenario_id: str | None = None,
 ) -> dict:
     current = normalize_model_bundle(model)
     config = dict(current["config"])
     token_ids = list(TOKEN_IDS)
     example_count = _example_count(token_ids, config)
-    sample_offset = _stable_offset(
-        task_id,
-        miner_id,
-        current["bundle_id"],
-        current["version"],
-        "infer",
-    ) % example_count
+    scenario = inference_scenario_summary(scenario_id)
+    if scenario:
+        sample_offsets = list(MODEL_BUNDLE_INFERENCE_SCENARIOS[scenario["scenario_id"]]["sample_offsets"])
+        sample_offset = int(sample_offsets[0]) % example_count
+    else:
+        sample_offsets = []
+        sample_offset = _stable_offset(
+            task_id,
+            miner_id,
+            current["bundle_id"],
+            current["version"],
+            "infer",
+        ) % example_count
     count = max(1, min(int(request_count), example_count))
     requests = []
     for index in range(count):
-        context, target = _example_at(token_ids, config, sample_offset + index)
+        offset = int(sample_offsets[index % len(sample_offsets)]) if sample_offsets else sample_offset + index
+        context, target = _example_at(token_ids, config, offset)
         requests.append({
             "request_id": f"req-{index + 1}",
             "prompt_token_ids": context,
             "target_token_id": target,
             "top_k": 3,
-            "sample_offset": sample_offset + index,
+            "sample_offset": offset,
         })
     first = requests[0]
-    return {
+    spec = {
         "type": INFERENCE_WORKLOAD_TYPE,
         "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
         "bundle_id": current["bundle_id"],
@@ -206,6 +236,8 @@ def model_bundle_inference_spec_for(
         "top_k": int(first["top_k"]),
         "sample_offset": sample_offset,
     }
+    spec.update(scenario)
+    return spec
 
 
 def model_bundle_version(model: dict) -> int:
@@ -230,6 +262,29 @@ def _example_at(token_ids: list[int], config: dict, sample_index: int) -> tuple[
     count = _example_count(token_ids, config)
     start = int(sample_index) % count
     return token_ids[start:start + context_length], token_ids[start + context_length]
+
+
+def normalize_inference_scenario_id(scenario_id: str | None) -> str:
+    value = str(scenario_id or "").strip()
+    if not value:
+        return ""
+    if value not in MODEL_BUNDLE_INFERENCE_SCENARIOS:
+        allowed = ", ".join(sorted(MODEL_BUNDLE_INFERENCE_SCENARIOS))
+        raise ValueError(f"unknown model bundle inference scenario_id {value!r}; expected one of: {allowed}")
+    return value
+
+
+def inference_scenario_summary(scenario_id: str | None) -> dict:
+    normalized = normalize_inference_scenario_id(scenario_id)
+    if not normalized:
+        return {}
+    scenario = MODEL_BUNDLE_INFERENCE_SCENARIOS[normalized]
+    return {
+        "scenario_schema": MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION,
+        "scenario_id": scenario["scenario_id"],
+        "scenario_description": scenario["description"],
+        "scenario_request_count": len(scenario["sample_offsets"]),
+    }
 
 
 def _softmax(values: list[float]) -> list[float]:
@@ -493,7 +548,8 @@ def run_model_bundle_inference(workload_spec: dict) -> dict:
     elapsed_ms = (time.monotonic() - start) * 1000.0
     correct_count = sum(1 for result in results if bool(result["correct"]))
     elapsed_seconds = max(elapsed_ms / 1000.0, 1e-9)
-    return {
+    scenario = inference_scenario_summary(spec.get("scenario_id"))
+    result = {
         "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
         "inference_result": results[0],
         "inference_results": results,
@@ -506,6 +562,8 @@ def run_model_bundle_inference(workload_spec: dict) -> dict:
         "top_k": max(int(request["top_k"]) for request in requests),
         "sample_offset": int(spec.get("sample_offset", 0)),
     }
+    result.update(scenario)
+    return result
 
 
 def _validate_single_model_bundle_inference_result(
@@ -661,8 +719,10 @@ def validate_model_bundle_inference(
     *,
     inference_results: list[dict] | None = None,
     expected_requests: list[dict] | None = None,
+    expected_scenario_id: str | None = None,
 ) -> dict:
     current = normalize_model_bundle(model)
+    scenario = inference_scenario_summary(expected_scenario_id)
     if inference_results is None and inference_result is not None:
         inference_results = [inference_result]
     if not isinstance(inference_results, list) or not inference_results:
@@ -740,7 +800,7 @@ def validate_model_bundle_inference(
         _safe_inference_trace(current["config"], result)
         for result in normalized_results[:MODEL_BUNDLE_INFERENCE_TRACE_LIMIT]
     ]
-    return {
+    validation = {
         "accepted": True,
         "code": "ok",
         "reason": "accepted",
@@ -762,6 +822,8 @@ def validate_model_bundle_inference(
         "target_token": first["target_token"],
         "correct": bool(first["correct"]),
     }
+    validation.update(scenario)
+    return validation
 
 
 def validate_model_bundle_delta(model: dict, bundle_delta: dict | None) -> dict:

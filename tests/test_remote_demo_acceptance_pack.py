@@ -28,6 +28,9 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
             http_timeout=5.0,
             artifact_timeout=60.0,
             admin_results_limit=10,
+            scenario_id="route-baseline",
+            create_session=False,
+            session_task_id="",
             output_dir="dist/remote-demo-acceptance",
             json_out="",
             markdown_out="",
@@ -45,6 +48,10 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
         validation = validation or {
             "code": "ok",
             "request_count": 4,
+            "scenario_schema": "model_bundle_inference_scenario_v1",
+            "scenario_id": "route-baseline",
+            "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+            "scenario_request_count": 8,
             "request_trace_count": 4,
             "accuracy": 0.25,
         }
@@ -86,18 +93,30 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
             )
         return state
 
-    def _results(self, *, miner_id: str = "remote-a", validation: dict | None = None, include_result: bool = True) -> dict:
+    def _results(
+        self,
+        *,
+        miner_id: str = "remote-a",
+        task_id: str = "task-1",
+        validation: dict | None = None,
+        include_result: bool = True,
+    ) -> dict:
         if not include_result:
             return {"results": []}
         validation = validation or {
             "code": "ok",
             "request_count": 4,
+            "scenario_schema": "model_bundle_inference_scenario_v1",
+            "scenario_id": "route-baseline",
+            "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+            "scenario_request_count": 8,
             "request_trace_count": 4,
             "accuracy": 0.25,
         }
         return {
             "results": [
                 {
+                    "task_id": task_id,
                     "status": "completed",
                     "miner_id": miner_id,
                     "workload_type": "model_bundle_infer",
@@ -149,6 +168,7 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
                 results=results,
                 miner_id="remote-a",
                 request_count=request_count,
+                scenario_id="route-baseline",
             ),
         }
 
@@ -170,9 +190,19 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
                 "summary": {
                     "schema": "remote_compute_evidence_v1",
                     "ok": evidence_ok,
+                    "route": "remote_python_model_bundle_infer",
+                    "route_confidence": "ready",
+                    "route_usable_now": True,
                     "request_count": 4,
+                    "scenario_schema": "model_bundle_inference_scenario_v1",
+                    "scenario_id": "route-baseline",
+                    "scenario_matches": True,
+                    "request_trace_count": 4,
+                    "accuracy": 0.25,
+                    "requests_per_second": 1200.0,
                     "read_only": True,
                     "redaction_ok": True,
+                    "observability_schema": "remote_compute_observability_v1",
                 },
             },
             "support_bundle": {
@@ -194,12 +224,16 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
             results=self._results(),
             miner_id="remote-a",
             request_count=4,
+            scenario_id="route-baseline",
         )
 
         self.assertTrue(summary["ready"])
         self.assertEqual(summary["route"], "remote_python_model_bundle_infer")
         self.assertIn("runtime:python-cli", summary["matched_capabilities"])
         self.assertIn("accepted_result", summary["matched_capabilities"])
+        self.assertIn("scenario_id", summary["matched_capabilities"])
+        self.assertEqual(summary["inference"]["scenario_id"], "route-baseline")
+        self.assertTrue(summary["inference"]["scenario_matches"])
         self.assertFalse(summary["missing_capabilities"])
 
         failed = remote_demo_acceptance_pack.readiness_summary(
@@ -207,6 +241,7 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
             results={"results": []},
             miner_id="remote-a",
             request_count=4,
+            scenario_id="route-baseline",
         )
         self.assertFalse(failed["ready"])
         self.assertIn("accepted_result", failed["missing_capabilities"])
@@ -229,8 +264,146 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
         self.assertEqual(report["diagnosis"]["primary_code"], "acceptance_ready")
         self.assertEqual(report["diagnosis_codes"], ["acceptance_ready"])
         self.assertEqual(report["evidence_summary"]["schema"], "remote_compute_evidence_v1")
+        self.assertEqual(report["observability_summary"]["schema"], "remote_demo_observability_v1")
+        self.assertEqual(report["observability_summary"]["availability"]["attempts"], 2)
+        self.assertTrue(report["observability_summary"]["availability"]["health_ok"])
+        self.assertEqual(report["observability_summary"]["work_queue"]["accepted_results"], 1)
+        self.assertEqual(report["observability_summary"]["miner"]["runtime"], "python-cli")
+        self.assertEqual(report["observability_summary"]["inference"]["request_count"], 4)
+        self.assertEqual(report["scenario"]["scenario_id"], "route-baseline")
+        self.assertEqual(report["evidence_summary"]["scenario_id"], "route-baseline")
+        self.assertTrue(report["evidence_summary"]["scenario_matches"])
+        self.assertEqual(report["observability_summary"]["inference"]["scenario_id"], "route-baseline")
+        self.assertTrue(report["observability_summary"]["inference"]["scenario_matches"])
+        self.assertEqual(report["observability_summary"]["inference"]["requests_per_second"], 1200.0)
+        self.assertFalse(report["session_request"]["created"])
+        self.assertEqual(
+            report["observability_summary"]["artifacts"]["evidence_observability_schema"],
+            "remote_compute_observability_v1",
+        )
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("observer-secret", encoded)
+        self.assertNotIn("admin-secret", encoded)
+
+    def test_build_report_summarizes_created_session_request(self) -> None:
+        args = self._args()
+        args.create_session = True
+        args.session_task_id = "task-created"
+        state = self._state()
+        state["tasks"][0]["task_id"] = "task-created"
+        status = self._status(
+            state=state,
+            results=self._results(task_id="task-created"),
+        )
+        status["summary"] = remote_demo_acceptance_pack.readiness_summary(
+            state=state,
+            results=status["results"],
+            miner_id="remote-a",
+            request_count=4,
+            scenario_id="route-baseline",
+            task_id="task-created",
+        )
+        wait = self._wait(status=status)
+        wait["session_create"] = {
+            "ok": True,
+            "session": {
+                "created": True,
+                "schema": "inference_session_request_v1",
+                "task_id": "task-created",
+                "request_count": 4,
+                "scenario_schema": "model_bundle_inference_scenario_v1",
+                "scenario_id": "route-baseline",
+                "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+                "scenario_request_count": 8,
+                "workload_type": "model_bundle_infer",
+                "status": "queued",
+            },
+        }
+
+        report = remote_demo_acceptance_pack.build_report(
+            args=args,
+            wait=wait,
+            artifacts=self._artifacts(),
+            generated_at="2026-05-22T00:00:00+00:00",
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["session_request"]["created"])
+        self.assertEqual(report["session_request"]["task_id"], "task-created")
+        self.assertEqual(report["session_request"]["scenario_id"], "route-baseline")
+        self.assertEqual(report["observability_summary"]["session_request"]["task_id"], "task-created")
+        self.assertEqual(report["observability_summary"]["work_queue"]["expected_task_id"], "task-created")
+
+    def test_create_session_mode_ignores_old_result_without_matching_task_id(self) -> None:
+        state = self._state()
+        state["tasks"][0]["task_id"] = "old-task"
+
+        summary = remote_demo_acceptance_pack.readiness_summary(
+            state=state,
+            results=self._results(task_id="old-task"),
+            miner_id="remote-a",
+            request_count=4,
+            scenario_id="route-baseline",
+            task_id="new-task",
+        )
+
+        self.assertFalse(summary["ready"])
+        self.assertEqual(summary["expected_task_id"], "new-task")
+        self.assertIn("accepted_result", summary["missing_capabilities"])
+
+    def test_readiness_summary_rejects_scenario_mismatch(self) -> None:
+        validation = {
+            "code": "ok",
+            "request_count": 4,
+            "scenario_schema": "model_bundle_inference_scenario_v1",
+            "scenario_id": "mixed-prompts",
+            "request_trace_count": 4,
+            "accuracy": 0.25,
+        }
+
+        summary = remote_demo_acceptance_pack.readiness_summary(
+            state=self._state(validation=validation),
+            results=self._results(validation=validation),
+            miner_id="remote-a",
+            request_count=4,
+            scenario_id="route-baseline",
+        )
+
+        self.assertFalse(summary["ready"])
+        self.assertIn("scenario_id", summary["missing_capabilities"])
+        self.assertEqual(summary["inference"]["scenario_id"], "mixed-prompts")
+        self.assertFalse(summary["inference"]["scenario_matches"])
+
+    def test_diagnosis_classifies_session_create_failure(self) -> None:
+        args = self._args()
+        args.create_session = True
+        wait = {
+            "ok": False,
+            "attempts": 0,
+            "elapsed_seconds": 0.0,
+            "status": {},
+            "errors": [],
+            "session_create": {
+                "ok": False,
+                "observation": {
+                    "endpoint": "admin_inference_session",
+                    "ok": False,
+                    "status": 403,
+                    "detail": "invalid admin token",
+                },
+            },
+        }
+
+        report = remote_demo_acceptance_pack.build_report(
+            args=args,
+            wait=wait,
+            artifacts=None,
+            generated_at="2026-05-22T00:00:00+00:00",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["diagnosis"]["primary_code"], "session_create_failed")
+        encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("admin-secret", encoded)
 
     def test_diagnosis_classifies_coordinator_unreachable(self) -> None:
@@ -259,6 +432,8 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
 
         self.assertFalse(report["ok"])
         self.assertEqual(report["diagnosis"]["primary_code"], "coordinator_unreachable")
+        self.assertEqual(report["observability_summary"]["schema"], "remote_demo_observability_v1")
+        self.assertFalse(report["observability_summary"]["availability"]["health_ok"])
 
     def test_diagnosis_classifies_auth_failures(self) -> None:
         args = self._args()
@@ -334,7 +509,12 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
 
     def test_diagnosis_classifies_request_count_mismatch(self) -> None:
         args = self._args()
-        validation = {"code": "ok", "request_count": 2}
+        validation = {
+            "code": "ok",
+            "request_count": 2,
+            "scenario_schema": "model_bundle_inference_scenario_v1",
+            "scenario_id": "route-baseline",
+        }
         state = self._state(validation=validation)
         results = self._results(validation=validation)
         status = self._status(state=state, results=results)
@@ -368,6 +548,10 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
             "coordinator_url": "https://coordinator.example",
             "miner_id": "remote-a",
             "route": "remote_python_model_bundle_infer",
+            "scenario": {
+                "scenario_schema": "model_bundle_inference_scenario_v1",
+                "scenario_id": "route-baseline",
+            },
             "wait_summary": {"ok": True, "attempts": 1, "elapsed_seconds": 0.1},
             "diagnosis": {
                 "primary_code": "acceptance_ready",
@@ -376,9 +560,41 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
                 "next_steps": ["Share the generated report."],
             },
             "diagnosis_codes": ["acceptance_ready"],
-            "evidence_summary": {"schema": "remote_compute_evidence_v1", "ok": True},
+            "evidence_summary": {
+                "schema": "remote_compute_evidence_v1",
+                "ok": True,
+                "scenario_id": "route-baseline",
+                "scenario_matches": True,
+            },
             "support_bundle_summary": {"online_enabled": True},
+            "observability_summary": {
+                "schema": "remote_demo_observability_v1",
+                "availability": {
+                    "health_ok": True,
+                    "state_ok": True,
+                    "admin_results_ok": True,
+                },
+                "work_queue": {"accepted_results": 1},
+                "miner": {"runtime": "python-cli", "backend": "cpu"},
+                "inference": {
+                    "request_count": 4,
+                    "scenario_id": "route-baseline",
+                    "scenario_matches": True,
+                    "request_trace_count": 4,
+                    "requests_per_second": 1200.0,
+                },
+                "artifacts": {"evidence_ok": True, "support_bundle_ok": True},
+            },
             "artifacts": {"evidence_json": "/tmp/evidence.json"},
+            "session_request": {
+                "created": True,
+                "schema": "inference_session_request_v1",
+                "task_id": "task-1",
+                "request_count": 4,
+                "scenario_schema": "model_bundle_inference_scenario_v1",
+                "scenario_id": "route-baseline",
+                "workload_type": "model_bundle_infer",
+            },
             "limitations": ["Controlled demo"],
         }
 
@@ -386,8 +602,13 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
 
         self.assertIn("# CrowdTensor Remote Demo Acceptance", markdown)
         self.assertIn("remote_python_model_bundle_infer", markdown)
+        self.assertIn("Scenario: `route-baseline`", markdown)
         self.assertIn("## Diagnosis", markdown)
+        self.assertIn("## Session Request", markdown)
+        self.assertIn("inference_session_request_v1", markdown)
         self.assertIn("acceptance_ready", markdown)
+        self.assertIn("## Observability", markdown)
+        self.assertIn("remote_demo_observability_v1", markdown)
         self.assertIn("Support Bundle", markdown)
 
 

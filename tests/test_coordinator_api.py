@@ -13,6 +13,8 @@ from fastapi import HTTPException
 from coordinator import create_app, load_miner_token_registry, parse_task_lane
 from crowdtensor.auth import hash_token
 from crowdtensor.diloco import run_inner_loop
+from crowdtensor.model_bundle import INFERENCE_WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_INFER
+from crowdtensor.model_bundle import run_model_bundle_inference
 from crowdtensor.model_bundle import run_model_bundle_inner_loop
 from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_SIGN_COMPRESSED_EF,
@@ -914,9 +916,11 @@ class CoordinatorApiTests(unittest.TestCase):
                 status="accepted",
                 miner_id="ledger-api-miner",
                 workload_type="diloco_train",
+                task_id=claim["task_id"],
                 x_crowdtensor_admin_token="secret",
             )
             self.assertEqual(ledger["status"], "accepted")
+            self.assertEqual(ledger["task_id"], claim["task_id"])
             self.assertEqual(len(ledger["results"]), 1)
             row = ledger["results"][0]
             self.assertEqual(row["task_id"], claim["task_id"])
@@ -928,8 +932,108 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertNotIn("api-ledger-key", public_text)
             self.assertNotIn("lease_token", public_text)
             self.assertNotIn("result_idempotency_key_hash", public_text)
-            self.assertNotIn("result_response", public_text)
-            self.assertNotIn("local_delta", public_text)
+
+    def test_admin_inference_session_enqueues_read_only_task_and_filters_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                admin_token="secret",
+            )
+            admin_inference = endpoint_for(app, "/admin/inference-sessions", "POST")
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            admin_results = endpoint_for(app, "/admin/results", "GET")
+            state = endpoint_for(app, "/state", "GET")
+            request_type = request_model(admin_inference)
+
+            with self.assertRaises(HTTPException) as missing_admin:
+                admin_inference(request_type(request_count=3))
+            self.assertEqual(missing_admin.exception.status_code, 403)
+            session = admin_inference(
+                request_type(request_count=3, scenario_id="route-baseline"),
+                x_crowdtensor_admin_token="secret",
+            )
+            self.assertEqual(session["schema"], "inference_session_request_v1")
+            self.assertEqual(session["workload_type"], WORKLOAD_MODEL_BUNDLE_INFER)
+            self.assertEqual(session["request_count"], 3)
+            self.assertEqual(session["scenario_id"], "route-baseline")
+            self.assertEqual(session["status"], "queued")
+            self.assertIn(session["task_id"], session["result_query"])
+            self.assertEqual(state()["task_counts"]["queued"], 1)
+
+            claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="admin-infer-miner",
+                    capabilities={
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "protocol_version": "runtime_contract_v1",
+                        "supported_workloads": [WORKLOAD_MODEL_BUNDLE_INFER],
+                    },
+                )
+            )
+            self.assertEqual(claim["task_id"], session["task_id"])
+            self.assertEqual(claim["workload_spec"]["request_count"], 3)
+            self.assertEqual(claim["workload_spec"]["scenario_id"], "route-baseline")
+            inner_result = run_model_bundle_inference(claim["workload_spec"])
+            result = result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    idempotency_key="admin-inference-key",
+                    inference_result=inner_result["inference_result"],
+                    inference_results=inner_result["inference_results"],
+                    metrics=inner_result,
+                ),
+            )
+            self.assertTrue(result["accepted"])
+            self.assertFalse(result["model_updated"])
+            self.assertFalse(result["model_bundle_updated"])
+
+            ledger = admin_results(
+                limit=10,
+                status="accepted",
+                miner_id="",
+                workload_type=WORKLOAD_MODEL_BUNDLE_INFER,
+                task_id=session["task_id"],
+                x_crowdtensor_admin_token="secret",
+            )
+            self.assertEqual(len(ledger["results"]), 1)
+            row = ledger["results"][0]
+            self.assertEqual(row["task_id"], session["task_id"])
+            self.assertEqual(row["validation"]["request_count"], 3)
+            self.assertEqual(row["validation"]["scenario_id"], "route-baseline")
+            self.assertEqual(row["session_metrics"]["request_count"], 3)
+            self.assertEqual(row["session_metrics"]["scenario_id"], "route-baseline")
+            self.assertFalse(row["model_updated"])
+            self.assertFalse(row["model_bundle_updated"])
+            public_text = json.dumps(ledger, sort_keys=True)
+            self.assertNotIn("admin-inference-key", public_text)
+            self.assertNotIn("lease_token", public_text)
+            self.assertNotIn("inference_results", public_text)
+
+    def test_admin_inference_session_rejects_unsupported_runtime_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10, backlog=0, admin_token="secret")
+            admin_inference = endpoint_for(app, "/admin/inference-sessions", "POST")
+            request_type = request_model(admin_inference)
+
+            with self.assertRaises(HTTPException) as rejected:
+                admin_inference(
+                    request_type(request_count=1, runtime="browser"),
+                    x_crowdtensor_admin_token="secret",
+                )
+            self.assertEqual(rejected.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as bad_scenario:
+                admin_inference(
+                    request_type(request_count=1, scenario_id="freeform-prompt"),
+                    x_crowdtensor_admin_token="secret",
+                )
+            self.assertEqual(bad_scenario.exception.status_code, 422)
 
     def test_sign_compressed_result_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

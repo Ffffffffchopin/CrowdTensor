@@ -89,6 +89,10 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
             "accuracy": 0.25,
             "elapsed_ms": 2.5,
             "requests_per_second": 1600.0,
+            "scenario_schema": "model_bundle_inference_scenario_v1",
+            "scenario_id": "route-baseline",
+            "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+            "scenario_request_count": 8,
             "read_only": True,
             "redaction_ok": True,
             "request_trace_count": 1,
@@ -113,6 +117,12 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
                 "status": "available",
                 "reason": "ready",
                 "cpu_only": True,
+            },
+            "scenario": {
+                "scenario_schema": "model_bundle_inference_scenario_v1",
+                "scenario_id": "route-baseline",
+                "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+                "scenario_request_count": 8,
             },
             "route_decision": {
                 "name": "local_cpu_model_bundle_infer",
@@ -173,6 +183,8 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
         self.assertIn("cpu_baseline_ready", evidence["route_decision"]["diagnosis_codes"])
         self.assertIn("cpu_baseline_ready", evidence["runtime_matrix"]["diagnosis_summary"]["codes"])
         self.assertEqual(evidence["inference_summary"]["request_count"], 4)
+        self.assertEqual(evidence["inference_summary"]["scenario_id"], "route-baseline")
+        self.assertEqual(evidence["scenario"]["scenario_schema"], "model_bundle_inference_scenario_v1")
         self.assertEqual(evidence["request_trace"][0]["prompt"], "crow")
         self.assertTrue(evidence["safety"]["read_only"])
         self.assertTrue(evidence["runtime_acceptance"]["present"])
@@ -233,6 +245,7 @@ class HomeComputeEvidencePackTests(unittest.TestCase):
         self.assertIn("home_compute_ready", markdown)
         self.assertIn("cpu_baseline_ready", markdown)
         self.assertIn("prompt=`crow`", markdown)
+        self.assertIn("route-baseline", markdown)
         self.assertIn("Read-only", markdown)
         self.assertIn("CPU-only demo evidence", markdown)
 

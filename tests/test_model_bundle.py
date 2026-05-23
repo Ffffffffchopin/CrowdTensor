@@ -5,7 +5,9 @@ import unittest
 from crowdtensor.diloco import default_model
 from crowdtensor.model_bundle import (
     BUNDLE_ID,
+    DEFAULT_INFERENCE_SCENARIO_ID,
     MODEL_BUNDLE_SCHEMA_VERSION,
+    MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION,
     apply_model_bundle_update,
     model_bundle_inference_spec_for,
     model_bundle_loss,
@@ -123,6 +125,55 @@ class ModelBundleTests(unittest.TestCase):
         self.assertIn("predicted_token_id", validation)
         self.assertIn("top_k", result["inference_result"])
         self.assertEqual(model["model_bundle"]["version"], 0)
+
+    def test_inference_scenario_generates_stable_named_requests(self) -> None:
+        model = default_model()
+        first = model_bundle_inference_spec_for(
+            "task-scenario",
+            "miner-a",
+            model["model_bundle"],
+            request_count=4,
+            scenario_id=DEFAULT_INFERENCE_SCENARIO_ID,
+        )
+        second = model_bundle_inference_spec_for(
+            "different-task",
+            "different-miner",
+            model["model_bundle"],
+            request_count=4,
+            scenario_id=DEFAULT_INFERENCE_SCENARIO_ID,
+        )
+
+        self.assertEqual(first["scenario_schema"], MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION)
+        self.assertEqual(first["scenario_id"], DEFAULT_INFERENCE_SCENARIO_ID)
+        self.assertEqual(first["request_count"], 4)
+        self.assertEqual(first["requests"], second["requests"])
+        self.assertEqual([row["sample_offset"] for row in first["requests"]], [0, 1, 2, 3])
+
+        result = run_model_bundle_inference(first)
+        validation = validate_model_bundle_inference(
+            model,
+            result["inference_result"],
+            inference_results=result["inference_results"],
+            expected_requests=first["requests"],
+            expected_scenario_id=first["scenario_id"],
+        )
+
+        self.assertTrue(validation["accepted"])
+        self.assertEqual(result["scenario_id"], DEFAULT_INFERENCE_SCENARIO_ID)
+        self.assertEqual(validation["scenario_id"], DEFAULT_INFERENCE_SCENARIO_ID)
+        self.assertEqual(validation["scenario_schema"], MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION)
+
+    def test_inference_scenario_rejects_unknown_id(self) -> None:
+        model = default_model()
+
+        with self.assertRaises(ValueError):
+            model_bundle_inference_spec_for(
+                "task-bad-scenario",
+                "miner-a",
+                model["model_bundle"],
+                request_count=4,
+                scenario_id="freeform-prompt",
+            )
 
     def test_inference_trace_is_derived_from_token_ids_not_miner_text(self) -> None:
         model = default_model()

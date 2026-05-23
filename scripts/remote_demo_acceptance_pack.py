@@ -22,6 +22,11 @@ if str(ROOT) not in sys.path:
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
+from crowdtensor.model_bundle import (  # noqa: E402
+    DEFAULT_INFERENCE_SCENARIO_ID,
+    inference_scenario_summary,
+    normalize_inference_scenario_id,
+)
 import support_bundle  # noqa: E402
 
 
@@ -29,6 +34,7 @@ ACCEPTANCE_SCHEMA = "remote_demo_acceptance_v1"
 WORKLOAD_TYPE = "model_bundle_infer"
 ROUTE_NAME = "remote_python_model_bundle_infer"
 DIAGNOSIS_ORDER = [
+    "session_create_failed",
     "coordinator_unreachable",
     "observer_auth_failed",
     "admin_auth_failed",
@@ -72,6 +78,14 @@ DIAGNOSIS_LIBRARY = {
         "next_steps": [
             "Regenerate or recopy the operator private environment file.",
             "Pass the correct CROWDTENSOR_ADMIN_TOKEN value without exposing it in logs.",
+        ],
+    },
+    "session_create_failed": {
+        "severity": "error",
+        "summary": "The admin-created read-only inference session could not be queued.",
+        "next_steps": [
+            "Confirm the Coordinator supports POST /admin/inference-sessions.",
+            "Verify the admin token and rerun with the same --request-count value.",
         ],
     },
     "miner_not_seen": {
@@ -142,16 +156,21 @@ def request_json(
     base_url: str,
     path: str,
     *,
+    payload: dict[str, Any] | None = None,
     observer_token: str = "",
     admin_token: str = "",
     timeout: float = 5.0,
 ) -> dict[str, Any]:
     headers: dict[str, str] = {}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["content-type"] = "application/json"
     if observer_token:
         headers["x-crowdtensor-observer-token"] = observer_token
     if admin_token:
         headers["x-crowdtensor-admin-token"] = admin_token
-    request = Request(f"{base_url.rstrip('/')}{path}", headers=headers, method=method)
+    request = Request(f"{base_url.rstrip('/')}{path}", data=data, headers=headers, method=method)
     with urlopen(request, timeout=timeout) as response:
         raw = response.read().decode("utf-8", errors="replace")
         return json.loads(raw) if raw else {}
@@ -176,16 +195,21 @@ def request_json_observed(
     base_url: str,
     path: str,
     *,
+    payload: dict[str, Any] | None = None,
     observer_token: str = "",
     admin_token: str = "",
     timeout: float = 5.0,
 ) -> dict[str, Any]:
     headers: dict[str, str] = {}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["content-type"] = "application/json"
     if observer_token:
         headers["x-crowdtensor-observer-token"] = observer_token
     if admin_token:
         headers["x-crowdtensor-admin-token"] = admin_token
-    request = Request(f"{base_url.rstrip('/')}{path}", headers=headers, method=method)
+    request = Request(f"{base_url.rstrip('/')}{path}", data=data, headers=headers, method=method)
     try:
         with urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", errors="replace")
@@ -250,23 +274,27 @@ def response_public_payload(response: dict[str, Any]) -> dict[str, Any]:
     return payload if response.get("ok") and payload else observation_digest(response)
 
 
-def admin_results_url(miner_id: str, limit: int) -> str:
-    query = urlencode({
+def admin_results_url(miner_id: str, limit: int, *, task_id: str = "") -> str:
+    query_params = {
         "status": "accepted",
-        "miner_id": miner_id,
         "workload_type": WORKLOAD_TYPE,
         "limit": limit,
-    })
+    }
+    if task_id:
+        query_params["task_id"] = task_id
+    else:
+        query_params["miner_id"] = miner_id
+    query = urlencode(query_params)
     return f"/admin/results?{query}"
 
 
-def completed_task_for(state: dict[str, Any], miner_id: str) -> dict[str, Any] | None:
+def completed_task_for(state: dict[str, Any], miner_id: str, *, task_id: str = "") -> dict[str, Any] | None:
     completed = [
         task for task in state.get("tasks", [])
         if (
             task.get("status") == "completed"
             and task.get("workload_type") == WORKLOAD_TYPE
-            and task.get("miner_id") == miner_id
+            and (task.get("task_id") == task_id if task_id else task.get("miner_id") == miner_id)
         )
     ]
     return completed[-1] if completed else None
@@ -314,13 +342,18 @@ def readiness_summary(
     results: dict[str, Any],
     miner_id: str,
     request_count: int,
+    scenario_id: str,
+    task_id: str = "",
 ) -> dict[str, Any]:
     profile = miner_profile(state, miner_id)
     capabilities = profile.get("last_capabilities") or {}
     workloads = capabilities.get("supported_workloads") or []
-    task = completed_task_for(state, miner_id)
+    task = completed_task_for(state, miner_id, task_id=task_id)
     row = latest_result(results)
     validation = (task or {}).get("validation") or (row or {}).get("validation") or {}
+    scenario = inference_scenario_summary(scenario_id)
+    expected_scenario_id = scenario.get("scenario_id")
+    actual_scenario_id = str(validation.get("scenario_id") or "")
     matched: list[str] = []
     missing: list[str] = []
     if profile.get("runtime") == "python-cli":
@@ -347,10 +380,16 @@ def readiness_summary(
         matched.append("request_count")
     else:
         missing.append("request_count")
+    if expected_scenario_id and actual_scenario_id == expected_scenario_id:
+        matched.append("scenario_id")
+    else:
+        missing.append("scenario_id")
     return {
         "ready": not missing,
         "route": ROUTE_NAME,
         "miner_id": miner_id,
+        "scenario": scenario,
+        "expected_task_id": task_id,
         "matched_capabilities": matched,
         "missing_capabilities": missing,
         "task_id": (task or {}).get("task_id"),
@@ -366,6 +405,12 @@ def readiness_summary(
         "inference": {
             "ok": validation.get("code") == "ok",
             "request_count": validation.get("request_count"),
+            "scenario_schema": validation.get("scenario_schema") or scenario.get("scenario_schema"),
+            "scenario_id": actual_scenario_id or expected_scenario_id,
+            "scenario_description": validation.get("scenario_description") or scenario.get("scenario_description"),
+            "scenario_request_count": validation.get("scenario_request_count") or scenario.get("scenario_request_count"),
+            "expected_scenario_id": expected_scenario_id,
+            "scenario_matches": bool(expected_scenario_id and actual_scenario_id == expected_scenario_id),
             "request_trace_count": validation.get("request_trace_count"),
             "accuracy": validation.get("accuracy"),
         },
@@ -373,6 +418,7 @@ def readiness_summary(
 
 
 def collect_status(args: argparse.Namespace) -> dict[str, Any]:
+    task_id = getattr(args, "session_task_id", "") or ""
     health_response = request_json_observed(
         "health",
         "GET",
@@ -399,7 +445,7 @@ def collect_status(args: argparse.Namespace) -> dict[str, Any]:
         "admin_results",
         "GET",
         args.coordinator_url,
-        admin_results_url(args.miner_id, args.admin_results_limit),
+        admin_results_url(args.miner_id, args.admin_results_limit, task_id=task_id),
         admin_token=args.admin_token,
         timeout=args.http_timeout,
     )
@@ -423,7 +469,59 @@ def collect_status(args: argparse.Namespace) -> dict[str, Any]:
             results=results,
             miner_id=args.miner_id,
             request_count=args.request_count,
+            scenario_id=args.scenario_id,
+            task_id=task_id,
         ),
+    }
+
+
+def safe_session_request(session: dict[str, Any] | None, *, create_session: bool) -> dict[str, Any]:
+    session = session or {}
+    return {
+        "created": bool(create_session and (session.get("accepted") is True or session.get("created") is True)),
+        "schema": session.get("schema"),
+        "task_id": session.get("task_id"),
+        "request_count": session.get("request_count"),
+        "scenario_schema": session.get("scenario_schema"),
+        "scenario_id": session.get("scenario_id"),
+        "scenario_description": session.get("scenario_description"),
+        "scenario_request_count": session.get("scenario_request_count"),
+        "workload_type": session.get("workload_type"),
+        "status": session.get("status"),
+        "result_query": session.get("result_query"),
+    }
+
+
+def create_inference_session(args: argparse.Namespace) -> dict[str, Any]:
+    response = request_json_observed(
+        "admin_inference_session",
+        "POST",
+        args.coordinator_url,
+        "/admin/inference-sessions",
+        payload={"request_count": args.request_count, "scenario_id": args.scenario_id},
+        admin_token=args.admin_token,
+        timeout=args.http_timeout,
+    )
+    if not response.get("ok"):
+        return {"ok": False, "observation": observation_digest(response)}
+    session = response_payload(response)
+    if (
+        session.get("schema") != "inference_session_request_v1"
+        or session.get("workload_type") != WORKLOAD_TYPE
+        or not session.get("task_id")
+        or int(session.get("request_count") or 0) != int(args.request_count)
+        or session.get("scenario_id") != args.scenario_id
+    ):
+        return {
+            "ok": False,
+            "observation": observation_digest(response),
+            "session": support_bundle.sanitize(session),
+            "error": "invalid_session_response",
+        }
+    return {
+        "ok": True,
+        "observation": observation_digest(response),
+        "session": safe_session_request(session, create_session=True),
     }
 
 
@@ -432,6 +530,19 @@ def wait_for_remote_result(args: argparse.Namespace) -> dict[str, Any]:
     attempts = 0
     last_status: dict[str, Any] = {}
     errors: list[str] = []
+    session_create: dict[str, Any] | None = None
+    if getattr(args, "create_session", False):
+        session_create = create_inference_session(args)
+        if not session_create.get("ok"):
+            return {
+                "ok": False,
+                "attempts": 0,
+                "elapsed_seconds": 0.0,
+                "status": {},
+                "errors": errors[-5:],
+                "session_create": session_create,
+            }
+        args.session_task_id = str((session_create.get("session") or {}).get("task_id") or "")
     while time.monotonic() <= deadline:
         attempts += 1
         try:
@@ -443,6 +554,7 @@ def wait_for_remote_result(args: argparse.Namespace) -> dict[str, Any]:
                     "elapsed_seconds": round(args.timeout_seconds - max(0.0, deadline - time.monotonic()), 3),
                     "status": last_status,
                     "errors": errors[-5:],
+                    "session_create": session_create,
                 }
         except Exception as exc:
             errors.append(str(exc))
@@ -453,6 +565,7 @@ def wait_for_remote_result(args: argparse.Namespace) -> dict[str, Any]:
         "elapsed_seconds": args.timeout_seconds,
         "status": last_status,
         "errors": errors[-5:],
+        "session_create": session_create,
     }
 
 
@@ -498,6 +611,8 @@ def collect_artifacts(args: argparse.Namespace) -> dict[str, Any]:
             args.miner_id,
             "--request-count",
             str(args.request_count),
+            "--scenario-id",
+            args.scenario_id,
             "--observer-token",
             args.observer_token,
             "--admin-token",
@@ -550,16 +665,24 @@ def summarize_evidence(payload: dict[str, Any]) -> dict[str, Any]:
     route = payload.get("route_decision") or {}
     summary = payload.get("inference_summary") or {}
     safety = payload.get("safety") or {}
+    observability = payload.get("observability_summary") or {}
     return {
         "schema": payload.get("schema"),
         "ok": payload.get("ok"),
         "mode": payload.get("mode"),
         "route": route.get("name"),
         "route_confidence": route.get("confidence"),
+        "route_usable_now": route.get("usable_now"),
         "request_count": summary.get("request_count"),
+        "scenario_schema": summary.get("scenario_schema"),
+        "scenario_id": summary.get("scenario_id"),
+        "scenario_matches": summary.get("scenario_matches"),
+        "request_trace_count": summary.get("request_trace_count"),
+        "accuracy": summary.get("accuracy"),
         "requests_per_second": summary.get("requests_per_second"),
         "read_only": safety.get("read_only"),
         "redaction_ok": safety.get("redaction_ok"),
+        "observability_schema": observability.get("schema"),
     }
 
 
@@ -612,6 +735,7 @@ def status_observed_digest(status: dict[str, Any]) -> dict[str, Any]:
         "matched_capabilities": summary.get("matched_capabilities", []),
         "missing_capabilities": summary.get("missing_capabilities", []),
         "task_id": summary.get("task_id"),
+        "expected_task_id": summary.get("expected_task_id"),
         "accepted_results": summary.get("accepted_results"),
         "task_counts": summary.get("task_counts", {}),
     }
@@ -663,6 +787,65 @@ def artifact_failure_details(artifacts: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
+def build_observability_summary(
+    *,
+    args: argparse.Namespace,
+    wait: dict[str, Any],
+    artifacts: dict[str, Any] | None,
+    diagnosis_codes: list[str],
+) -> dict[str, Any]:
+    status = wait.get("status") or {}
+    summary = status.get("summary") or {}
+    artifacts = artifacts or {}
+    evidence = artifacts.get("evidence") or {}
+    support = artifacts.get("support_bundle") or {}
+    evidence_summary = evidence.get("summary") or {}
+    support_summary = support.get("summary") or {}
+    observations = endpoint_observations(status)
+    return {
+        "schema": "remote_demo_observability_v1",
+        "route": ROUTE_NAME,
+        "miner_id": args.miner_id,
+        "session_request": safe_session_request((wait.get("session_create") or {}).get("session"), create_session=bool(getattr(args, "create_session", False))),
+        "availability": {
+            "health_ok": (observations.get("health") or {}).get("ok"),
+            "ready_ok": (observations.get("ready") or {}).get("ok"),
+            "state_ok": (observations.get("state") or {}).get("ok"),
+            "admin_results_ok": (observations.get("admin_results") or {}).get("ok"),
+            "acceptance_ready": summary.get("ready"),
+            "attempts": wait.get("attempts"),
+            "elapsed_seconds": wait.get("elapsed_seconds"),
+        },
+        "work_queue": {
+            "task_counts": summary.get("task_counts", {}),
+            "accepted_results": summary.get("accepted_results"),
+            "task_id": summary.get("task_id"),
+            "expected_task_id": summary.get("expected_task_id"),
+        },
+        "miner": summary.get("profile", {}),
+        "inference": {
+            "ok": (summary.get("inference") or {}).get("ok"),
+            "request_count": (summary.get("inference") or {}).get("request_count"),
+            "scenario_schema": (summary.get("inference") or {}).get("scenario_schema"),
+            "scenario_id": (summary.get("inference") or {}).get("scenario_id"),
+            "expected_scenario_id": (summary.get("inference") or {}).get("expected_scenario_id"),
+            "scenario_matches": (summary.get("inference") or {}).get("scenario_matches"),
+            "request_trace_count": (summary.get("inference") or {}).get("request_trace_count"),
+            "accuracy": (summary.get("inference") or {}).get("accuracy"),
+            "requests_per_second": evidence_summary.get("requests_per_second"),
+        },
+        "artifacts": {
+            "evidence_ok": bool(evidence.get("ok")),
+            "support_bundle_ok": bool(support.get("ok")),
+            "evidence_path": evidence.get("path"),
+            "support_bundle_path": support.get("path"),
+            "evidence_observability_schema": evidence_summary.get("observability_schema"),
+            "support_online_enabled": support_summary.get("online_enabled"),
+        },
+        "diagnosis_codes": list(diagnosis_codes),
+    }
+
+
 def diagnose_acceptance(
     *,
     args: argparse.Namespace,
@@ -670,6 +853,7 @@ def diagnose_acceptance(
     artifacts: dict[str, Any] | None,
 ) -> dict[str, Any]:
     status = wait.get("status") or {}
+    session_create = wait.get("session_create") or {}
     observations = endpoint_observations(status)
     health_observation = observations.get("health") or {}
     state_observation = observations.get("state") or {}
@@ -677,13 +861,26 @@ def diagnose_acceptance(
     state = status.get("state") if isinstance(status.get("state"), dict) else {}
     ready = status.get("ready") if isinstance(status.get("ready"), dict) else {}
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
-    task = completed_task_for(state, args.miner_id)
+    task_id = str((session_create.get("session") or {}).get("task_id") or getattr(args, "session_task_id", "") or "")
+    task = completed_task_for(state, args.miner_id, task_id=task_id)
     row = latest_result(results)
     validation = (task or {}).get("validation") or (row or {}).get("validation") or {}
     profile = miner_profile(state, args.miner_id)
     capabilities = profile.get("last_capabilities") or {}
     workloads = capabilities.get("supported_workloads") or []
     diagnoses: list[dict[str, Any]] = []
+
+    if getattr(args, "create_session", False) and session_create.get("ok") is not True:
+        append_diagnosis(
+            diagnoses,
+            "session_create_failed",
+            status=status,
+            details=support_bundle.sanitize({
+                "session_create": session_create,
+                "request_count": args.request_count,
+                "scenario_id": args.scenario_id,
+            }),
+        )
 
     if (
         not status
@@ -767,6 +964,8 @@ def diagnose_acceptance(
             status=status,
             details={
                 "miner_id": args.miner_id,
+                "task_id": task_id,
+                "attempts": wait.get("attempts"),
                 "task_counts": state.get("task_counts", {}),
                 "accepted_results": state.get("accepted_results"),
                 "ledger_row_count": len(ledger_rows),
@@ -793,6 +992,18 @@ def diagnose_acceptance(
             },
         )
 
+    if validation and validation.get("scenario_id") != args.scenario_id:
+        append_diagnosis(
+            diagnoses,
+            "validation_failed",
+            status=status,
+            details={
+                "expected_scenario_id": args.scenario_id,
+                "actual_scenario_id": validation.get("scenario_id"),
+                "validation": support_bundle.sanitize(validation),
+            },
+        )
+
     if wait.get("ok") and artifacts and (
         not artifacts.get("evidence", {}).get("ok")
         or not artifacts.get("support_bundle", {}).get("ok")
@@ -813,6 +1024,7 @@ def diagnose_acceptance(
                 "miner_id": args.miner_id,
                 "workload_type": WORKLOAD_TYPE,
                 "route": ROUTE_NAME,
+                "scenario_id": args.scenario_id,
             },
         )
 
@@ -840,6 +1052,14 @@ def build_report(
     evidence_summary = (artifacts or {}).get("evidence", {}).get("summary", {})
     support_summary = (artifacts or {}).get("support_bundle", {}).get("summary", {})
     diagnosis = diagnose_acceptance(args=args, wait=wait, artifacts=artifacts)
+    session_request = safe_session_request((wait.get("session_create") or {}).get("session"), create_session=bool(getattr(args, "create_session", False)))
+    observability = build_observability_summary(
+        args=args,
+        wait=wait,
+        artifacts=artifacts,
+        diagnosis_codes=diagnosis["codes"],
+    )
+    scenario = inference_scenario_summary(args.scenario_id)
     report = {
         "schema": ACCEPTANCE_SCHEMA,
         "generated_at": generated_at or utc_now(),
@@ -848,6 +1068,8 @@ def build_report(
         "miner_id": args.miner_id,
         "workload_type": WORKLOAD_TYPE,
         "route": ROUTE_NAME,
+        "scenario": scenario,
+        "session_request": session_request,
         "wait_summary": {
             "ok": wait.get("ok"),
             "attempts": wait.get("attempts"),
@@ -860,6 +1082,7 @@ def build_report(
         "diagnoses": diagnosis["all"],
         "evidence_summary": evidence_summary,
         "support_bundle_summary": support_summary,
+        "observability_summary": observability,
         "artifacts": {
             "evidence_json": (artifacts or {}).get("evidence", {}).get("path"),
             "evidence_markdown": (artifacts or {}).get("evidence", {}).get("markdown_path"),
@@ -888,9 +1111,16 @@ def build_report(
 
 def render_markdown(payload: dict[str, Any]) -> str:
     wait = payload.get("wait_summary") or {}
+    session = payload.get("session_request") or {}
     diagnosis = payload.get("diagnosis") or {}
     evidence = payload.get("evidence_summary") or {}
     support = payload.get("support_bundle_summary") or {}
+    observability = payload.get("observability_summary") or {}
+    availability = observability.get("availability") or {}
+    observed_queue = observability.get("work_queue") or {}
+    observed_miner = observability.get("miner") or {}
+    observed_inference = observability.get("inference") or {}
+    observed_artifacts = observability.get("artifacts") or {}
     artifacts = payload.get("artifacts") or {}
     lines = [
         "# CrowdTensor Remote Demo Acceptance",
@@ -900,12 +1130,23 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"Coordinator: `{payload.get('coordinator_url', '')}`",
         f"Miner: `{payload.get('miner_id', '')}`",
         f"Route: `{payload.get('route', '')}`",
+        f"Scenario: `{(payload.get('scenario') or {}).get('scenario_id', '')}`",
         "",
         "## Wait Summary",
         "",
         f"- Ready: `{wait.get('ok')}`",
         f"- Attempts: `{wait.get('attempts')}`",
         f"- Elapsed seconds: `{wait.get('elapsed_seconds')}`",
+        "",
+        "## Session Request",
+        "",
+        f"- Created: `{session.get('created')}`",
+        f"- Schema: `{session.get('schema')}`",
+        f"- Task ID: `{session.get('task_id')}`",
+        f"- Request count: `{session.get('request_count')}`",
+        f"- Scenario: `{session.get('scenario_id')}`",
+        f"- Scenario schema: `{session.get('scenario_schema')}`",
+        f"- Workload: `{session.get('workload_type')}`",
         "",
         "## Diagnosis",
         "",
@@ -926,8 +1167,27 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Schema: `{evidence.get('schema')}`",
         f"- OK: `{evidence.get('ok')}`",
         f"- Request count: `{evidence.get('request_count')}`",
+        f"- Scenario: `{evidence.get('scenario_id')}`",
+        f"- Scenario matches: `{evidence.get('scenario_matches')}`",
         f"- Read-only: `{evidence.get('read_only')}`",
         f"- Redaction OK: `{evidence.get('redaction_ok')}`",
+        "",
+        "## Observability",
+        "",
+        f"- Schema: `{observability.get('schema')}`",
+        f"- Health OK: `{availability.get('health_ok')}`",
+        f"- State OK: `{availability.get('state_ok')}`",
+        f"- Admin results OK: `{availability.get('admin_results_ok')}`",
+        f"- Accepted results: `{observed_queue.get('accepted_results')}`",
+        f"- Miner runtime: `{observed_miner.get('runtime')}`",
+        f"- Miner backend: `{observed_miner.get('backend')}`",
+        f"- Inference requests: `{observed_inference.get('request_count')}`",
+        f"- Inference scenario: `{observed_inference.get('scenario_id')}`",
+        f"- Scenario matches: `{observed_inference.get('scenario_matches')}`",
+        f"- Request trace count: `{observed_inference.get('request_trace_count')}`",
+        f"- Requests/sec: `{observed_inference.get('requests_per_second')}`",
+        f"- Evidence artifact OK: `{observed_artifacts.get('evidence_ok')}`",
+        f"- Support bundle OK: `{observed_artifacts.get('support_bundle_ok')}`",
         "",
         "## Support Bundle",
         "",
@@ -979,11 +1239,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--observer-token", required=True)
     parser.add_argument("--admin-token", required=True)
     parser.add_argument("--request-count", type=int, default=4)
+    parser.add_argument("--scenario-id", default=DEFAULT_INFERENCE_SCENARIO_ID)
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--http-timeout", type=float, default=5.0)
     parser.add_argument("--artifact-timeout", type=float, default=60.0)
     parser.add_argument("--admin-results-limit", type=int, default=10)
+    parser.add_argument("--create-session", action="store_true")
     parser.add_argument("--output-dir", default="dist/remote-demo-acceptance")
     parser.add_argument("--json-out", default="")
     parser.add_argument("--markdown-out", default="")
@@ -994,7 +1256,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--timeout-seconds must be non-negative")
     if args.poll_interval <= 0:
         raise SystemExit("--poll-interval must be positive")
+    args.scenario_id = normalize_inference_scenario_id(args.scenario_id) or DEFAULT_INFERENCE_SCENARIO_ID
     args.coordinator_url = args.coordinator_url.rstrip("/")
+    args.session_task_id = ""
     output_dir = Path(args.output_dir)
     if not args.json_out:
         args.json_out = str(output_dir / "remote_demo_acceptance.json")

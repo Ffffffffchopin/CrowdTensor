@@ -55,10 +55,17 @@ class ReleaseGateTests(unittest.TestCase):
                 "remote_compute_evidence_docs",
                 "remote_demo_runbook_docs",
                 "remote_demo_acceptance_docs",
+                "demo_manifest_docs",
+                "local_proof_docs",
+                "cleanup_docs",
+                "remote_cli_docs",
+                "home_inference_cli_docs",
                 "release_materials",
                 "open_source_entrypoints",
                 "project_memory",
                 "model_bundle_inference_docs",
+                "admin_inference_session_docs",
+                "inference_session_client_docs",
                 "runtime_matrix_docs",
                 "external_llm_inference_docs",
                 "dockerfile",
@@ -366,6 +373,121 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("remote_demo_acceptance_pack.py" in detail for detail in details))
         self.assertTrue(any("remote_demo_acceptance_v1" in detail for detail in details))
         self.assertTrue(any("coordinator_unreachable" in detail for detail in details))
+        self.assertTrue(any("--create-session" in detail for detail in details))
+        self.assertTrue(any("session_create_failed" in detail for detail in details))
+
+    def test_demo_manifest_docs_must_describe_latest_artifact_entrypoint(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No demo manifest docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "demo_manifest_docs")
+        self.assertTrue(any("demo_manifest_pack.py" in detail for detail in details))
+        self.assertTrue(any("demo_manifest_v1" in detail for detail in details))
+        self.assertTrue(any("latest output artifact" in detail for detail in details))
+
+    def test_local_proof_docs_must_describe_one_command_entrypoint(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No local proof docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "local_proof_docs")
+        self.assertTrue(any("crowdtensor local-proof" in detail for detail in details))
+        self.assertTrue(any("local_proof_summary_v1" in detail for detail in details))
+        self.assertTrue(any("crowdtensor/cli.py" in detail for detail in details))
+
+    def test_cleanup_docs_must_describe_safe_artifact_cleanup(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "CHANGELOG.md",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No cleanup docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "cleanup_docs")
+        self.assertTrue(any("crowdtensor clean-artifacts" in detail for detail in details))
+        self.assertTrue(any("cleanup_report_v1" in detail for detail in details))
+        self.assertTrue(any("--include-reports" in detail for detail in details))
+
+    def test_remote_cli_docs_must_describe_operator_entrypoints(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No remote CLI docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "remote_cli_docs")
+        self.assertTrue(any("crowdtensor remote-runbook" in detail for detail in details))
+        self.assertTrue(any("remote_acceptance_cli_v1" in detail for detail in details))
+        self.assertTrue(any("token redaction" in detail for detail in details))
+
+    def test_home_inference_cli_docs_must_describe_user_entrypoint(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No home inference CLI docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "home_inference_cli_docs")
+        self.assertTrue(any("crowdtensor home-infer" in detail for detail in details))
+        self.assertTrue(any("home_inference_cli_v1" in detail for detail in details))
+        self.assertTrue(any("model_bundle_inference_scenario_v1" in detail for detail in details))
+        self.assertTrue(any("request_trace" in detail for detail in details))
 
     def test_release_materials_must_describe_release_flow(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
@@ -445,6 +567,56 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("inference_session_demo.py" in detail for detail in details))
         self.assertTrue(any("--skip-inference-session-demo" in detail for detail in details))
         self.assertTrue(any("--request-count" in detail for detail in details))
+
+    def test_admin_inference_session_docs_must_describe_api_and_acceptance(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/api.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No admin inference docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "admin_inference_session_docs")
+        self.assertTrue(any("POST /admin/inference-sessions" in detail for detail in details))
+        self.assertTrue(any("admin_inference_session_check.py" in detail for detail in details))
+        self.assertTrue(any("inference_session_request_v1" in detail for detail in details))
+        self.assertTrue(any("--skip-admin-inference-session" in detail for detail in details))
+
+    def test_inference_session_client_docs_must_describe_user_client_and_acceptance(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/api.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/runtime_acceptance_pack.py",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No inference session client docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "inference_session_client_docs")
+        self.assertTrue(any("inference_session_client.py" in detail for detail in details))
+        self.assertTrue(any("inference_session_client_v1" in detail for detail in details))
+        self.assertTrue(any("session_client_ready" in detail for detail in details))
+        self.assertTrue(any("--skip-inference-session-client" in detail for detail in details))
 
     def test_external_llm_inference_docs_must_describe_adapter_and_acceptance(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

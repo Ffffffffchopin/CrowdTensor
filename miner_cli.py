@@ -424,6 +424,8 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
     thread.start()
 
     try:
+        if args.compute_seconds > 0 and workload_type in {WORKLOAD_MODEL_BUNDLE_INFER, WORKLOAD_EXTERNAL_LLM_INFER}:
+            time.sleep(args.compute_seconds)
         if workload_type == "cpu_lora_mock":
             inner_result = run_lora_inner_loop(
                 claim["workload_spec"],

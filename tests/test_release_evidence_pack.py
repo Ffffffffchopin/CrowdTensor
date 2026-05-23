@@ -140,6 +140,97 @@ class ReleaseEvidencePackTests(unittest.TestCase):
         self.assertEqual(report["diagnosis_codes"], ["home_compute_ready"])
         self.assertEqual(report["diagnosis_by_check"], {"home_compute_demo": ["home_compute_ready"]})
 
+    def test_remote_report_preserves_safe_observability_summary(self) -> None:
+        tmp_root = Path(self._tmp_dir())
+        remote_report = tmp_root / "remote.json"
+        remote_report.write_text(
+            json.dumps({
+                "ok": True,
+                "diagnosis_codes": ["acceptance_ready"],
+                "observability_summary": {
+                    "schema": "remote_demo_observability_v1",
+                    "route": "remote_python_model_bundle_infer",
+                    "miner_id": "remote-a",
+                    "availability": {
+                        "health_ok": True,
+                        "state_ok": True,
+                        "admin_results_ok": True,
+                        "elapsed_seconds": 1.5,
+                    },
+                    "work_queue": {
+                        "accepted_results": 1,
+                        "task_id": "task-1",
+                    },
+                    "miner": {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "accepted": 1,
+                        "rejected": 0,
+                        "supported_workloads": ["model_bundle_infer"],
+                    },
+                    "inference": {
+                        "request_count": 4,
+                        "request_trace_count": 4,
+                        "requests_per_second": 1200.0,
+                    },
+                    "artifacts": {
+                        "evidence_ok": True,
+                        "support_bundle_ok": True,
+                        "evidence_path": "/tmp/secret-local-path/evidence.json",
+                        "support_bundle_path": "/tmp/secret-local-path/support.json",
+                        "evidence_observability_schema": "remote_compute_observability_v1",
+                    },
+                    "diagnosis_codes": ["acceptance_ready"],
+                    "token": "secret-token",
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        report = release_evidence_pack.load_acceptance_report(
+            str(remote_report),
+            name="remote",
+            required=False,
+        )
+
+        observed = report["observability_summaries"][0]
+        self.assertEqual(observed["schema"], "remote_demo_observability_v1")
+        self.assertEqual(observed["route"], "remote_python_model_bundle_infer")
+        self.assertEqual(observed["inference"]["request_count"], 4)
+        self.assertEqual(observed["inference"]["requests_per_second"], 1200.0)
+        self.assertEqual(observed["artifacts"]["evidence_observability_schema"], "remote_compute_observability_v1")
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn("secret-token", encoded)
+        self.assertNotIn("secret-local-path", encoded)
+
+    def test_markdown_renders_observability_summaries(self) -> None:
+        payload = {
+            "release_status": {"status": "ready", "blocking_reasons": []},
+            "git": {"commit": "abc", "branch": "main"},
+            "project": {"name": "crowdtensord", "version": "0.1.0a0"},
+            "generated_at": "2026-05-22T00:00:00+00:00",
+            "checks": {"release_gate": {"ok": True, "total": 1, "failed": []}},
+            "reports": {
+                "remote": {
+                    "present": True,
+                    "ok": True,
+                    "checks_total": 0,
+                    "observability_summaries": [
+                        {
+                            "schema": "remote_compute_observability_v1",
+                            "route": {"name": "remote_python_model_bundle_infer"},
+                            "inference": {"request_count": 4, "requests_per_second": 1200.0},
+                        },
+                    ],
+                },
+            },
+        }
+
+        markdown = release_evidence_pack.render_markdown(payload)
+
+        self.assertIn("remote_compute_observability_v1", markdown)
+        self.assertIn("requests=4", markdown)
+
     def test_nested_release_report_diagnosis_rows_are_aggregated(self) -> None:
         summary = release_evidence_pack.summarize_diagnosis({
             "reports": {

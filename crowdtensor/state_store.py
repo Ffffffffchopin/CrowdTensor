@@ -79,6 +79,7 @@ from .model_bundle import (
     model_bundle_loss,
     model_bundle_training_spec_for,
     model_bundle_version,
+    normalize_inference_scenario_id,
     validate_model_bundle_delta,
     validate_model_bundle_inference,
 )
@@ -349,6 +350,7 @@ class StateStore:
         status: str = "any",
         miner_id: str | None = None,
         workload_type: str | None = None,
+        task_id: str | None = None,
     ) -> list[dict]:
         capped = min(MAX_EVENT_TAIL_LIMIT, max(0, int(limit)))
         if capped == 0:
@@ -358,6 +360,7 @@ class StateStore:
             raise ValueError("status must be any, accepted, or rejected")
         wanted_miner = str(miner_id or "").strip()
         wanted_workload = str(workload_type or "").strip()
+        wanted_task_id = str(task_id or "").strip()
 
         with self._lock:
             scored = self._miner_workload_scores()
@@ -377,10 +380,50 @@ class StateStore:
                     continue
                 if wanted_workload and row["workload_type"] != wanted_workload:
                     continue
+                if wanted_task_id and row["task_id"] != wanted_task_id:
+                    continue
                 filtered.append(row)
                 if len(filtered) >= capped:
                     break
             return filtered
+
+    def create_readonly_inference_task(
+        self,
+        *,
+        request_count: int = 4,
+        scenario_id: str = "",
+        required_runtime: str = "python-cli",
+        required_backend: str = "cpu",
+        required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+    ) -> dict:
+        count = max(1, min(int(request_count), 8))
+        scenario = normalize_inference_scenario_id(scenario_id)
+        runtime = str(required_runtime or "").strip()
+        backend = str(required_backend or "").strip()
+        if runtime != "python-cli":
+            raise ValueError("read-only inference sessions require runtime python-cli")
+        if backend != "cpu":
+            raise ValueError("read-only inference sessions require backend cpu")
+        with self._lock:
+            task_id = self._create_task(
+                required_runtime=runtime,
+                required_backend=backend,
+                required_protocol_version=required_protocol_version,
+                workload_type=WORKLOAD_MODEL_BUNDLE_INFER,
+                inner_steps=count,
+                workload_metadata={"scenario_id": scenario} if scenario else {},
+            )
+            task = self._tasks[task_id]
+            return {
+                "schema": "inference_session_request_v1",
+                "accepted": True,
+                "task_id": task_id,
+                "status": task["status"],
+                "workload_type": task["workload_type"],
+                "request_count": task["inner_steps"],
+                "scenario_id": scenario,
+                "task_requirements": self._task_requirements(task),
+            }
 
     def complete_task(
         self,
@@ -889,6 +932,7 @@ class StateStore:
             inference_result,
             inference_results=inference_results,
             expected_requests=(task.get("claim_workload_spec") or {}).get("requests"),
+            expected_scenario_id=(task.get("claim_workload_spec") or {}).get("scenario_id"),
         )
         staleness = model_bundle_version(self._model) - int(task["model_version"])
         now = now_epoch()
@@ -909,6 +953,10 @@ class StateStore:
             "request_count": int(validation.get("request_count", 1)),
             "correct_count": int(validation.get("correct_count", 1 if validation.get("correct") else 0)),
             "accuracy": float(validation.get("accuracy", 1.0 if validation.get("correct") else 0.0)),
+            "scenario_schema": validation.get("scenario_schema"),
+            "scenario_id": validation.get("scenario_id"),
+            "scenario_description": validation.get("scenario_description"),
+            "scenario_request_count": validation.get("scenario_request_count"),
             "staleness": staleness,
         } if validation["accepted"] else dict(validation)
         event = {
@@ -1212,17 +1260,20 @@ class StateStore:
         required_backend: str = REQUIREMENT_ANY,
         required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
         workload_type: str = DEFAULT_WORKLOAD_TYPE,
+        inner_steps: int | None = None,
+        workload_metadata: dict | None = None,
     ) -> str:
         now = now_epoch()
         task_id = new_task_id()
         event = self._append_event({
             "type": EVENT_TASK_CREATED,
             "task_id": task_id,
-            "inner_steps": self.inner_steps,
+            "inner_steps": self.inner_steps if inner_steps is None else max(1, int(inner_steps)),
             "required_runtime": required_runtime or REQUIREMENT_ANY,
             "required_backend": required_backend or REQUIREMENT_ANY,
             "required_protocol_version": required_protocol_version or DEFAULT_PROTOCOL_VERSION,
             "workload_type": workload_type or DEFAULT_WORKLOAD_TYPE,
+            "workload_metadata": dict(workload_metadata or {}),
             "audit_mode": self._audit_mode_for_workload(workload_type or DEFAULT_WORKLOAD_TYPE),
             "ts": now,
         })
@@ -1385,6 +1436,7 @@ class StateStore:
                     or DEFAULT_PROTOCOL_VERSION
                 ),
                 "workload_type": event.get("workload_type", DEFAULT_WORKLOAD_TYPE) or DEFAULT_WORKLOAD_TYPE,
+                "workload_metadata": event.get("workload_metadata", {}) or {},
                 "audit_mode": event.get("audit_mode", AUDIT_MODE_NONE) or AUDIT_MODE_NONE,
                 "claim_weights": None,
                 "claim_training_spec": {},
@@ -1710,6 +1762,10 @@ class StateStore:
             "request_trace",
             "request_trace_count",
             "request_trace_truncated",
+            "scenario_schema",
+            "scenario_id",
+            "scenario_description",
+            "scenario_request_count",
             "completion_count",
             "output_chars",
             "adapter_kind",
@@ -1731,6 +1787,10 @@ class StateStore:
             "request_count",
             "correct_count",
             "accuracy",
+            "scenario_schema",
+            "scenario_id",
+            "scenario_description",
+            "scenario_request_count",
             "completion_count",
             "output_chars",
             "requests_per_second",
@@ -2040,6 +2100,7 @@ class StateStore:
                 task.get("miner_id") or "anonymous",
                 self._model.get("model_bundle", {}),
                 request_count=int(task.get("inner_steps", 1)),
+                scenario_id=(task.get("workload_metadata") or {}).get("scenario_id"),
             )
         if workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
             return external_llm_inference_spec_for(

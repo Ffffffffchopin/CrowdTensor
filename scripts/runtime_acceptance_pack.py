@@ -30,6 +30,7 @@ TOKEN_ENV_SCRIPTS = {
     "inference_session_demo.py",
     "model_bundle_inference_smoke.py",
     "model_bundle_smoke.py",
+    "multi_miner_scenario_sweep_check.py",
     "operator_control_check.py",
     "remote_compute_evidence_check.py",
     "remote_miner_readiness_check.py",
@@ -61,6 +62,10 @@ def safe_summary_json(payload: dict[str, Any]) -> dict[str, Any]:
         "request_count",
         "request_trace_count",
         "requests_per_second",
+        "execution_mode",
+        "failure_mode",
+        "scenario_ids",
+        "distinct_miner_count",
         "diagnosis",
         "diagnosis_codes",
     ]
@@ -158,10 +163,38 @@ def check_command(
         "--state-dir",
         str(state_dir),
     ]
-    if script_name in {"operator_control_check.py", "home_compute_demo_check.py", "home_compute_evidence_check.py"}:
+    if script_name in {
+        "operator_control_check.py",
+        "home_compute_demo_check.py",
+        "home_compute_evidence_check.py",
+        "admin_inference_session_check.py",
+    }:
         command.extend(["--admin-token", admin_token])
     if script_name == "inference_session_demo.py":
         command.append("--json")
+    if script_name == "multi_miner_scenario_sweep_check.py":
+        command.extend(["--execution-mode", "concurrent"])
+        command.extend(["--json-out", str(state_dir / "multi_miner_scenario_sweep.json")])
+    return command
+
+
+def multi_miner_requeue_check_command(
+    *,
+    host: str,
+    port: int,
+    state_dir: Path,
+    admin_token: str,
+) -> list[str]:
+    command = check_command(
+        "multi_miner_scenario_sweep_check.py",
+        host=host,
+        port=port,
+        state_dir=state_dir,
+        admin_token=admin_token,
+    )
+    command.extend(["--failure-mode", "kill-after-claim"])
+    json_index = command.index("--json-out")
+    command[json_index + 1] = str(state_dir / "multi_miner_requeue.json")
     return command
 
 
@@ -239,8 +272,10 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
         ("delta_transport_negotiation", "delta_transport_negotiation_check.py", args.base_port + 17, args.skip_delta_transport_negotiation),
         ("model_bundle_inference", "model_bundle_inference_smoke.py", args.base_port + 30, args.skip_model_bundle_inference),
         ("inference_session_demo", "inference_session_demo.py", args.base_port + 31, args.skip_inference_session_demo),
+        ("inference_session_client", "inference_session_client_check.py", args.base_port + 39, args.skip_inference_session_client),
         ("external_llm_inference", "external_llm_inference_smoke.py", args.base_port + 32, args.skip_external_llm_inference),
         ("external_llm_http_adapter", "external_llm_http_adapter_smoke.py", args.base_port + 33, args.skip_external_llm_http_adapter),
+        ("admin_inference_session", "admin_inference_session_check.py", args.base_port + 38, args.skip_admin_inference_session),
     ]
     if args.include_remote_miner:
         specs.append((
@@ -255,6 +290,20 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
             "remote_compute_evidence_check.py",
             args.base_port + 37,
             args.skip_remote_evidence,
+        ))
+    if args.include_multi_miner_sweep:
+        specs.append((
+            "multi_miner_scenario_sweep",
+            "multi_miner_scenario_sweep_check.py",
+            args.base_port + 40,
+            args.skip_multi_miner_sweep,
+        ))
+    if args.include_multi_miner_requeue:
+        specs.append((
+            "multi_miner_requeue",
+            "multi_miner_scenario_sweep_check.py",
+            args.base_port + 41,
+            args.skip_multi_miner_requeue,
         ))
     for name, script_name, port, skipped in specs:
         if skipped:
@@ -275,6 +324,13 @@ def selected_checks(args: argparse.Namespace, state_root: Path) -> list[dict[str
                 admin_token=args.admin_token,
             ),
         })
+        if name == "multi_miner_requeue":
+            checks[-1]["command"] = multi_miner_requeue_check_command(
+                host=args.host,
+                port=port,
+                state_dir=state_dir,
+                admin_token=args.admin_token,
+            )
     if args.include_browser:
         browser_specs = [
             ("webrtc", "webrtc_smoke.py", args.base_port + 19, None, args.skip_webrtc),
@@ -413,6 +469,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-micro-transformer", action="store_true")
     parser.add_argument("--include-remote-miner", action="store_true")
     parser.add_argument("--include-remote-evidence", action="store_true")
+    parser.add_argument("--include-multi-miner-sweep", action="store_true")
+    parser.add_argument("--include-multi-miner-requeue", action="store_true")
     parser.add_argument("--browser", default="")
     parser.add_argument("--headful", action="store_true")
     parser.add_argument("--browser-timeout", type=float, default=20.0)
@@ -429,6 +487,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-model-bundle", action="store_true")
     parser.add_argument("--skip-model-bundle-inference", action="store_true")
     parser.add_argument("--skip-inference-session-demo", action="store_true")
+    parser.add_argument("--skip-inference-session-client", action="store_true")
+    parser.add_argument("--skip-admin-inference-session", action="store_true")
     parser.add_argument("--skip-external-llm-inference", action="store_true")
     parser.add_argument("--skip-external-llm-http-adapter", action="store_true")
     parser.add_argument("--skip-result-idempotency", action="store_true")
@@ -443,6 +503,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-delta-transport-negotiation", action="store_true")
     parser.add_argument("--skip-remote-miner", action="store_true")
     parser.add_argument("--skip-remote-evidence", action="store_true")
+    parser.add_argument("--skip-multi-miner-sweep", action="store_true")
+    parser.add_argument("--skip-multi-miner-requeue", action="store_true")
     parser.add_argument("--skip-webrtc", action="store_true")
     parser.add_argument("--skip-runtime-contract", action="store_true")
     parser.add_argument("--skip-browser-miner", action="store_true")

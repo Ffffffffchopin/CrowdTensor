@@ -119,6 +119,10 @@ class HomeComputeDemoTests(unittest.TestCase):
             "request_trace": request_trace,
             "request_trace_count": len(request_trace),
             "request_trace_truncated": False,
+            "scenario_schema": "model_bundle_inference_scenario_v1",
+            "scenario_id": "route-baseline",
+            "scenario_description": "Fixed CPU read-only route prompts from the built-in bundle corpus.",
+            "scenario_request_count": 8,
             "read_only": read_only,
             "redaction_ok": redaction_ok,
         }
@@ -144,6 +148,8 @@ class HomeComputeDemoTests(unittest.TestCase):
         self.assertIn("cpu_baseline_ready", report["runtime_matrix"]["diagnosis_summary"]["codes"])
         self.assertTrue(report["runtime_matrix"]["hardware_targets"][0]["usable_now"])
         self.assertTrue(report["selected_workload"]["cpu_only"])
+        self.assertEqual(report["scenario"]["scenario_id"], "route-baseline")
+        self.assertEqual(report["scenario"]["scenario_schema"], "model_bundle_inference_scenario_v1")
         self.assertEqual(report["runtime_matrix"]["host_profile"]["cpu_count"], 8)
         self.assertEqual(report["inference_session"]["request_trace_count"], 1)
         self.assertEqual(report["inference_session"]["request_trace"][0]["prompt"], "crow")

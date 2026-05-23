@@ -228,6 +228,66 @@ class SupportBundleTests(unittest.TestCase):
         self.assertEqual(report["diagnosis_codes"], ["home_compute_ready"])
         self.assertEqual(report["diagnosis_by_check"], {"runtime.home_compute_demo": ["home_compute_ready"]})
 
+    def test_load_json_report_preserves_safe_observability_summary(self) -> None:
+        tmp_root = Path(self._tmp_dir())
+        report_path = tmp_root / "remote.json"
+        report_path.write_text(
+            json.dumps({
+                "ok": True,
+                "diagnosis_codes": ["acceptance_ready"],
+                "observability_summary": {
+                    "schema": "remote_demo_observability_v1",
+                    "route": "remote_python_model_bundle_infer",
+                    "miner_id": "remote-a",
+                    "availability": {
+                        "health_ok": True,
+                        "state_ok": True,
+                        "admin_results_ok": True,
+                        "elapsed_seconds": 1.5,
+                    },
+                    "work_queue": {
+                        "accepted_results": 1,
+                        "task_id": "task-1",
+                    },
+                    "miner": {
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "accepted": 1,
+                        "rejected": 0,
+                        "supported_workloads": ["model_bundle_infer"],
+                    },
+                    "inference": {
+                        "request_count": 4,
+                        "request_trace_count": 4,
+                        "requests_per_second": 1200.0,
+                    },
+                    "artifacts": {
+                        "evidence_ok": True,
+                        "support_bundle_ok": True,
+                        "evidence_path": "/tmp/secret-local-path/evidence.json",
+                        "support_bundle_path": "/tmp/secret-local-path/support.json",
+                        "evidence_observability_schema": "remote_compute_observability_v1",
+                    },
+                    "diagnosis_codes": ["acceptance_ready"],
+                    "token": "secret-token",
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        report = support_bundle.load_json_report(str(report_path), name="remote")
+
+        observed = report["observability_summaries"][0]
+        self.assertEqual(observed["schema"], "remote_demo_observability_v1")
+        self.assertEqual(observed["route"], "remote_python_model_bundle_infer")
+        self.assertTrue(observed["availability"]["health_ok"])
+        self.assertEqual(observed["inference"]["request_count"], 4)
+        self.assertEqual(observed["inference"]["requests_per_second"], 1200.0)
+        self.assertEqual(observed["artifacts"]["evidence_observability_schema"], "remote_compute_observability_v1")
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn("secret-token", encoded)
+        self.assertNotIn("secret-local-path", encoded)
+
     def test_markdown_output_summarizes_reports(self) -> None:
         payload = {
             "generated_at": "2026-05-21T00:00:00+00:00",
@@ -242,6 +302,13 @@ class SupportBundleTests(unittest.TestCase):
                     "ok": True,
                     "checks_total": 2,
                     "diagnosis_codes": ["home_compute_ready"],
+                    "observability_summaries": [
+                        {
+                            "schema": "remote_compute_observability_v1",
+                            "route": {"name": "remote_python_model_bundle_infer"},
+                            "inference": {"request_count": 4, "requests_per_second": 1200.0},
+                        },
+                    ],
                 },
             },
         }
@@ -251,6 +318,8 @@ class SupportBundleTests(unittest.TestCase):
         self.assertIn("CrowdTensorD Support Bundle", markdown)
         self.assertIn("runtime", markdown)
         self.assertIn("home_compute_ready", markdown)
+        self.assertIn("remote_compute_observability_v1", markdown)
+        self.assertIn("requests=4", markdown)
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

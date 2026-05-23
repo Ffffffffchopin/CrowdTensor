@@ -329,6 +329,8 @@ class StateStoreTests(unittest.TestCase):
                 store.result_ledger(miner_id="ledger-accepted", workload_type="diloco_train")[0]["task_id"],
                 accepted_claim["task_id"],
             )
+            self.assertEqual(store.result_ledger(task_id=accepted_claim["task_id"])[0]["task_id"], accepted_claim["task_id"])
+            self.assertEqual(store.result_ledger(task_id="missing-task"), [])
             self.assertEqual(store.result_ledger(limit=0), [])
             with self.assertRaises(ValueError):
                 store.result_ledger(status="broken")
@@ -832,6 +834,53 @@ class StateStoreTests(unittest.TestCase):
             )
             self.assertNotIn("inference_result", json.dumps(summary["tasks"], sort_keys=True))
             self.assertNotIn("inference_results", json.dumps(summary["tasks"], sort_keys=True))
+
+    def test_create_readonly_inference_task_enqueues_cpu_model_bundle_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
+
+            session = store.create_readonly_inference_task(request_count=3, scenario_id="route-baseline")
+            claim = store.claim_task("admin-session-miner", capabilities=self._model_bundle_inference_capabilities())
+            inner_result = run_model_bundle_inference(claim["workload_spec"])
+            result = store.complete_task(
+                claim["task_id"],
+                lease_token=claim["lease_token"],
+                attempt=claim["attempt"],
+                inference_result=inner_result["inference_result"],
+                inference_results=inner_result["inference_results"],
+                metrics=inner_result,
+            )
+
+            self.assertEqual(session["schema"], "inference_session_request_v1")
+            self.assertEqual(session["task_id"], claim["task_id"])
+            self.assertEqual(session["request_count"], 3)
+            self.assertEqual(session["scenario_id"], "route-baseline")
+            self.assertEqual(session["task_requirements"]["runtime"], "python-cli")
+            self.assertEqual(session["task_requirements"]["backend"], "cpu")
+            self.assertEqual(claim["workload_type"], WORKLOAD_MODEL_BUNDLE_INFER)
+            self.assertEqual(claim["workload_spec"]["request_count"], 3)
+            self.assertEqual(claim["workload_spec"]["scenario_id"], "route-baseline")
+            self.assertFalse(result["model_updated"])
+            self.assertFalse(result["model_bundle_updated"])
+            self.assertEqual(result["scenario_id"], "route-baseline")
+            row = store.result_ledger(task_id=session["task_id"])[0]
+            self.assertEqual(row["task_id"], session["task_id"])
+            self.assertEqual(row["validation"]["request_count"], 3)
+            self.assertEqual(row["validation"]["scenario_id"], "route-baseline")
+            self.assertEqual(row["session_metrics"]["request_count"], 3)
+            self.assertEqual(row["session_metrics"]["scenario_id"], "route-baseline")
+            self.assertFalse(row["model_updated"])
+
+    def test_create_readonly_inference_task_rejects_non_cpu_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
+
+            with self.assertRaises(ValueError):
+                store.create_readonly_inference_task(required_runtime="browser")
+            with self.assertRaises(ValueError):
+                store.create_readonly_inference_task(required_backend="cuda")
+            with self.assertRaises(ValueError):
+                store.create_readonly_inference_task(scenario_id="freeform-prompt")
 
     def test_model_bundle_inference_multi_request_session_is_read_only_and_ledgered(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
