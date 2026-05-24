@@ -16,6 +16,7 @@ from crowdtensor.protocol import (
     LeaseConflict,
     NoTaskAvailable,
     ResultRejected,
+    WORKLOAD_EXTERNAL_LLM_INFER,
     WORKLOAD_MODEL_BUNDLE_INFER,
 )
 from crowdtensor.outer_optimizer import (
@@ -357,6 +358,7 @@ def create_app(
         scenario_id: str = ""
         runtime: str = "python-cli"
         backend: str = "cpu"
+        workload_type: str = WORKLOAD_MODEL_BUNDLE_INFER
 
     def require_admin(token: str | None) -> None:
         if not configured_admin_token:
@@ -525,20 +527,38 @@ def create_app(
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
         require_admin(x_crowdtensor_admin_token)
+        requested_workload = str(request.workload_type or WORKLOAD_MODEL_BUNDLE_INFER).strip()
+        aliases = {
+            "model-bundle": WORKLOAD_MODEL_BUNDLE_INFER,
+            "external-llm": WORKLOAD_EXTERNAL_LLM_INFER,
+        }
+        workload_type = aliases.get(requested_workload, requested_workload)
         try:
-            session = store.create_readonly_inference_task(
-                request_count=request.request_count,
-                scenario_id=request.scenario_id,
-                required_runtime=request.runtime,
-                required_backend=request.backend,
-                required_protocol_version=DEFAULT_PROTOCOL_VERSION,
-            )
+            if workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
+                session = store.create_readonly_inference_task(
+                    request_count=request.request_count,
+                    scenario_id=request.scenario_id,
+                    required_runtime=request.runtime,
+                    required_backend=request.backend,
+                    required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                )
+            elif workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
+                session = store.create_readonly_external_llm_task(
+                    request_count=request.request_count,
+                    required_runtime=request.runtime,
+                    required_backend=request.backend,
+                    required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                )
+            else:
+                raise ValueError(
+                    f"unsupported inference session workload_type: {requested_workload}"
+                )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
             **session,
-            "workload_type": WORKLOAD_MODEL_BUNDLE_INFER,
-            "result_query": f"/admin/results?task_id={session['task_id']}&workload_type={WORKLOAD_MODEL_BUNDLE_INFER}",
+            "workload_type": workload_type,
+            "result_query": f"/admin/results?task_id={session['task_id']}&workload_type={workload_type}",
             "claim_requirements": session["task_requirements"],
         }
 

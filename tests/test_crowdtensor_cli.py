@@ -700,6 +700,183 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("admin-secret", serialized)
         self.assertTrue(any("--remote-timeout-seconds" in command for command in calls))
 
+    def test_remote_demo_external_llm_forwards_workload_and_runtime_flags(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("remote_home_compute_demo_pack.py", command[1])
+            self.assertEqual(command[2], "verify")
+            self.assertIn("--workload", command)
+            self.assertIn("external-llm", command)
+            self.assertIn("--mock", command)
+            self.assertIn("--llm-runtime-url", command)
+            self.assertIn("--llm-runtime-api-key", command)
+            return completed({
+                "schema": "remote_home_compute_demo_v1",
+                "ok": True,
+                "mode": "verify",
+                "diagnosis_codes": ["remote_external_llm_ready", "remote_home_compute_ready"],
+                "demo": {"workload_kind": "external-llm", "workload_type": "external_llm_infer"},
+            })
+
+        args = cli.parse_args([
+            "remote-demo",
+            "verify",
+            "--workload",
+            "external-llm",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "remote-linux-1",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--mock",
+            "--llm-runtime-url",
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "--llm-runtime-api-key",
+            "runtime-secret",
+        ])
+
+        summary = cli.build_remote_demo(args, runner=fake_runner)
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["demo"]["workload_type"], "external_llm_infer")
+        self.assertIn("remote_external_llm_ready", summary["diagnosis_codes"])
+        self.assertNotIn("observer-secret", serialized)
+        self.assertNotIn("admin-secret", serialized)
+        self.assertNotIn("runtime-secret", serialized)
+        self.assertNotIn("http://127.0.0.1:11434", serialized)
+
+    def test_remote_demo_doctor_forwards_tokens_and_require_result(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("remote_home_compute_demo_pack.py", command[1])
+            self.assertEqual(command[2], "doctor")
+            self.assertIn("--require-result", command)
+            self.assertIn("--observer-token", command)
+            self.assertIn("--admin-token", command)
+            return completed({
+                "schema": "remote_home_compute_doctor_v1",
+                "ok": True,
+                "diagnosis_codes": ["remote_home_compute_doctor_ready"],
+            })
+
+        args = cli.parse_args([
+            "remote-demo",
+            "doctor",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "remote-linux-1",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--require-result",
+        ])
+
+        summary = cli.build_remote_demo(args, runner=fake_runner)
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "remote_home_compute_doctor_v1")
+        self.assertNotIn("observer-secret", serialized)
+        self.assertNotIn("admin-secret", serialized)
+        self.assertTrue(calls)
+
+    def test_remote_demo_collect_forwards_task_and_external_runtime_flags(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("remote_home_compute_demo_pack.py", command[1])
+            self.assertEqual(command[2], "collect")
+            self.assertIn("--task-id", command)
+            self.assertIn("task-1", command)
+            self.assertIn("--mock", command)
+            self.assertIn("--llm-runtime-url", command)
+            return completed({
+                "schema": "remote_home_compute_collect_v1",
+                "ok": True,
+                "diagnosis_codes": ["remote_home_compute_collect_ready"],
+            })
+
+        args = cli.parse_args([
+            "remote-demo",
+            "collect",
+            "--workload",
+            "external-llm",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "remote-linux-1",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--task-id",
+            "task-1",
+            "--mock",
+            "--llm-runtime-url",
+            "http://127.0.0.1:11434/v1/chat/completions",
+        ])
+
+        summary = cli.build_remote_demo(args, runner=fake_runner)
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "remote_home_compute_collect_v1")
+        self.assertNotIn("observer-secret", serialized)
+        self.assertNotIn("admin-secret", serialized)
+        self.assertNotIn("http://127.0.0.1:11434", serialized)
+
+    def test_remote_demo_clean_uses_cleanup_mode_without_workload_args(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("remote_home_compute_demo_pack.py", command[1])
+            self.assertEqual(command[2], "clean")
+            self.assertIn("--apply", command)
+            self.assertIn("--include-private", command)
+            self.assertNotIn("--workload", command)
+            return completed({
+                "schema": "remote_home_compute_cleanup_v1",
+                "ok": True,
+                "diagnosis_codes": ["remote_home_compute_cleanup_ready"],
+            })
+
+        args = cli.parse_args([
+            "remote-demo",
+            "clean",
+            "--output-dir",
+            str(output_dir),
+            "--apply",
+            "--include-private",
+        ])
+
+        summary = cli.build_remote_demo(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "remote_home_compute_cleanup_v1")
+        self.assertTrue(calls)
+
     def test_main_remote_runbook_json_outputs_summary(self) -> None:
         summary = {"schema": "remote_runbook_cli_v1", "ok": True}
         with patch.object(cli, "build_remote_runbook", return_value=summary), patch("builtins.print") as mocked_print:

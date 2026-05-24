@@ -446,7 +446,7 @@ For `external_llm_infer`, submit `external_llm_results` for the claim-time promp
 }
 ```
 
-Accepted `external_llm_infer` results are read-only: `model_updated=false`, `model_bundle_updated=false`, and no model checkpoint is changed. Coordinator validates `external_llm_infer_v1`, request order, prompt hashes, non-empty output, output length, and request count. The admin result ledger keeps safe `request_count`, `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries while redacting `output_preview`; redacted `/state` avoids raw prompts, `external_llm_result`, `external_llm_results`, and `output_text` payloads.
+Accepted `external_llm_infer` results are read-only: `model_updated=false`, `model_bundle_updated=false`, and no model checkpoint is changed. Coordinator validates `external_llm_infer_v1`, request order, prompt hashes, non-empty output, output length, and request count. The admin result ledger keeps safe `request_count`, `completion_count`, `output_chars`, `adapter_kind`, and `model_id` summaries while redacting `output_preview`; redacted `/state` avoids raw prompts, `external_llm_result`, `external_llm_results`, and `output_text` payloads. Admin-created `POST /admin/inference-sessions` can also queue this fixed-prompt contract with `{"workload_type": "external_llm_infer", "request_count": N}`; this is the boundary used by `crowdtensor remote-demo verify --workload external-llm` and `remote_external_llm_evidence_v1`, not a public arbitrary prompt API.
 
 Successful `diloco_train` response fields include:
 

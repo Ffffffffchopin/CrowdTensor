@@ -425,6 +425,42 @@ class StateStore:
                 "task_requirements": self._task_requirements(task),
             }
 
+    def create_readonly_external_llm_task(
+        self,
+        *,
+        request_count: int = 4,
+        required_runtime: str = "python-cli",
+        required_backend: str = "cpu",
+        required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+    ) -> dict:
+        count = max(1, min(int(request_count), 8))
+        runtime = str(required_runtime or "").strip()
+        backend = str(required_backend or "").strip()
+        if runtime != "python-cli":
+            raise ValueError("read-only external LLM sessions require runtime python-cli")
+        if backend != "cpu":
+            raise ValueError("read-only external LLM sessions require backend cpu")
+        with self._lock:
+            task_id = self._create_task(
+                required_runtime=runtime,
+                required_backend=backend,
+                required_protocol_version=required_protocol_version,
+                workload_type=WORKLOAD_EXTERNAL_LLM_INFER,
+                inner_steps=count,
+                workload_metadata={"adapter_contract": "external_llm_runtime_v1"},
+            )
+            task = self._tasks[task_id]
+            return {
+                "schema": "inference_session_request_v1",
+                "accepted": True,
+                "task_id": task_id,
+                "status": task["status"],
+                "workload_type": task["workload_type"],
+                "request_count": task["inner_steps"],
+                "scenario_id": "",
+                "task_requirements": self._task_requirements(task),
+            }
+
     def complete_task(
         self,
         task_id: str,

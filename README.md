@@ -180,7 +180,25 @@ After starting the generated Coordinator command on the operator host and `crowd
 
 ```bash
 . dist/remote-home-compute/operator.private.env
+crowdtensor remote-demo doctor \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+
 crowdtensor remote-demo verify \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+
+crowdtensor remote-demo collect \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
   --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
@@ -190,7 +208,53 @@ crowdtensor remote-demo verify \
   --json
 ```
 
-The `crowdtensor remote-demo` path emits `remote_home_compute_demo_v1` and is the preferred operator wrapper for the controlled Beta-shaped home-compute demo. It reuses `scripts/remote_home_compute_demo_pack.py`, `operator.private.env`, `miner.private.env`, `POST /admin/inference-sessions`, `model_bundle_infer`, `remote_python_model_bundle_infer`, `remote_compute_evidence_v1`, and `remote_demo_observability_v1`, then validates the local stand-in with `scripts/remote_home_compute_demo_check.py`. This is not production Swarm Inference, not P2P routing, and not GPU pooling; real two-machine use still requires operator-provided TLS, VPN, tunnel, or another trusted network path.
+Use `crowdtensor remote-demo clean --output-dir dist/remote-home-compute --json` to dry-run cleanup of known generated artifacts; add `--apply` to delete public generated files and `--include-private` only when you intentionally want to remove `operator.private.env`, `miner.private.env`, and `miner_registry.json`.
+
+The `crowdtensor remote-demo` path emits `remote_home_compute_demo_v1` and is the preferred operator wrapper for the controlled Beta-shaped home-compute demo. It reuses `scripts/remote_home_compute_demo_pack.py`, `operator.private.env`, `miner.private.env`, `POST /admin/inference-sessions`, `model_bundle_infer`, `remote_python_model_bundle_infer`, `remote_compute_evidence_v1`, and `remote_demo_observability_v1`. `remote-demo doctor`, `remote-demo collect`, and `remote-demo clean` emit `remote_home_compute_doctor_v1`, `remote_home_compute_collect_v1`, and `remote_home_compute_cleanup_v1`; `scripts/remote_home_compute_demo_check.py` validates prepare, doctor, verify, collect, and clean for the local stand-ins. This is not production Swarm Inference, not P2P routing, and not GPU pooling; real two-machine use still requires operator-provided TLS, VPN, tunnel, or another trusted network path.
+
+The same high-level wrapper can run the first remote external LLM runtime proof. This creates a read-only `external_llm_infer` session, expects the remote Miner to advertise a mock, command, or OpenAI-compatible operator-owned runtime, and emits `remote_external_llm_evidence_v1` plus `remote_external_llm_observability_v1` without raw prompts, `output_text`, runtime URL, API key, lease token, or idempotency material:
+
+```bash
+crowdtensor remote-demo prepare \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+
+. dist/remote-home-compute-llm/operator.private.env
+crowdtensor remote-demo doctor \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+
+crowdtensor remote-demo verify \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+
+crowdtensor remote-demo collect \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+```
+
+`--mock` is deterministic and CI-safe. Operators can replace it with explicit `--llm-runtime-cmd` or `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` when they own the runtime. This remains fixed-prompt runtime evidence, not public arbitrary prompt serving.
 
 Build a safe two-machine remote demo runbook:
 
@@ -509,6 +573,8 @@ python3 scripts/external_llm_evidence_pack.py \
 ```
 
 Validate the default mock path with `scripts/external_llm_evidence_check.py`; runtime acceptance includes it by default and can skip it with `--skip-external-llm-evidence`.
+
+For remote Miners, `scripts/remote_external_llm_evidence_pack.py` collects the same safe proof layer from a running Coordinator. `crowdtensor remote-demo verify --workload external-llm --mock` wraps that path and records `remote_python_external_llm_infer`, `remote_external_llm_evidence_v1`, and `remote_external_llm_observability_v1` while preserving the non-production and non-public-serving boundary.
 
 Run only the remote Miner invite/join smoke:
 

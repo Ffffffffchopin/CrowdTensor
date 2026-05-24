@@ -13,6 +13,8 @@ from fastapi import HTTPException
 from coordinator import create_app, load_miner_token_registry, parse_task_lane
 from crowdtensor.auth import hash_token
 from crowdtensor.diloco import run_inner_loop
+from crowdtensor.external_llm import WORKLOAD_TYPE as WORKLOAD_EXTERNAL_LLM_INFER
+from crowdtensor.external_llm import run_mock_external_llm_inference
 from crowdtensor.model_bundle import INFERENCE_WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_INFER
 from crowdtensor.model_bundle import run_model_bundle_inference
 from crowdtensor.model_bundle import run_model_bundle_inner_loop
@@ -1016,6 +1018,81 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertNotIn("lease_token", public_text)
             self.assertNotIn("inference_results", public_text)
 
+    def test_admin_inference_session_can_enqueue_external_llm_read_only_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                admin_token="secret",
+            )
+            admin_inference = endpoint_for(app, "/admin/inference-sessions", "POST")
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            admin_results = endpoint_for(app, "/admin/results", "GET")
+            request_type = request_model(admin_inference)
+
+            session = admin_inference(
+                request_type(request_count=3, workload_type=WORKLOAD_EXTERNAL_LLM_INFER),
+                x_crowdtensor_admin_token="secret",
+            )
+            self.assertEqual(session["schema"], "inference_session_request_v1")
+            self.assertEqual(session["workload_type"], WORKLOAD_EXTERNAL_LLM_INFER)
+            self.assertEqual(session["request_count"], 3)
+            self.assertEqual(session["scenario_id"], "")
+            self.assertIn(WORKLOAD_EXTERNAL_LLM_INFER, session["result_query"])
+
+            claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="admin-external-llm-miner",
+                    capabilities={
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "protocol_version": "runtime_contract_v1",
+                        "supported_workloads": [WORKLOAD_EXTERNAL_LLM_INFER],
+                        "external_llm_runtime": {"adapter_kind": "mock", "model_id": "mock-llm"},
+                    },
+                )
+            )
+            self.assertEqual(claim["task_id"], session["task_id"])
+            self.assertEqual(claim["workload_type"], WORKLOAD_EXTERNAL_LLM_INFER)
+            self.assertEqual(claim["workload_spec"]["request_count"], 3)
+            inner_result = run_mock_external_llm_inference(claim["workload_spec"])
+            result = result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    idempotency_key="admin-external-llm-key",
+                    external_llm_result=inner_result["external_llm_result"],
+                    external_llm_results=inner_result["external_llm_results"],
+                    metrics=inner_result,
+                ),
+            )
+            self.assertTrue(result["accepted"])
+            self.assertFalse(result["model_updated"])
+            self.assertFalse(result["model_bundle_updated"])
+
+            ledger = admin_results(
+                limit=10,
+                status="accepted",
+                miner_id="",
+                workload_type=WORKLOAD_EXTERNAL_LLM_INFER,
+                task_id=session["task_id"],
+                x_crowdtensor_admin_token="secret",
+            )
+            self.assertEqual(len(ledger["results"]), 1)
+            row = ledger["results"][0]
+            self.assertEqual(row["task_id"], session["task_id"])
+            self.assertEqual(row["validation"]["request_count"], 3)
+            self.assertEqual(row["session_metrics"]["completion_count"], 3)
+            public_text = json.dumps(ledger, sort_keys=True)
+            self.assertNotIn("admin-external-llm-key", public_text)
+            self.assertNotIn("lease_token", public_text)
+            self.assertNotIn("external_llm_results", public_text)
+            self.assertNotIn("output_text", public_text)
+
     def test_admin_inference_session_rejects_unsupported_runtime_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10, backlog=0, admin_token="secret")
@@ -1034,6 +1111,12 @@ class CoordinatorApiTests(unittest.TestCase):
                     x_crowdtensor_admin_token="secret",
                 )
             self.assertEqual(bad_scenario.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as bad_workload:
+                admin_inference(
+                    request_type(request_count=1, workload_type="public_chat"),
+                    x_crowdtensor_admin_token="secret",
+                )
+            self.assertEqual(bad_workload.exception.status_code, 422)
 
     def test_sign_compressed_result_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

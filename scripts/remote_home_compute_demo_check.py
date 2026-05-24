@@ -101,12 +101,14 @@ def run_json(command: list[str], *, timeout: float) -> dict:
 
 
 def run_prepare(args: argparse.Namespace, output_dir: Path) -> dict:
-    return run_json([
+    command = [
         sys.executable,
         "-m",
         "crowdtensor.cli",
         "remote-demo",
         "prepare",
+        "--workload",
+        args.workload,
         "--coordinator-url",
         args.base_url,
         "--miner-id",
@@ -121,7 +123,10 @@ def run_prepare(args: argparse.Namespace, output_dir: Path) -> dict:
         str(int(args.command_timeout)),
         "--replace",
         "--json",
-    ], timeout=args.command_timeout)
+    ]
+    if args.workload == "external-llm":
+        command.append("--mock")
+    return run_json(command, timeout=args.command_timeout)
 
 
 def start_coordinator(args: argparse.Namespace, state_dir: Path, registry_path: Path, operator_env: dict[str, str]) -> subprocess.Popen:
@@ -141,7 +146,7 @@ def start_coordinator(args: argparse.Namespace, state_dir: Path, registry_path: 
         "--backlog",
         "0",
         "--task-lane",
-        "python-cli:cpu:0:model_bundle_infer",
+        f"python-cli:cpu:0:{'external_llm_infer' if args.workload == 'external-llm' else 'model_bundle_infer'}",
         "--miner-token-registry",
         str(registry_path),
         "--observer-token",
@@ -180,6 +185,8 @@ def start_miner(args: argparse.Namespace, miner_env: dict[str, str], log_dir: Pa
         "--idle-sleep",
         "0.2",
     ]
+    if args.workload == "external-llm":
+        command.extend(["--enable-mock-llm-runtime", "--llm-runtime-model-id", "loopback-mock-llm"])
     proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=stdout, stderr=stderr)
     proc._crowdtensor_stdout = stdout  # type: ignore[attr-defined]
     proc._crowdtensor_stderr = stderr  # type: ignore[attr-defined]
@@ -187,12 +194,14 @@ def start_miner(args: argparse.Namespace, miner_env: dict[str, str], log_dir: Pa
 
 
 def run_verify(args: argparse.Namespace, output_dir: Path, operator_env: dict[str, str]) -> dict:
-    return run_json([
+    command = [
         sys.executable,
         "-m",
         "crowdtensor.cli",
         "remote-demo",
         "verify",
+        "--workload",
+        args.workload,
         "--coordinator-url",
         args.base_url,
         "--miner-id",
@@ -215,12 +224,99 @@ def run_verify(args: argparse.Namespace, output_dir: Path, operator_env: dict[st
         "0.2",
         "--create-session",
         "--json",
+    ]
+    if args.workload == "external-llm":
+        command.append("--mock")
+    return run_json(command, timeout=args.command_timeout)
+
+
+def run_doctor(args: argparse.Namespace, output_dir: Path, operator_env: dict[str, str], *, require_result: bool) -> dict:
+    command = [
+        sys.executable,
+        "-m",
+        "crowdtensor.cli",
+        "remote-demo",
+        "doctor",
+        "--workload",
+        args.workload,
+        "--coordinator-url",
+        args.base_url,
+        "--miner-id",
+        MINER_ID,
+        "--observer-token",
+        operator_env["CROWDTENSOR_OBSERVER_TOKEN"],
+        "--admin-token",
+        operator_env["CROWDTENSOR_ADMIN_TOKEN"],
+        "--output-dir",
+        str(output_dir),
+        "--request-count",
+        str(args.request_count),
+        "--scenario-id",
+        args.scenario_id,
+        "--json",
+    ]
+    if require_result:
+        command.append("--require-result")
+    return run_json(command, timeout=args.command_timeout)
+
+
+def run_collect(args: argparse.Namespace, output_dir: Path, operator_env: dict[str, str], task_id: str) -> dict:
+    command = [
+        sys.executable,
+        "-m",
+        "crowdtensor.cli",
+        "remote-demo",
+        "collect",
+        "--workload",
+        args.workload,
+        "--coordinator-url",
+        args.base_url,
+        "--miner-id",
+        MINER_ID,
+        "--observer-token",
+        operator_env["CROWDTENSOR_OBSERVER_TOKEN"],
+        "--admin-token",
+        operator_env["CROWDTENSOR_ADMIN_TOKEN"],
+        "--output-dir",
+        str(output_dir),
+        "--request-count",
+        str(args.request_count),
+        "--scenario-id",
+        args.scenario_id,
+        "--task-id",
+        task_id,
+        "--json",
+    ]
+    if args.workload == "external-llm":
+        command.append("--mock")
+    return run_json(command, timeout=args.command_timeout)
+
+
+def run_clean(args: argparse.Namespace, output_dir: Path) -> dict:
+    return run_json([
+        sys.executable,
+        "-m",
+        "crowdtensor.cli",
+        "remote-demo",
+        "clean",
+        "--output-dir",
+        str(output_dir),
+        "--json",
     ], timeout=args.command_timeout)
 
 
 def validate_public_report(payload: dict, *, mode: str, secret_values: list[str]) -> None:
-    if payload.get("schema") != "remote_home_compute_demo_v1" or payload.get("mode") != mode or not payload.get("ok"):
+    schema_by_mode = {
+        "prepare": "remote_home_compute_demo_v1",
+        "verify": "remote_home_compute_demo_v1",
+        "doctor": "remote_home_compute_doctor_v1",
+        "collect": "remote_home_compute_collect_v1",
+        "clean": "remote_home_compute_cleanup_v1",
+    }
+    if payload.get("schema") != schema_by_mode[mode] or not payload.get("ok"):
         raise SystemExit(f"unexpected {mode} report: {json.dumps(payload, sort_keys=True)}")
+    if mode in {"prepare", "verify"} and payload.get("mode") != mode:
+        raise SystemExit(f"unexpected {mode} mode: {json.dumps(payload, sort_keys=True)}")
     encoded = json.dumps(payload, sort_keys=True)
     for fragment in [
         "lease_token",
@@ -239,6 +335,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run remote home-compute demo loopback check.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8920)
+    parser.add_argument("--workload", choices=["model-bundle", "external-llm"], default="model-bundle")
     parser.add_argument("--request-count", type=int, default=4)
     parser.add_argument("--scenario-id", default="route-baseline")
     parser.add_argument("--startup-timeout", type=float, default=10.0)
@@ -271,6 +368,8 @@ def main() -> None:
                 raise SystemExit("miner.private.env missing CROWDTENSOR_MINER_TOKEN")
             validate_public_report(prepare, mode="prepare", secret_values=list(operator_env.values()) + list(miner_env.values()))
             coordinator = start_coordinator(args, state_dir, registry_path, operator_env)
+            doctor_before = run_doctor(args, output_dir, operator_env, require_result=False)
+            validate_public_report(doctor_before, mode="doctor", secret_values=list(operator_env.values()) + list(miner_env.values()))
             miner = start_miner(args, miner_env, log_dir)
             try:
                 verify = run_verify(args, output_dir, operator_env)
@@ -288,20 +387,47 @@ def main() -> None:
                 pass
             close_process_logs(miner)
             validate_public_report(verify, mode="verify", secret_values=list(operator_env.values()) + list(miner_env.values()))
-            if "remote_home_compute_ready" not in verify.get("diagnosis_codes", []):
-                raise SystemExit(f"verify report did not emit remote_home_compute_ready: {verify.get('diagnosis_codes')}")
+            task_id = str((verify.get("acceptance_summary") or {}).get("task_id") or "")
+            doctor_after = run_doctor(args, output_dir, operator_env, require_result=True)
+            validate_public_report(doctor_after, mode="doctor", secret_values=list(operator_env.values()) + list(miner_env.values()))
+            collect = run_collect(args, output_dir, operator_env, task_id)
+            validate_public_report(collect, mode="collect", secret_values=list(operator_env.values()) + list(miner_env.values()))
+            clean = run_clean(args, output_dir)
+            validate_public_report(clean, mode="clean", secret_values=list(operator_env.values()) + list(miner_env.values()))
             acceptance = verify.get("acceptance_summary") or {}
-            if acceptance.get("schema") != "remote_demo_acceptance_v1" or acceptance.get("evidence_schema") != "remote_compute_evidence_v1":
+            if args.workload == "external-llm":
+                expected_acceptance_schema = "remote_external_llm_acceptance_v1"
+                expected_evidence_schema = "remote_external_llm_evidence_v1"
+                expected_observability_schema = "remote_external_llm_observability_v1"
+                expected_ready_code = "remote_external_llm_ready"
+            else:
+                expected_acceptance_schema = "remote_demo_acceptance_v1"
+                expected_evidence_schema = "remote_compute_evidence_v1"
+                expected_observability_schema = "remote_demo_observability_v1"
+                expected_ready_code = "remote_home_compute_ready"
+            if expected_ready_code not in verify.get("diagnosis_codes", []):
+                raise SystemExit(f"verify report did not emit {expected_ready_code}: {verify.get('diagnosis_codes')}")
+            if acceptance.get("schema") != expected_acceptance_schema or acceptance.get("evidence_schema") != expected_evidence_schema:
                 raise SystemExit(f"verify summary did not carry expected acceptance/evidence schemas: {acceptance}")
-            if acceptance.get("observability_schema") != "remote_demo_observability_v1":
+            if acceptance.get("observability_schema") != expected_observability_schema:
                 raise SystemExit(f"verify summary did not carry remote demo observability: {acceptance}")
-            for artifact_name in [
+            artifact_names = [
                 "remote_home_compute_demo_json",
-                "remote_demo_runbook_json",
-                "remote_demo_acceptance_json",
-                "remote_compute_evidence_json",
                 "support_bundle_json",
-            ]:
+            ]
+            if args.workload == "external-llm":
+                artifact_names.extend([
+                    "remote_external_llm_runbook_json",
+                    "remote_external_llm_acceptance_json",
+                    "remote_external_llm_evidence_json",
+                ])
+            else:
+                artifact_names.extend([
+                    "remote_demo_runbook_json",
+                    "remote_demo_acceptance_json",
+                    "remote_compute_evidence_json",
+                ])
+            for artifact_name in artifact_names:
                 artifact = (verify.get("artifacts") or {}).get(artifact_name) or {}
                 if artifact.get("present") is not True:
                     raise SystemExit(f"verify report missing artifact {artifact_name}: {artifact}")
@@ -310,8 +436,12 @@ def main() -> None:
                 "schema": "remote_home_compute_demo_check_v1",
                 "demo_schema": verify.get("schema"),
                 "miner_id": verify.get("miner_id"),
+                "workload": args.workload,
                 "scenario_id": (verify.get("demo") or {}).get("scenario_id"),
                 "diagnosis_codes": verify.get("diagnosis_codes"),
+                "doctor_schema": doctor_after.get("schema"),
+                "collect_schema": collect.get("schema"),
+                "cleanup_schema": clean.get("schema"),
                 "acceptance_schema": acceptance.get("schema"),
                 "evidence_schema": acceptance.get("evidence_schema"),
                 "observability_schema": acceptance.get("observability_schema"),

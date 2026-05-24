@@ -415,10 +415,28 @@ crowdtensor remote-demo prepare \
   --json
 ```
 
-Then start the generated Coordinator and Miner commands, source `operator.private.env`, and verify:
+Then start the generated Coordinator and Miner commands, source `operator.private.env`, run doctor, verify, and collect:
 
 ```bash
+crowdtensor remote-demo doctor \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+
 crowdtensor remote-demo verify \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+
+crowdtensor remote-demo collect \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
   --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
@@ -428,7 +446,41 @@ crowdtensor remote-demo verify \
   --json
 ```
 
-`crowdtensor remote-demo` is the high-level operator path for the controlled home-compute remote Miner demo. It emits `remote_home_compute_demo_v1`, delegates to `scripts/remote_home_compute_demo_pack.py`, keeps `operator.private.env` and `miner.private.env` private, creates a read-only `model_bundle_infer` session through `POST /admin/inference-sessions`, verifies the `remote_python_model_bundle_infer` route, and summarizes `remote_compute_evidence_v1` plus `remote_demo_observability_v1`. `scripts/remote_home_compute_demo_check.py` validates the local-loopback stand-in in CI. This remains not production Swarm Inference, not P2P routing, and not GPU pooling.
+`crowdtensor remote-demo` is the high-level operator path for the controlled home-compute remote Miner demo. It emits `remote_home_compute_demo_v1`, delegates to `scripts/remote_home_compute_demo_pack.py`, keeps `operator.private.env` and `miner.private.env` private, creates a read-only `model_bundle_infer` session through `POST /admin/inference-sessions`, verifies the `remote_python_model_bundle_infer` route, and summarizes `remote_compute_evidence_v1` plus `remote_demo_observability_v1`. `remote-demo doctor`, `remote-demo collect`, and `remote-demo clean` emit `remote_home_compute_doctor_v1`, `remote_home_compute_collect_v1`, and `remote_home_compute_cleanup_v1`; cleanup defaults to dry-run and only removes private env/registry files with `--include-private`. `scripts/remote_home_compute_demo_check.py` validates the local-loopback stand-in in CI. This remains not production Swarm Inference, not P2P routing, and not GPU pooling.
+
+The high-level wrapper also supports the controlled remote external LLM runtime path:
+
+```bash
+crowdtensor remote-demo prepare \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+
+crowdtensor remote-demo verify \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+
+crowdtensor remote-demo collect \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+```
+
+This creates a read-only `external_llm_infer` task through `POST /admin/inference-sessions`, verifies `remote_python_external_llm_infer`, and collects `remote_external_llm_evidence_v1` plus `remote_external_llm_observability_v1` through `scripts/remote_external_llm_evidence_pack.py`. `--mock` is deterministic for CI; explicit `--llm-runtime-cmd` or `--llm-runtime-url` remains operator-owned. The report keeps raw prompts, `output_text`, runtime URL, API key, leases, and idempotency material out of public artifacts. It is fixed-prompt runtime evidence, not public arbitrary prompt serving.
 
 Safe two-machine remote runbook:
 

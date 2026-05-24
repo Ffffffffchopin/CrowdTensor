@@ -21,7 +21,25 @@ After the generated Coordinator and remote Miner commands are running, verify th
 
 ```bash
 . dist/remote-home-compute/operator.private.env
+crowdtensor remote-demo doctor \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+
 crowdtensor remote-demo verify \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+
+crowdtensor remote-demo collect \
   --coordinator-url https://YOUR_COORDINATOR_HOST \
   --miner-id remote-linux-1 \
   --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
@@ -31,7 +49,41 @@ crowdtensor remote-demo verify \
   --json
 ```
 
-The wrapper uses `scripts/remote_home_compute_demo_pack.py` and CI validates the local stand-in with `scripts/remote_home_compute_demo_check.py`. The `remote_home_compute_demo_v1` artifact links the underlying `remote_demo_runbook_v1`, `POST /admin/inference-sessions` acceptance, `remote_compute_evidence_v1`, `remote_demo_observability_v1`, `model_bundle_infer`, and `remote_python_model_bundle_infer` evidence without exposing plaintext tokens. It is not production Swarm Inference and not P2P routing.
+The wrapper uses `scripts/remote_home_compute_demo_pack.py` and CI validates the local stand-in with `scripts/remote_home_compute_demo_check.py`. The `remote_home_compute_demo_v1` artifact links the underlying `remote_demo_runbook_v1`, `POST /admin/inference-sessions` acceptance, `remote_compute_evidence_v1`, `remote_demo_observability_v1`, `model_bundle_infer`, and `remote_python_model_bundle_infer` evidence without exposing plaintext tokens. `remote-demo doctor` writes `remote_home_compute_doctor_v1`, `remote-demo collect` writes `remote_home_compute_collect_v1`, and `remote-demo clean` writes `remote_home_compute_cleanup_v1` while defaulting to dry-run cleanup. It is not production Swarm Inference and not P2P routing.
+
+For an operator-owned local LLM runtime on the Miner host, use the explicit external LLM workload:
+
+```bash
+crowdtensor remote-demo prepare \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+
+crowdtensor remote-demo verify \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+
+crowdtensor remote-demo collect \
+  --workload external-llm \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --mock \
+  --output-dir dist/remote-home-compute-llm \
+  --json
+```
+
+This queues read-only `external_llm_infer` through `POST /admin/inference-sessions`, verifies `remote_python_external_llm_infer`, and collects `remote_external_llm_evidence_v1` plus `remote_external_llm_observability_v1` through `scripts/remote_external_llm_evidence_pack.py`. The public artifacts do not include raw prompts, `output_text`, runtime URL, API key, lease token, or idempotency material. Replace `--mock` with `--llm-runtime-cmd` or `--llm-runtime-url` only when the operator owns the runtime. It is fixed-prompt runtime evidence, not public arbitrary prompt serving.
 
 For the lower-level safe two-machine runbook that creates only the registry, private env files, and public operator commands:
 

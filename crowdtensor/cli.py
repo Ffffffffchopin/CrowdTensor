@@ -1037,10 +1037,45 @@ def build_remote_acceptance(args: argparse.Namespace, *, runner: Runner = subpro
 def build_remote_demo(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    if args.remote_demo_action == "clean":
+        command = [
+            sys.executable,
+            str(SCRIPTS_DIR / "remote_home_compute_demo_pack.py"),
+            "clean",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ]
+        if args.apply:
+            command.append("--apply")
+        if args.include_private:
+            command.append("--include-private")
+        if args.remove_empty_dir:
+            command.append("--remove-empty-dir")
+        step, payload = run_json_step(
+            "remote_home_compute_demo",
+            command,
+            runner=runner,
+            cwd=ROOT,
+            timeout_seconds=args.timeout_seconds,
+        )
+        if not payload:
+            payload = {
+                "schema": REMOTE_HOME_DEMO_SCHEMA,
+                "generated_at": utc_now(),
+                "ok": False,
+                "mode": args.remote_demo_action,
+                "output_dir": str(output_dir),
+                "step": step,
+                "diagnosis_codes": ["remote_home_compute_failed"],
+            }
+        return sanitize(payload)
     command = [
         sys.executable,
         str(SCRIPTS_DIR / "remote_home_compute_demo_pack.py"),
         args.remote_demo_action,
+        "--workload",
+        args.workload,
         "--coordinator-url",
         args.coordinator_url,
         "--miner-id",
@@ -1051,16 +1086,28 @@ def build_remote_demo(args: argparse.Namespace, *, runner: Runner = subprocess.r
         str(args.request_count),
         "--scenario-id",
         args.scenario_id,
-        "--timeout-seconds",
-        str(args.timeout_seconds),
         "--json",
     ]
     secret_values: list[str] = []
+    if args.remote_demo_action in {"prepare", "verify"} and hasattr(args, "timeout_seconds"):
+        command.extend(["--timeout-seconds", str(args.timeout_seconds)])
+    if hasattr(args, "mock") and getattr(args, "mock", False):
+        command.append("--mock")
+    if hasattr(args, "llm_runtime_cmd") and getattr(args, "llm_runtime_cmd", ""):
+        command.extend(["--llm-runtime-cmd", args.llm_runtime_cmd])
+    if hasattr(args, "llm_runtime_url") and getattr(args, "llm_runtime_url", ""):
+        command.extend(["--llm-runtime-url", args.llm_runtime_url])
+    if hasattr(args, "llm_runtime_api_key") and getattr(args, "llm_runtime_api_key", ""):
+        command.extend(["--llm-runtime-api-key", args.llm_runtime_api_key])
+    if hasattr(args, "llm_runtime_model_id") and getattr(args, "llm_runtime_model_id", ""):
+        command.extend(["--llm-runtime-model-id", args.llm_runtime_model_id])
+    if hasattr(args, "llm_runtime_timeout") and getattr(args, "llm_runtime_timeout", None) is not None:
+        command.extend(["--llm-runtime-timeout", str(args.llm_runtime_timeout)])
     if args.remote_demo_action == "prepare":
         if args.replace:
             command.append("--replace")
     elif args.remote_demo_action == "verify":
-        secret_values = [args.observer_token, args.admin_token]
+        secret_values = [args.observer_token, args.admin_token, args.llm_runtime_url, args.llm_runtime_api_key]
         command.extend([
             "--observer-token",
             args.observer_token,
@@ -1070,11 +1117,47 @@ def build_remote_demo(args: argparse.Namespace, *, runner: Runner = subprocess.r
             str(args.remote_timeout_seconds),
             "--poll-interval",
             str(args.poll_interval),
+            "--http-timeout",
+            str(args.http_timeout),
+            "--artifact-timeout",
+            str(args.artifact_timeout),
+            "--admin-results-limit",
+            str(args.admin_results_limit),
         ])
         if args.create_session:
             command.append("--create-session")
         else:
             command.append("--no-create-session")
+    elif args.remote_demo_action == "doctor":
+        secret_values = [args.observer_token, args.admin_token]
+        command.extend([
+            "--observer-token",
+            args.observer_token,
+            "--admin-token",
+            args.admin_token,
+            "--http-timeout",
+            str(args.http_timeout),
+            "--admin-results-limit",
+            str(args.admin_results_limit),
+        ])
+        if args.require_result:
+            command.append("--require-result")
+    elif args.remote_demo_action == "collect":
+        secret_values = [args.observer_token, args.admin_token, args.llm_runtime_url, args.llm_runtime_api_key]
+        command.extend([
+            "--observer-token",
+            args.observer_token,
+            "--admin-token",
+            args.admin_token,
+            "--http-timeout",
+            str(args.http_timeout),
+            "--artifact-timeout",
+            str(args.artifact_timeout),
+            "--admin-results-limit",
+            str(args.admin_results_limit),
+        ])
+        if args.task_id:
+            command.extend(["--task-id", args.task_id])
     else:
         raise SystemExit(f"unknown remote-demo action: {args.remote_demo_action}")
     step, payload = run_json_step(
@@ -1308,6 +1391,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "prepare",
         help="Create the recommended remote home-compute runbook and private env files.",
     )
+    remote_demo_prepare.add_argument("--workload", choices=["model-bundle", "external-llm"], default="model-bundle")
     remote_demo_prepare.add_argument("--coordinator-url", default="http://127.0.0.1:8787")
     remote_demo_prepare.add_argument("--miner-id", default="remote-linux-1")
     remote_demo_prepare.add_argument("--output-dir", default="dist/remote-home-compute")
@@ -1315,11 +1399,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_demo_prepare.add_argument("--scenario-id", default="route-baseline")
     remote_demo_prepare.add_argument("--timeout-seconds", type=int, default=180)
     remote_demo_prepare.add_argument("--replace", action="store_true")
+    remote_demo_prepare.add_argument("--mock", action="store_true")
+    remote_demo_prepare.add_argument("--llm-runtime-cmd", default="")
+    remote_demo_prepare.add_argument("--llm-runtime-url", default="")
+    remote_demo_prepare.add_argument("--llm-runtime-api-key", default="")
+    remote_demo_prepare.add_argument("--llm-runtime-model-id", default="external-llm-runtime")
+    remote_demo_prepare.add_argument("--llm-runtime-timeout", type=float, default=30.0)
     remote_demo_prepare.add_argument("--json", action="store_true")
+    remote_demo_doctor = remote_demo_subparsers.add_parser(
+        "doctor",
+        help="Check remote-demo files, token presence, Coordinator reachability, and route readiness.",
+    )
+    remote_demo_doctor.add_argument("--workload", choices=["model-bundle", "external-llm"], default="model-bundle")
+    remote_demo_doctor.add_argument("--coordinator-url", default="http://127.0.0.1:8787")
+    remote_demo_doctor.add_argument("--miner-id", default="remote-linux-1")
+    remote_demo_doctor.add_argument("--observer-token", default="")
+    remote_demo_doctor.add_argument("--admin-token", default="")
+    remote_demo_doctor.add_argument("--output-dir", default="dist/remote-home-compute")
+    remote_demo_doctor.add_argument("--request-count", type=int, default=4)
+    remote_demo_doctor.add_argument("--scenario-id", default="route-baseline")
+    remote_demo_doctor.add_argument("--timeout-seconds", type=int, default=180)
+    remote_demo_doctor.add_argument("--http-timeout", type=float, default=5.0)
+    remote_demo_doctor.add_argument("--admin-results-limit", type=int, default=10)
+    remote_demo_doctor.add_argument("--require-result", action="store_true")
+    remote_demo_doctor.add_argument("--json", action="store_true")
     remote_demo_verify = remote_demo_subparsers.add_parser(
         "verify",
-        help="Create and verify a read-only remote model_bundle_infer session.",
+        help="Create and verify a read-only remote home-compute session.",
     )
+    remote_demo_verify.add_argument("--workload", choices=["model-bundle", "external-llm"], default="model-bundle")
     remote_demo_verify.add_argument("--coordinator-url", required=True)
     remote_demo_verify.add_argument("--miner-id", required=True)
     remote_demo_verify.add_argument("--observer-token", required=True)
@@ -1330,11 +1438,56 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_demo_verify.add_argument("--timeout-seconds", type=int, default=180)
     remote_demo_verify.add_argument("--remote-timeout-seconds", type=float, default=120.0)
     remote_demo_verify.add_argument("--poll-interval", type=float, default=2.0)
+    remote_demo_verify.add_argument("--http-timeout", type=float, default=5.0)
+    remote_demo_verify.add_argument("--artifact-timeout", type=float, default=60.0)
+    remote_demo_verify.add_argument("--admin-results-limit", type=int, default=10)
     remote_demo_verify.add_argument("--create-session", dest="create_session", action="store_true", default=True)
     remote_demo_verify.add_argument("--no-create-session", dest="create_session", action="store_false")
+    remote_demo_verify.add_argument("--mock", action="store_true")
+    remote_demo_verify.add_argument("--llm-runtime-cmd", default="")
+    remote_demo_verify.add_argument("--llm-runtime-url", default="")
+    remote_demo_verify.add_argument("--llm-runtime-api-key", default="")
+    remote_demo_verify.add_argument("--llm-runtime-model-id", default="external-llm-runtime")
+    remote_demo_verify.add_argument("--llm-runtime-timeout", type=float, default=30.0)
     remote_demo_verify.add_argument("--json", action="store_true")
+    remote_demo_collect = remote_demo_subparsers.add_parser(
+        "collect",
+        help="Collect evidence and Support Bundle from an already running remote-demo.",
+    )
+    remote_demo_collect.add_argument("--workload", choices=["model-bundle", "external-llm"], default="model-bundle")
+    remote_demo_collect.add_argument("--coordinator-url", required=True)
+    remote_demo_collect.add_argument("--miner-id", required=True)
+    remote_demo_collect.add_argument("--observer-token", required=True)
+    remote_demo_collect.add_argument("--admin-token", required=True)
+    remote_demo_collect.add_argument("--output-dir", default="dist/remote-home-compute")
+    remote_demo_collect.add_argument("--request-count", type=int, default=4)
+    remote_demo_collect.add_argument("--scenario-id", default="route-baseline")
+    remote_demo_collect.add_argument("--task-id", default="")
+    remote_demo_collect.add_argument("--timeout-seconds", type=int, default=180)
+    remote_demo_collect.add_argument("--http-timeout", type=float, default=5.0)
+    remote_demo_collect.add_argument("--artifact-timeout", type=float, default=60.0)
+    remote_demo_collect.add_argument("--admin-results-limit", type=int, default=10)
+    remote_demo_collect.add_argument("--mock", action="store_true")
+    remote_demo_collect.add_argument("--llm-runtime-cmd", default="")
+    remote_demo_collect.add_argument("--llm-runtime-url", default="")
+    remote_demo_collect.add_argument("--llm-runtime-api-key", default="")
+    remote_demo_collect.add_argument("--llm-runtime-model-id", default="external-llm-runtime")
+    remote_demo_collect.add_argument("--llm-runtime-timeout", type=float, default=30.0)
+    remote_demo_collect.add_argument("--json", action="store_true")
+    remote_demo_clean = remote_demo_subparsers.add_parser(
+        "clean",
+        help="Dry-run or delete known files generated by remote-demo.",
+    )
+    remote_demo_clean.add_argument("--output-dir", default="dist/remote-home-compute")
+    remote_demo_clean.add_argument("--timeout-seconds", type=int, default=60)
+    remote_demo_clean.add_argument("--apply", action="store_true")
+    remote_demo_clean.add_argument("--include-private", action="store_true")
+    remote_demo_clean.add_argument("--remove-empty-dir", action="store_true")
+    remote_demo_clean.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if args.command in {"local-proof", "home-infer", "llm-infer", "release-ready", "remote-runbook", "remote-acceptance", "remote-demo"}:
+    if args.command in {"local-proof", "home-infer", "llm-infer", "release-ready", "remote-runbook", "remote-acceptance"} or (
+        args.command == "remote-demo" and hasattr(args, "request_count")
+    ):
         if args.request_count < 1:
             raise SystemExit("--request-count must be at least 1")
         if args.timeout_seconds < 1:
@@ -1354,11 +1507,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--remote-timeout-seconds must be non-negative")
         if args.poll_interval <= 0:
             raise SystemExit("--poll-interval must be positive")
+    if args.command == "remote-demo" and args.remote_demo_action in {"doctor", "verify", "collect"}:
+        if args.http_timeout <= 0:
+            raise SystemExit("--http-timeout must be positive")
+        if args.admin_results_limit < 1:
+            raise SystemExit("--admin-results-limit must be at least 1")
     if args.command == "remote-demo" and args.remote_demo_action == "verify":
         if args.remote_timeout_seconds < 0:
             raise SystemExit("--remote-timeout-seconds must be non-negative")
         if args.poll_interval <= 0:
             raise SystemExit("--poll-interval must be positive")
+        if args.artifact_timeout <= 0:
+            raise SystemExit("--artifact-timeout must be positive")
+    if args.command == "remote-demo" and args.remote_demo_action == "collect":
+        if args.artifact_timeout <= 0:
+            raise SystemExit("--artifact-timeout must be positive")
+    if args.command == "remote-demo" and args.remote_demo_action in {"prepare", "verify", "collect"}:
+        if args.llm_runtime_cmd and args.llm_runtime_url:
+            raise SystemExit("--llm-runtime-cmd and --llm-runtime-url are mutually exclusive")
+        if args.llm_runtime_timeout <= 0:
+            raise SystemExit("--llm-runtime-timeout must be positive")
     if args.command == "clean-artifacts":
         if args.older_than_hours < 0:
             raise SystemExit("--older-than-hours must be non-negative")
