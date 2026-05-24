@@ -32,7 +32,23 @@ Run a 5-minute local swarm demo with Python 3.11 or newer.
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -e .[dev]
+```
+
+For a fresh-clone onboarding check that avoids system pip / PEP 668 issues and validates the documented console commands from a clean virtualenv, run:
+
+```bash
+python scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
+```
+
+The `onboarding_gate_v1` report creates a temporary venv, runs `python -m pip install -e .[dev]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, and `crowdtensor release-ready --allow-dirty`. It is an Alpha onboarding gate, not production Swarm Inference readiness.
+
+The install creates these console commands:
+
+```bash
+crowdtensor --help
+crowdtensord --help
+crowdtensor-miner --help
 ```
 
 Run the First-run Doctor before starting services:

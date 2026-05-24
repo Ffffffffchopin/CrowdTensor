@@ -9,10 +9,10 @@ Use Python 3.11 or newer.
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -e .[dev]
 ```
 
-If your environment has no network access, preinstall `setuptools` and `wheel` in the virtualenv or use a base image that already includes them. The package install uses standard Python build metadata.
+Avoid installing into the system Python. A virtualenv keeps the checkout compatible with distributions that enforce PEP 668 externally managed Python environments. If your environment has no network access, preinstall `setuptools` and `wheel` in the virtualenv or use a base image that already includes them. The package install uses standard Python build metadata.
 
 The install creates two console commands:
 
@@ -21,6 +21,14 @@ crowdtensor --help
 crowdtensord --help
 crowdtensor-miner --help
 ```
+
+To verify the documented fresh-clone path from a clean virtualenv, run:
+
+```bash
+python scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
+```
+
+The `onboarding_gate_v1` report creates a temporary venv, runs `python -m pip install -e .[dev]`, validates the three console commands above, then runs `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, and `crowdtensor release-ready --allow-dirty` with reduced request counts. It is an Alpha onboarding gate, not production Swarm Inference, arbitrary prompt serving, GPU pooling, P2P routing, or WebGPU execution.
 
 Run the one-command local proof first when you want the shortest open-source path from checkout to safe artifact:
 

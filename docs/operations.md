@@ -2,6 +2,16 @@
 
 This document collects common commands for local Alpha operation.
 
+## Fresh Clone Onboarding Gate
+
+```bash
+python scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
+```
+
+The onboarding gate emits `onboarding_gate_v1`. It creates a clean temporary virtualenv, runs `python -m pip install -e .[dev]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, and `crowdtensor release-ready --allow-dirty` with reduced request counts.
+
+Use this when validating a fresh checkout or CI image before longer runtime acceptance. It writes reports under `/tmp` by default, removes the temporary venv unless `--keep-venv` is passed, and is not production Swarm Inference readiness.
+
 ## Release Readiness
 
 ```bash

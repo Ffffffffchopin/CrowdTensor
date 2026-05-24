@@ -24,6 +24,8 @@ jobs:
         run: python scripts/release_gate.py --json
       - name: Release readiness
         run: python scripts/release_readiness_check.py --allow-dirty
+      - name: Fresh clone onboarding gate
+        run: python scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
       - name: First-run Doctor
         run: python scripts/doctor.py --json
       - name: Local proof CLI

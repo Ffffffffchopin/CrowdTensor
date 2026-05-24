@@ -46,6 +46,7 @@ REQUIRED_FILES = [
     "scripts/remote_demo_acceptance_check.py",
     "scripts/demo_manifest_pack.py",
     "scripts/demo_manifest_check.py",
+    "scripts/onboarding_gate.py",
     "scripts/release_readiness_pack.py",
     "scripts/release_readiness_check.py",
     "scripts/remote_compute_evidence_pack.py",
@@ -440,6 +441,43 @@ def check_release_readiness_docs(root: Path) -> dict[str, Any]:
         if fragment not in combined:
             details.append(f"release readiness docs/CI must mention {fragment}")
     return check_result("release_readiness_docs", not details, details)
+
+
+def check_onboarding_gate_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "scripts/onboarding_gate.py",
+        "onboarding_gate_v1",
+        "python3 -m venv",
+        "python -m pip install -e .[dev]",
+        "crowdtensor --help",
+        "crowdtensord --help",
+        "crowdtensor-miner --help",
+        "crowdtensor local-proof",
+        "crowdtensor home-infer",
+        "crowdtensor llm-infer --mock",
+        "crowdtensor release-ready",
+        "--quick",
+        "not production",
+    ]:
+        if fragment not in combined:
+            details.append(f"onboarding gate docs/CI must mention {fragment}")
+    return check_result("onboarding_gate_docs", not details, details)
 
 
 def check_doctor_docs(root: Path) -> dict[str, Any]:
@@ -1178,6 +1216,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python -m py_compile": "CI must compile Python entrypoints",
         "python scripts/release_gate.py --json": "CI must run the release gate",
         "python scripts/release_readiness_check.py --allow-dirty": "CI must run the release readiness check",
+        "python scripts/onboarding_gate.py --quick": "CI must run the fresh clone onboarding gate",
         "python scripts/doctor.py --json": "CI must run first-run doctor",
         "python scripts/runtime_matrix_check.py": "CI must run the runtime matrix check",
         "python scripts/home_compute_demo_check.py": "CI must run the home-compute demo check",
@@ -1225,6 +1264,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_browser_acceptance_docs(gate_root),
         check_release_evidence_docs(gate_root),
         check_release_readiness_docs(gate_root),
+        check_onboarding_gate_docs(gate_root),
         check_doctor_docs(gate_root),
         check_support_bundle_docs(gate_root),
         check_home_compute_evidence_docs(gate_root),

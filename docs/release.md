@@ -18,6 +18,14 @@ python3 scripts/doctor.py --json
 python3 scripts/security_preflight.py --json
 ```
 
+Verify the documented fresh-clone onboarding path from a clean virtualenv:
+
+```bash
+python3 scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
+```
+
+The `onboarding_gate_v1` report runs `python3 -m venv`, installs with `python -m pip install -e .[dev]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, and `crowdtensor release-ready --allow-dirty`. This is an Alpha repository onboarding gate, not production Swarm Inference readiness.
+
 Build the maintainer readiness report before running longer acceptance:
 
 ```bash

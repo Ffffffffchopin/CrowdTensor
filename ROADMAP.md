@@ -10,6 +10,7 @@ Status: current.
 - Deterministic CPU-only workload contracts for dense, adapter, micro LM, model bundle training, read-only model bundle inference, optional external LLM adapter inference, and browser probe tasks.
 - Admission controls, result validation, replay audit, trust quarantine, operator ledger, release gate, release evidence, and Support Bundle.
 - Maintainer release readiness gate through `crowdtensor release-ready`, `release_readiness_v1`, `scripts/release_readiness_pack.py`, and `scripts/release_readiness_check.py --allow-dirty`, aggregating Git metadata, release gate, security preflight, and `demo_manifest_v1` while surfacing blockers such as `git_dirty`.
+- Fresh clone onboarding gate through `scripts/onboarding_gate.py --quick` and `onboarding_gate_v1`, creating a clean temporary virtualenv, running `python -m pip install -e .[dev]`, checking `crowdtensor --help`, `crowdtensord --help`, `crowdtensor-miner --help`, and smoke-validating `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, and `crowdtensor release-ready --allow-dirty` without claiming production readiness.
 - Runtime capability matrix so new users can inspect CPU-only readiness, optional browser support, and external LLM adapter configuration before running longer checks.
 - Matrix-guided home-compute demo that combines local capability discovery with the read-only `model_bundle_infer` inference session.
 - Controlled remote Miner demo and browser WebRTC/Worker experiments.

@@ -50,6 +50,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "browser_acceptance_docs",
                 "release_evidence_docs",
                 "release_readiness_docs",
+                "onboarding_gate_docs",
                 "doctor_docs",
                 "support_bundle_docs",
                 "home_compute_evidence_docs",
@@ -277,6 +278,29 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("crowdtensor release-ready" in detail for detail in details))
         self.assertTrue(any("release_readiness_v1" in detail for detail in details))
         self.assertTrue(any("--allow-dirty" in detail for detail in details))
+
+    def test_onboarding_gate_docs_must_describe_fresh_clone_path(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No onboarding docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "onboarding_gate_docs")
+        self.assertTrue(any("scripts/onboarding_gate.py" in detail for detail in details))
+        self.assertTrue(any("onboarding_gate_v1" in detail for detail in details))
+        self.assertTrue(any("crowdtensor local-proof" in detail for detail in details))
 
     def test_doctor_docs_must_describe_first_run_diagnostics(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
