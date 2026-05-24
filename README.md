@@ -165,6 +165,33 @@ python3 scripts/demo_manifest_pack.py \
 
 The `demo_manifest_v1` artifact indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `external_llm_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries in one safe JSON/Markdown pair. It is the recommended handoff artifact for showing what this checkout can run today. The external LLM entry uses deterministic mock evidence by default and does not expose raw prompts, `output_text`, runtime URL, or API key. CI validates the path with `scripts/demo_manifest_check.py`.
 
+Run the recommended high-level two-machine remote home-compute demo:
+
+```bash
+crowdtensor remote-demo prepare \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+```
+
+After starting the generated Coordinator command on the operator host and `crowdtensor-miner` command on the Miner host, verify the same read-only session:
+
+```bash
+. dist/remote-home-compute/operator.private.env
+crowdtensor remote-demo verify \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+```
+
+The `crowdtensor remote-demo` path emits `remote_home_compute_demo_v1` and is the preferred operator wrapper for the controlled Beta-shaped home-compute demo. It reuses `scripts/remote_home_compute_demo_pack.py`, `operator.private.env`, `miner.private.env`, `POST /admin/inference-sessions`, `model_bundle_infer`, `remote_python_model_bundle_infer`, `remote_compute_evidence_v1`, and `remote_demo_observability_v1`, then validates the local stand-in with `scripts/remote_home_compute_demo_check.py`. This is not production Swarm Inference, not P2P routing, and not GPU pooling; real two-machine use still requires operator-provided TLS, VPN, tunnel, or another trusted network path.
+
 Build a safe two-machine remote demo runbook:
 
 ```bash

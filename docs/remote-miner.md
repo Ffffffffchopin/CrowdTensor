@@ -6,7 +6,34 @@ Use HTTPS, a VPN, or a private network for any remote demo. Miner tokens are sen
 
 ## 1. Create a Miner Registry Entry
 
-For a safe two-machine runbook that creates the registry, private env files, and public operator commands in one step:
+For the recommended high-level two-machine home-compute demo, start with `crowdtensor remote-demo prepare`. It creates the registry, `operator.private.env`, `miner.private.env`, public runbook, and `remote_home_compute_demo_v1` summary in one output directory:
+
+```bash
+crowdtensor remote-demo prepare \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+```
+
+After the generated Coordinator and remote Miner commands are running, verify the read-only `model_bundle_infer` session:
+
+```bash
+. dist/remote-home-compute/operator.private.env
+crowdtensor remote-demo verify \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+```
+
+The wrapper uses `scripts/remote_home_compute_demo_pack.py` and CI validates the local stand-in with `scripts/remote_home_compute_demo_check.py`. The `remote_home_compute_demo_v1` artifact links the underlying `remote_demo_runbook_v1`, `POST /admin/inference-sessions` acceptance, `remote_compute_evidence_v1`, `remote_demo_observability_v1`, `model_bundle_infer`, and `remote_python_model_bundle_infer` evidence without exposing plaintext tokens. It is not production Swarm Inference and not P2P routing.
+
+For the lower-level safe two-machine runbook that creates only the registry, private env files, and public operator commands:
 
 ```bash
 crowdtensor remote-runbook \

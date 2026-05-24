@@ -404,6 +404,32 @@ python3 scripts/demo_manifest_pack.py \
 
 `scripts/demo_manifest_pack.py` produces the `demo_manifest_v1` latest output artifact for operator handoff. It writes `runtime_matrix.json`, `remote_compute_evidence_v1`, `external_llm_evidence_v1`, `support_bundle`, `demo_manifest.json`, and `demo_manifest.md` under one output directory, then summarizes `remote_compute_observability_v1` and deterministic mock external LLM evidence without embedding raw state, raw prompts, `output_text`, runtime URL, API key, tokens, leases, idempotency material, or tensor payloads. Validate the path with `scripts/demo_manifest_check.py --base-port 8914`.
 
+Recommended two-machine remote home-compute demo:
+
+```bash
+crowdtensor remote-demo prepare \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+```
+
+Then start the generated Coordinator and Miner commands, source `operator.private.env`, and verify:
+
+```bash
+crowdtensor remote-demo verify \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --scenario-id route-baseline \
+  --output-dir dist/remote-home-compute \
+  --json
+```
+
+`crowdtensor remote-demo` is the high-level operator path for the controlled home-compute remote Miner demo. It emits `remote_home_compute_demo_v1`, delegates to `scripts/remote_home_compute_demo_pack.py`, keeps `operator.private.env` and `miner.private.env` private, creates a read-only `model_bundle_infer` session through `POST /admin/inference-sessions`, verifies the `remote_python_model_bundle_infer` route, and summarizes `remote_compute_evidence_v1` plus `remote_demo_observability_v1`. `scripts/remote_home_compute_demo_check.py` validates the local-loopback stand-in in CI. This remains not production Swarm Inference, not P2P routing, and not GPU pooling.
+
 Safe two-machine remote runbook:
 
 ```bash

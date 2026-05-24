@@ -29,6 +29,7 @@ SUMMARY_SCHEMA = "local_proof_summary_v1"
 CLEANUP_SCHEMA = "cleanup_report_v1"
 REMOTE_RUNBOOK_CLI_SCHEMA = "remote_runbook_cli_v1"
 REMOTE_ACCEPTANCE_CLI_SCHEMA = "remote_acceptance_cli_v1"
+REMOTE_HOME_DEMO_SCHEMA = "remote_home_compute_demo_v1"
 HOME_INFERENCE_CLI_SCHEMA = "home_inference_cli_v1"
 LLM_INFERENCE_CLI_SCHEMA = "llm_inference_cli_v1"
 SECRET_FRAGMENTS = (
@@ -1033,6 +1034,79 @@ def build_remote_acceptance(args: argparse.Namespace, *, runner: Runner = subpro
     return summary
 
 
+def build_remote_demo(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "remote_home_compute_demo_pack.py"),
+        args.remote_demo_action,
+        "--coordinator-url",
+        args.coordinator_url,
+        "--miner-id",
+        args.miner_id,
+        "--output-dir",
+        str(output_dir),
+        "--request-count",
+        str(args.request_count),
+        "--scenario-id",
+        args.scenario_id,
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--json",
+    ]
+    secret_values: list[str] = []
+    if args.remote_demo_action == "prepare":
+        if args.replace:
+            command.append("--replace")
+    elif args.remote_demo_action == "verify":
+        secret_values = [args.observer_token, args.admin_token]
+        command.extend([
+            "--observer-token",
+            args.observer_token,
+            "--admin-token",
+            args.admin_token,
+            "--remote-timeout-seconds",
+            str(args.remote_timeout_seconds),
+            "--poll-interval",
+            str(args.poll_interval),
+        ])
+        if args.create_session:
+            command.append("--create-session")
+        else:
+            command.append("--no-create-session")
+    else:
+        raise SystemExit(f"unknown remote-demo action: {args.remote_demo_action}")
+    step, payload = run_json_step(
+        "remote_home_compute_demo",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+        redact_secrets=secret_values,
+    )
+    if not payload:
+        payload = {
+            "schema": REMOTE_HOME_DEMO_SCHEMA,
+            "generated_at": utc_now(),
+            "ok": False,
+            "mode": args.remote_demo_action,
+            "output_dir": str(output_dir),
+            "coordinator_url": args.coordinator_url.rstrip("/"),
+            "miner_id": args.miner_id,
+            "step": step,
+            "diagnosis_codes": ["remote_home_compute_failed"],
+        }
+    payload = sanitize(redact_values(payload, secret_values))
+    encoded = json.dumps(payload, sort_keys=True)
+    if any(secret and secret in encoded for secret in secret_values):
+        payload["ok"] = False
+        payload.setdefault("diagnosis_codes", [])
+        if "sensitive_output_detected" not in payload["diagnosis_codes"]:
+            payload["diagnosis_codes"].append("sensitive_output_detected")
+    return payload
+
+
 def print_local_proof(summary: dict[str, Any]) -> None:
     print("CrowdTensor local proof")
     print(f"  ok: {summary.get('ok')}")
@@ -1225,8 +1299,42 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote.add_argument("--create-session", dest="create_session", action="store_true", default=True)
     remote.add_argument("--no-create-session", dest="create_session", action="store_false")
     remote.add_argument("--json", action="store_true")
+    remote_demo = subparsers.add_parser(
+        "remote-demo",
+        help="Prepare or verify the high-level two-machine home-compute remote Miner demo.",
+    )
+    remote_demo_subparsers = remote_demo.add_subparsers(dest="remote_demo_action", required=True)
+    remote_demo_prepare = remote_demo_subparsers.add_parser(
+        "prepare",
+        help="Create the recommended remote home-compute runbook and private env files.",
+    )
+    remote_demo_prepare.add_argument("--coordinator-url", default="http://127.0.0.1:8787")
+    remote_demo_prepare.add_argument("--miner-id", default="remote-linux-1")
+    remote_demo_prepare.add_argument("--output-dir", default="dist/remote-home-compute")
+    remote_demo_prepare.add_argument("--request-count", type=int, default=4)
+    remote_demo_prepare.add_argument("--scenario-id", default="route-baseline")
+    remote_demo_prepare.add_argument("--timeout-seconds", type=int, default=180)
+    remote_demo_prepare.add_argument("--replace", action="store_true")
+    remote_demo_prepare.add_argument("--json", action="store_true")
+    remote_demo_verify = remote_demo_subparsers.add_parser(
+        "verify",
+        help="Create and verify a read-only remote model_bundle_infer session.",
+    )
+    remote_demo_verify.add_argument("--coordinator-url", required=True)
+    remote_demo_verify.add_argument("--miner-id", required=True)
+    remote_demo_verify.add_argument("--observer-token", required=True)
+    remote_demo_verify.add_argument("--admin-token", required=True)
+    remote_demo_verify.add_argument("--output-dir", default="dist/remote-home-compute")
+    remote_demo_verify.add_argument("--request-count", type=int, default=4)
+    remote_demo_verify.add_argument("--scenario-id", default="route-baseline")
+    remote_demo_verify.add_argument("--timeout-seconds", type=int, default=180)
+    remote_demo_verify.add_argument("--remote-timeout-seconds", type=float, default=120.0)
+    remote_demo_verify.add_argument("--poll-interval", type=float, default=2.0)
+    remote_demo_verify.add_argument("--create-session", dest="create_session", action="store_true", default=True)
+    remote_demo_verify.add_argument("--no-create-session", dest="create_session", action="store_false")
+    remote_demo_verify.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if args.command in {"local-proof", "home-infer", "llm-infer", "release-ready", "remote-runbook", "remote-acceptance"}:
+    if args.command in {"local-proof", "home-infer", "llm-infer", "release-ready", "remote-runbook", "remote-acceptance", "remote-demo"}:
         if args.request_count < 1:
             raise SystemExit("--request-count must be at least 1")
         if args.timeout_seconds < 1:
@@ -1242,6 +1350,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if args.llm_runtime_timeout <= 0:
             raise SystemExit("--llm-runtime-timeout must be positive")
     if args.command == "remote-acceptance":
+        if args.remote_timeout_seconds < 0:
+            raise SystemExit("--remote-timeout-seconds must be non-negative")
+        if args.poll_interval <= 0:
+            raise SystemExit("--poll-interval must be positive")
+    if args.command == "remote-demo" and args.remote_demo_action == "verify":
         if args.remote_timeout_seconds < 0:
             raise SystemExit("--remote-timeout-seconds must be non-negative")
         if args.poll_interval <= 0:
@@ -1302,6 +1415,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(summary, sort_keys=True))
         else:
             print_remote_cli_report(summary, title="CrowdTensor remote acceptance")
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "remote-demo":
+        summary = build_remote_demo(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_remote_cli_report(summary, title="CrowdTensor remote home-compute demo")
         raise SystemExit(0 if summary.get("ok") else 1)
     raise SystemExit(f"unknown command: {args.command}")
 

@@ -622,6 +622,84 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("observer-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
 
+    def test_remote_demo_prepare_wraps_home_compute_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("remote_home_compute_demo_pack.py", command[1])
+            self.assertEqual(command[2], "prepare")
+            return completed({
+                "schema": "remote_home_compute_demo_v1",
+                "ok": True,
+                "mode": "prepare",
+                "diagnosis_codes": ["remote_home_compute_prepare_ready"],
+            })
+
+        args = cli.parse_args([
+            "remote-demo",
+            "prepare",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "remote-linux-1",
+            "--output-dir",
+            str(output_dir),
+            "--replace",
+        ])
+
+        summary = cli.build_remote_demo(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "remote_home_compute_demo_v1")
+        self.assertEqual(summary["mode"], "prepare")
+        self.assertTrue(any("--replace" in command for command in calls))
+
+    def test_remote_demo_verify_defaults_create_session_and_redacts_tokens(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("remote_home_compute_demo_pack.py", command[1])
+            self.assertEqual(command[2], "verify")
+            self.assertIn("--create-session", command)
+            return completed({
+                "schema": "remote_home_compute_demo_v1",
+                "ok": True,
+                "mode": "verify",
+                "diagnosis_codes": ["remote_home_compute_ready"],
+                "step": {
+                    "stderr_tail": "observer-secret should be redacted",
+                },
+            })
+
+        args = cli.parse_args([
+            "remote-demo",
+            "verify",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "remote-linux-1",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+        ])
+
+        summary = cli.build_remote_demo(args, runner=fake_runner)
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "remote_home_compute_demo_v1")
+        self.assertIn("remote_home_compute_ready", summary["diagnosis_codes"])
+        self.assertNotIn("observer-secret", serialized)
+        self.assertNotIn("admin-secret", serialized)
+        self.assertTrue(any("--remote-timeout-seconds" in command for command in calls))
+
     def test_main_remote_runbook_json_outputs_summary(self) -> None:
         summary = {"schema": "remote_runbook_cli_v1", "ok": True}
         with patch.object(cli, "build_remote_runbook", return_value=summary), patch("builtins.print") as mocked_print:
@@ -652,6 +730,28 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "remote_acceptance_cli_v1")
+
+    def test_main_remote_demo_json_outputs_summary(self) -> None:
+        summary = {"schema": "remote_home_compute_demo_v1", "ok": True}
+        with patch.object(cli, "build_remote_demo", return_value=summary), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "remote-demo",
+                    "verify",
+                    "--coordinator-url",
+                    "https://coord.example",
+                    "--miner-id",
+                    "remote-linux-1",
+                    "--observer-token",
+                    "observer-secret",
+                    "--admin-token",
+                    "admin-secret",
+                    "--json",
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "remote_home_compute_demo_v1")
 
 
 if __name__ == "__main__":

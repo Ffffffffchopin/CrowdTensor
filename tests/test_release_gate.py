@@ -61,6 +61,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "local_proof_docs",
                 "cleanup_docs",
                 "remote_cli_docs",
+                "remote_home_compute_demo_docs",
                 "home_inference_cli_docs",
                 "release_materials",
                 "open_source_entrypoints",

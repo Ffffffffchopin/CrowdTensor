@@ -273,7 +273,32 @@ python3 scripts/runtime_acceptance_pack.py \
 
 ## Remote Miner Demo
 
-Generate a safe two-machine runbook first. This is the preferred operator entrypoint because it creates the registry, private env files, and public commands without making users manually stitch scripts together:
+Use the high-level remote home-compute demo first. It creates the registry, private env files, public commands, and `remote_home_compute_demo_v1` summary without making users manually stitch lower-level scripts together:
+
+```bash
+crowdtensor remote-demo prepare \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --output-dir dist/remote-home-compute \
+  --json
+```
+
+After the generated Coordinator and Miner commands are running:
+
+```bash
+. dist/remote-home-compute/operator.private.env
+crowdtensor remote-demo verify \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id remote-linux-1 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --output-dir dist/remote-home-compute \
+  --json
+```
+
+The wrapper uses `scripts/remote_home_compute_demo_pack.py`, validates through `scripts/remote_home_compute_demo_check.py`, creates the read-only `model_bundle_infer` session with `POST /admin/inference-sessions`, and summarizes `remote_python_model_bundle_infer`, `remote_compute_evidence_v1`, and `remote_demo_observability_v1`. It keeps `operator.private.env` and `miner.private.env` private. This is not production Swarm Inference and not P2P routing.
+
+The lower-level safe two-machine runbook is still available:
 
 ```bash
 crowdtensor remote-runbook \

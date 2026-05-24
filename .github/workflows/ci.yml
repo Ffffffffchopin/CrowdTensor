@@ -42,6 +42,8 @@ jobs:
         run: python scripts/remote_demo_runbook_check.py
       - name: Remote demo acceptance
         run: python scripts/remote_demo_acceptance_check.py --port 8913
+      - name: Remote home-compute demo
+        run: python scripts/remote_home_compute_demo_check.py --port 8920
       - name: Demo manifest
         run: python scripts/demo_manifest_check.py --base-port 8914
       - name: Support Bundle

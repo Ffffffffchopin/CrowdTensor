@@ -44,6 +44,8 @@ REQUIRED_FILES = [
     "scripts/remote_demo_runbook_check.py",
     "scripts/remote_demo_acceptance_pack.py",
     "scripts/remote_demo_acceptance_check.py",
+    "scripts/remote_home_compute_demo_pack.py",
+    "scripts/remote_home_compute_demo_check.py",
     "scripts/demo_manifest_pack.py",
     "scripts/demo_manifest_check.py",
     "scripts/onboarding_gate.py",
@@ -805,6 +807,44 @@ def check_remote_cli_docs(root: Path) -> dict[str, Any]:
     return check_result("remote_cli_docs", not details, details)
 
 
+def check_remote_home_compute_demo_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "crowdtensor remote-demo",
+        "remote_home_compute_demo_v1",
+        "remote_home_compute_demo_pack.py",
+        "remote_home_compute_demo_check.py",
+        "model_bundle_infer",
+        "remote_python_model_bundle_infer",
+        "POST /admin/inference-sessions",
+        "remote_compute_evidence_v1",
+        "remote_demo_observability_v1",
+        "operator.private.env",
+        "miner.private.env",
+        "not production",
+        "not P2P",
+    ]:
+        if fragment not in combined:
+            details.append(f"remote home-compute demo docs/CI must mention {fragment}")
+    return check_result("remote_home_compute_demo_docs", not details, details)
+
+
 def check_home_inference_cli_docs(root: Path) -> dict[str, Any]:
     details: list[str] = []
     combined = "\n".join(
@@ -1224,6 +1264,7 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python scripts/remote_compute_evidence_check.py": "CI must run the remote-compute evidence check",
         "python scripts/remote_demo_runbook_check.py": "CI must run the remote demo runbook check",
         "python scripts/remote_demo_acceptance_check.py": "CI must run the remote demo acceptance check",
+        "python scripts/remote_home_compute_demo_check.py": "CI must run the remote home-compute demo check",
         "python scripts/support_bundle.py": "CI must build support bundle",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
@@ -1275,6 +1316,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_local_proof_docs(gate_root),
         check_cleanup_docs(gate_root),
         check_remote_cli_docs(gate_root),
+        check_remote_home_compute_demo_docs(gate_root),
         check_home_inference_cli_docs(gate_root),
         check_release_materials(gate_root),
         check_open_source_entrypoints(gate_root),
