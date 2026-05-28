@@ -35,6 +35,11 @@ dev = [
 browser = [
   "playwright>=1.50,<2",
 ]
+hf = [
+  "torch>=2,<3",
+  "transformers>=4.40,<5",
+  "safetensors>=0.4,<1",
+]
 
 [project.scripts]
 crowdtensor = "crowdtensor.cli:main"

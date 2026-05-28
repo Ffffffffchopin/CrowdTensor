@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
@@ -1117,6 +1118,63 @@ class CoordinatorApiTests(unittest.TestCase):
                     x_crowdtensor_admin_token="secret",
                 )
             self.assertEqual(bad_workload.exception.status_code, 422)
+
+    def test_real_llm_inference_session_reports_missing_hf_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10, backlog=0, admin_token="secret")
+            admin_inference = endpoint_for(app, "/admin/inference-sessions", "POST")
+            request_type = request_model(admin_inference)
+
+            with patch(
+                "crowdtensor.state_store.inspect_real_llm_artifact",
+                side_effect=RuntimeError(
+                    "real_llm_sharded_infer requires optional Hugging Face dependencies: transformers. "
+                    "Install with: python -m pip install -e .[hf]"
+                ),
+            ), self.assertRaises(HTTPException) as missing:
+                admin_inference(
+                    request_type(request_count=1, workload_type="real_llm_sharded_infer"),
+                    x_crowdtensor_admin_token="secret",
+                )
+            self.assertEqual(missing.exception.status_code, 503)
+            self.assertIn("requires optional Hugging Face dependencies", str(missing.exception.detail))
+
+    def test_real_llm_cuda_session_uses_cpu_coordinator_metadata_only(self) -> None:
+        artifact = {
+            "schema": "real_llm_artifact_v1",
+            "artifact_hash": "sha256:test-real-llm-cuda-artifact",
+            "model_id": "sshleifer/tiny-gpt2",
+            "backend": "hf_transformers_cuda",
+            "split_index": 1,
+            "num_hidden_layers": 2,
+            "hidden_size": 2,
+            "vocab_size": 128,
+            "read_only": True,
+            "metadata_only": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "crowdtensor.state_store.inspect_real_llm_artifact",
+            return_value=artifact,
+        ) as inspect_artifact:
+            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10, backlog=0, admin_token="secret")
+            admin_inference = endpoint_for(app, "/admin/inference-sessions", "POST")
+            request_type = request_model(admin_inference)
+
+            session = admin_inference(
+                request_type(
+                    request_count=1,
+                    workload_type="real_llm_sharded_infer",
+                    backend="cuda",
+                    runtime="python-cli",
+                ),
+                x_crowdtensor_admin_token="secret",
+            )
+
+            inspect_artifact.assert_called_once()
+            self.assertFalse(inspect_artifact.call_args.kwargs["require_runtime"])
+            self.assertEqual(session["backend"], "hf_transformers_cuda")
+            self.assertEqual(session["task_requirements"]["backend"], "cuda")
+            self.assertEqual(session["task_requirements"]["stage_capability"], "real_llm_sharded_cuda_stage0")
 
     def test_sign_compressed_result_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

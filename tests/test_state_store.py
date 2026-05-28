@@ -1,22 +1,40 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from crowdtensor.protocol import LeaseConflict, NoTaskAvailable, ResultRejected
 from crowdtensor.state_store import StateStore
 from crowdtensor.diloco import run_inner_loop
 from crowdtensor.external_llm import WORKLOAD_TYPE as WORKLOAD_EXTERNAL_LLM_INFER
 from crowdtensor.external_llm import run_mock_external_llm_inference
+from crowdtensor.micro_transformer import MICRO_LLM_SHARDED_WORKLOAD_TYPE as WORKLOAD_MICRO_LLM_SHARDED_INFER
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
-from crowdtensor.micro_transformer import run_micro_transformer_inner_loop
+from crowdtensor.micro_transformer import run_micro_llm_sharded_inference, run_micro_transformer_inner_loop
+from crowdtensor.micro_llm_artifact import build_default_micro_llm_artifact
+from crowdtensor.protocol import (
+    MICRO_LLM_SHARDED_BOTH_CAPABILITY,
+    MICRO_LLM_SHARDED_STAGE0_CAPABILITY,
+    MICRO_LLM_SHARDED_STAGE1_CAPABILITY,
+    REAL_LLM_SHARDED_BOTH_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_BOTH_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+    REAL_LLM_SHARDED_STAGE0_CAPABILITY,
+    REAL_LLM_SHARDED_STAGE1_CAPABILITY,
+)
+from crowdtensor.real_llm import WORKLOAD_TYPE as WORKLOAD_REAL_LLM_SHARDED_INFER
 from crowdtensor.model_bundle import WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_LM
 from crowdtensor.model_bundle import INFERENCE_WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_INFER
+from crowdtensor.model_bundle import SHARDED_INFERENCE_WORKLOAD_TYPE as WORKLOAD_SHARDED_MODEL_BUNDLE_INFER
 from crowdtensor.model_bundle import run_model_bundle_inference
 from crowdtensor.model_bundle import run_model_bundle_inner_loop
+from crowdtensor.model_bundle import run_sharded_model_bundle_inference
 from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
     DELTA_FORMAT_SIGN_COMPRESSED,
@@ -69,6 +87,66 @@ class StateStoreTests(unittest.TestCase):
 
     def _model_bundle_inference_capabilities(self) -> dict:
         return self._python_capabilities([WORKLOAD_MODEL_BUNDLE_INFER])
+
+    def _sharded_model_bundle_inference_capabilities(self) -> dict:
+        return self._python_capabilities([WORKLOAD_SHARDED_MODEL_BUNDLE_INFER])
+
+    def _micro_llm_sharded_inference_capabilities(self) -> dict:
+        capabilities = self._python_capabilities([WORKLOAD_MICRO_LLM_SHARDED_INFER])
+        capabilities["micro_llm_sharded_stage_role"] = "both"
+        capabilities["micro_llm_sharded_stage_capabilities"] = [
+            MICRO_LLM_SHARDED_STAGE0_CAPABILITY,
+            MICRO_LLM_SHARDED_STAGE1_CAPABILITY,
+            MICRO_LLM_SHARDED_BOTH_CAPABILITY,
+        ]
+        return capabilities
+
+    def _micro_llm_stage_capabilities(self, stage_role: str) -> dict:
+        capabilities = self._python_capabilities([WORKLOAD_MICRO_LLM_SHARDED_INFER])
+        capabilities["micro_llm_sharded_stage_role"] = stage_role
+        if stage_role == "stage0":
+            capabilities["micro_llm_sharded_stage_capabilities"] = [MICRO_LLM_SHARDED_STAGE0_CAPABILITY]
+        elif stage_role == "stage1":
+            capabilities["micro_llm_sharded_stage_capabilities"] = [MICRO_LLM_SHARDED_STAGE1_CAPABILITY]
+        else:
+            capabilities["micro_llm_sharded_stage_capabilities"] = [
+                MICRO_LLM_SHARDED_STAGE0_CAPABILITY,
+                MICRO_LLM_SHARDED_STAGE1_CAPABILITY,
+                MICRO_LLM_SHARDED_BOTH_CAPABILITY,
+            ]
+        return capabilities
+
+    def _real_llm_stage_capabilities(self, stage_role: str) -> dict:
+        capabilities = self._python_capabilities([WORKLOAD_REAL_LLM_SHARDED_INFER])
+        capabilities["real_llm_sharded_stage_role"] = stage_role
+        if stage_role == "stage0":
+            capabilities["real_llm_sharded_stage_capabilities"] = [REAL_LLM_SHARDED_STAGE0_CAPABILITY]
+        elif stage_role == "stage1":
+            capabilities["real_llm_sharded_stage_capabilities"] = [REAL_LLM_SHARDED_STAGE1_CAPABILITY]
+        else:
+            capabilities["real_llm_sharded_stage_capabilities"] = [
+                REAL_LLM_SHARDED_STAGE0_CAPABILITY,
+                REAL_LLM_SHARDED_STAGE1_CAPABILITY,
+                REAL_LLM_SHARDED_BOTH_CAPABILITY,
+            ]
+        return capabilities
+
+    def _real_llm_cuda_stage_capabilities(self, stage_role: str) -> dict:
+        capabilities = self._python_capabilities([WORKLOAD_REAL_LLM_SHARDED_INFER])
+        capabilities["backend"] = "cuda"
+        capabilities["real_llm_runtime"] = {"adapter_kind": "hf_transformers_cuda"}
+        capabilities["real_llm_sharded_stage_role"] = stage_role
+        if stage_role == "stage0":
+            capabilities["real_llm_sharded_stage_capabilities"] = [REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY]
+        elif stage_role == "stage1":
+            capabilities["real_llm_sharded_stage_capabilities"] = [REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY]
+        else:
+            capabilities["real_llm_sharded_stage_capabilities"] = [
+                REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+                REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+                REAL_LLM_SHARDED_CUDA_BOTH_CAPABILITY,
+            ]
+        return capabilities
 
     def _external_llm_inference_capabilities(self) -> dict:
         return self._python_capabilities([WORKLOAD_EXTERNAL_LLM_INFER])
@@ -1080,6 +1158,233 @@ class StateStoreTests(unittest.TestCase):
                 )
 
             self.assertEqual(raised.exception.validation["code"], "model_bundle_inference_prediction_mismatch")
+
+    def test_sharded_model_bundle_inference_runs_two_stage_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=1, backlog=0)
+            session = store.create_sharded_inference_session(request_count=3, scenario_id="route-baseline")
+
+            stage0_claim = store.claim_task("stage-0-miner", capabilities=self._sharded_model_bundle_inference_capabilities())
+            self.assertEqual(stage0_claim["workload_type"], WORKLOAD_SHARDED_MODEL_BUNDLE_INFER)
+            self.assertEqual(stage0_claim["workload_spec"]["stage_id"], 0)
+            stage0_result = run_sharded_model_bundle_inference(stage0_claim["workload_spec"])
+            accepted0 = store.complete_task(
+                stage0_claim["task_id"],
+                lease_token=stage0_claim["lease_token"],
+                attempt=stage0_claim["attempt"],
+                sharded_inference_result=stage0_result,
+                metrics=stage0_result,
+            )
+
+            stage1_claim = store.claim_task("stage-1-miner", capabilities=self._sharded_model_bundle_inference_capabilities())
+            self.assertEqual(stage1_claim["workload_spec"]["stage_id"], 1)
+            self.assertEqual(stage1_claim["workload_spec"]["parent_task_id"], stage0_claim["task_id"])
+            self.assertEqual(stage1_claim["workload_spec"]["activation_count"], 3)
+            stage1_result = run_sharded_model_bundle_inference(stage1_claim["workload_spec"])
+            accepted1 = store.complete_task(
+                stage1_claim["task_id"],
+                lease_token=stage1_claim["lease_token"],
+                attempt=stage1_claim["attempt"],
+                sharded_inference_result=stage1_result,
+                metrics=stage1_result,
+            )
+
+            self.assertEqual(session["schema"], "sharded_inference_session_v1")
+            self.assertEqual(accepted0["stage_id"], 0)
+            self.assertEqual(accepted0["activation_count"], 3)
+            self.assertTrue(accepted0["activation_transport_ready"])
+            self.assertEqual(accepted1["stage_id"], 1)
+            self.assertTrue(accepted1["baseline_match"])
+            self.assertFalse(accepted1["model_updated"])
+            rows = store.result_ledger(workload_type=WORKLOAD_SHARDED_MODEL_BUNDLE_INFER, session_id=session["session_id"])
+            self.assertEqual(len(rows), 2)
+            self.assertEqual({row["stage_id"] for row in rows}, {0, 1})
+            public = json.dumps(store.summary(), sort_keys=True)
+            self.assertNotIn("activation_results", public)
+            self.assertNotIn("logits", public)
+            self.assertNotIn("sharded_inference_result", public)
+            self.assertIn("activation_hashes", public)
+
+    def test_sharded_model_bundle_inference_rejects_tampered_activation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=1, backlog=0)
+            store.create_sharded_inference_session(request_count=2, scenario_id="route-baseline")
+            claim = store.claim_task("bad-stage-0-miner", capabilities=self._sharded_model_bundle_inference_capabilities())
+            inner_result = run_sharded_model_bundle_inference(claim["workload_spec"])
+            inner_result["activation_results"][0]["logits"][0] += 1.0
+
+            with self.assertRaises(ResultRejected) as raised:
+                store.complete_task(
+                    claim["task_id"],
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    sharded_inference_result=inner_result,
+                    metrics=inner_result,
+                )
+
+            self.assertEqual(raised.exception.validation["code"], "sharded_model_bundle_activation_logits_mismatch")
+
+    def test_micro_llm_sharded_inference_runs_two_stage_decode_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=1, backlog=0)
+            session = store.create_micro_llm_sharded_inference_session(request_count=2, decode_steps=4)
+
+            stage0_claim = store.claim_task("micro-stage-0-miner", capabilities=self._micro_llm_sharded_inference_capabilities())
+            self.assertEqual(stage0_claim["workload_type"], WORKLOAD_MICRO_LLM_SHARDED_INFER)
+            self.assertEqual(stage0_claim["workload_spec"]["stage_id"], 0)
+            self.assertEqual(stage0_claim["workload_spec"]["decode_steps"], 4)
+            stage0_result = run_micro_llm_sharded_inference(stage0_claim["workload_spec"])
+            accepted0 = store.complete_task(
+                stage0_claim["task_id"],
+                lease_token=stage0_claim["lease_token"],
+                attempt=stage0_claim["attempt"],
+                sharded_inference_result=stage0_result,
+                metrics=stage0_result,
+            )
+
+            stage1_claim = store.claim_task("micro-stage-1-miner", capabilities=self._micro_llm_sharded_inference_capabilities())
+            self.assertEqual(stage1_claim["workload_spec"]["stage_id"], 1)
+            self.assertEqual(stage1_claim["workload_spec"]["parent_task_id"], stage0_claim["task_id"])
+            self.assertEqual(stage1_claim["workload_spec"]["activation_count"], 8)
+            stage1_result = run_micro_llm_sharded_inference(stage1_claim["workload_spec"])
+            accepted1 = store.complete_task(
+                stage1_claim["task_id"],
+                lease_token=stage1_claim["lease_token"],
+                attempt=stage1_claim["attempt"],
+                sharded_inference_result=stage1_result,
+                metrics=stage1_result,
+            )
+
+            self.assertEqual(session["schema"], "micro_llm_sharded_session_v1")
+            self.assertEqual(accepted0["stage_id"], 0)
+            self.assertEqual(accepted0["activation_count"], 8)
+            self.assertTrue(accepted0["activation_transport_ready"])
+            self.assertEqual(accepted1["stage_id"], 1)
+            self.assertTrue(accepted1["baseline_match"])
+            self.assertTrue(accepted1["decoded_tokens_match"])
+            self.assertEqual(accepted1["decode_steps"], 4)
+            self.assertEqual(accepted1["generated_token_count"], 8)
+            self.assertFalse(accepted1["model_updated"])
+            self.assertFalse(accepted1["micro_transformer_updated"])
+            rows = store.result_ledger(workload_type=WORKLOAD_MICRO_LLM_SHARDED_INFER, session_id=session["session_id"])
+            self.assertEqual(len(rows), 2)
+            self.assertEqual({row["stage_id"] for row in rows}, {0, 1})
+            public = json.dumps(store.summary(), sort_keys=True)
+            self.assertNotIn("activation_results", public)
+            self.assertNotIn("hidden_state", public)
+            self.assertNotIn("sharded_inference_result", public)
+            self.assertIn("decoded_tokens_match", public)
+            self.assertIn("activation_hashes", public)
+
+    def test_micro_llm_sharded_inference_rejects_tampered_activation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=1, backlog=0)
+            store.create_micro_llm_sharded_inference_session(request_count=1, decode_steps=2)
+            claim = store.claim_task("bad-micro-stage-0-miner", capabilities=self._micro_llm_sharded_inference_capabilities())
+            inner_result = run_micro_llm_sharded_inference(claim["workload_spec"])
+            inner_result["activation_results"][0]["hidden_state"][0] += 1.0
+
+            with self.assertRaises(ResultRejected) as raised:
+                store.complete_task(
+                    claim["task_id"],
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    sharded_inference_result=inner_result,
+                    metrics=inner_result,
+                )
+
+            self.assertEqual(raised.exception.validation["code"], "micro_llm_activation_hidden_mismatch")
+
+    def test_micro_llm_sharded_stage_capabilities_route_split_miners(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=1, backlog=0)
+            session = store.create_micro_llm_sharded_inference_session(request_count=2, decode_steps=2)
+
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("stage1-too-early", capabilities=self._micro_llm_stage_capabilities("stage1"))
+
+            stage0_claim = store.claim_task(
+                "stage0-only",
+                capabilities=self._micro_llm_stage_capabilities("stage0"),
+            )
+            self.assertEqual(stage0_claim["task_requirements"]["stage_capability"], MICRO_LLM_SHARDED_STAGE0_CAPABILITY)
+            stage0_result = run_micro_llm_sharded_inference(stage0_claim["workload_spec"])
+            store.complete_task(
+                stage0_claim["task_id"],
+                lease_token=stage0_claim["lease_token"],
+                attempt=stage0_claim["attempt"],
+                sharded_inference_result=stage0_result,
+                metrics=stage0_result,
+            )
+
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("stage0-too-late", capabilities=self._micro_llm_stage_capabilities("stage0"))
+
+            stage1_claim = store.claim_task(
+                "stage1-only",
+                capabilities=self._micro_llm_stage_capabilities("stage1"),
+            )
+            self.assertEqual(stage1_claim["task_requirements"]["stage_capability"], MICRO_LLM_SHARDED_STAGE1_CAPABILITY)
+            self.assertEqual(stage1_claim["workload_spec"]["parent_task_id"], stage0_claim["task_id"])
+            stage1_result = run_micro_llm_sharded_inference(stage1_claim["workload_spec"])
+            accepted1 = store.complete_task(
+                stage1_claim["task_id"],
+                lease_token=stage1_claim["lease_token"],
+                attempt=stage1_claim["attempt"],
+                sharded_inference_result=stage1_result,
+                metrics=stage1_result,
+            )
+
+            self.assertTrue(accepted1["baseline_match"])
+            rows = store.result_ledger(workload_type=WORKLOAD_MICRO_LLM_SHARDED_INFER, session_id=session["session_id"])
+            self.assertEqual({row["miner_id"] for row in rows}, {"stage0-only", "stage1-only"})
+
+    def test_micro_llm_sharded_session_can_use_file_backed_artifact_and_prompt_texts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp) / "artifact"
+            artifact = build_default_micro_llm_artifact(artifact_dir)
+            store = StateStore(
+                Path(tmp) / "state",
+                lease_seconds=5,
+                inner_steps=1,
+                backlog=0,
+                micro_llm_artifact=artifact_dir,
+            )
+            session = store.create_micro_llm_sharded_inference_session(
+                request_count=2,
+                decode_steps=3,
+                prompt_texts=["arn", "ten"],
+            )
+
+            self.assertEqual(session["artifact_hash"], artifact["artifact_hash"])
+            self.assertEqual(session["artifact_id"], artifact["artifact_id"])
+            stage0_claim = store.claim_task("artifact-stage0", capabilities=self._micro_llm_stage_capabilities("stage0"))
+            self.assertEqual(stage0_claim["workload_spec"]["artifact_hash"], artifact["artifact_hash"])
+            self.assertEqual([row["prompt_token_ids"] for row in stage0_claim["workload_spec"]["requests"]], [[1, 7, 5], [9, 2, 5]])
+            stage0_result = run_micro_llm_sharded_inference(stage0_claim["workload_spec"])
+            accepted0 = store.complete_task(
+                stage0_claim["task_id"],
+                lease_token=stage0_claim["lease_token"],
+                attempt=stage0_claim["attempt"],
+                sharded_inference_result=stage0_result,
+                metrics=stage0_result,
+            )
+            stage1_claim = store.claim_task("artifact-stage1", capabilities=self._micro_llm_stage_capabilities("stage1"))
+            stage1_result = run_micro_llm_sharded_inference(stage1_claim["workload_spec"])
+            accepted1 = store.complete_task(
+                stage1_claim["task_id"],
+                lease_token=stage1_claim["lease_token"],
+                attempt=stage1_claim["attempt"],
+                sharded_inference_result=stage1_result,
+                metrics=stage1_result,
+            )
+
+            self.assertEqual(accepted0["artifact_hash"], artifact["artifact_hash"])
+            self.assertEqual(accepted1["artifact_hash"], artifact["artifact_hash"])
+            self.assertEqual(accepted1["artifact_id"], artifact["artifact_id"])
+            self.assertTrue(accepted1["baseline_match"])
+            rows = store.result_ledger(workload_type=WORKLOAD_MICRO_LLM_SHARDED_INFER, session_id=session["session_id"])
+            self.assertEqual({row["validation"]["artifact_hash"] for row in rows}, {artifact["artifact_hash"]})
 
     def test_external_llm_inference_is_read_only_ledgered_and_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2548,6 +2853,268 @@ class StateStoreTests(unittest.TestCase):
                 summary["last_incompatible_claim"]["queued_requirements"],
                 ["python-cli/cpu/runtime_contract_v1"],
             )
+
+    def test_real_llm_stage_capabilities_route_split_miners_without_loading_hf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
+            task_id = store._create_task(  # noqa: SLF001 - scheduler fixture
+                required_runtime="python-cli",
+                required_backend="cpu",
+                workload_type=WORKLOAD_REAL_LLM_SHARDED_INFER,
+                inner_steps=1,
+                workload_metadata={
+                    "session_id": "real-llm-session-test",
+                    "stage_id": 0,
+                    "stage_count": 2,
+                    "artifact_schema": "real_llm_artifact_v1",
+                    "artifact_hash": "sha256:test-real-llm-artifact",
+                    "model_id": "sshleifer/tiny-gpt2",
+                    "backend": "hf_transformers_cpu",
+                    "split_index": 1,
+                    "num_hidden_layers": 2,
+                    "hidden_size": 2,
+                },
+            )
+
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("stage1-only", capabilities=self._real_llm_stage_capabilities("stage1"))
+
+            claim = store.claim_task("stage0-only", capabilities=self._real_llm_stage_capabilities("stage0"))
+
+            self.assertEqual(claim["task_id"], task_id)
+            self.assertEqual(claim["task_requirements"]["stage_capability"], REAL_LLM_SHARDED_STAGE0_CAPABILITY)
+
+    def test_real_llm_cuda_stage_capabilities_require_cuda_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
+            task_id = store._create_task(  # noqa: SLF001 - scheduler fixture
+                required_runtime="python-cli",
+                required_backend="cuda",
+                workload_type=WORKLOAD_REAL_LLM_SHARDED_INFER,
+                inner_steps=1,
+                workload_metadata={
+                    "session_id": "real-llm-cuda-session-test",
+                    "stage_id": 0,
+                    "stage_count": 2,
+                    "artifact_schema": "real_llm_artifact_v1",
+                    "artifact_hash": "sha256:test-real-llm-cuda-artifact",
+                    "model_id": "sshleifer/tiny-gpt2",
+                    "backend": "hf_transformers_cuda",
+                    "split_index": 1,
+                    "num_hidden_layers": 2,
+                    "hidden_size": 2,
+                },
+            )
+
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("cpu-stage0", capabilities=self._real_llm_stage_capabilities("stage0"))
+
+            claim = store.claim_task("cuda-stage0", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+
+            self.assertEqual(claim["task_id"], task_id)
+            self.assertEqual(claim["task_requirements"]["stage_capability"], REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY)
+
+    def test_real_llm_cuda_session_creation_defers_cuda_runtime_to_miner(self) -> None:
+        artifact = {
+            "schema": "real_llm_artifact_v1",
+            "artifact_hash": "sha256:test-real-llm-cuda-artifact",
+            "model_id": "sshleifer/tiny-gpt2",
+            "backend": "hf_transformers_cuda",
+            "split_index": 1,
+            "num_hidden_layers": 2,
+            "hidden_size": 2,
+            "vocab_size": 128,
+            "read_only": True,
+            "metadata_only": True,
+            "cuda_runtime": {
+                "backend": "hf_transformers_cuda",
+                "coordinator_runtime_required": False,
+                "miner_runtime_required": True,
+                "diagnosis_codes": ["cuda_runtime_deferred_to_miner"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "crowdtensor.state_store.inspect_real_llm_artifact",
+            return_value=artifact,
+        ) as inspect_artifact:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
+
+            session = store.create_real_llm_sharded_inference_session(
+                request_count=1,
+                required_runtime="python-cli",
+                required_backend="cuda",
+                llm_backend="hf_transformers_cuda",
+            )
+
+            inspect_artifact.assert_called_once()
+            self.assertFalse(inspect_artifact.call_args.kwargs["require_runtime"])
+            self.assertEqual(session["backend"], "hf_transformers_cuda")
+            self.assertEqual(session["task_requirements"]["backend"], "cuda")
+            self.assertEqual(session["task_requirements"]["stage_capability"], REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY)
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("cpu-stage0", capabilities=self._real_llm_stage_capabilities("stage0"))
+            claim = store.claim_task("cuda-stage0", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            self.assertEqual(claim["task_id"], session["stage_0_task_id"])
+
+    def test_real_llm_generation_session_chains_next_stage0_until_max_new_tokens(self) -> None:
+        artifact = {
+            "schema": "real_llm_artifact_v1",
+            "artifact_hash": "sha256:test-real-llm-generation-artifact",
+            "model_id": "sshleifer/tiny-gpt2",
+            "backend": "hf_transformers_cuda",
+            "split_index": 1,
+            "num_hidden_layers": 2,
+            "hidden_size": 2,
+            "vocab_size": 128,
+            "read_only": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "crowdtensor.state_store.inspect_real_llm_artifact",
+            return_value=artifact,
+        ):
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
+            session = store.create_real_llm_sharded_inference_session(
+                request_count=1,
+                max_new_tokens=2,
+                prompt_texts=["The future of open AI is"],
+                required_runtime="python-cli",
+                required_backend="cuda",
+                llm_backend="hf_transformers_cuda",
+            )
+            stage0_claim = store.claim_task("stage0-a", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            self.assertEqual(stage0_claim["workload_spec"]["max_new_tokens"], 2)
+            self.assertEqual(stage0_claim["workload_spec"]["generation_step"], 0)
+            activation = {
+                "schema_version": "real_llm_activation_v1",
+                "session_id": session["session_id"],
+                "request_id": "req-1",
+                "prompt_hash": stage0_claim["workload_spec"]["requests"][0]["prompt_hash"],
+                "model_id": "sshleifer/tiny-gpt2",
+                "artifact_hash": artifact["artifact_hash"],
+                "split_index": 1,
+                "generation_step": 0,
+                "max_new_tokens": 2,
+                "generated_token_ids": [],
+                "generated_text": "",
+                "input_ids": [1, 2],
+                "position_ids": [0, 1],
+                "hidden_shape": [1, 2, 2],
+                "hidden_state": [[[0.1, 0.2], [0.3, 0.4]]],
+            }
+            activation["activation_hash"] = real_activation_hash = "sha256:" + hashlib.sha256(
+                json.dumps({
+                    "artifact_hash": activation["artifact_hash"],
+                    "hidden_shape": activation["hidden_shape"],
+                    "hidden_state": activation["hidden_state"],
+                    "input_ids": activation["input_ids"],
+                    "model_id": activation["model_id"],
+                    "position_ids": activation["position_ids"],
+                    "request_id": activation["request_id"],
+                    "schema_version": activation["schema_version"],
+                    "session_id": activation["session_id"],
+                    "split_index": activation["split_index"],
+                }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            stage0_result = {
+                "schema_version": "real_llm_sharded_infer_v1",
+                "type": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                "session_id": session["session_id"],
+                "stage_id": 0,
+                "stage_count": 2,
+                "model_id": "sshleifer/tiny-gpt2",
+                "backend": "hf_transformers_cuda",
+                "partition_mode": "full",
+                "artifact_schema": "real_llm_artifact_v1",
+                "artifact_hash": artifact["artifact_hash"],
+                "split_index": 1,
+                "max_new_tokens": 2,
+                "generation_step": 0,
+                "request_count": 1,
+                "activation_count": 1,
+                "activation_bytes": 10,
+                "activation_hashes": [real_activation_hash],
+                "activation_transport_ready": True,
+                "activation_results": [activation],
+                "real_llm_artifact_ready": True,
+            }
+            store.complete_task(
+                stage0_claim["task_id"],
+                lease_token=stage0_claim["lease_token"],
+                attempt=stage0_claim["attempt"],
+                sharded_inference_result=stage0_result,
+            )
+            stage1_claim = store.claim_task("stage1-a", capabilities=self._real_llm_cuda_stage_capabilities("stage1"))
+            self.assertEqual(stage1_claim["workload_spec"]["generation_step"], 0)
+            self.assertEqual(stage1_claim["workload_spec"]["activation_hashes"], [real_activation_hash])
+            stage1_result_row = {
+                "request_id": "req-1",
+                "prompt_hash": activation["prompt_hash"],
+                "model_id": "sshleifer/tiny-gpt2",
+                "artifact_hash": artifact["artifact_hash"],
+                "activation_hash": real_activation_hash,
+                "generation_step": 0,
+                "max_new_tokens": 2,
+                "next_token_id": 42,
+                "next_token_text": " useful",
+                "baseline_next_token_id": 42,
+                "baseline_next_token_text": " useful",
+                "generated_token_ids": [42],
+                "generated_token_count": 1,
+                "generated_text": " useful",
+                "generated_text_hash": "sha256:" + hashlib.sha256(b" useful").hexdigest(),
+                "baseline_match": True,
+            }
+            stage1_result_row["output_hash"] = "sha256:" + hashlib.sha256(
+                json.dumps({
+                    "activation_hash": real_activation_hash,
+                    "artifact_hash": artifact["artifact_hash"],
+                    "baseline_match": True,
+                    "baseline_next_token_id": 42,
+                    "model_id": "sshleifer/tiny-gpt2",
+                    "next_token_id": 42,
+                    "request_id": "req-1",
+                }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            stage1_result = {
+                "schema_version": "real_llm_sharded_infer_v1",
+                "type": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                "session_id": session["session_id"],
+                "stage_id": 1,
+                "stage_count": 2,
+                "model_id": "sshleifer/tiny-gpt2",
+                "backend": "hf_transformers_cuda",
+                "partition_mode": "full",
+                "artifact_schema": "real_llm_artifact_v1",
+                "artifact_hash": artifact["artifact_hash"],
+                "split_index": 1,
+                "max_new_tokens": 2,
+                "generation_step": 0,
+                "request_count": 1,
+                "activation_count": 1,
+                "activation_hashes": [real_activation_hash],
+                "activation_transport_ready": True,
+                "inference_results": [stage1_result_row],
+                "inference_result": stage1_result_row,
+                "baseline_match": True,
+                "decoded_tokens_match": True,
+                "generated_token_ids": [42],
+                "generated_token_count": 1,
+                "generated_text": " useful",
+                "generated_text_hash": stage1_result_row["generated_text_hash"],
+                "real_llm_artifact_ready": True,
+            }
+            store.complete_task(
+                stage1_claim["task_id"],
+                lease_token=stage1_claim["lease_token"],
+                attempt=stage1_claim["attempt"],
+                sharded_inference_result=stage1_result,
+            )
+            next_stage0_claim = store.claim_task("stage0-b", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            self.assertEqual(next_stage0_claim["workload_spec"]["generation_step"], 1)
+            next_request = next_stage0_claim["workload_spec"]["requests"][0]
+            self.assertEqual(next_request["prompt"], "The future of open AI is useful")
+            self.assertEqual(next_request["generated_token_ids"], [42])
+            self.assertEqual(next_request["generated_text"], " useful")
 
     def test_requeue_preserves_task_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

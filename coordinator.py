@@ -17,7 +17,10 @@ from crowdtensor.protocol import (
     NoTaskAvailable,
     ResultRejected,
     WORKLOAD_EXTERNAL_LLM_INFER,
+    WORKLOAD_MICRO_LLM_SHARDED_INFER,
     WORKLOAD_MODEL_BUNDLE_INFER,
+    WORKLOAD_REAL_LLM_SHARDED_INFER,
+    WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
 )
 from crowdtensor.outer_optimizer import (
     DELTA_FORMAT_SIGN_COMPRESSED_EF,
@@ -290,6 +293,11 @@ def create_app(
     miner_token: str | None = None,
     miner_token_registry: str | Path | None = None,
     observer_token: str | None = None,
+    micro_llm_artifact: str | Path | None = None,
+    real_llm_model_id: str = "",
+    real_llm_backend: str = "hf_transformers_cpu",
+    real_llm_partition_mode: str = "full",
+    hf_cache_dir: str | Path | None = None,
 ):
     try:
         from fastapi import FastAPI, Header, HTTPException, Query, Response
@@ -307,6 +315,11 @@ def create_app(
         replay_audit=replay_audit,
         outer_optimizer=outer_optimizer,
         delta_format=delta_format,
+        micro_llm_artifact=micro_llm_artifact,
+        real_llm_model_id=real_llm_model_id or "sshleifer/tiny-gpt2",
+        real_llm_backend=real_llm_backend,
+        real_llm_partition_mode=real_llm_partition_mode,
+        hf_cache_dir=hf_cache_dir,
     )
     configured_admin_token = admin_token if admin_token is not None else os.environ.get("CROWDTENSOR_ADMIN_TOKEN", "")
     configured_miner_token = miner_token if miner_token is not None else os.environ.get("CROWDTENSOR_MINER_TOKEN", "")
@@ -345,6 +358,7 @@ def create_app(
         inference_results: list[dict[str, Any]] | None = None
         external_llm_result: dict[str, Any] | None = None
         external_llm_results: list[dict[str, Any]] | None = None
+        sharded_inference_result: dict[str, Any] | None = None
         metrics: dict[str, Any] = Field(default_factory=dict)
 
     class TrustOverrideRequest(BaseModel):
@@ -355,10 +369,15 @@ def create_app(
 
     class InferenceSessionRequest(BaseModel):
         request_count: int = Field(default=4, ge=1, le=8)
+        decode_steps: int = Field(default=1, ge=1, le=4)
+        max_new_tokens: int = Field(default=1, ge=1, le=32)
         scenario_id: str = ""
         runtime: str = "python-cli"
         backend: str = "cpu"
         workload_type: str = WORKLOAD_MODEL_BUNDLE_INFER
+        prompt: str | None = None
+        prompt_texts: list[str] | None = None
+        partition_mode: str = ""
 
     def require_admin(token: str | None) -> None:
         if not configured_admin_token:
@@ -500,23 +519,37 @@ def create_app(
         miner_id: str = Query(default=""),
         workload_type: str = Query(default=""),
         task_id: str = Query(default=""),
+        session_id: str = Query(default=""),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
         require_admin(x_crowdtensor_admin_token)
+        def query_value(value, default):
+            if hasattr(value, "default"):
+                value = value.default
+            return default if value is None else value
+
+        limit_value = query_value(limit, 50)
+        status_value = query_value(status, "any")
+        miner_value = query_value(miner_id, "")
+        workload_value = query_value(workload_type, "")
+        task_value = query_value(task_id, "")
+        session_value = query_value(session_id, "")
         try:
             return {
                 "results": store.result_ledger(
-                    limit=limit,
-                    status=status,
-                    miner_id=miner_id,
-                    workload_type=workload_type,
-                    task_id=task_id,
+                    limit=limit_value,
+                    status=status_value,
+                    miner_id=miner_value,
+                    workload_type=workload_value,
+                    task_id=task_value,
+                    session_id=session_value,
                 ),
-                "limit": min(500, max(0, int(limit))),
-                "status": status,
-                "miner_id": miner_id,
-                "workload_type": workload_type,
-                "task_id": task_id,
+                "limit": min(500, max(0, int(limit_value))),
+                "status": status_value,
+                "miner_id": miner_value,
+                "workload_type": workload_value,
+                "task_id": task_value,
+                "session_id": session_value,
             }
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -531,6 +564,12 @@ def create_app(
         aliases = {
             "model-bundle": WORKLOAD_MODEL_BUNDLE_INFER,
             "external-llm": WORKLOAD_EXTERNAL_LLM_INFER,
+            "sharded-model-bundle": WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+            "sharded": WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+            "micro-llm-sharded": WORKLOAD_MICRO_LLM_SHARDED_INFER,
+            "micro-llm-shard": WORKLOAD_MICRO_LLM_SHARDED_INFER,
+            "real-llm-sharded": WORKLOAD_REAL_LLM_SHARDED_INFER,
+            "real-llm-shard": WORKLOAD_REAL_LLM_SHARDED_INFER,
         }
         workload_type = aliases.get(requested_workload, requested_workload)
         try:
@@ -549,16 +588,65 @@ def create_app(
                     required_backend=request.backend,
                     required_protocol_version=DEFAULT_PROTOCOL_VERSION,
                 )
+            elif workload_type == WORKLOAD_SHARDED_MODEL_BUNDLE_INFER:
+                session = store.create_sharded_inference_session(
+                    request_count=request.request_count,
+                    scenario_id=request.scenario_id,
+                    required_runtime=request.runtime,
+                    required_backend=request.backend,
+                    required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                )
+            elif workload_type == WORKLOAD_MICRO_LLM_SHARDED_INFER:
+                session = store.create_micro_llm_sharded_inference_session(
+                    request_count=request.request_count,
+                    decode_steps=request.decode_steps,
+                    prompt_texts=(
+                        request.prompt_texts
+                        if request.prompt_texts is not None
+                        else ([request.prompt] if request.prompt else None)
+                    ),
+                    required_runtime=request.runtime,
+                    required_backend=request.backend,
+                    required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                )
+            elif workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER:
+                llm_backend = "hf_transformers_cuda" if request.backend == "cuda" else "hf_transformers_cpu"
+                session = store.create_real_llm_sharded_inference_session(
+                    request_count=request.request_count,
+                    max_new_tokens=request.max_new_tokens,
+                    prompt_texts=(
+                        request.prompt_texts
+                        if request.prompt_texts is not None
+                        else ([request.prompt] if request.prompt else None)
+                    ),
+                    required_runtime=request.runtime,
+                    required_backend=request.backend,
+                    llm_backend=llm_backend,
+                    partition_mode=request.partition_mode,
+                    required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                )
             else:
                 raise ValueError(
                     f"unsupported inference session workload_type: {requested_workload}"
                 )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            detail = str(exc)
+            if (
+                workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER
+                and "requires optional Hugging Face dependencies" in detail
+            ):
+                raise HTTPException(status_code=503, detail=detail) from exc
+            raise
         return {
             **session,
             "workload_type": workload_type,
-            "result_query": f"/admin/results?task_id={session['task_id']}&workload_type={workload_type}",
+            "task_id": session.get("task_id") or session.get("stage_1_task_id") or session.get("stage_0_task_id"),
+            "result_query": (
+                f"/admin/results?task_id={session.get('task_id') or session.get('stage_1_task_id') or session.get('stage_0_task_id')}"
+                f"&workload_type={workload_type}"
+            ),
             "claim_requirements": session["task_requirements"],
         }
 
@@ -630,6 +718,7 @@ def create_app(
                 inference_results=request.inference_results,
                 external_llm_result=request.external_llm_result,
                 external_llm_results=request.external_llm_results,
+                sharded_inference_result=request.sharded_inference_result,
                 metrics=request.metrics,
             )
         except ResultRejected as exc:
@@ -724,6 +813,36 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="allowed browser origin for local browser Miner clients; repeat for multiple origins",
     )
+    parser.add_argument(
+        "--micro-llm-artifact",
+        default=os.environ.get("CROWDTENSOR_MICRO_LLM_ARTIFACT", ""),
+        help="path to a file-backed micro_llm_artifact_v1 manifest or directory",
+    )
+    parser.add_argument(
+        "--real-llm-model-id",
+        default=os.environ.get("CROWDTENSOR_HF_MODEL_ID", "sshleifer/tiny-gpt2"),
+        help="Hugging Face causal LM id for real_llm_sharded_infer sessions",
+    )
+    parser.add_argument(
+        "--real-llm-backend",
+        choices=["hf_transformers_cpu", "hf_transformers_cuda", "cpu", "cuda", "auto"],
+        default=os.environ.get("CROWDTENSOR_REAL_LLM_BACKEND", "hf_transformers_cpu"),
+        help=(
+            "backend for real_llm_sharded_infer sessions; cuda schedules CUDA-capable Miner tasks "
+            "and defers torch CUDA runtime checks to the Miner"
+        ),
+    )
+    parser.add_argument(
+        "--real-llm-partition-mode",
+        choices=["full", "stage-local", "stage_local"],
+        default=os.environ.get("CROWDTENSOR_REAL_LLM_PARTITION_MODE", "full"),
+        help="real_llm_sharded_infer partition mode; stage-local moves only stage-owned modules to the target device",
+    )
+    parser.add_argument(
+        "--hf-cache-dir",
+        default=os.environ.get("CROWDTENSOR_HF_CACHE_DIR", ""),
+        help="optional Hugging Face cache directory for real_llm_sharded_infer",
+    )
     args = parser.parse_args()
     if args.replay_audit and args.delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
         parser.error("--delta-format sign_compressed_ef cannot be used with --replay-audit")
@@ -752,6 +871,11 @@ def main() -> None:
         miner_token=args.miner_token,
         miner_token_registry=args.miner_token_registry,
         observer_token=args.observer_token,
+        micro_llm_artifact=args.micro_llm_artifact,
+        real_llm_model_id=args.real_llm_model_id,
+        real_llm_backend=args.real_llm_backend,
+        real_llm_partition_mode=args.real_llm_partition_mode,
+        hf_cache_dir=args.hf_cache_dir,
     )
     uvicorn.run(app, host=args.host, port=args.port)
 

@@ -170,6 +170,110 @@ class MinerCliTests(unittest.TestCase):
         self.assertEqual(payload["preflight_failures"], 0)
         self.assertEqual(payload["workloads"], {"diloco_train": 1})
 
+    def test_send_failure_heartbeat_reports_safe_error_summary(self) -> None:
+        args = miner_args(
+            heartbeat_timeout=1.0,
+            miner_token="token",
+            compute_seconds=0.2,
+            max_tasks=1,
+        )
+        counters: Counter = Counter()
+        captured = {}
+
+        def fake_post_json(_base_url, path, payload, **_kwargs):
+            captured["path"] = path
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch.object(miner_cli, "post_json", fake_post_json):
+            miner_cli.send_failure_heartbeat(
+                args,
+                {"task_id": "task-1", "lease_token": "lease", "attempt": 2},
+                task_started_at=0.0,
+                workload_type="real_llm_sharded_infer",
+                phase="workload_failed",
+                exc=RuntimeError("cuda boom"),
+                counters=counters,
+            )
+
+        self.assertEqual(captured["path"], "/tasks/task-1/heartbeat")
+        status = captured["payload"]["runtime_status"]
+        self.assertEqual(status["phase"], "workload_failed")
+        self.assertEqual(status["workload_type"], "real_llm_sharded_infer")
+        self.assertEqual(status["failure_class"], "RuntimeError")
+        self.assertEqual(status["failure_message"], "cuda boom")
+
+    def test_heartbeat_failure_does_not_stop_result_upload(self) -> None:
+        args = miner_args(
+            miner_id="miner-test",
+            miner_token="token",
+            compute_seconds=0.05,
+            heartbeat_interval=0.01,
+            heartbeat_timeout=0.01,
+            claim_timeout=1.0,
+            result_timeout=1.0,
+            delta_format="auto",
+            max_tasks=1,
+            enable_mock_llm_runtime=False,
+            llm_runtime_cmd="",
+            llm_runtime_url="",
+            llm_runtime_model_id="",
+            llm_runtime_api_key="",
+            llm_runtime_timeout=1.0,
+            micro_llm_stage_role="both",
+            enable_hf_tiny_gpt_runtime=False,
+            hf_model_id="sshleifer/tiny-gpt2",
+            real_llm_backend="hf_transformers_cpu",
+            real_llm_stage_role="both",
+            hf_cache_dir="",
+            idle_sleep=0.0,
+        )
+        counters: Counter = Counter()
+        calls = {"heartbeat": 0, "result": 0}
+
+        def fake_post_json(_base_url, path, payload, **_kwargs):
+            if path == "/tasks/claim":
+                return {
+                    "task_id": "task-1",
+                    "lease_token": "lease",
+                    "attempt": 1,
+                    "model_version": 0,
+                    "workload_type": "model_bundle_infer",
+                    "workload_spec": {"prompt_token_ids": [1, 2], "target_token_id": 3},
+                    "weights": [],
+                    "inner_steps": 1,
+                    "optimizer_spec": {},
+                }
+            if path.endswith("/heartbeat"):
+                calls["heartbeat"] += 1
+                raise miner_cli.CoordinatorTransportError("heartbeat offline")
+            if path.endswith("/result"):
+                calls["result"] += 1
+                return {
+                    "bundle_version": 0,
+                    "request_count": 1,
+                    "accuracy": 1.0,
+                    "predicted_token": "x",
+                    "target_token": "x",
+                    "correct": True,
+                }
+            raise AssertionError(path)
+
+        with patch.object(miner_cli, "post_json", fake_post_json), patch.object(
+            miner_cli,
+            "run_model_bundle_inference",
+            return_value={
+                "inference_result": {"correct": True},
+                "inference_results": [{"correct": True}],
+                "request_count": 1,
+                "prediction_correct": True,
+            },
+        ):
+            self.assertTrue(miner_cli.process_one(args, counters, {}))
+
+        self.assertGreaterEqual(calls["heartbeat"], 1)
+        self.assertEqual(calls["result"], 1)
+
     def test_capabilities_advertise_delta_formats(self) -> None:
         capabilities = miner_cli.miner_capabilities()
 
@@ -178,6 +282,13 @@ class MinerCliTests(unittest.TestCase):
         self.assertIn("sign_compressed_ef", capabilities["supported_delta_formats"])
         self.assertIn("model_bundle_lm", capabilities["supported_workloads"])
         self.assertIn("model_bundle_infer", capabilities["supported_workloads"])
+        self.assertIn("sharded_model_bundle_infer", capabilities["supported_workloads"])
+        self.assertIn("micro_llm_sharded_infer", capabilities["supported_workloads"])
+        self.assertEqual(capabilities["micro_llm_sharded_stage_role"], "both")
+        self.assertIn("micro_llm_sharded_stage0", capabilities["micro_llm_sharded_stage_capabilities"])
+        self.assertIn("micro_llm_sharded_stage1", capabilities["micro_llm_sharded_stage_capabilities"])
+        self.assertNotIn("real_llm_sharded_infer", capabilities["supported_workloads"])
+        self.assertEqual(capabilities["real_llm_runtime"], {})
         self.assertNotIn("external_llm_infer", capabilities["supported_workloads"])
         self.assertEqual(capabilities["external_llm_runtime"], {})
         self.assertEqual(capabilities["backend"], "cpu")
@@ -185,6 +296,52 @@ class MinerCliTests(unittest.TestCase):
         self.assertGreaterEqual(profile["cpu_count"], 1)
         self.assertTrue(profile["os"])
         self.assertTrue(profile["python_version"])
+        self.assertEqual(profile["runtime_environment"], "generic")
+        self.assertEqual(profile["gpu_tpu_workload_enabled"], bool(profile.get("cuda_available")))
+
+    def test_capabilities_can_advertise_micro_llm_stage_role(self) -> None:
+        stage0 = miner_cli.miner_capabilities(micro_llm_stage_role="stage0")
+        stage1 = miner_cli.miner_capabilities(micro_llm_stage_role="stage1")
+
+        self.assertEqual(stage0["micro_llm_sharded_stage_capabilities"], ["micro_llm_sharded_stage0"])
+        self.assertEqual(stage1["micro_llm_sharded_stage_capabilities"], ["micro_llm_sharded_stage1"])
+
+    def test_capabilities_advertise_real_llm_only_when_enabled(self) -> None:
+        disabled = miner_cli.miner_capabilities(enable_hf_tiny_gpt_runtime=False)
+        enabled = miner_cli.miner_capabilities(
+            enable_hf_tiny_gpt_runtime=True,
+            hf_model_id="sshleifer/tiny-gpt2",
+            real_llm_stage_role="stage1",
+        )
+
+        self.assertNotIn("real_llm_sharded_infer", disabled["supported_workloads"])
+        self.assertIn("real_llm_sharded_infer", enabled["supported_workloads"])
+        self.assertEqual(enabled["real_llm_runtime"]["adapter_kind"], "hf_transformers_cpu")
+        self.assertEqual(enabled["real_llm_runtime"]["model_id"], "sshleifer/tiny-gpt2")
+        self.assertEqual(enabled["real_llm_sharded_stage_role"], "stage1")
+        self.assertEqual(enabled["real_llm_sharded_stage_capabilities"], ["real_llm_sharded_stage1"])
+
+    def test_capabilities_can_advertise_real_llm_cuda_backend(self) -> None:
+        enabled = miner_cli.miner_capabilities(
+            enable_hf_tiny_gpt_runtime=True,
+            hf_model_id="sshleifer/tiny-gpt2",
+            real_llm_backend="hf_transformers_cuda",
+            real_llm_stage_role="both",
+        )
+
+        self.assertEqual(enabled["backend"], "cuda")
+        self.assertEqual(enabled["real_llm_runtime"]["adapter_kind"], "hf_transformers_cuda")
+        self.assertIn("real_llm_sharded_cuda_stage0", enabled["real_llm_sharded_stage_capabilities"])
+        self.assertIn("real_llm_sharded_cuda_stage1", enabled["real_llm_sharded_stage_capabilities"])
+        self.assertIn("real_llm_sharded_cuda_both", enabled["real_llm_sharded_stage_capabilities"])
+
+    def test_hardware_profile_marks_kaggle_environment_without_enabling_gpu_tpu_workload(self) -> None:
+        with patch.dict("os.environ", {"KAGGLE_KERNEL_RUN_TYPE": "Interactive"}, clear=False):
+            profile = miner_cli.hardware_profile()
+
+        self.assertEqual(profile["runtime_environment"], "kaggle")
+        self.assertIn("kaggle_runtime", profile["accelerator_hints"])
+        self.assertEqual(profile["gpu_tpu_workload_enabled"], bool(profile.get("cuda_available")))
 
     def test_capabilities_advertise_external_llm_only_when_enabled(self) -> None:
         mock_capabilities = miner_cli.miner_capabilities(enable_mock_llm_runtime=True)

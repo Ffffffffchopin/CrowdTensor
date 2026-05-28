@@ -15,10 +15,13 @@ from typing import Iterable
 
 MODEL_BUNDLE_SCHEMA_VERSION = "model_bundle_lm_v1"
 MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION = "model_bundle_infer_v1"
+SHARDED_MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION = "sharded_model_bundle_infer_v1"
+MODEL_BUNDLE_ACTIVATION_SCHEMA_VERSION = "model_bundle_activation_v1"
 MODEL_BUNDLE_INFERENCE_SCENARIO_SCHEMA_VERSION = "model_bundle_inference_scenario_v1"
 MODEL_BUNDLE_INFERENCE_TRACE_LIMIT = 8
 WORKLOAD_TYPE = "model_bundle_lm"
 INFERENCE_WORKLOAD_TYPE = "model_bundle_infer"
+SHARDED_INFERENCE_WORKLOAD_TYPE = "sharded_model_bundle_infer"
 BUNDLE_ID = "builtin-char-bundle"
 CORPUS = "crowd tensor nodes route gradients safely "
 VOCAB = sorted(set(CORPUS))
@@ -67,6 +70,39 @@ def _artifact_hash(values: Iterable[float], config: dict) -> str:
     }
     raw = repr(payload).encode("utf-8")
     return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _activation_hash(payload: dict) -> str:
+    public = {
+        key: payload.get(key)
+        for key in (
+            "schema_version",
+            "session_id",
+            "request_id",
+            "bundle_id",
+            "bundle_version",
+            "artifact_hash",
+            "prompt_token_ids",
+            "target_token_id",
+            "logits",
+        )
+    }
+    raw = json_repr(public).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def json_repr(payload: dict) -> str:
+    return repr(_round_floats(payload))
+
+
+def _round_floats(value):
+    if isinstance(value, float):
+        return round(value, 12)
+    if isinstance(value, dict):
+        return {key: _round_floats(item) for key, item in sorted(value.items())}
+    if isinstance(value, list):
+        return [_round_floats(item) for item in value]
+    return value
 
 
 def default_config() -> dict:
@@ -237,6 +273,46 @@ def model_bundle_inference_spec_for(
         "sample_offset": sample_offset,
     }
     spec.update(scenario)
+    return spec
+
+
+def sharded_model_bundle_inference_spec_for(
+    task_id: str,
+    miner_id: str,
+    model: dict,
+    *,
+    request_count: int = 1,
+    scenario_id: str | None = None,
+    session_id: str = "",
+    stage_id: int = 0,
+    parent_task_id: str = "",
+    activation_results: list[dict] | None = None,
+) -> dict:
+    stage = int(stage_id)
+    if stage not in {0, 1}:
+        raise ValueError("sharded model bundle inference stage_id must be 0 or 1")
+    base = model_bundle_inference_spec_for(
+        task_id,
+        miner_id,
+        model,
+        request_count=request_count,
+        scenario_id=scenario_id,
+    )
+    spec = {
+        **base,
+        "type": SHARDED_INFERENCE_WORKLOAD_TYPE,
+        "schema_version": SHARDED_MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+        "base_inference_schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+        "session_id": str(session_id or task_id),
+        "stage_id": stage,
+        "stage_count": 2,
+        "parent_task_id": str(parent_task_id or ""),
+        "shard_role": "activation_producer" if stage == 0 else "prediction_head",
+    }
+    if stage == 1:
+        spec.pop("weights", None)
+        spec["activation_results"] = list(activation_results or [])
+        spec["activation_count"] = len(spec["activation_results"])
     return spec
 
 
@@ -566,6 +642,134 @@ def run_model_bundle_inference(workload_spec: dict) -> dict:
     return result
 
 
+def run_sharded_model_bundle_inference(workload_spec: dict) -> dict:
+    spec = dict(workload_spec or {})
+    stage_id = int(spec.get("stage_id", 0))
+    if stage_id not in {0, 1}:
+        raise ValueError("sharded model bundle inference stage_id must be 0 or 1")
+    config = normalize_config(spec.get("config"))
+    requests = _inference_requests_from_spec(spec, config)
+    bundle_id = str(spec.get("bundle_id", BUNDLE_ID))
+    bundle_version = int(spec.get("bundle_version", 0))
+    artifact_hash = str(spec.get("artifact_hash", ""))
+    session_id = str(spec.get("session_id") or "")
+    start = time.monotonic()
+    scenario = inference_scenario_summary(spec.get("scenario_id"))
+
+    if stage_id == 0:
+        weights = [float(value) for value in spec.get("weights", [])]
+        expected = parameter_count(config)
+        if len(weights) != expected:
+            raise ValueError(f"sharded model bundle weights length {len(weights)} does not match expected {expected}")
+        activations = []
+        for request in requests:
+            activation = {
+                "schema_version": MODEL_BUNDLE_ACTIVATION_SCHEMA_VERSION,
+                "session_id": session_id,
+                "request_id": str(request["request_id"]),
+                "bundle_id": bundle_id,
+                "bundle_version": bundle_version,
+                "artifact_hash": artifact_hash,
+                "prompt_token_ids": list(request["prompt_token_ids"]),
+                "target_token_id": int(request["target_token_id"]),
+                "top_k": int(request["top_k"]),
+                "logits": logits_for(weights, config, list(request["prompt_token_ids"])),
+            }
+            activation["activation_hash"] = _activation_hash(activation)
+            activations.append(activation)
+        elapsed_ms = (time.monotonic() - start) * 1000.0
+        activation_bytes = len(json_repr({"activation_results": activations}).encode("utf-8"))
+        return {
+            "schema_version": SHARDED_MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+            "stage_id": 0,
+            "stage_count": 2,
+            "session_id": session_id,
+            "activation_result": activations[0],
+            "activation_results": activations,
+            "activation_count": len(activations),
+            "activation_bytes": activation_bytes,
+            "activation_hashes": [row["activation_hash"] for row in activations],
+            "request_count": len(activations),
+            "elapsed_ms": elapsed_ms,
+        }
+
+    activations = list(spec.get("activation_results") or [])
+    if not activations and isinstance(spec.get("activation_result"), dict):
+        activations = [dict(spec["activation_result"])]
+    if len(activations) != len(requests):
+        raise ValueError("stage-1 activation count does not match request count")
+    results = []
+    for request, activation in zip(requests, activations):
+        if not isinstance(activation, dict):
+            raise ValueError("activation rows must be objects")
+        if str(activation.get("schema_version")) != MODEL_BUNDLE_ACTIVATION_SCHEMA_VERSION:
+            raise ValueError("activation schema_version mismatch")
+        if str(activation.get("session_id")) != session_id:
+            raise ValueError("activation session_id mismatch")
+        if str(activation.get("request_id")) != str(request["request_id"]):
+            raise ValueError("activation request_id mismatch")
+        if str(activation.get("bundle_id")) != bundle_id:
+            raise ValueError("activation bundle_id mismatch")
+        if int(activation.get("bundle_version", -1)) != bundle_version:
+            raise ValueError("activation bundle_version mismatch")
+        if str(activation.get("artifact_hash")) != artifact_hash:
+            raise ValueError("activation artifact_hash mismatch")
+        if _activation_hash(activation) != str(activation.get("activation_hash")):
+            raise ValueError("activation_hash mismatch")
+        logits = [float(value) for value in activation.get("logits", [])]
+        if len(logits) != int(config["vocab_size"]):
+            raise ValueError("activation logits length does not match vocab_size")
+        probabilities = _softmax(logits)
+        ranked = sorted(
+            enumerate(probabilities),
+            key=lambda item: (-float(item[1]), int(item[0])),
+        )[:int(request["top_k"])]
+        predicted_id = int(ranked[0][0])
+        target = int(request["target_token_id"])
+        results.append({
+            "schema_version": MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+            "request_id": str(request["request_id"]),
+            "bundle_id": bundle_id,
+            "base_bundle_version": bundle_version,
+            "artifact_hash": artifact_hash,
+            "prompt_token_ids": list(request["prompt_token_ids"]),
+            "target_token_id": target,
+            "target_token": _token_text(config, target),
+            "predicted_token_id": predicted_id,
+            "predicted_token": _token_text(config, predicted_id),
+            "top_k": [
+                {
+                    "token_id": int(token_id),
+                    "token": _token_text(config, int(token_id)),
+                    "probability": float(probability),
+                }
+                for token_id, probability in ranked
+            ],
+            "correct": predicted_id == target,
+        })
+    elapsed_ms = (time.monotonic() - start) * 1000.0
+    correct_count = sum(1 for result in results if bool(result["correct"]))
+    elapsed_seconds = max(elapsed_ms / 1000.0, 1e-9)
+    result = {
+        "schema_version": SHARDED_MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION,
+        "stage_id": 1,
+        "stage_count": 2,
+        "session_id": session_id,
+        "inference_result": results[0],
+        "inference_results": results,
+        "prediction_correct": correct_count == len(results),
+        "request_count": len(results),
+        "correct_count": correct_count,
+        "accuracy": correct_count / len(results),
+        "elapsed_ms": elapsed_ms,
+        "requests_per_second": len(results) / elapsed_seconds,
+        "activation_count": len(activations),
+        "activation_hashes": [str(row.get("activation_hash")) for row in activations],
+    }
+    result.update(scenario)
+    return result
+
+
 def _validate_single_model_bundle_inference_result(
     current: dict,
     inference_result: dict,
@@ -823,6 +1027,178 @@ def validate_model_bundle_inference(
         "correct": bool(first["correct"]),
     }
     validation.update(scenario)
+    return validation
+
+
+def validate_sharded_model_bundle_inference(
+    model: dict,
+    sharded_result: dict | None,
+    *,
+    expected_spec: dict | None = None,
+) -> dict:
+    spec = dict(expected_spec or {})
+    if not isinstance(sharded_result, dict):
+        return {
+            "accepted": False,
+            "code": "sharded_model_bundle_result_missing",
+            "reason": "sharded_model_bundle_infer requires a sharded_inference_result object",
+            "sharded_inference_result": sharded_result,
+        }
+    if str(sharded_result.get("schema_version")) != SHARDED_MODEL_BUNDLE_INFERENCE_SCHEMA_VERSION:
+        return {
+            "accepted": False,
+            "code": "sharded_model_bundle_schema_mismatch",
+            "reason": "sharded result schema_version does not match sharded_model_bundle_infer_v1",
+            "sharded_inference_result": sharded_result,
+        }
+    try:
+        stage_id = int(spec.get("stage_id", sharded_result.get("stage_id", -1)))
+    except (TypeError, ValueError):
+        stage_id = -1
+    if stage_id not in {0, 1} or int(sharded_result.get("stage_id", -1)) != stage_id:
+        return {
+            "accepted": False,
+            "code": "sharded_model_bundle_stage_mismatch",
+            "reason": "sharded result stage_id does not match claim stage",
+            "sharded_inference_result": sharded_result,
+        }
+    current = normalize_model_bundle(model)
+    if str(spec.get("bundle_id")) != current["bundle_id"] or str(sharded_result.get("session_id", spec.get("session_id", ""))) != str(spec.get("session_id", "")):
+        return {
+            "accepted": False,
+            "code": "sharded_model_bundle_session_mismatch",
+            "reason": "sharded result does not match claim-time session or bundle",
+            "sharded_inference_result": sharded_result,
+        }
+    if stage_id == 0:
+        activations = list(sharded_result.get("activation_results") or [])
+        if not activations and isinstance(sharded_result.get("activation_result"), dict):
+            activations = [dict(sharded_result["activation_result"])]
+        expected_requests = list(spec.get("requests") or [])
+        if len(activations) != len(expected_requests):
+            return {
+                "accepted": False,
+                "code": "sharded_model_bundle_activation_count_mismatch",
+                "reason": "stage-0 activation count does not match claim-time requests",
+                "activation_count": len(activations),
+                "expected_request_count": len(expected_requests),
+            }
+        normalized_activations = []
+        for index, activation in enumerate(activations):
+            if not isinstance(activation, dict):
+                return {
+                    "accepted": False,
+                    "code": "sharded_model_bundle_activation_invalid",
+                    "reason": "activation rows must be objects",
+                    "request_index": index,
+                }
+            request = expected_requests[index]
+            if (
+                str(activation.get("schema_version")) != MODEL_BUNDLE_ACTIVATION_SCHEMA_VERSION
+                or str(activation.get("session_id")) != str(spec.get("session_id", ""))
+                or str(activation.get("request_id")) != str(request.get("request_id"))
+                or str(activation.get("bundle_id")) != current["bundle_id"]
+                or int(activation.get("bundle_version", -1)) != int(current["version"])
+                or str(activation.get("artifact_hash")) != current["artifact_hash"]
+                or [int(value) for value in activation.get("prompt_token_ids", [])] != [
+                    int(value) for value in request.get("prompt_token_ids", [])
+                ]
+                or int(activation.get("target_token_id", -1)) != int(request.get("target_token_id", -2))
+            ):
+                return {
+                    "accepted": False,
+                    "code": "sharded_model_bundle_activation_mismatch",
+                    "reason": "activation row does not match claim-time request",
+                    "request_index": index,
+                    "activation": activation,
+                }
+            try:
+                logits = [float(value) for value in activation.get("logits", [])]
+            except (TypeError, ValueError):
+                return {
+                    "accepted": False,
+                    "code": "sharded_model_bundle_activation_not_numeric",
+                    "reason": "activation logits must be numeric",
+                    "request_index": index,
+                }
+            expected_logits = logits_for(current["weights"], current["config"], list(request.get("prompt_token_ids", [])))
+            if len(logits) != len(expected_logits) or any(abs(a - b) > 1e-12 for a, b in zip(logits, expected_logits)):
+                return {
+                    "accepted": False,
+                    "code": "sharded_model_bundle_activation_logits_mismatch",
+                    "reason": "activation logits do not match Coordinator recomputation",
+                    "request_index": index,
+                }
+            if str(activation.get("activation_hash")) != _activation_hash({**activation, "logits": logits}):
+                return {
+                    "accepted": False,
+                    "code": "sharded_model_bundle_activation_hash_mismatch",
+                    "reason": "activation_hash does not match activation payload",
+                    "request_index": index,
+                }
+            normalized = {**activation, "logits": logits}
+            normalized_activations.append(normalized)
+        activation_bytes = len(json_repr({"activation_results": normalized_activations}).encode("utf-8"))
+        return {
+            "accepted": True,
+            "code": "ok",
+            "reason": "accepted",
+            "stage_id": 0,
+            "stage_count": 2,
+            "session_id": str(spec.get("session_id", "")),
+            "bundle_id": current["bundle_id"],
+            "base_bundle_version": int(current["version"]),
+            "artifact_hash": current["artifact_hash"],
+            "request_count": len(normalized_activations),
+            "activation_result": normalized_activations[0],
+            "activation_results": normalized_activations,
+            "activation_count": len(normalized_activations),
+            "activation_bytes": activation_bytes,
+            "activation_hashes": [row["activation_hash"] for row in normalized_activations],
+            "activation_transport_ready": True,
+        }
+
+    baseline = run_model_bundle_inference({
+        "bundle_id": current["bundle_id"],
+        "bundle_version": current["version"],
+        "artifact_hash": current["artifact_hash"],
+        "config": current["config"],
+        "weights": current["weights"],
+        "requests": spec.get("requests") or [],
+        "scenario_id": spec.get("scenario_id"),
+    })
+    validation = validate_model_bundle_inference(
+        model,
+        sharded_result.get("inference_result"),
+        inference_results=sharded_result.get("inference_results"),
+        expected_requests=spec.get("requests"),
+        expected_scenario_id=spec.get("scenario_id"),
+    )
+    if not validation["accepted"]:
+        return {
+            **validation,
+            "code": f"sharded_{validation.get('code', 'model_bundle_inference_invalid')}",
+            "stage_id": 1,
+        }
+    baseline_match = validation.get("inference_results") == baseline.get("inference_results")
+    if not baseline_match:
+        return {
+            **validation,
+            "accepted": False,
+            "code": "sharded_model_bundle_baseline_mismatch",
+            "reason": "stage-1 output does not match single-task baseline",
+            "stage_id": 1,
+            "baseline_match": False,
+        }
+    validation.update({
+        "stage_id": 1,
+        "stage_count": 2,
+        "session_id": str(spec.get("session_id", "")),
+        "baseline_match": True,
+        "activation_count": int(sharded_result.get("activation_count", 0)),
+        "activation_hashes": list(sharded_result.get("activation_hashes") or []),
+        "activation_transport_ready": True,
+    })
     return validation
 
 

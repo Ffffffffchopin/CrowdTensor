@@ -30,7 +30,16 @@ from .protocol import (
     EVENT_TASK_REQUEUED,
     EVENT_TRUST_OVERRIDE_SET,
     LeaseConflict,
+    MICRO_LLM_SHARDED_BOTH_CAPABILITY,
+    MICRO_LLM_SHARDED_STAGE0_CAPABILITY,
+    MICRO_LLM_SHARDED_STAGE1_CAPABILITY,
     NoTaskAvailable,
+    REAL_LLM_SHARDED_BOTH_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_BOTH_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+    REAL_LLM_SHARDED_STAGE0_CAPABILITY,
+    REAL_LLM_SHARDED_STAGE1_CAPABILITY,
     ResultRejected,
     REQUIREMENT_ANY,
     STATUS_COMPLETED,
@@ -41,9 +50,12 @@ from .protocol import (
     WORKLOAD_CPU_LORA_MOCK,
     WORKLOAD_DILOCO_TRAIN,
     WORKLOAD_EXTERNAL_LLM_INFER,
+    WORKLOAD_MICRO_LLM_SHARDED_INFER,
     WORKLOAD_MICRO_TRANSFORMER_LM,
     WORKLOAD_MODEL_BUNDLE_INFER,
     WORKLOAD_MODEL_BUNDLE_LM,
+    WORKLOAD_REAL_LLM_SHARDED_INFER,
+    WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
     new_lease_token,
     new_task_id,
     now_epoch,
@@ -68,11 +80,15 @@ from .lora_mock import (
 )
 from .micro_transformer import (
     apply_micro_transformer_update,
+    micro_llm_sharded_inference_spec_for,
+    micro_transformer_artifact_hash,
     micro_transformer_loss,
     micro_transformer_training_spec_for,
     micro_transformer_version,
+    validate_micro_llm_sharded_inference,
     validate_micro_transformer_delta,
 )
+from .micro_llm_artifact import load_micro_llm_artifact, prompt_requests_for_model
 from .model_bundle import (
     apply_model_bundle_update,
     model_bundle_inference_spec_for,
@@ -80,8 +96,10 @@ from .model_bundle import (
     model_bundle_training_spec_for,
     model_bundle_version,
     normalize_inference_scenario_id,
+    sharded_model_bundle_inference_spec_for,
     validate_model_bundle_delta,
     validate_model_bundle_inference,
+    validate_sharded_model_bundle_inference,
 )
 from .outer_optimizer import (
     DELTA_FORMAT_DENSE_FLOAT,
@@ -91,6 +109,18 @@ from .outer_optimizer import (
 )
 from .outer_optimizer import decode_delta_payload
 from .outer_optimizer import OPTIMIZER_DILOCO_MOMENTUM
+from .real_llm import (
+    BACKEND_CPU as REAL_LLM_BACKEND_CPU,
+    BACKEND_CUDA as REAL_LLM_BACKEND_CUDA,
+    DEFAULT_MODEL_ID as DEFAULT_REAL_LLM_MODEL_ID,
+    DEFAULT_PROMPTS as DEFAULT_REAL_LLM_PROMPTS,
+    PARTITION_MODE_FULL as REAL_LLM_PARTITION_MODE_FULL,
+    inspect_real_llm_artifact,
+    normalize_backend as normalize_real_llm_backend,
+    normalize_partition_mode as normalize_real_llm_partition_mode,
+    real_llm_sharded_inference_spec_for,
+    validate_real_llm_sharded_inference,
+)
 from .validation import validate_local_delta
 
 
@@ -125,6 +155,11 @@ class StateStore:
         replay_audit: bool = False,
         outer_optimizer: str = OPTIMIZER_DILOCO_MOMENTUM,
         delta_format: str = DELTA_FORMAT_DENSE_FLOAT,
+        micro_llm_artifact: str | Path | None = None,
+        real_llm_model_id: str = DEFAULT_REAL_LLM_MODEL_ID,
+        real_llm_backend: str = REAL_LLM_BACKEND_CPU,
+        real_llm_partition_mode: str = REAL_LLM_PARTITION_MODE_FULL,
+        hf_cache_dir: str | Path | None = None,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.task_log_path = self.state_dir / "tasks.jsonl"
@@ -135,6 +170,12 @@ class StateStore:
         self.replay_audit = bool(replay_audit)
         self.outer_optimizer = str(outer_optimizer or OPTIMIZER_DILOCO_MOMENTUM)
         self.delta_format = normalize_delta_format(delta_format)
+        self.micro_llm_artifact_path = str(micro_llm_artifact or "")
+        self.real_llm_model_id = str(real_llm_model_id or DEFAULT_REAL_LLM_MODEL_ID)
+        self.real_llm_backend = normalize_real_llm_backend(real_llm_backend)
+        self.real_llm_partition_mode = normalize_real_llm_partition_mode(real_llm_partition_mode)
+        self.hf_cache_dir = str(hf_cache_dir or "")
+        self._real_llm_artifact_cache: dict[str, dict] = {}
         if self.replay_audit and self.delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
             raise ValueError("sign_compressed_ef cannot be used with replay_audit")
         self.task_lanes = self._normalize_task_lanes(task_lanes)
@@ -145,9 +186,13 @@ class StateStore:
         self._blocked_claims: list[dict] = []
         self._trust_overrides: dict[str, dict[str, dict]] = {}
         self._model = default_model(outer_optimizer_type=self.outer_optimizer)
+        if self.micro_llm_artifact_path:
+            self._model["micro_transformer"] = load_micro_llm_artifact(self.micro_llm_artifact_path)["model"]
 
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self._load()
+        if self.micro_llm_artifact_path:
+            self._model["micro_transformer"] = load_micro_llm_artifact(self.micro_llm_artifact_path)["model"]
         self._recover_inflight()
         self.ensure_backlog()
 
@@ -351,6 +396,7 @@ class StateStore:
         miner_id: str | None = None,
         workload_type: str | None = None,
         task_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[dict]:
         capped = min(MAX_EVENT_TAIL_LIMIT, max(0, int(limit)))
         if capped == 0:
@@ -361,6 +407,7 @@ class StateStore:
         wanted_miner = str(miner_id or "").strip()
         wanted_workload = str(workload_type or "").strip()
         wanted_task_id = str(task_id or "").strip()
+        wanted_session_id = str(session_id or "").strip()
 
         with self._lock:
             scored = self._miner_workload_scores()
@@ -381,6 +428,8 @@ class StateStore:
                 if wanted_workload and row["workload_type"] != wanted_workload:
                     continue
                 if wanted_task_id and row["task_id"] != wanted_task_id:
+                    continue
+                if wanted_session_id and row.get("session_id") != wanted_session_id:
                     continue
                 filtered.append(row)
                 if len(filtered) >= capped:
@@ -461,6 +510,198 @@ class StateStore:
                 "task_requirements": self._task_requirements(task),
             }
 
+    def create_sharded_inference_session(
+        self,
+        *,
+        request_count: int = 4,
+        scenario_id: str = "",
+        required_runtime: str = "python-cli",
+        required_backend: str = "cpu",
+        required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+    ) -> dict:
+        count = max(1, min(int(request_count), 8))
+        scenario = normalize_inference_scenario_id(scenario_id)
+        runtime = str(required_runtime or "").strip()
+        backend = str(required_backend or "").strip()
+        if runtime != "python-cli":
+            raise ValueError("sharded inference sessions require runtime python-cli")
+        if backend != "cpu":
+            raise ValueError("sharded inference sessions require backend cpu")
+        with self._lock:
+            session_id = new_task_id().replace("task-", "shard-session-", 1)
+            stage0_id = self._create_task(
+                required_runtime=runtime,
+                required_backend=backend,
+                required_protocol_version=required_protocol_version,
+                workload_type=WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+                inner_steps=count,
+                workload_metadata={
+                    "session_id": session_id,
+                    "stage_id": 0,
+                    "stage_count": 2,
+                    "scenario_id": scenario,
+                },
+            )
+            task = self._tasks[stage0_id]
+            return {
+                "schema": "sharded_inference_session_v1",
+                "accepted": True,
+                "session_id": session_id,
+                "stage_count": 2,
+                "stage_0_task_id": stage0_id,
+                "stage_1_task_id": "",
+                "status": "stage_0_queued",
+                "workload_type": WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+                "request_count": task["inner_steps"],
+                "scenario_id": scenario,
+                "task_requirements": self._task_requirements(task),
+            }
+
+    def create_micro_llm_sharded_inference_session(
+        self,
+        *,
+        request_count: int = 4,
+        decode_steps: int = 1,
+        prompt_texts: list[str] | None = None,
+        required_runtime: str = "python-cli",
+        required_backend: str = "cpu",
+        required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+    ) -> dict:
+        count = max(1, min(int(request_count), 8))
+        steps = max(1, min(int(decode_steps), 4))
+        runtime = str(required_runtime or "").strip()
+        backend = str(required_backend or "").strip()
+        if runtime != "python-cli":
+            raise ValueError("micro LLM sharded inference sessions require runtime python-cli")
+        if backend != "cpu":
+            raise ValueError("micro LLM sharded inference sessions require backend cpu")
+        with self._lock:
+            micro_model = self._model.get("micro_transformer", {})
+            requests = prompt_requests_for_model(micro_model, prompt_texts=prompt_texts) if prompt_texts else []
+            if requests:
+                count = min(count, len(requests))
+                requests = requests[:count]
+            session_id = new_task_id().replace("task-", "micro-llm-shard-session-", 1)
+            stage0_id = self._create_task(
+                required_runtime=runtime,
+                required_backend=backend,
+                required_protocol_version=required_protocol_version,
+                workload_type=WORKLOAD_MICRO_LLM_SHARDED_INFER,
+                inner_steps=count,
+                workload_metadata={
+                    "session_id": session_id,
+                    "stage_id": 0,
+                    "stage_count": 2,
+                    "decode_steps": steps,
+                    "requests": requests,
+                "artifact_schema": micro_model.get("artifact_schema", ""),
+                "artifact_id": micro_model.get("artifact_id", ""),
+                "artifact_version": micro_model.get("artifact_version"),
+                "artifact_hash": micro_transformer_artifact_hash(micro_model),
+                "tokenizer_schema": micro_model.get("tokenizer_schema", ""),
+                "prompt_request_count": len(requests),
+            },
+        )
+            task = self._tasks[stage0_id]
+            return {
+                "schema": "micro_llm_sharded_session_v1",
+                "accepted": True,
+                "session_id": session_id,
+                "stage_count": 2,
+                "stage_0_task_id": stage0_id,
+                "stage_1_task_id": "",
+                "status": "stage_0_queued",
+                "workload_type": WORKLOAD_MICRO_LLM_SHARDED_INFER,
+                "request_count": task["inner_steps"],
+                "decode_steps": steps,
+                "artifact_schema": micro_model.get("artifact_schema", ""),
+                "artifact_id": micro_model.get("artifact_id", ""),
+                "artifact_version": micro_model.get("artifact_version"),
+                "artifact_hash": micro_transformer_artifact_hash(micro_model),
+                "tokenizer_schema": micro_model.get("tokenizer_schema", ""),
+                "prompt_request_count": len(requests),
+                "task_requirements": self._task_requirements(task),
+            }
+
+    def create_real_llm_sharded_inference_session(
+        self,
+        *,
+        request_count: int = 1,
+        max_new_tokens: int = 1,
+        prompt_texts: list[str] | None = None,
+        required_runtime: str = "python-cli",
+        required_backend: str = "cpu",
+        llm_backend: str | None = None,
+        partition_mode: str | None = None,
+        required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+    ) -> dict:
+        count = max(1, min(int(request_count), 4))
+        generation_limit = max(1, min(int(max_new_tokens), 32))
+        runtime = str(required_runtime or "").strip()
+        backend = str(required_backend or "").strip()
+        resolved_llm_backend = normalize_real_llm_backend(llm_backend or self.real_llm_backend)
+        resolved_partition_mode = normalize_real_llm_partition_mode(partition_mode or self.real_llm_partition_mode)
+        expected_backend = "cuda" if resolved_llm_backend == REAL_LLM_BACKEND_CUDA else "cpu"
+        if runtime != "python-cli":
+            raise ValueError("real LLM sharded inference sessions require runtime python-cli")
+        if backend != expected_backend:
+            raise ValueError(f"real LLM sharded inference sessions require backend {expected_backend}")
+        with self._lock:
+            artifact = self._real_llm_artifact_summary(resolved_llm_backend)
+            artifact["partition_mode"] = resolved_partition_mode
+            prompts = [str(item) for item in (prompt_texts or DEFAULT_REAL_LLM_PROMPTS) if str(item)]
+            prompts = prompts[:count] or list(DEFAULT_REAL_LLM_PROMPTS[:count])
+            session_id = new_task_id().replace("task-", "real-llm-shard-session-", 1)
+            stage0_id = self._create_task(
+                required_runtime=runtime,
+                required_backend=backend,
+                required_protocol_version=required_protocol_version,
+                workload_type=WORKLOAD_REAL_LLM_SHARDED_INFER,
+                inner_steps=count,
+                workload_metadata={
+                    "session_id": session_id,
+                    "stage_id": 0,
+                    "stage_count": 2,
+                    "requests": [],
+                    "prompt_texts": prompts,
+                    "max_new_tokens": generation_limit,
+                    "generation_step": 0,
+                    "artifact_schema": artifact.get("schema", ""),
+                    "artifact_hash": artifact.get("artifact_hash", ""),
+                    "model_id": artifact.get("model_id", self.real_llm_model_id),
+                    "backend": artifact.get("backend", "hf_transformers_cpu"),
+                    "partition_mode": resolved_partition_mode,
+                    "split_index": artifact.get("split_index"),
+                    "num_hidden_layers": artifact.get("num_hidden_layers"),
+                    "hidden_size": artifact.get("hidden_size"),
+                    "real_llm_artifact_ready": True,
+                },
+            )
+            task = self._tasks[stage0_id]
+            return {
+                "schema": "real_llm_sharded_session_v1",
+                "accepted": True,
+                "session_id": session_id,
+                "stage_count": 2,
+                "stage_0_task_id": stage0_id,
+                "stage_1_task_id": "",
+                "status": "stage_0_queued",
+                "workload_type": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                "request_count": task["inner_steps"],
+                "max_new_tokens": generation_limit,
+                "generation_step": 0,
+                "artifact_schema": artifact.get("schema"),
+                "artifact_hash": artifact.get("artifact_hash"),
+                "model_id": artifact.get("model_id"),
+                "backend": artifact.get("backend"),
+                "partition_mode": resolved_partition_mode,
+                "split_index": artifact.get("split_index"),
+                "num_hidden_layers": artifact.get("num_hidden_layers"),
+                "hidden_size": artifact.get("hidden_size"),
+                "prompt_request_count": len(prompts),
+                "task_requirements": self._task_requirements(task),
+            }
+
     def complete_task(
         self,
         task_id: str,
@@ -478,6 +719,7 @@ class StateStore:
         inference_results: list[dict] | None = None,
         external_llm_result: dict | None = None,
         external_llm_results: list[dict] | None = None,
+        sharded_inference_result: dict | None = None,
         metrics: dict | None = None,
     ) -> dict:
         with self._lock:
@@ -548,6 +790,33 @@ class StateStore:
                     idempotency_key=idempotency_key,
                     external_llm_result=external_llm_result,
                     external_llm_results=external_llm_results,
+                    metrics=metrics,
+                )
+            if workload_type == WORKLOAD_SHARDED_MODEL_BUNDLE_INFER:
+                return self._complete_sharded_model_bundle_inference_task(
+                    task,
+                    lease_token=lease_token,
+                    attempt=attempt,
+                    idempotency_key=idempotency_key,
+                    sharded_inference_result=sharded_inference_result,
+                    metrics=metrics,
+                )
+            if workload_type == WORKLOAD_MICRO_LLM_SHARDED_INFER:
+                return self._complete_micro_llm_sharded_inference_task(
+                    task,
+                    lease_token=lease_token,
+                    attempt=attempt,
+                    idempotency_key=idempotency_key,
+                    sharded_inference_result=sharded_inference_result,
+                    metrics=metrics,
+                )
+            if workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER:
+                return self._complete_real_llm_sharded_inference_task(
+                    task,
+                    lease_token=lease_token,
+                    attempt=attempt,
+                    idempotency_key=idempotency_key,
+                    sharded_inference_result=sharded_inference_result,
                     metrics=metrics,
                 )
             if workload_type != WORKLOAD_DILOCO_TRAIN:
@@ -1087,6 +1356,461 @@ class StateStore:
             raise ResultRejected(validation)
         return response
 
+    def _complete_sharded_model_bundle_inference_task(
+        self,
+        task: dict,
+        *,
+        lease_token: str,
+        attempt: int,
+        idempotency_key: str | None = None,
+        sharded_inference_result: dict | None = None,
+        metrics: dict | None = None,
+    ) -> dict:
+        claim_spec = task.get("claim_workload_spec") or {}
+        validation = validate_sharded_model_bundle_inference(
+            self._model,
+            sharded_inference_result,
+            expected_spec=claim_spec,
+        )
+        staleness = model_bundle_version(self._model) - int(task["model_version"])
+        now = now_epoch()
+        stage_id = int(claim_spec.get("stage_id", validation.get("stage_id", 0)))
+        response = {
+            "accepted": True,
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "workload_type": WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+            "model_version": model_bundle_version(self._model),
+            "bundle_version": validation.get("base_bundle_version"),
+            "bundle_id": validation.get("bundle_id"),
+            "artifact_hash": validation.get("artifact_hash"),
+            "session_id": validation.get("session_id"),
+            "stage_id": stage_id,
+            "stage_count": 2,
+            "activation_count": int(validation.get("activation_count", 0)),
+            "activation_bytes": int(validation.get("activation_bytes", 0)),
+            "activation_hashes": list(validation.get("activation_hashes") or []),
+            "activation_transport_ready": bool(validation.get("activation_transport_ready", False)),
+            "baseline_match": bool(validation.get("baseline_match", stage_id == 0)),
+            "request_count": int(validation.get("request_count", 0)),
+            "correct_count": int(validation.get("correct_count", 0)),
+            "accuracy": float(validation.get("accuracy", 0.0)),
+            "scenario_schema": validation.get("scenario_schema"),
+            "scenario_id": validation.get("scenario_id"),
+            "scenario_description": validation.get("scenario_description"),
+            "scenario_request_count": validation.get("scenario_request_count"),
+            "staleness": staleness,
+        } if validation["accepted"] else dict(validation)
+        if validation["accepted"] and stage_id == 1:
+            response.update({
+                "predicted_token_id": validation.get("predicted_token_id"),
+                "predicted_token": validation.get("predicted_token"),
+                "target_token_id": validation.get("target_token_id"),
+                "target_token": validation.get("target_token"),
+                "correct": bool(validation.get("correct", False)),
+            })
+        event = {
+            "type": EVENT_TASK_COMPLETED if validation["accepted"] else EVENT_TASK_REJECTED,
+            "task_id": task["task_id"],
+            "attempt": attempt,
+            "lease_token": lease_token,
+            "miner_id": task.get("miner_id"),
+            "base_model_version": int(task["model_version"]),
+            "sharded_inference_result": (
+                validation.get("sharded_inference_result") if validation["accepted"] else sharded_inference_result
+            ),
+            "activation_results": validation.get("activation_results") if validation["accepted"] and stage_id == 0 else [],
+            "inference_result": validation.get("inference_result") if validation["accepted"] and stage_id == 1 else {},
+            "inference_results": validation.get("inference_results") if validation["accepted"] and stage_id == 1 else [],
+            "metrics": metrics or {},
+            "staleness": staleness,
+            "validation": validation,
+            "result_model_version": model_bundle_version(self._model),
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "result_response": response,
+            **self._idempotency_event_fields(
+                idempotency_key,
+                lease_token=lease_token,
+            ),
+            "ts": now,
+        }
+        self._apply_task_event(self._append_event(event))
+        if validation["accepted"] and stage_id == 0:
+            self._create_stage1_task_from_stage0(task["task_id"], validation)
+        self.ensure_backlog()
+        if not validation["accepted"]:
+            raise ResultRejected(validation)
+        return response
+
+    def _create_stage1_task_from_stage0(self, stage0_task_id: str, validation: dict) -> str:
+        stage0_task = self._tasks[stage0_task_id]
+        metadata = dict(stage0_task.get("workload_metadata") or {})
+        session_id = str(metadata.get("session_id") or validation.get("session_id") or "")
+        for task in self._tasks.values():
+            task_metadata = task.get("workload_metadata") or {}
+            if (
+                self._workload_type(task) == WORKLOAD_SHARDED_MODEL_BUNDLE_INFER
+                and str(task_metadata.get("session_id")) == session_id
+                and int(task_metadata.get("stage_id", -1)) == 1
+            ):
+                return task["task_id"]
+        return self._create_task(
+            required_runtime=stage0_task.get("required_runtime", REQUIREMENT_ANY),
+            required_backend=stage0_task.get("required_backend", REQUIREMENT_ANY),
+            required_protocol_version=stage0_task.get("required_protocol_version", DEFAULT_PROTOCOL_VERSION),
+            workload_type=WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+            inner_steps=int(stage0_task.get("inner_steps", 1)),
+            workload_metadata={
+                **metadata,
+                "stage_id": 1,
+                "stage_count": 2,
+                "parent_task_id": stage0_task_id,
+                "activation_results": validation.get("activation_results") or [],
+                "activation_hashes": validation.get("activation_hashes") or [],
+                "activation_bytes": int(validation.get("activation_bytes", 0)),
+                "artifact_schema": metadata.get("artifact_schema", ""),
+                "artifact_id": metadata.get("artifact_id", ""),
+                "artifact_version": metadata.get("artifact_version"),
+                "artifact_hash": metadata.get("artifact_hash", ""),
+                "tokenizer_schema": metadata.get("tokenizer_schema", ""),
+            },
+        )
+
+    def _complete_micro_llm_sharded_inference_task(
+        self,
+        task: dict,
+        *,
+        lease_token: str,
+        attempt: int,
+        idempotency_key: str | None = None,
+        sharded_inference_result: dict | None = None,
+        metrics: dict | None = None,
+    ) -> dict:
+        claim_spec = task.get("claim_workload_spec") or {}
+        validation = validate_micro_llm_sharded_inference(
+            self._model.get("micro_transformer", {}),
+            sharded_inference_result,
+            expected_spec=claim_spec,
+        )
+        staleness = micro_transformer_version(self._model) - int(task["model_version"])
+        now = now_epoch()
+        stage_id = int(claim_spec.get("stage_id", validation.get("stage_id", 0)))
+        response = {
+            "accepted": True,
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "micro_transformer_updated": False,
+            "workload_type": WORKLOAD_MICRO_LLM_SHARDED_INFER,
+            "model_version": micro_transformer_version(self._model),
+            "base_model_version": validation.get("base_model_version"),
+            "artifact_hash": validation.get("artifact_hash"),
+            "session_id": validation.get("session_id"),
+            "stage_id": stage_id,
+            "stage_count": 2,
+            "activation_count": int(validation.get("activation_count", 0)),
+            "activation_bytes": int(validation.get("activation_bytes", 0)),
+            "activation_hashes": list(validation.get("activation_hashes") or []),
+            "activation_transport_ready": bool(validation.get("activation_transport_ready", False)),
+            "artifact_schema": validation.get("artifact_schema"),
+            "artifact_id": validation.get("artifact_id"),
+            "artifact_version": validation.get("artifact_version"),
+            "tokenizer_schema": validation.get("tokenizer_schema"),
+            "baseline_match": bool(validation.get("baseline_match", stage_id == 0)),
+            "decoded_tokens_match": bool(validation.get("decoded_tokens_match", stage_id == 0)),
+            "request_count": int(validation.get("request_count", 0)),
+            "decode_steps": int(validation.get("decode_steps", 0)),
+            "generated_token_count": int(validation.get("generated_token_count", 0)),
+            "generated_token_ids": list(validation.get("generated_token_ids") or []),
+            "generated_text": validation.get("generated_text", ""),
+            "staleness": staleness,
+        } if validation["accepted"] else dict(validation)
+        event = {
+            "type": EVENT_TASK_COMPLETED if validation["accepted"] else EVENT_TASK_REJECTED,
+            "task_id": task["task_id"],
+            "attempt": attempt,
+            "lease_token": lease_token,
+            "miner_id": task.get("miner_id"),
+            "base_model_version": int(task["model_version"]),
+            "sharded_inference_result": (
+                validation.get("sharded_inference_result") if validation["accepted"] else sharded_inference_result
+            ),
+            "activation_results": validation.get("activation_results") if validation["accepted"] and stage_id == 0 else [],
+            "inference_result": validation.get("inference_result") if validation["accepted"] and stage_id == 1 else {},
+            "inference_results": validation.get("inference_results") if validation["accepted"] and stage_id == 1 else [],
+            "metrics": metrics or {},
+            "staleness": staleness,
+            "validation": validation,
+            "result_model_version": micro_transformer_version(self._model),
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "micro_transformer_updated": False,
+            "result_response": response,
+            **self._idempotency_event_fields(
+                idempotency_key,
+                lease_token=lease_token,
+            ),
+            "ts": now,
+        }
+        self._apply_task_event(self._append_event(event))
+        if validation["accepted"] and stage_id == 0:
+            self._create_micro_llm_stage1_task_from_stage0(task["task_id"], validation)
+        self.ensure_backlog()
+        if not validation["accepted"]:
+            raise ResultRejected(validation)
+        return response
+
+    def _create_micro_llm_stage1_task_from_stage0(self, stage0_task_id: str, validation: dict) -> str:
+        stage0_task = self._tasks[stage0_task_id]
+        metadata = dict(stage0_task.get("workload_metadata") or {})
+        session_id = str(metadata.get("session_id") or validation.get("session_id") or "")
+        for task in self._tasks.values():
+            task_metadata = task.get("workload_metadata") or {}
+            if (
+                self._workload_type(task) == WORKLOAD_MICRO_LLM_SHARDED_INFER
+                and str(task_metadata.get("session_id")) == session_id
+                and int(task_metadata.get("stage_id", -1)) == 1
+            ):
+                return task["task_id"]
+        return self._create_task(
+            required_runtime=stage0_task.get("required_runtime", REQUIREMENT_ANY),
+            required_backend=stage0_task.get("required_backend", REQUIREMENT_ANY),
+            required_protocol_version=stage0_task.get("required_protocol_version", DEFAULT_PROTOCOL_VERSION),
+            workload_type=WORKLOAD_MICRO_LLM_SHARDED_INFER,
+            inner_steps=int(stage0_task.get("inner_steps", 1)),
+            workload_metadata={
+                **metadata,
+                "stage_id": 1,
+                "stage_count": 2,
+                "parent_task_id": stage0_task_id,
+                "requests": list((stage0_task.get("claim_workload_spec") or {}).get("requests") or []),
+                "activation_results": validation.get("activation_results") or [],
+                "activation_hashes": validation.get("activation_hashes") or [],
+                "activation_bytes": int(validation.get("activation_bytes", 0)),
+                "artifact_schema": metadata.get("artifact_schema", ""),
+                "artifact_id": metadata.get("artifact_id", ""),
+                "artifact_version": metadata.get("artifact_version"),
+                "artifact_hash": metadata.get("artifact_hash", ""),
+                "tokenizer_schema": metadata.get("tokenizer_schema", ""),
+            },
+        )
+
+    def _complete_real_llm_sharded_inference_task(
+        self,
+        task: dict,
+        *,
+        lease_token: str,
+        attempt: int,
+        idempotency_key: str | None = None,
+        sharded_inference_result: dict | None = None,
+        metrics: dict | None = None,
+    ) -> dict:
+        claim_spec = task.get("claim_workload_spec") or {}
+        validation = validate_real_llm_sharded_inference(
+            sharded_inference_result,
+            expected_spec=claim_spec,
+            cache_dir=self.hf_cache_dir,
+            replay_runtime=(
+                str(claim_spec.get("backend") or REAL_LLM_BACKEND_CPU) != REAL_LLM_BACKEND_CUDA
+            ),
+        )
+        staleness = 0
+        now = now_epoch()
+        stage_id = int(claim_spec.get("stage_id", validation.get("stage_id", 0)))
+        response = {
+            "accepted": True,
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "micro_transformer_updated": False,
+            "workload_type": WORKLOAD_REAL_LLM_SHARDED_INFER,
+            "model_version": int(task.get("model_version") or 0),
+            "artifact_schema": validation.get("artifact_schema"),
+            "artifact_hash": validation.get("artifact_hash"),
+            "model_id": validation.get("model_id"),
+            "backend": validation.get("backend"),
+            "partition_mode": validation.get("partition_mode", REAL_LLM_PARTITION_MODE_FULL),
+            "stage_layer_range": list(validation.get("stage_layer_range") or []),
+            "stage_parameter_count": int(validation.get("stage_parameter_count", 0)),
+            "full_model_parameter_count": int(validation.get("full_model_parameter_count", 0)),
+            "stage_parameter_fraction": validation.get("stage_parameter_fraction"),
+            "device_parameter_count": int(validation.get("device_parameter_count", 0)),
+            "partition_parameter_split_valid": bool(validation.get("partition_parameter_split_valid", False)),
+            "stage_local_partition_ready": bool(validation.get("stage_local_partition_ready", False)),
+            "stage0_partition_loaded": bool(validation.get("stage0_partition_loaded", False)),
+            "stage1_partition_loaded": bool(validation.get("stage1_partition_loaded", False)),
+            "stage_gpu_memory_reduced": bool(validation.get("stage_gpu_memory_reduced", False)),
+            "stage_cpu_partition_ready": bool(validation.get("stage_cpu_partition_ready", False)),
+            "baseline_device": validation.get("baseline_device", ""),
+            "split_index": validation.get("split_index"),
+            "session_id": validation.get("session_id"),
+            "stage_id": stage_id,
+            "stage_count": 2,
+            "max_new_tokens": int(validation.get("max_new_tokens", 1)),
+            "generation_step": int(validation.get("generation_step", 0)),
+            "activation_count": int(validation.get("activation_count", 0)),
+            "activation_bytes": int(validation.get("activation_bytes", 0)),
+            "activation_hashes": list(validation.get("activation_hashes") or []),
+            "activation_transport_ready": bool(validation.get("activation_transport_ready", False)),
+            "real_llm_artifact_ready": bool(validation.get("real_llm_artifact_ready", False)),
+            "runtime_replay_performed": bool(validation.get("runtime_replay_performed", False)),
+            "remote_runtime_validation": bool(validation.get("remote_runtime_validation", False)),
+            "baseline_match": bool(validation.get("baseline_match", stage_id == 0)),
+            "decoded_tokens_match": bool(validation.get("decoded_tokens_match", stage_id == 0)),
+            "request_count": int(validation.get("request_count", 0)),
+            "generated_token_count": int(validation.get("generated_token_count", 0)),
+            "generated_token_ids": list(validation.get("generated_token_ids") or []),
+            "generated_text": validation.get("generated_text", ""),
+            "generated_text_hash": validation.get("generated_text_hash", ""),
+            "staleness": staleness,
+        } if validation["accepted"] else dict(validation)
+        event = {
+            "type": EVENT_TASK_COMPLETED if validation["accepted"] else EVENT_TASK_REJECTED,
+            "task_id": task["task_id"],
+            "attempt": attempt,
+            "lease_token": lease_token,
+            "miner_id": task.get("miner_id"),
+            "base_model_version": int(task["model_version"]),
+            "sharded_inference_result": (
+                validation.get("sharded_inference_result") if validation["accepted"] else sharded_inference_result
+            ),
+            "activation_results": validation.get("activation_results") if validation["accepted"] and stage_id == 0 else [],
+            "inference_result": validation.get("inference_result") if validation["accepted"] and stage_id == 1 else {},
+            "inference_results": validation.get("inference_results") if validation["accepted"] and stage_id == 1 else [],
+            "metrics": metrics or {},
+            "staleness": staleness,
+            "validation": validation,
+            "result_model_version": int(task.get("model_version") or 0),
+            "model_updated": False,
+            "model_bundle_updated": False,
+            "micro_transformer_updated": False,
+            "result_response": response,
+            **self._idempotency_event_fields(
+                idempotency_key,
+                lease_token=lease_token,
+            ),
+            "ts": now,
+        }
+        self._apply_task_event(self._append_event(event))
+        if validation["accepted"] and stage_id == 0:
+            self._create_real_llm_stage1_task_from_stage0(task["task_id"], validation)
+        if validation["accepted"] and stage_id == 1:
+            self._create_next_real_llm_stage0_task_from_stage1(task["task_id"], validation)
+        self.ensure_backlog()
+        if not validation["accepted"]:
+            raise ResultRejected(validation)
+        return response
+
+    def _create_real_llm_stage1_task_from_stage0(self, stage0_task_id: str, validation: dict) -> str:
+        stage0_task = self._tasks[stage0_task_id]
+        metadata = dict(stage0_task.get("workload_metadata") or {})
+        session_id = str(metadata.get("session_id") or validation.get("session_id") or "")
+        generation_step = int(metadata.get("generation_step", validation.get("generation_step", 0)))
+        for task in self._tasks.values():
+            task_metadata = task.get("workload_metadata") or {}
+            if (
+                self._workload_type(task) == WORKLOAD_REAL_LLM_SHARDED_INFER
+                and str(task_metadata.get("session_id")) == session_id
+                and int(task_metadata.get("stage_id", -1)) == 1
+                and int(task_metadata.get("generation_step", 0)) == generation_step
+            ):
+                return task["task_id"]
+        return self._create_task(
+            required_runtime=stage0_task.get("required_runtime", REQUIREMENT_ANY),
+            required_backend=stage0_task.get("required_backend", REQUIREMENT_ANY),
+            required_protocol_version=stage0_task.get("required_protocol_version", DEFAULT_PROTOCOL_VERSION),
+            workload_type=WORKLOAD_REAL_LLM_SHARDED_INFER,
+            inner_steps=int(stage0_task.get("inner_steps", 1)),
+            workload_metadata={
+                **metadata,
+                "stage_id": 1,
+                "stage_count": 2,
+                "parent_task_id": stage0_task_id,
+                "generation_step": generation_step,
+                "max_new_tokens": int(metadata.get("max_new_tokens", 1)),
+                "requests": list((stage0_task.get("claim_workload_spec") or {}).get("requests") or []),
+                "activation_results": validation.get("activation_results") or [],
+                "activation_hashes": validation.get("activation_hashes") or [],
+                "activation_bytes": int(validation.get("activation_bytes", 0)),
+                "artifact_schema": metadata.get("artifact_schema", ""),
+                "artifact_hash": metadata.get("artifact_hash", ""),
+                "model_id": metadata.get("model_id", self.real_llm_model_id),
+                "backend": metadata.get("backend", "hf_transformers_cpu"),
+                "partition_mode": metadata.get("partition_mode", REAL_LLM_PARTITION_MODE_FULL),
+                "split_index": metadata.get("split_index"),
+                "num_hidden_layers": metadata.get("num_hidden_layers"),
+                "hidden_size": metadata.get("hidden_size"),
+                "real_llm_artifact_ready": metadata.get("real_llm_artifact_ready", True),
+            },
+        )
+
+    def _create_next_real_llm_stage0_task_from_stage1(self, stage1_task_id: str, validation: dict) -> str:
+        stage1_task = self._tasks[stage1_task_id]
+        metadata = dict(stage1_task.get("workload_metadata") or {})
+        session_id = str(metadata.get("session_id") or validation.get("session_id") or "")
+        current_step = int(metadata.get("generation_step", validation.get("generation_step", 0)))
+        max_new_tokens = max(1, min(int(metadata.get("max_new_tokens", validation.get("max_new_tokens", 1))), 32))
+        next_step = current_step + 1
+        if next_step >= max_new_tokens:
+            return ""
+        results = list(validation.get("inference_results") or [])
+        if not results and isinstance(validation.get("inference_result"), dict):
+            results = [dict(validation["inference_result"])]
+        previous_requests = list(metadata.get("requests") or [])
+        next_requests: list[dict] = []
+        for index, previous in enumerate(previous_requests):
+            result = results[index] if index < len(results) and isinstance(results[index], dict) else {}
+            token_text = str(result.get("next_token_text") or "")
+            base_prompt = str(previous.get("prompt") or "")
+            generated_text = str(result.get("generated_text") or (str(previous.get("generated_text") or "") + token_text))
+            token_ids = list(result.get("generated_token_ids") or list(previous.get("generated_token_ids") or []))
+            next_requests.append({
+                "request_id": str(previous.get("request_id") or f"req-{index + 1}"),
+                "prompt": (base_prompt + token_text)[:256],
+                "prompt_hash": str(previous.get("prompt_hash") or ""),
+                "max_new_tokens": max_new_tokens,
+                "generated_token_ids": token_ids,
+                "generated_text": generated_text,
+                "generation_step": next_step,
+            })
+        for task in self._tasks.values():
+            task_metadata = task.get("workload_metadata") or {}
+            if (
+                self._workload_type(task) == WORKLOAD_REAL_LLM_SHARDED_INFER
+                and str(task_metadata.get("session_id")) == session_id
+                and int(task_metadata.get("stage_id", -1)) == 0
+                and int(task_metadata.get("generation_step", 0)) == next_step
+            ):
+                return task["task_id"]
+        return self._create_task(
+            required_runtime=stage1_task.get("required_runtime", REQUIREMENT_ANY),
+            required_backend=stage1_task.get("required_backend", REQUIREMENT_ANY),
+            required_protocol_version=stage1_task.get("required_protocol_version", DEFAULT_PROTOCOL_VERSION),
+            workload_type=WORKLOAD_REAL_LLM_SHARDED_INFER,
+            inner_steps=int(stage1_task.get("inner_steps", 1)),
+            workload_metadata={
+                **metadata,
+                "stage_id": 0,
+                "stage_count": 2,
+                "parent_task_id": stage1_task_id,
+                "generation_step": next_step,
+                "max_new_tokens": max_new_tokens,
+                "requests": next_requests,
+                "prompt_texts": [],
+                "activation_results": [],
+                "activation_hashes": [],
+                "activation_bytes": 0,
+                "artifact_schema": metadata.get("artifact_schema", ""),
+                "artifact_hash": metadata.get("artifact_hash", ""),
+                "model_id": metadata.get("model_id", self.real_llm_model_id),
+                "backend": metadata.get("backend", "hf_transformers_cpu"),
+                "partition_mode": metadata.get("partition_mode", REAL_LLM_PARTITION_MODE_FULL),
+                "split_index": metadata.get("split_index"),
+                "num_hidden_layers": metadata.get("num_hidden_layers"),
+                "hidden_size": metadata.get("hidden_size"),
+                "real_llm_artifact_ready": metadata.get("real_llm_artifact_ready", True),
+            },
+        )
+
     def reap_expired(self, *, now: float | None = None) -> list[str]:
         with self._lock:
             current = now_epoch() if now is None else float(now)
@@ -1452,6 +2176,8 @@ class StateStore:
                 "inference_results": [],
                 "external_llm_result": {},
                 "external_llm_results": [],
+                "sharded_inference_result": {},
+                "activation_results": [],
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1523,6 +2249,8 @@ class StateStore:
                 "inference_results": event.get("inference_results", []),
                 "external_llm_result": event.get("external_llm_result", {}),
                 "external_llm_results": event.get("external_llm_results", []),
+                "sharded_inference_result": event.get("sharded_inference_result", {}),
+                "activation_results": event.get("activation_results", []),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1554,6 +2282,8 @@ class StateStore:
                 "inference_results": event.get("inference_results", []),
                 "external_llm_result": event.get("external_llm_result", {}),
                 "external_llm_results": event.get("external_llm_results", []),
+                "sharded_inference_result": event.get("sharded_inference_result", {}),
+                "activation_results": event.get("activation_results", []),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
                 "result_lease_token_hash": event.get("result_lease_token_hash", ""),
@@ -1583,6 +2313,8 @@ class StateStore:
                 "inference_results": [],
                 "external_llm_result": {},
                 "external_llm_results": [],
+                "sharded_inference_result": {},
+                "activation_results": [],
                 "result_response": {},
                 "result_idempotency_key_hash": "",
                 "result_lease_token_hash": "",
@@ -1670,6 +2402,12 @@ class StateStore:
             "inference_results",
             "external_llm_result",
             "external_llm_results",
+            "sharded_inference_result",
+            "activation_result",
+            "activation_results",
+            "hidden_state",
+            "input_ids",
+            "logits",
             "output_text",
         ):
             public.pop(field, None)
@@ -1677,6 +2415,7 @@ class StateStore:
 
     def _public_task(self, task: dict) -> dict:
         public = dict(task)
+        workload_type = self._workload_type(task)
         if public.get("lease_token"):
             public["lease_token"] = "<redacted>"
         public.pop("result_idempotency_key_hash", None)
@@ -1687,14 +2426,32 @@ class StateStore:
         public.pop("inference_results", None)
         public.pop("external_llm_result", None)
         public.pop("external_llm_results", None)
+        public.pop("sharded_inference_result", None)
+        public.pop("activation_results", None)
+        if workload_type in {
+            WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+            WORKLOAD_MICRO_LLM_SHARDED_INFER,
+            WORKLOAD_REAL_LLM_SHARDED_INFER,
+        } and isinstance(public.get("workload_metadata"), dict):
+            metadata = dict(public["workload_metadata"])
+            metadata.pop("activation_results", None)
+            metadata.pop("activation_result", None)
+            metadata.pop("prompt_texts", None)
+            if workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER and isinstance(metadata.get("requests"), list):
+                requests = json.loads(json.dumps(metadata["requests"]))
+                for request in requests:
+                    if isinstance(request, dict) and "prompt" in request:
+                        request["prompt"] = "<redacted>"
+                metadata["requests"] = requests
+            public["workload_metadata"] = metadata
         public["claim_workload_spec"] = self._public_workload_spec(
             public.get("claim_workload_spec"),
-            workload_type=self._workload_type(task),
+            workload_type=workload_type,
         )
         public["metrics"] = self._public_metrics(public.get("metrics"))
         public["validation"] = self._public_validation(
             public.get("validation"),
-            workload_type=self._workload_type(task),
+            workload_type=workload_type,
         )
         return public
 
@@ -1708,6 +2465,42 @@ class StateStore:
                 for request in requests:
                     if isinstance(request, dict) and "prompt" in request:
                         request["prompt"] = "<redacted>"
+        if workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER:
+            requests = public.get("requests")
+            if isinstance(requests, list):
+                for request in requests:
+                    if isinstance(request, dict) and "prompt" in request:
+                        request["prompt"] = "<redacted>"
+            artifact = public.get("artifact")
+            if isinstance(artifact, dict):
+                public["artifact"] = {
+                    key: artifact.get(key)
+                    for key in (
+                        "schema",
+                        "model_id",
+                        "backend",
+                        "model_type",
+                        "num_hidden_layers",
+                        "hidden_size",
+                        "vocab_size",
+                        "split_index",
+                        "artifact_hash",
+                        "read_only",
+                    )
+                    if key in artifact
+                }
+        if workload_type in {
+            WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+            WORKLOAD_MICRO_LLM_SHARDED_INFER,
+            WORKLOAD_REAL_LLM_SHARDED_INFER,
+        }:
+            public.pop("weights", None)
+            public.pop("activation_results", None)
+            public.pop("activation_result", None)
+            public.pop("hidden_state", None)
+            public.pop("input_ids", None)
+            if "activation_hashes" in public:
+                public["activation_hashes"] = list(public.get("activation_hashes") or [])
         return public
 
     def _public_validation(self, validation: dict | None, *, workload_type: str) -> dict:
@@ -1720,6 +2513,12 @@ class StateStore:
             "inference_results",
             "external_llm_result",
             "external_llm_results",
+            "sharded_inference_result",
+            "activation_result",
+            "activation_results",
+            "hidden_state",
+            "input_ids",
+            "logits",
             "output_text",
         ):
             public.pop(field, None)
@@ -1736,6 +2535,10 @@ class StateStore:
         return {
             "event_index": int(task.get("result_event_index") or 0),
             "task_id": task["task_id"],
+            "session_id": (task.get("workload_metadata") or {}).get("session_id"),
+            "parent_task_id": (task.get("workload_metadata") or {}).get("parent_task_id"),
+            "stage_id": (task.get("validation") or {}).get("stage_id"),
+            "stage_count": (task.get("validation") or {}).get("stage_count"),
             "status": task.get("status"),
             "accepted": task.get("status") == STATUS_COMPLETED,
             "miner_id": miner_id,
@@ -1787,6 +2590,13 @@ class StateStore:
             "bundle_id",
             "base_bundle_version",
             "artifact_hash",
+            "artifact_schema",
+            "artifact_id",
+            "artifact_version",
+            "tokenizer_schema",
+            "backend",
+            "split_index",
+            "real_llm_artifact_ready",
             "predicted_token_id",
             "predicted_token",
             "target_token_id",
@@ -1807,6 +2617,22 @@ class StateStore:
             "adapter_kind",
             "model_id",
             "output_preview",
+            "session_id",
+            "stage_id",
+            "stage_count",
+            "max_new_tokens",
+            "generation_step",
+            "activation_count",
+            "activation_bytes",
+            "activation_hashes",
+            "activation_transport_ready",
+            "baseline_match",
+            "decoded_tokens_match",
+            "decode_steps",
+            "generated_token_count",
+            "generated_token_ids",
+            "generated_text",
+            "generated_text_hash",
         ]
         summary = {
             field: validation.get(field)
@@ -1832,6 +2658,17 @@ class StateStore:
             "requests_per_second",
             "adapter_kind",
             "model_id",
+            "backend",
+            "split_index",
+            "real_llm_artifact_ready",
+            "stage_id",
+            "stage_count",
+            "activation_count",
+            "activation_bytes",
+            "baseline_match",
+            "decoded_tokens_match",
+            "decode_steps",
+            "generated_token_count",
         ]
         return {
             field: metrics.get(field)
@@ -1891,6 +2728,12 @@ class StateStore:
                             "result_lease_token_hash",
                             "external_llm_result",
                             "external_llm_results",
+                            "sharded_inference_result",
+                            "activation_result",
+                            "activation_results",
+                            "hidden_state",
+                            "input_ids",
+                            "logits",
                             "output_text",
                         }
                         else redact(item)
@@ -1918,6 +2761,11 @@ class StateStore:
                     if "output_preview" in validation:
                         validation["output_preview"] = "<redacted>"
                     redacted["validation"] = validation
+                if isinstance(claim_spec, dict) and claim_spec.get("type") == WORKLOAD_REAL_LLM_SHARDED_INFER:
+                    redacted["claim_workload_spec"] = self._public_workload_spec(
+                        claim_spec,
+                        workload_type=WORKLOAD_REAL_LLM_SHARDED_INFER,
+                    )
                 return redacted
             if isinstance(value, list):
                 return [redact(item) for item in value]
@@ -1973,18 +2821,37 @@ class StateStore:
         return AUDIT_MODE_NONE
 
     def _model_version_for_task(self, task: dict) -> int:
-        if self._workload_type(task) == WORKLOAD_MICRO_TRANSFORMER_LM:
+        if self._workload_type(task) in {
+            WORKLOAD_MICRO_TRANSFORMER_LM,
+            WORKLOAD_MICRO_LLM_SHARDED_INFER,
+        }:
             return micro_transformer_version(self._model)
-        if self._workload_type(task) in {WORKLOAD_MODEL_BUNDLE_LM, WORKLOAD_MODEL_BUNDLE_INFER}:
+        if self._workload_type(task) == WORKLOAD_REAL_LLM_SHARDED_INFER:
+            return 0
+        if self._workload_type(task) in {
+            WORKLOAD_MODEL_BUNDLE_LM,
+            WORKLOAD_MODEL_BUNDLE_INFER,
+            WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+        }:
             return model_bundle_version(self._model)
         return int(self._model["version"])
 
     def _claim_weights_for_task(self, task: dict, workload_spec: dict) -> list[float]:
-        if self._workload_type(task) == WORKLOAD_EXTERNAL_LLM_INFER:
+        if self._workload_type(task) in {
+            WORKLOAD_EXTERNAL_LLM_INFER,
+            WORKLOAD_REAL_LLM_SHARDED_INFER,
+        }:
             return []
-        if self._workload_type(task) == WORKLOAD_MICRO_TRANSFORMER_LM:
+        if self._workload_type(task) in {
+            WORKLOAD_MICRO_TRANSFORMER_LM,
+            WORKLOAD_MICRO_LLM_SHARDED_INFER,
+        }:
             return list(workload_spec.get("weights", []))
-        if self._workload_type(task) in {WORKLOAD_MODEL_BUNDLE_LM, WORKLOAD_MODEL_BUNDLE_INFER}:
+        if self._workload_type(task) in {
+            WORKLOAD_MODEL_BUNDLE_LM,
+            WORKLOAD_MODEL_BUNDLE_INFER,
+            WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+        }:
             return list(workload_spec.get("weights", []))
         return list(self._model["weights"])
 
@@ -1999,7 +2866,13 @@ class StateStore:
     def _claim_contract(self, task: dict, miner_id: str, model_version: int) -> dict:
         audit_mode = task.get("audit_mode", AUDIT_MODE_NONE) or AUDIT_MODE_NONE
         optimizer_spec = self._optimizer_spec_for_task(task)
-        if self._workload_type(task) in {WORKLOAD_MODEL_BUNDLE_INFER, WORKLOAD_EXTERNAL_LLM_INFER}:
+        if self._workload_type(task) in {
+            WORKLOAD_MODEL_BUNDLE_INFER,
+            WORKLOAD_EXTERNAL_LLM_INFER,
+            WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
+            WORKLOAD_MICRO_LLM_SHARDED_INFER,
+            WORKLOAD_REAL_LLM_SHARDED_INFER,
+        }:
             claim_task = {**task, "miner_id": miner_id, "model_version": model_version}
             workload_spec = self._workload_spec(claim_task)
             return {
@@ -2096,7 +2969,7 @@ class StateStore:
         return self._merge_audit_validation(validation, audit, "model_bundle_delta_replay_mismatch")
 
     def _task_requirements(self, task: dict) -> dict:
-        return {
+        requirements = {
             "runtime": task.get("required_runtime", REQUIREMENT_ANY) or REQUIREMENT_ANY,
             "backend": task.get("required_backend", REQUIREMENT_ANY) or REQUIREMENT_ANY,
             "protocol_version": (
@@ -2104,6 +2977,10 @@ class StateStore:
                 or DEFAULT_PROTOCOL_VERSION
             ),
         }
+        stage_capability = self._required_stage_capability(task)
+        if stage_capability:
+            requirements["stage_capability"] = stage_capability
+        return requirements
 
     def _workload_type(self, task: dict) -> str:
         return task.get("workload_type", DEFAULT_WORKLOAD_TYPE) or DEFAULT_WORKLOAD_TYPE
@@ -2144,15 +3021,99 @@ class StateStore:
                 task.get("miner_id") or "anonymous",
                 request_count=int(task.get("inner_steps", 1)),
             )
+        if workload_type == WORKLOAD_SHARDED_MODEL_BUNDLE_INFER:
+            metadata = task.get("workload_metadata") or {}
+            return sharded_model_bundle_inference_spec_for(
+                task["task_id"],
+                task.get("miner_id") or "anonymous",
+                self._model.get("model_bundle", {}),
+                request_count=int(task.get("inner_steps", 1)),
+                scenario_id=metadata.get("scenario_id"),
+                session_id=str(metadata.get("session_id") or ""),
+                stage_id=int(metadata.get("stage_id", 0)),
+                parent_task_id=str(metadata.get("parent_task_id") or ""),
+                activation_results=list(metadata.get("activation_results") or []),
+            )
+        if workload_type == WORKLOAD_MICRO_LLM_SHARDED_INFER:
+            metadata = task.get("workload_metadata") or {}
+            return micro_llm_sharded_inference_spec_for(
+                task["task_id"],
+                task.get("miner_id") or "anonymous",
+                self._model.get("micro_transformer", {}),
+                request_count=int(task.get("inner_steps", 1)),
+                decode_steps=int(metadata.get("decode_steps", 1)),
+                session_id=str(metadata.get("session_id") or ""),
+                stage_id=int(metadata.get("stage_id", 0)),
+                parent_task_id=str(metadata.get("parent_task_id") or ""),
+                requests=list(metadata.get("requests") or []),
+                activation_results=list(metadata.get("activation_results") or []),
+            )
+        if workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER:
+            metadata = task.get("workload_metadata") or {}
+            artifact = self._real_llm_artifact_from_metadata(metadata) or self._real_llm_artifact_summary()
+            if isinstance(metadata, dict) and metadata.get("partition_mode"):
+                artifact["partition_mode"] = normalize_real_llm_partition_mode(metadata.get("partition_mode"))
+            return real_llm_sharded_inference_spec_for(
+                task["task_id"],
+                task.get("miner_id") or "anonymous",
+                artifact,
+                request_count=int(task.get("inner_steps", 1)),
+                prompt_texts=list(metadata.get("prompt_texts") or []),
+                session_id=str(metadata.get("session_id") or ""),
+                stage_id=int(metadata.get("stage_id", 0)),
+                parent_task_id=str(metadata.get("parent_task_id") or ""),
+                max_new_tokens=int(metadata.get("max_new_tokens", 1)),
+                generation_step=int(metadata.get("generation_step", 0)),
+                requests=list(metadata.get("requests") or []),
+                activation_results=list(metadata.get("activation_results") or []),
+            )
         return {"type": WORKLOAD_DILOCO_TRAIN}
+
+    def _real_llm_artifact_summary(self, backend: str | None = None) -> dict:
+        resolved_backend = normalize_real_llm_backend(backend or self.real_llm_backend)
+        cached = self._real_llm_artifact_cache.get(resolved_backend)
+        if cached is not None:
+            return dict(cached)
+        artifact = inspect_real_llm_artifact(
+            model_id=self.real_llm_model_id,
+            cache_dir=self.hf_cache_dir,
+            backend=resolved_backend,
+            require_runtime=resolved_backend != REAL_LLM_BACKEND_CUDA,
+        )
+        self._real_llm_artifact_cache[resolved_backend] = dict(artifact)
+        return dict(artifact)
+
+    def _real_llm_artifact_from_metadata(self, metadata: dict | None) -> dict:
+        if not isinstance(metadata, dict):
+            return {}
+        artifact_hash = str(metadata.get("artifact_hash") or "").strip()
+        model_id = str(metadata.get("model_id") or self.real_llm_model_id or DEFAULT_REAL_LLM_MODEL_ID).strip()
+        if not artifact_hash:
+            return {}
+        return {
+            "schema": str(metadata.get("artifact_schema") or "real_llm_artifact_v1"),
+            "artifact_hash": artifact_hash,
+            "model_id": model_id,
+            "backend": normalize_real_llm_backend(str(metadata.get("backend") or REAL_LLM_BACKEND_CPU)),
+            "partition_mode": normalize_real_llm_partition_mode(metadata.get("partition_mode") or REAL_LLM_PARTITION_MODE_FULL),
+            "model_type": str(metadata.get("model_type") or ""),
+            "split_index": int(metadata.get("split_index") or 1),
+            "num_hidden_layers": int(metadata.get("num_hidden_layers") or 2),
+            "hidden_size": int(metadata.get("hidden_size") or 1),
+            "vocab_size": int(metadata.get("vocab_size") or 0),
+            "read_only": True,
+        }
 
     def _requirement_key(self, task: dict) -> str:
         requirements = self._task_requirements(task)
-        return (
+        key = (
             f"{requirements['runtime']}/"
             f"{requirements['backend']}/"
             f"{requirements['protocol_version']}"
         )
+        if requirements.get("stage_capability"):
+            key = f"{key}/{requirements['stage_capability']}"
+        return key
 
     def _lane_key(self, task: dict) -> str:
         return f"{self._requirement_key(task)}/{self._workload_type(task)}"
@@ -2197,6 +3158,10 @@ class StateStore:
         if workload_type not in supported:
             return False
 
+        required_stage_capability = self._required_stage_capability(task)
+        if required_stage_capability and not self._miner_supports_stage_capability(capabilities, required_stage_capability):
+            return False
+
         if workload_type != WORKLOAD_DILOCO_TRAIN:
             return True
         expected_format = self._optimizer_spec_for_task(task).get("delta_format", DELTA_FORMAT_DENSE_FLOAT)
@@ -2208,6 +3173,114 @@ class StateStore:
         else:
             formats = {str(value) for value in supported_delta_formats}
         return expected_format in formats
+
+    def _required_stage_capability(self, task: dict) -> str:
+        workload_type = self._workload_type(task)
+        if workload_type not in {WORKLOAD_MICRO_LLM_SHARDED_INFER, WORKLOAD_REAL_LLM_SHARDED_INFER}:
+            return ""
+        metadata = task.get("workload_metadata") or {}
+        try:
+            stage_id = int(metadata.get("stage_id", 0))
+        except (TypeError, ValueError):
+            stage_id = 0
+        if workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER:
+            real_backend = str(metadata.get("backend") or REAL_LLM_BACKEND_CPU)
+            if stage_id == 0:
+                return (
+                    REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY
+                    if real_backend == REAL_LLM_BACKEND_CUDA
+                    else REAL_LLM_SHARDED_STAGE0_CAPABILITY
+                )
+            if stage_id == 1:
+                return (
+                    REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY
+                    if real_backend == REAL_LLM_BACKEND_CUDA
+                    else REAL_LLM_SHARDED_STAGE1_CAPABILITY
+                )
+            return ""
+        if stage_id == 0:
+            return MICRO_LLM_SHARDED_STAGE0_CAPABILITY
+        if stage_id == 1:
+            return MICRO_LLM_SHARDED_STAGE1_CAPABILITY
+        return ""
+
+    def _miner_supports_stage_capability(self, capabilities: dict, required_stage_capability: str) -> bool:
+        if required_stage_capability in {
+            REAL_LLM_SHARDED_STAGE0_CAPABILITY,
+            REAL_LLM_SHARDED_STAGE1_CAPABILITY,
+            REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+            REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+        }:
+            return self._miner_supports_real_llm_stage(capabilities, required_stage_capability)
+        return self._miner_supports_micro_llm_stage(capabilities, required_stage_capability)
+
+    def _miner_supports_micro_llm_stage(self, capabilities: dict, required_stage_capability: str) -> bool:
+        advertised = capabilities.get("micro_llm_sharded_stage_capabilities")
+        if advertised is None:
+            role = str(capabilities.get("micro_llm_sharded_stage_role") or "both").strip().lower()
+            advertised_set = {
+                "stage0": {MICRO_LLM_SHARDED_STAGE0_CAPABILITY},
+                "stage1": {MICRO_LLM_SHARDED_STAGE1_CAPABILITY},
+                "both": {
+                    MICRO_LLM_SHARDED_STAGE0_CAPABILITY,
+                    MICRO_LLM_SHARDED_STAGE1_CAPABILITY,
+                    MICRO_LLM_SHARDED_BOTH_CAPABILITY,
+                },
+            }.get(role)
+            if advertised_set is None:
+                advertised_set = {
+                    MICRO_LLM_SHARDED_STAGE0_CAPABILITY,
+                    MICRO_LLM_SHARDED_STAGE1_CAPABILITY,
+                    MICRO_LLM_SHARDED_BOTH_CAPABILITY,
+                }
+        elif isinstance(advertised, str):
+            advertised_set = {advertised}
+        else:
+            advertised_set = {str(value) for value in advertised}
+        return (
+            MICRO_LLM_SHARDED_BOTH_CAPABILITY in advertised_set
+            or required_stage_capability in advertised_set
+        )
+
+    def _miner_supports_real_llm_stage(self, capabilities: dict, required_stage_capability: str) -> bool:
+        advertised = capabilities.get("real_llm_sharded_stage_capabilities")
+        if advertised is None:
+            role = str(capabilities.get("real_llm_sharded_stage_role") or "both").strip().lower()
+            advertised_set = {
+                "stage0": {REAL_LLM_SHARDED_STAGE0_CAPABILITY},
+                "stage1": {REAL_LLM_SHARDED_STAGE1_CAPABILITY},
+                "both": {
+                    REAL_LLM_SHARDED_STAGE0_CAPABILITY,
+                    REAL_LLM_SHARDED_STAGE1_CAPABILITY,
+                    REAL_LLM_SHARDED_BOTH_CAPABILITY,
+                },
+            }.get(role)
+            if advertised_set is None:
+                advertised_set = {
+                    REAL_LLM_SHARDED_STAGE0_CAPABILITY,
+                    REAL_LLM_SHARDED_STAGE1_CAPABILITY,
+                    REAL_LLM_SHARDED_BOTH_CAPABILITY,
+                }
+        elif isinstance(advertised, str):
+            advertised_set = {advertised}
+        else:
+            advertised_set = {str(value) for value in advertised}
+        if required_stage_capability in {
+            REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+            REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+        }:
+            runtime = capabilities.get("real_llm_runtime") if isinstance(capabilities.get("real_llm_runtime"), dict) else {}
+            return (
+                str(runtime.get("adapter_kind") or "") == REAL_LLM_BACKEND_CUDA
+                and (
+                    REAL_LLM_SHARDED_CUDA_BOTH_CAPABILITY in advertised_set
+                    or required_stage_capability in advertised_set
+                )
+            )
+        return (
+            REAL_LLM_SHARDED_BOTH_CAPABILITY in advertised_set
+            or required_stage_capability in advertised_set
+        )
 
     def _validate_probe_result(self, probe_result: dict | None) -> dict:
         if not isinstance(probe_result, dict):
