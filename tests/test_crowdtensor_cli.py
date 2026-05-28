@@ -1326,6 +1326,61 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "public_swarm_inference_beta_rc_v1")
 
+    def test_public_swarm_product_beta_wraps_product_pack_and_redacts_tokens(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_product_beta_pack.py", command[1])
+            self.assertEqual(command[2], "external-existing")
+            self.assertIn("--coordinator-url", command)
+            self.assertIn("--observer-token", command)
+            self.assertIn("--admin-token", command)
+            return completed({
+                "schema": "public_swarm_product_beta_v1",
+                "ok": True,
+                "mode": "external-existing",
+                "diagnosis_codes": [
+                    "public_swarm_product_beta_ready",
+                    "observer-secret",
+                    "admin-secret",
+                ],
+            })
+
+        args = cli.parse_args([
+            "public-swarm-product-beta",
+            "external-existing",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "http://127.0.0.1:9999",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+        ])
+        summary = cli.build_public_swarm_product_beta(args, runner=fake_runner)
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "public_swarm_product_beta_v1")
+        self.assertEqual(summary["cli_schema"], "public_swarm_product_beta_cli_v1")
+        self.assertEqual(summary["mode"], "external-existing")
+        self.assertNotIn("observer-secret", serialized)
+        self.assertNotIn("admin-secret", serialized)
+        self.assertTrue(calls)
+
+    def test_main_public_swarm_product_beta_json_outputs_summary(self) -> None:
+        summary = {"schema": "public_swarm_product_beta_v1", "ok": True}
+        with patch.object(cli, "build_public_swarm_product_beta", return_value=summary), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["public-swarm-product-beta", "local-loopback", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "public_swarm_product_beta_v1")
+
     def test_public_swarm_gpu_beta_wraps_gpu_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
 

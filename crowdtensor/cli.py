@@ -62,6 +62,7 @@ PUBLIC_SWARM_INFERENCE_ALPHA_CLI_SCHEMA = "public_swarm_inference_alpha_cli_v1"
 PUBLIC_SWARM_INFERENCE_ALPHA_RC_CLI_SCHEMA = "public_swarm_inference_alpha_rc_cli_v1"
 PUBLIC_SWARM_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_inference_beta_cli_v1"
 PUBLIC_SWARM_INFERENCE_BETA_RC_CLI_SCHEMA = "public_swarm_inference_beta_rc_cli_v1"
+PUBLIC_SWARM_PRODUCT_BETA_CLI_SCHEMA = "public_swarm_product_beta_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
@@ -2539,6 +2540,102 @@ def build_public_swarm_inference_beta_rc(args: argparse.Namespace, *, runner: Ru
     })
 
 
+def build_public_swarm_product_beta(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "public_swarm_product_beta_mode", "local-loopback")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "public_swarm_product_beta_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--base-port",
+        str(args.base_port),
+        "--port",
+        str(args.port),
+        "--public-host",
+        args.public_host,
+        "--bind-host",
+        args.bind_host,
+        "--target",
+        args.target,
+        "--miner-id-prefix",
+        args.miner_id_prefix,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--gpu-report",
+        args.gpu_report,
+        "--prompt-text",
+        args.prompt_text,
+        "--scenario-id",
+        args.scenario_id,
+        "--request-count",
+        str(args.request_count),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--cpu-request-count",
+        str(args.cpu_request_count),
+        "--external-llm-request-count",
+        str(args.external_llm_request_count),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--remote-timeout-seconds",
+        str(args.remote_timeout_seconds),
+        "--cpu-timeout-seconds",
+        str(args.cpu_timeout_seconds),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--process-exit-timeout",
+        str(args.process_exit_timeout),
+        "--poll-interval",
+        str(args.poll_interval),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--json",
+    ]
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if args.coordinator_url:
+        command.extend(["--coordinator-url", args.coordinator_url])
+    if args.observer_token:
+        command.extend(["--observer-token", args.observer_token])
+    if args.admin_token:
+        command.extend(["--admin-token", args.admin_token])
+    secret_values = [getattr(args, "observer_token", ""), getattr(args, "admin_token", "")]
+    step, payload = run_json_step(
+        "public_swarm_product_beta",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.remote_timeout_seconds), float(args.cpu_timeout_seconds), 60.0) + 360.0,
+        redact_secrets=secret_values,
+    )
+    if payload:
+        payload = sanitize(redact_values(payload, secret_values))
+        payload.setdefault("cli_schema", PUBLIC_SWARM_PRODUCT_BETA_CLI_SCHEMA)
+        encoded = json.dumps(payload, sort_keys=True)
+        if any(secret and secret in encoded for secret in secret_values):
+            payload["ok"] = False
+            payload.setdefault("diagnosis_codes", [])
+            if "sensitive_output_detected" not in payload["diagnosis_codes"]:
+                payload["diagnosis_codes"].append("sensitive_output_detected")
+        return payload
+    return sanitize({
+        "schema": "public_swarm_product_beta_v1",
+        "cli_schema": PUBLIC_SWARM_PRODUCT_BETA_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["public_swarm_product_beta_failed"],
+        "limitations": [
+            "Coordinator-backed Public Swarm Product Beta; not production Swarm Inference",
+            "Does not provide libp2p, DHT, NAT traversal, GPU marketplace, large-model serving, training, payments, or staking",
+        ],
+    })
+
+
 def build_public_swarm_gpu_inference_beta(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -4140,6 +4237,20 @@ def print_public_swarm_inference_beta_rc(report: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
+    beta = report.get("product_beta") if isinstance(report.get("product_beta"), dict) else {}
+    print("CrowdTensor Public Swarm Product Beta")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  ready: {beta.get('ready')}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     print("CrowdTensor Public Swarm GPU Inference Beta")
@@ -4983,6 +5094,45 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     public_swarm_beta_rc.add_argument("--http-timeout", type=float, default=10.0)
     public_swarm_beta_rc.add_argument("--json", action="store_true")
 
+    public_swarm_product_beta = subparsers.add_parser(
+        "public-swarm-product-beta",
+        help="Build the user-facing Public Swarm Product Beta artifact.",
+    )
+    public_swarm_product_beta.add_argument("public_swarm_product_beta_mode", choices=["local-loopback", "package", "external-existing"])
+    public_swarm_product_beta.add_argument("--output-dir", default="dist/public-swarm-product-beta")
+    public_swarm_product_beta.add_argument("--base-port", type=int, default=9320)
+    public_swarm_product_beta.add_argument("--port", type=int, default=9320)
+    public_swarm_product_beta.add_argument("--public-host", default="127.0.0.1")
+    public_swarm_product_beta.add_argument("--bind-host", default="127.0.0.1")
+    public_swarm_product_beta.add_argument("--coordinator-url", default="")
+    public_swarm_product_beta.add_argument("--target", choices=["local", "kaggle"], default="local")
+    public_swarm_product_beta.add_argument("--miner-id-prefix", default="public-swarm-product-beta")
+    public_swarm_product_beta.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    public_swarm_product_beta.add_argument("--hf-cache-dir", default="")
+    public_swarm_product_beta.add_argument(
+        "--gpu-report",
+        default=(
+            "dist/gpu-sharded-generation-beta-kaggle-20260528095658/"
+            "gpu_sharded_generation_beta_kaggle_auto.json"
+        ),
+    )
+    public_swarm_product_beta.add_argument("--prompt-text", default="CrowdTensor product beta")
+    public_swarm_product_beta.add_argument("--scenario-id", default="route-baseline")
+    public_swarm_product_beta.add_argument("--request-count", type=int, default=1)
+    public_swarm_product_beta.add_argument("--max-new-tokens", type=int, default=2)
+    public_swarm_product_beta.add_argument("--cpu-request-count", type=int, default=1)
+    public_swarm_product_beta.add_argument("--external-llm-request-count", type=int, default=1)
+    public_swarm_product_beta.add_argument("--observer-token", default="")
+    public_swarm_product_beta.add_argument("--admin-token", default="")
+    public_swarm_product_beta.add_argument("--timeout-seconds", type=float, default=300.0)
+    public_swarm_product_beta.add_argument("--remote-timeout-seconds", type=float, default=180.0)
+    public_swarm_product_beta.add_argument("--cpu-timeout-seconds", type=float, default=180.0)
+    public_swarm_product_beta.add_argument("--startup-timeout", type=float, default=45.0)
+    public_swarm_product_beta.add_argument("--process-exit-timeout", type=float, default=20.0)
+    public_swarm_product_beta.add_argument("--poll-interval", type=float, default=1.0)
+    public_swarm_product_beta.add_argument("--http-timeout", type=float, default=10.0)
+    public_swarm_product_beta.add_argument("--json", action="store_true")
+
     public_swarm_gpu_beta = subparsers.add_parser(
         "public-swarm-gpu-beta",
         help="Prepare, smoke-check, or validate optional CUDA Public Swarm Inference Beta.",
@@ -5369,7 +5519,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_demo_kaggle_real.add_argument("--task-id", default="")
     remote_demo_kaggle_real.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if args.command in {"local-proof", "serve", "join", "generate", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-gpu-beta", "gpu-generate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "serve", "join", "generate", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-swarm-gpu-beta", "gpu-generate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -5567,6 +5717,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             if getattr(args, name) <= 0:
                 raise SystemExit(f"--{name.replace('_', '-')} must be positive")
         if args.public_swarm_beta_rc_mode == "external-existing":
+            missing = [
+                name for name in ["coordinator_url", "observer_token", "admin_token"]
+                if not getattr(args, name)
+            ]
+            if missing:
+                raise SystemExit(f"external-existing requires: {', '.join('--' + item.replace('_', '-') for item in missing)}")
+    if args.command == "public-swarm-product-beta":
+        if args.request_count < 1 or args.request_count > 4:
+            raise SystemExit("--request-count must be between 1 and 4")
+        if args.cpu_request_count < 1 or args.cpu_request_count > 4:
+            raise SystemExit("--cpu-request-count must be between 1 and 4")
+        if args.external_llm_request_count < 1 or args.external_llm_request_count > 4:
+            raise SystemExit("--external-llm-request-count must be between 1 and 4")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        if args.base_port < 1 or args.port < 1:
+            raise SystemExit("--base-port and --port must be positive")
+        for name in [
+            "timeout_seconds",
+            "remote_timeout_seconds",
+            "cpu_timeout_seconds",
+            "startup_timeout",
+            "process_exit_timeout",
+            "poll_interval",
+            "http_timeout",
+        ]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+        if args.public_swarm_product_beta_mode == "external-existing":
             missing = [
                 name for name in ["coordinator_url", "observer_token", "admin_token"]
                 if not getattr(args, name)
@@ -6032,6 +6211,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(summary, sort_keys=True))
         else:
             print_public_swarm_inference_beta_rc(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "public-swarm-product-beta":
+        summary = build_public_swarm_product_beta(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_public_swarm_product_beta(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "public-swarm-gpu-beta":
         summary = build_public_swarm_gpu_inference_beta(args)

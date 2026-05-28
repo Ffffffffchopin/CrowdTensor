@@ -82,6 +82,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "public_swarm_inference_alpha_rc_docs",
                 "public_swarm_inference_beta_docs",
                 "public_swarm_inference_beta_rc_docs",
+                "public_swarm_product_beta_docs",
                 "public_swarm_gpu_inference_beta_docs",
                 "release_materials",
                 "open_source_entrypoints",
@@ -1050,6 +1051,38 @@ class ReleaseGateTests(unittest.TestCase):
         ci_details = failed_details(report, "ci_workflow")
         self.assertTrue(any("Public Swarm Inference Beta RC package" in detail for detail in ci_details))
         self.assertTrue(any("Public Swarm Inference Beta RC external-existing" in detail for detail in ci_details))
+
+    def test_public_swarm_product_beta_docs_must_describe_user_product_path(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No Public Swarm Product Beta docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "public_swarm_product_beta_docs")
+        self.assertTrue(any("public_swarm_product_beta_v1" in detail for detail in details))
+        self.assertTrue(any("public_swarm_product_beta_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor public-swarm-product-beta" in detail for detail in details))
+        self.assertTrue(any("serve_ready" in detail for detail in details))
+        self.assertTrue(any("stage0_join_ready" in detail for detail in details))
+        self.assertTrue(any("support_bundle_ready" in detail for detail in details))
+        self.assertTrue(any("private_artifacts_cleaned" in detail for detail in details))
+        ci_details = failed_details(report, "ci_workflow")
+        self.assertTrue(any("Public Swarm Product Beta package" in detail for detail in ci_details))
+        self.assertTrue(any("Public Swarm Product Beta external-existing" in detail for detail in ci_details))
 
     def test_public_swarm_gpu_inference_beta_docs_must_describe_optional_cuda_beta(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

@@ -198,6 +198,20 @@ python scripts/public_swarm_inference_beta_check.py --mode local-loopback --base
 
 `crowdtensor public-swarm-beta` emits `public_swarm_inference_beta_v1` through `scripts/public_swarm_inference_beta_pack.py` and is checked by `scripts/public_swarm_inference_beta_check.py`. `product-beta` should report `public_swarm_product_beta_ready`, `public_swarm_product_rc_ready`, `coordinator_product_surface_ready`, `session_protocol_ready`, `p2p_lite_discovery_ready`, `gpu_generation_evidence_import_ready`, `cpu_fallback_ready`, and `local_cpu_inference_ready`. It aggregates `crowdtensor serve`, `crowdtensor join`, `crowdtensor generate`, `crowdtensor peer`, `session_protocol_v1`, `p2p_lite_peer_v1`, retained GPU sharded generation evidence, and a CPU inference fallback into one shareable Beta artifact. `public-swarm-beta local-loopback` still reports `two_stage_split_inference_ready`, `local_loopback_ready`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`; `public-swarm-beta evidence-import` still reports `public_swarm_beta_evidence_import_ready`, `external_live_evidence_imported`, `stage0_live_requeue_evidence_ready`, and `stage1_live_requeue_evidence_ready`. Operator runs use `prepare`, `coordinator`, `miner --stage stage0`, `miner --stage stage1`, `verify`, `collect`, and dry-run `clean`. This remains Coordinator-backed, read-only, not production Swarm Inference, not libp2p/DHT/NAT traversal, not Hivemind-level serving, and not large-model serving.
 
+Use Public Swarm Product Beta when you need the ordinary user-facing path rather than a release-candidate aggregate:
+
+```bash
+python -m pip install -e '.[hf]'
+crowdtensor public-swarm-product-beta local-loopback --base-port 9320 --max-new-tokens 2 --json
+crowdtensor public-swarm-product-beta package --target kaggle --json
+crowdtensor public-swarm-product-beta external-existing --coordinator-url https://YOUR_COORDINATOR_HOST --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" --admin-token "$CROWDTENSOR_ADMIN_TOKEN" --json
+python scripts/public_swarm_product_beta_check.py --mode local-loopback --json
+python scripts/public_swarm_product_beta_check.py --mode package --target kaggle --json
+python scripts/public_swarm_product_beta_check.py --mode external-existing --json
+```
+
+`crowdtensor public-swarm-product-beta` emits `public_swarm_product_beta_v1` through `scripts/public_swarm_product_beta_pack.py` and is checked by `scripts/public_swarm_product_beta_check.py`. A ready local user path reports `public_swarm_product_beta_ready`, `public_swarm_product_beta_user_path_ready`, `serve_ready`, `stage0_join_ready`, `stage1_join_ready`, `generate_ready`, `support_bundle_ready`, `private_artifacts_cleaned`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`. Use `package` for two-machine or Kaggle join material with `private_artifacts_local_only` and `miner_join_pack_ready`; use `external-existing` only for an already running controlled runtime. Missing optional `[hf]` dependencies should report `hf_dependencies_missing`. It is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 Use Public Swarm Inference Beta RC when you need one release-candidate artifact over the product path:
 
 ```bash
