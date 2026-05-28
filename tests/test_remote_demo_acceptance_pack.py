@@ -334,6 +334,39 @@ class RemoteDemoAcceptancePackTests(unittest.TestCase):
         self.assertEqual(report["observability_summary"]["session_request"]["task_id"], "task-created")
         self.assertEqual(report["observability_summary"]["work_queue"]["expected_task_id"], "task-created")
 
+    def test_collect_artifacts_pins_evidence_to_created_session_task(self) -> None:
+        args = self._args()
+        args.session_task_id = "task-created"
+        args.output_dir = "dist/test-acceptance"
+        commands: list[list[str]] = []
+
+        def fake_run_json_command(command: list[str], *, timeout: float) -> dict:
+            commands.append(command)
+            if "remote_compute_evidence_pack.py" in command[1]:
+                return {
+                    "ok": True,
+                    "payload": {
+                        "schema": "remote_compute_evidence_v1",
+                        "ok": True,
+                        "route_decision": {"name": "remote_python_model_bundle_infer"},
+                        "inference_summary": {"scenario_matches": True},
+                        "safety": {},
+                        "observability_summary": {},
+                    },
+                }
+            return {"ok": True, "payload": {"online": {"enabled": True}}}
+
+        original = remote_demo_acceptance_pack.run_json_command
+        try:
+            remote_demo_acceptance_pack.run_json_command = fake_run_json_command
+            remote_demo_acceptance_pack.collect_artifacts(args)
+        finally:
+            remote_demo_acceptance_pack.run_json_command = original
+
+        evidence_command = commands[0]
+        self.assertIn("--task-id", evidence_command)
+        self.assertEqual(evidence_command[evidence_command.index("--task-id") + 1], "task-created")
+
     def test_create_session_mode_ignores_old_result_without_matching_task_id(self) -> None:
         state = self._state()
         state["tasks"][0]["task_id"] = "old-task"

@@ -219,6 +219,36 @@ class RemoteComputeEvidencePackTests(unittest.TestCase):
         self.assertEqual(evidence["inference_summary"]["expected_scenario_id"], "route-baseline")
         self.assertFalse(evidence["inference_summary"]["scenario_matches"])
 
+    def test_build_evidence_can_pin_to_specific_session_task(self) -> None:
+        state = self._state()
+        old_task = json.loads(json.dumps(state["tasks"][0]))
+        old_task["task_id"] = "old-task"
+        old_task["validation"]["scenario_id"] = "mixed-prompts"
+        state["tasks"].insert(0, old_task)
+        ledger = self._ledger()
+        old_row = json.loads(json.dumps(ledger["results"][0]))
+        old_row["task_id"] = "old-task"
+        old_row["validation"]["scenario_id"] = "mixed-prompts"
+        ledger["results"].insert(0, old_row)
+
+        evidence = remote_compute_evidence_pack.build_evidence(
+            mode="collect",
+            base_url="https://coordinator.example",
+            miner_id="remote-a",
+            state=state,
+            ledger={"results": [ledger["results"][1]]},
+            miner_summary=None,
+            request_count=4,
+            scenario_id="route-baseline",
+            task_id="task-1",
+            generated_at="2026-05-22T00:00:00+00:00",
+        )
+
+        self.assertTrue(evidence["ok"])
+        self.assertEqual(evidence["workload"]["task_id"], "task-1")
+        self.assertEqual(evidence["workload"]["expected_task_id"], "task-1")
+        self.assertTrue(evidence["inference_summary"]["scenario_matches"])
+
     def test_markdown_renders_remote_sections(self) -> None:
         evidence = remote_compute_evidence_pack.build_evidence(
             mode="local-loopback",

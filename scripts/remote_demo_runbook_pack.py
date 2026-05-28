@@ -31,7 +31,10 @@ import support_bundle  # noqa: E402
 
 
 RUNBOOK_SCHEMA = "remote_demo_runbook_v1"
+MINER_JOIN_SCHEMA = "miner_join_pack_v1"
 WORKLOAD_TYPE = "model_bundle_infer"
+TARGET_GENERIC = "generic"
+TARGET_KAGGLE = "kaggle"
 
 
 def utc_now() -> str:
@@ -135,6 +138,256 @@ def build_commands(args: argparse.Namespace, *, observer_hash: str, admin_hash: 
     }
 
 
+def kaggle_commands(args: argparse.Namespace) -> dict[str, str]:
+    coordinator_url = args.coordinator_url.rstrip("/")
+    return {
+        "upload_files": "Upload miner.private.env and kaggle_remote_miner.py to the Kaggle Notebook input or working directory.",
+        "install_checkout": "python -m pip install -e .",
+        "start_kaggle_miner": (
+            "python kaggle_remote_miner.py "
+            f"--coordinator {coordinator_url} "
+            f"--miner-id {args.miner_id} "
+            "--env-file miner.private.env"
+        ),
+    }
+
+
+def render_miner_join_script(args: argparse.Namespace) -> str:
+    coordinator_url = args.coordinator_url.rstrip("/")
+    target = getattr(args, "target", TARGET_GENERIC)
+    remote_environment = "kaggle" if target == TARGET_KAGGLE else "generic"
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="${{CROWDTENSOR_MINER_ENV_FILE:-miner.private.env}}"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "missing Miner env file: $ENV_FILE" >&2
+  exit 2
+fi
+
+set -a
+. "$ENV_FILE"
+set +a
+
+export CROWDTENSOR_REMOTE_ENVIRONMENT="${{CROWDTENSOR_REMOTE_ENVIRONMENT:-{remote_environment}}}"
+exec crowdtensor-miner \\
+  --coordinator {coordinator_url!r} \\
+  --miner-id {args.miner_id!r} \\
+  --max-tasks {args.max_tasks} \\
+  --compute-seconds {args.compute_seconds} \\
+  --heartbeat-interval {args.heartbeat_interval} \\
+  --max-request-attempts {args.max_request_attempts}
+'''
+
+
+def miner_join_pack(args: argparse.Namespace, *, target_environment: dict[str, Any]) -> dict[str, Any]:
+    target = getattr(args, "target", TARGET_GENERIC)
+    return {
+        "schema": MINER_JOIN_SCHEMA,
+        "ready": True,
+        "target": target_environment.get("name") or TARGET_GENERIC,
+        "remote_environment": target_environment.get("remote_environment") or TARGET_GENERIC,
+        "workload_type": WORKLOAD_TYPE,
+        "route": "remote_python_model_bundle_infer",
+        "miner_id": args.miner_id,
+        "private_files_required": ["miner.private.env"],
+        "operator_files_forbidden": ["operator.private.env", "miner_registry.json"],
+        "generated_files": {
+            "join_script": "miner_join.sh",
+            "join_runbook": "MINER_JOIN.md",
+            "kaggle_script": "kaggle_remote_miner.py" if target == TARGET_KAGGLE else "",
+        },
+        "recommended_command": "bash miner_join.sh",
+        "kaggle_command": "python kaggle_remote_miner.py --env-file miner.private.env" if target == TARGET_KAGGLE else "",
+        "safety": {
+            "token_values_in_public_artifacts": False,
+            "operator_env_required_on_miner": False,
+            "miner_outbound_only": target == TARGET_KAGGLE,
+            "requires_operator_provided_transport": True,
+        },
+        "boundaries": {
+            "cpu_only": True,
+            "read_only": True,
+            "task_level_remote_inference": True,
+            "not_model_sharding": True,
+            "not_p2p": True,
+            "not_production": True,
+        },
+    }
+
+
+def render_miner_join_markdown(payload: dict[str, Any]) -> str:
+    demo = payload.get("demo") or {}
+    miner = payload.get("miner") or {}
+    join = payload.get("miner_join_pack") or {}
+    target = payload.get("target_environment") or {}
+    lines = [
+        "# CrowdTensor Miner Join Pack",
+        "",
+        f"Schema: `{join.get('schema', MINER_JOIN_SCHEMA)}`",
+        f"Coordinator URL: `{demo.get('coordinator_url', '')}`",
+        f"Miner ID: `{miner.get('miner_id', '')}`",
+        f"Target: `{target.get('name', TARGET_GENERIC)}`",
+        f"Workload: `{demo.get('workload_type', WORKLOAD_TYPE)}`",
+        f"Route: `{demo.get('route', 'remote_python_model_bundle_infer')}`",
+        "",
+        "## Miner Host Steps",
+        "",
+        "1. Copy only `miner.private.env`, `miner_join.sh`, and this file to the Miner host.",
+        "2. Install CrowdTensor from this checkout or package.",
+        "3. Run the generated join command.",
+        "",
+        "```bash",
+        join.get("recommended_command") or "bash miner_join.sh",
+        "```",
+        "",
+    ]
+    if join.get("kaggle_command"):
+        lines.extend([
+            "## Kaggle CPU Runtime",
+            "",
+            "Upload only `miner.private.env` and `kaggle_remote_miner.py`, then run:",
+            "",
+            "```bash",
+            str(join.get("kaggle_command")),
+            "```",
+            "",
+        ])
+    lines.extend([
+        "## Do Not Copy",
+        "",
+        "- `operator.private.env`",
+        "- `miner_registry.json`",
+        "",
+        "## Boundaries",
+        "",
+        "- CPU-only, read-only task-level remote inference.",
+        "- Not production Swarm Inference, not model sharding, not P2P, and not GPU/TPU pooling.",
+        "- Real two-machine use still requires operator-provided TLS, VPN, tunnel, or trusted network.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def render_kaggle_miner_script(args: argparse.Namespace) -> str:
+    coordinator_url = args.coordinator_url.rstrip("/")
+    return f'''#!/usr/bin/env python3
+"""Kaggle Remote Miner Beta launcher for CrowdTensor.
+
+Upload this file and miner.private.env into a Kaggle Notebook attached to the
+CrowdTensor checkout, then run this script from the notebook. It only starts an
+outbound CPU-only Miner; it does not expose a Coordinator from Kaggle.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+
+DEFAULT_COORDINATOR = {coordinator_url!r}
+DEFAULT_MINER_ID = {args.miner_id!r}
+
+
+def load_env(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {{}}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        if "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        parsed = shlex.split(raw_value)
+        values[key] = parsed[0] if parsed else ""
+    return values
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run a Kaggle-hosted CrowdTensor remote Miner.")
+    parser.add_argument("--coordinator", default=os.environ.get("CROWDTENSOR_COORDINATOR_URL", DEFAULT_COORDINATOR))
+    parser.add_argument("--miner-id", default=os.environ.get("CROWDTENSOR_MINER_ID", DEFAULT_MINER_ID))
+    parser.add_argument("--env-file", default=os.environ.get("CROWDTENSOR_MINER_ENV_FILE", "miner.private.env"))
+    parser.add_argument("--max-tasks", type=int, default=int(os.environ.get("CROWDTENSOR_MAX_TASKS", "1")))
+    parser.add_argument("--compute-seconds", type=float, default=float(os.environ.get("CROWDTENSOR_COMPUTE_SECONDS", "0.2")))
+    parser.add_argument("--heartbeat-interval", type=float, default=float(os.environ.get("CROWDTENSOR_HEARTBEAT_INTERVAL", "0.1")))
+    parser.add_argument("--max-request-attempts", type=int, default=int(os.environ.get("CROWDTENSOR_MAX_REQUEST_ATTEMPTS", "5")))
+    args = parser.parse_args()
+
+    env_file = Path(args.env_file)
+    if not env_file.is_file():
+        raise SystemExit(f"missing Miner env file: {{env_file}}")
+    env = os.environ.copy()
+    env.update(load_env(env_file))
+    env["CROWDTENSOR_REMOTE_ENVIRONMENT"] = "kaggle"
+    env.setdefault("PYTHONUNBUFFERED", "1")
+
+    command = [
+        "crowdtensor-miner",
+        "--coordinator",
+        args.coordinator,
+        "--miner-id",
+        args.miner_id,
+        "--max-tasks",
+        str(args.max_tasks),
+        "--compute-seconds",
+        str(args.compute_seconds),
+        "--heartbeat-interval",
+        str(args.heartbeat_interval),
+        "--max-request-attempts",
+        str(args.max_request_attempts),
+    ]
+    print("Starting Kaggle remote Miner:", " ".join(command), flush=True)
+    return subprocess.call(command, env=env)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
+def render_kaggle_markdown(payload: dict[str, Any]) -> str:
+    demo = payload.get("demo") or {}
+    target = payload.get("target_environment") or {}
+    commands = payload.get("kaggle_commands") or {}
+    lines = [
+        "# CrowdTensor Kaggle Remote Miner Beta",
+        "",
+        f"Generated: `{payload.get('generated_at', '')}`",
+        f"Coordinator URL: `{demo.get('coordinator_url', '')}`",
+        f"Miner ID: `{(payload.get('miner') or {}).get('miner_id', '')}`",
+        f"Target: `{target.get('name', '')}`",
+        "",
+        "## Kaggle Notebook Steps",
+        "",
+        "1. Create a Kaggle Notebook with Internet enabled.",
+        "2. Upload only `miner.private.env` and `kaggle_remote_miner.py` to the notebook working directory or attach them as private input files.",
+        "3. Install this CrowdTensor checkout in the notebook.",
+        "4. Run the generated Kaggle Miner command.",
+        "",
+        "## Commands",
+        "",
+    ]
+    for name, command in commands.items():
+        lines.extend([f"### {name}", "", "```bash", command, "```", ""])
+    lines.extend([
+        "## Boundaries",
+        "",
+        "- Kaggle is used as an outbound remote Miner environment; it is not the production network substrate.",
+        "- This Beta is CPU-only and read-only for `model_bundle_infer`.",
+        "- GPU/TPU visibility may be recorded as runtime hints, but no GPU/TPU workload is enabled by this path.",
+        "- Do not paste `operator.private.env` into Kaggle.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def build_runbook(
     *,
     args: argparse.Namespace,
@@ -147,6 +400,15 @@ def build_runbook(
 ) -> dict[str, Any]:
     commands = build_commands(args, observer_hash=observer_hash, admin_hash=admin_hash)
     scenario = inference_scenario_summary(args.scenario_id)
+    target = getattr(args, "target", TARGET_GENERIC)
+    target_environment = {
+        "name": target,
+        "remote_environment": "kaggle" if target == TARGET_KAGGLE else "generic",
+        "kaggle_remote_miner_beta": target == TARGET_KAGGLE,
+        "coordinator_in_kaggle": False,
+        "miner_outbound_only": target == TARGET_KAGGLE,
+        "gpu_tpu_workload_enabled": False,
+    }
     payload = {
         "schema": RUNBOOK_SCHEMA,
         "generated_at": generated_at or utc_now(),
@@ -164,10 +426,15 @@ def build_runbook(
             "scenario_request_count": scenario.get("scenario_request_count"),
             "route": "remote_python_model_bundle_infer",
         },
+        "target_environment": target_environment,
         "files": {
             "registry": str(Path(args.registry)),
             "operator_private_env": str(operator_env_path),
             "miner_private_env": str(miner_env_path),
+            "miner_join_script": str(Path(args.output_dir) / "miner_join.sh"),
+            "miner_join_runbook": str(Path(args.output_dir) / "MINER_JOIN.md"),
+            "kaggle_miner_script": str(Path(args.output_dir) / "kaggle_remote_miner.py") if target == TARGET_KAGGLE else "",
+            "kaggle_runbook": str(Path(args.output_dir) / "kaggle_remote_miner.md") if target == TARGET_KAGGLE else "",
         },
         "tokens": {
             "miner_registry_hashed": str(invite.get("token_hash", "")).startswith("sha256:"),
@@ -182,6 +449,8 @@ def build_runbook(
             "max_request_attempts": args.max_request_attempts,
         },
         "commands": commands,
+        "miner_join_pack": miner_join_pack(args, target_environment=target_environment),
+        "kaggle_commands": kaggle_commands(args) if target == TARGET_KAGGLE else {},
         "operator_steps": [
             "Copy only miner.private.env to the remote Miner host.",
             "Run the security preflight command on the Coordinator host.",
@@ -190,17 +459,25 @@ def build_runbook(
             "After at least one accepted result, collect remote_compute_evidence_v1.",
             f"Keep --scenario-id {args.scenario_id} consistent across acceptance and evidence collection.",
         ],
+        "kaggle_steps": [
+            "Keep operator.private.env on the Coordinator/operator side.",
+            "Upload only miner.private.env and kaggle_remote_miner.py to the Kaggle Notebook.",
+            "Run Kaggle as an outbound Miner; do not try to expose a Coordinator from Kaggle in this Beta.",
+            "Run crowdtensor remote-demo doctor/verify/collect from the operator host.",
+        ] if target == TARGET_KAGGLE else [],
         "safety": {
             "public_artifact_redacted": True,
             "private_env_files": True,
             "registry_hashed": str(invite.get("token_hash", "")).startswith("sha256:"),
             "requires_tls_or_vpn": True,
             "raw_tokens_in_public_report": False,
+            "kaggle_operator_env_excluded": target == TARGET_KAGGLE,
         },
         "limitations": [
             "Controlled two-machine demo; not public-internet hardening",
             "CPU-only model_bundle_infer path; not GPU pooling or production LLM serving",
             "No P2P discovery, NAT traversal, decentralized identity, or incentives are claimed",
+            "Kaggle target records accelerator visibility only as hints; GPU/TPU workloads are not enabled",
         ],
     }
     return support_bundle.sanitize(payload)
@@ -211,6 +488,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
     files = payload.get("files") or {}
     tokens = payload.get("tokens") or {}
     safety = payload.get("safety") or {}
+    target = payload.get("target_environment") or {}
     lines = [
         "# CrowdTensor Remote Demo Runbook",
         "",
@@ -225,18 +503,36 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Request count: `{demo.get('request_count')}`",
         f"- Scenario: `{demo.get('scenario_id')}`",
         f"- Scenario schema: `{demo.get('scenario_schema')}`",
+        f"- Target: `{target.get('name', 'generic')}`",
         "",
         "## Files",
         "",
         f"- Registry: `{files.get('registry', '')}`",
         f"- Operator env: `{files.get('operator_private_env', '')}`",
         f"- Miner env: `{files.get('miner_private_env', '')}`",
+        f"- Miner join script: `{files.get('miner_join_script', '')}`",
+        f"- Miner join runbook: `{files.get('miner_join_runbook', '')}`",
+        f"- Kaggle Miner script: `{files.get('kaggle_miner_script', '')}`",
+        f"- Kaggle runbook: `{files.get('kaggle_runbook', '')}`",
         "",
         "## Commands",
         "",
     ]
     for name, command in (payload.get("commands") or {}).items():
         lines.extend([f"### {name}", "", "```bash", command, "```", ""])
+    if payload.get("kaggle_commands"):
+        lines.extend(["## Kaggle Remote Miner", ""])
+        for name, command in (payload.get("kaggle_commands") or {}).items():
+            lines.extend([f"### {name}", "", "```bash", command, "```", ""])
+    if payload.get("miner_join_pack"):
+        lines.extend([
+            "## Miner Join Pack",
+            "",
+            f"- Schema: `{(payload.get('miner_join_pack') or {}).get('schema')}`",
+            f"- Command: `{(payload.get('miner_join_pack') or {}).get('recommended_command')}`",
+            "- Copy only `miner.private.env` and generated join files to the Miner host.",
+            "",
+        ])
     lines.extend([
         "## Safety",
         "",
@@ -283,7 +579,7 @@ def build_from_args(args: argparse.Namespace) -> dict[str, Any]:
     write_private_env(miner_env_path, {
         "CROWDTENSOR_MINER_TOKEN": miner_token,
     })
-    return build_runbook(
+    payload = build_runbook(
         args=args,
         invite=invite,
         observer_hash=observer_hash,
@@ -291,6 +587,18 @@ def build_from_args(args: argparse.Namespace) -> dict[str, Any]:
         operator_env_path=operator_env_path,
         miner_env_path=miner_env_path,
     )
+    if getattr(args, "target", TARGET_GENERIC) == TARGET_KAGGLE:
+        script_path = output_dir / "kaggle_remote_miner.py"
+        runbook_path = output_dir / "kaggle_remote_miner.md"
+        script_path.write_text(render_kaggle_miner_script(args), encoding="utf-8")
+        script_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        runbook_path.write_text(render_kaggle_markdown(payload), encoding="utf-8")
+    join_script = output_dir / "miner_join.sh"
+    join_runbook = output_dir / "MINER_JOIN.md"
+    join_script.write_text(render_miner_join_script(args), encoding="utf-8")
+    join_script.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    join_runbook.write_text(render_miner_join_markdown(payload), encoding="utf-8")
+    return payload
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -300,6 +608,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--operator-env", default="")
     parser.add_argument("--miner-env", default="")
     parser.add_argument("--coordinator-url", default="http://127.0.0.1:8787")
+    parser.add_argument("--target", choices=[TARGET_GENERIC, TARGET_KAGGLE], default=TARGET_GENERIC)
     parser.add_argument("--bind-host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--state-dir", default="state")

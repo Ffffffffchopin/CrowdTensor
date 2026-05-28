@@ -69,6 +69,9 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
             self.assertIn("remote_compute_evidence_pack.py --mode collect", payload["commands"]["collect_remote_evidence"])
             self.assertIn("--scenario-id route-baseline", payload["commands"]["collect_remote_evidence"])
             self.assertIn("--coordinator https://coordinator.example", payload["commands"]["collect_support_bundle"])
+            self.assertEqual(payload["miner_join_pack"]["schema"], "miner_join_pack_v1")
+            self.assertTrue(payload["miner_join_pack"]["ready"])
+            self.assertIn("bash miner_join.sh", payload["miner_join_pack"]["recommended_command"])
 
             registry = json.loads((tmp / "miner_registry.json").read_text(encoding="utf-8"))
             token_hash = registry["miners"][0]["token"]
@@ -84,9 +87,12 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
             self.assertNotIn("admin-secret", miner_env)
             self.assertEqual(stat.S_IMODE(os.stat(tmp / "operator.private.env").st_mode), 0o600)
             self.assertEqual(stat.S_IMODE(os.stat(tmp / "miner.private.env").st_mode), 0o600)
+            self.assertTrue((tmp / "miner_join.sh").is_file())
+            self.assertTrue((tmp / "MINER_JOIN.md").is_file())
 
             public_text = json.dumps(payload, sort_keys=True)
             public_text += (tmp / "remote_demo_runbook.md").read_text(encoding="utf-8")
+            public_text += (tmp / "MINER_JOIN.md").read_text(encoding="utf-8")
             self.assertNotIn("miner-secret", public_text)
             self.assertNotIn("observer-secret", public_text)
             self.assertNotIn("admin-secret", public_text)
@@ -109,6 +115,8 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
                 "registry": "state/miner_registry.json",
                 "operator_private_env": "operator.private.env",
                 "miner_private_env": "miner.private.env",
+                "miner_join_script": "miner_join.sh",
+                "miner_join_runbook": "MINER_JOIN.md",
             },
             "tokens": {
                 "observer_hash_prefix": "sha256",
@@ -116,6 +124,10 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
             },
             "commands": {
                 "start_coordinator": "crowdtensord --task-lane python-cli:cpu:1:model_bundle_infer",
+            },
+            "miner_join_pack": {
+                "schema": "miner_join_pack_v1",
+                "recommended_command": "bash miner_join.sh",
             },
             "safety": {
                 "registry_hashed": True,
@@ -133,6 +145,7 @@ class RemoteDemoRunbookPackTests(unittest.TestCase):
         self.assertIn("Scenario: `route-baseline`", markdown)
         self.assertIn("start_coordinator", markdown)
         self.assertIn("Registry hashed", markdown)
+        self.assertIn("Miner Join Pack", markdown)
 
 
 if __name__ == "__main__":

@@ -582,6 +582,7 @@ def run_collect(args: argparse.Namespace) -> dict[str, Any]:
         admin_token=args.admin_token,
         miner_id=args.miner_id,
         workload_type=WORKLOAD_TYPE,
+        task_id=args.task_id,
     )
     return build_evidence(
         mode="collect",
@@ -592,6 +593,7 @@ def run_collect(args: argparse.Namespace) -> dict[str, Any]:
         miner_summary=None,
         request_count=args.request_count,
         scenario_id=args.scenario_id,
+        task_id=args.task_id,
     )
 
 
@@ -713,6 +715,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--observer-token", default=DEFAULT_OBSERVER_TOKEN)
     parser.add_argument("--admin-token", default=DEFAULT_ADMIN_TOKEN)
     parser.add_argument("--invite-token", default=DEFAULT_INVITE_TOKEN)
+    parser.add_argument("--task-id", default="")
     parser.add_argument("--json-out", default="")
     parser.add_argument("--markdown-out", default="")
     args = parser.parse_args(argv)

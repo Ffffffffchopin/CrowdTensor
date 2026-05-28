@@ -38,6 +38,28 @@ def module_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def torch_cuda_runtime_summary() -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "torch_available": False,
+        "cuda_available": False,
+        "gpu_count": 0,
+        "torch_cuda_version": "",
+    }
+    try:
+        import torch  # type: ignore
+    except ModuleNotFoundError:
+        return summary
+    summary["torch_available"] = True
+    summary["torch_cuda_version"] = str(getattr(torch.version, "cuda", "") or "")
+    try:
+        summary["cuda_available"] = bool(torch.cuda.is_available())
+        summary["gpu_count"] = int(torch.cuda.device_count()) if summary["cuda_available"] else 0
+    except Exception:
+        summary["cuda_available"] = False
+        summary["gpu_count"] = 0
+    return summary
+
+
 def _project_files_ok(root: Path) -> bool:
     required = [
         "coordinator.py",
@@ -140,7 +162,19 @@ def build_hardware_targets(
     source_env: dict[str, str],
 ) -> list[dict[str, Any]]:
     cpu_workloads = [name for name, _label in CPU_BASELINE_WORKLOADS] + ["external_llm_infer_mock"]
-    nvidia_detected = executable_available("nvidia-smi") or executable_available("nvcc")
+    cuda_summary = torch_cuda_runtime_summary()
+    nvidia_tooling_detected = executable_available("nvidia-smi") or executable_available("nvcc")
+    cuda_runtime_available = bool(cuda_summary.get("cuda_available"))
+    hf_transformers_available = bool(module_available("torch") and module_available("transformers"))
+    nvidia_detected = bool(nvidia_tooling_detected or cuda_runtime_available)
+    nvidia_cuda_ready = bool(nvidia_detected and cuda_runtime_available and hf_transformers_available)
+    nvidia_missing: list[str] = []
+    if not nvidia_detected:
+        nvidia_missing.append("nvidia_tooling")
+    if not cuda_runtime_available:
+        nvidia_missing.append("torch_cuda_runtime")
+    if not hf_transformers_available:
+        nvidia_missing.append("hf_transformers_cuda")
     amd_detected = executable_available("rocminfo") or executable_available("rocm-smi")
     apple_detected = profile.get("os") == "Darwin" and str(profile.get("machine", "")).lower() in {"arm64", "aarch64"}
     container_detected = (
@@ -165,16 +199,36 @@ def build_hardware_targets(
         ),
         _target(
             "nvidia_cuda",
-            status="detected" if nvidia_detected else "optional_missing",
-            reason="NVIDIA tooling was detected, but no CUDA runtime adapter is implemented yet" if nvidia_detected else
-            "Install NVIDIA drivers/tooling when future CUDA adapters are available",
-            next_command="python3 scripts/runtime_matrix.py --json",
+            status="available" if nvidia_cuda_ready else ("detected" if nvidia_detected else "optional_missing"),
+            reason="CUDA runtime and optional HF runtime are ready for the tiny GPT split proof" if nvidia_cuda_ready else (
+                "NVIDIA/CUDA was detected, but the optional HF/CUDA tiny GPT runtime is not ready" if nvidia_detected else
+                "Install NVIDIA drivers and optional [hf] dependencies to run the GPU tiny GPT split proof"
+            ),
+            next_command="crowdtensor public-swarm-gpu-beta local-loopback --json"
+            if nvidia_cuda_ready else
+            "crowdtensor public-swarm-gpu-beta local-smoke --json",
             optional=True,
-            usable_now=False,
-            diagnosis_codes=["nvidia_cuda_detected_future_adapter"] if nvidia_detected else ["nvidia_cuda_optional_missing"],
-            operator_action="future_adapter" if nvidia_detected else "configure_optional_runtime",
-            matched_capabilities=["nvidia_tooling"] if nvidia_detected else [],
-            missing_capabilities=["runtime_adapter_not_implemented"] if nvidia_detected else ["nvidia_tooling", "runtime_adapter_not_implemented"],
+            usable_now=nvidia_cuda_ready,
+            supported_workloads=["real_llm_sharded_infer"] if nvidia_cuda_ready else [],
+            diagnosis_codes=[
+                "nvidia_cuda_runtime_ready",
+                "cuda_runtime_available",
+                "hf_transformers_cuda_ready",
+                "public_swarm_gpu_beta_candidate",
+            ] if nvidia_cuda_ready else (
+                ["nvidia_cuda_detected_adapter_unavailable"] if nvidia_detected else ["nvidia_cuda_optional_missing"]
+            ),
+            operator_action="run_now" if nvidia_cuda_ready else "configure_optional_runtime",
+            matched_capabilities=[
+                capability
+                for capability, present in [
+                    ("nvidia_tooling", nvidia_detected),
+                    ("torch_cuda_runtime", cuda_runtime_available),
+                    ("hf_transformers_cuda", hf_transformers_available),
+                ]
+                if present
+            ],
+            missing_capabilities=nvidia_missing,
         ),
         _target(
             "amd_rocm",
@@ -306,6 +360,12 @@ def build_recommended_routes(hardware_targets: list[dict[str, Any]], workloads: 
             "external_llm_infer",
             "crowdtensor-miner --llm-runtime-cmd /path/to/wrapper",
         ),
+        (
+            "local_cuda_real_llm_sharded_infer",
+            "nvidia_cuda",
+            "real_llm_sharded_infer",
+            "crowdtensor public-swarm-gpu-beta local-loopback --json",
+        ),
     ]
     routes = []
     for name, target_name, workload_name, next_command in route_specs:
@@ -339,7 +399,19 @@ def build_recommended_routes(hardware_targets: list[dict[str, Any]], workloads: 
         elif target_name == "cpu_baseline":
             missing.extend(["python_runtime", "cpu_only_contract"])
             diagnosis_codes.append("cpu_baseline_blocked")
-        if target_name in {"nvidia_cuda", "amd_rocm", "apple_metal"}:
+        if target_name == "nvidia_cuda":
+            if usable_now:
+                matched.extend(["nvidia_tooling", "torch_cuda_runtime", "hf_transformers_cuda"])
+                diagnosis_codes.extend(["cuda_runtime_available", "hf_transformers_cuda_ready", "public_swarm_gpu_route_ready"])
+            else:
+                for capability in target.get("missing_capabilities") or ["torch_cuda_runtime", "hf_transformers_cuda"]:
+                    missing.append(str(capability))
+                diagnosis_codes.append(
+                    "nvidia_cuda_detected_adapter_unavailable"
+                    if status == "detected"
+                    else "nvidia_cuda_optional_missing"
+                )
+        if target_name in {"amd_rocm", "apple_metal"}:
             missing.append("runtime_adapter_not_implemented")
             if status == "detected":
                 diagnosis_codes.append("accelerator_adapter_not_implemented")
@@ -368,7 +440,7 @@ def build_recommended_routes(hardware_targets: list[dict[str, Any]], workloads: 
             operator_action = "run_now"
         elif confidence == "blocked":
             operator_action = "fix_blocker"
-        elif target_name in {"nvidia_cuda", "amd_rocm", "apple_metal"} and status == "detected":
+        elif target_name in {"amd_rocm", "apple_metal"} and status == "detected":
             operator_action = "future_adapter"
         elif target_name == "remote_container":
             operator_action = "configure_optional_runtime"

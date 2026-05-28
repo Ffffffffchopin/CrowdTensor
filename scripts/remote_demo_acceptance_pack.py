@@ -599,8 +599,7 @@ def collect_artifacts(args: argparse.Namespace) -> dict[str, Any]:
     evidence_md = output_dir / "remote_compute_evidence.md"
     support_json = output_dir / "support_bundle.json"
     support_md = output_dir / "support_bundle.md"
-    evidence_result = run_json_command(
-        [
+    evidence_command = [
             sys.executable,
             str(ROOT / "scripts" / "remote_compute_evidence_pack.py"),
             "--mode",
@@ -621,7 +620,11 @@ def collect_artifacts(args: argparse.Namespace) -> dict[str, Any]:
             str(evidence_json),
             "--markdown-out",
             str(evidence_md),
-        ],
+    ]
+    if args.session_task_id:
+        evidence_command.extend(["--task-id", args.session_task_id])
+    evidence_result = run_json_command(
+        evidence_command,
         timeout=args.artifact_timeout,
     )
     support_result = run_json_command(

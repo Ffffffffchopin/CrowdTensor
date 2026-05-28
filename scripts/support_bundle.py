@@ -37,6 +37,9 @@ SENSITIVE_FRAGMENTS = (
     "lease",
     "idempotency",
 )
+SAFE_SENSITIVE_NAMED_FIELDS = {
+    "token_rotation_required",
+}
 
 
 def utc_now() -> str:
@@ -63,7 +66,9 @@ def sanitize(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
-            if is_sensitive_key(str(key)):
+            if str(key) in SAFE_SENSITIVE_NAMED_FIELDS:
+                sanitized[str(key)] = sanitize(item)
+            elif is_sensitive_key(str(key)):
                 sanitized[str(key)] = "<redacted>"
             else:
                 sanitized[str(key)] = sanitize(item)

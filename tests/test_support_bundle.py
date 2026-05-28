@@ -108,6 +108,7 @@ class SupportBundleTests(unittest.TestCase):
             "token": "secret",
             "nested": {
                 "lease_token": "lease",
+                "token_rotation_required": True,
                 "weights": [1, 2],
                 "safe": "value",
                 "local_delta": [0.1],
@@ -119,6 +120,7 @@ class SupportBundleTests(unittest.TestCase):
 
         self.assertEqual(sanitized["token"], "<redacted>")
         self.assertEqual(sanitized["nested"]["lease_token"], "<redacted>")
+        self.assertIs(sanitized["nested"]["token_rotation_required"], True)
         self.assertEqual(sanitized["nested"]["weights"], "<redacted>")
         self.assertEqual(sanitized["nested"]["local_delta"], "<redacted>")
         self.assertEqual(sanitized["nested"]["safe"], "value")
