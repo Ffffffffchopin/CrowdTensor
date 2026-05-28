@@ -102,6 +102,12 @@ jobs:
         run: python scripts/public_swarm_inference_beta_check.py --mode local-loopback --base-port 9290 --request-count 1 --timeout-seconds 300
       - name: Public Swarm Inference Beta product aggregate
         run: python scripts/public_swarm_inference_beta_check.py --mode product-beta --base-port 9292 --request-count 1 --timeout-seconds 300
+      - name: Public Swarm Inference Beta RC local loopback contract
+        run: python scripts/public_swarm_inference_beta_rc_check.py --mode local-loopback --base-port 9310 --max-new-tokens 2 --timeout-seconds 300
+      - name: Public Swarm Inference Beta RC package contract
+        run: python scripts/public_swarm_inference_beta_rc_check.py --mode package --target kaggle --base-port 9312 --timeout-seconds 300
+      - name: Public Swarm Inference Beta RC external-existing contract
+        run: python scripts/public_swarm_inference_beta_rc_check.py --mode external-existing --base-port 9314 --max-new-tokens 2 --timeout-seconds 300
       - name: Public Swarm GPU Inference Beta local smoke
         run: python scripts/public_swarm_gpu_inference_beta_check.py --mode local-smoke
       - name: Public Swarm GPU Inference Beta Kaggle package

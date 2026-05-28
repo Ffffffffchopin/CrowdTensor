@@ -319,6 +319,19 @@ crowdtensor public-swarm-beta clean --json
 
 It emits `public_swarm_inference_beta_v1` through `scripts/public_swarm_inference_beta_pack.py`. `product-beta` aggregates the Product RC (`serve`, `join`, `generate`, `peer`), `session_protocol_v1`, `p2p_lite_peer_v1`, retained `gpu_sharded_generation_beta_v1` evidence, and the local CPU inference fallback. A ready report requires `public_swarm_inference_beta_ready`, `public_swarm_product_beta_ready`, `public_swarm_product_rc_ready`, `coordinator_product_surface_ready`, `session_protocol_ready`, `p2p_lite_discovery_ready`, `gpu_generation_evidence_import_ready`, `cpu_fallback_ready`, and `local_cpu_inference_ready`. `public-swarm-beta local-loopback` still wraps `remote_real_llm_sharded_beta_v1` in split mode and requires `two_stage_split_inference_ready`, `local_loopback_ready`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`; `public-swarm-beta evidence-import` still imports retained Alpha RC evidence with `public_swarm_beta_evidence_import_ready`, `external_live_evidence_imported`, `stage0_live_requeue_evidence_ready`, and `stage1_live_requeue_evidence_ready`. This is Coordinator-backed, read-only Beta evidence, not production Swarm Inference, not libp2p/DHT/NAT traversal, not Hivemind-level serving, and not large-model serving.
 
+Public Swarm Inference Beta RC is the release-candidate layer for the current product path:
+
+```bash
+crowdtensor public-swarm-beta-rc local-loopback --base-port 9310 --max-new-tokens 2 --json
+crowdtensor public-swarm-beta-rc package --target kaggle --json
+crowdtensor public-swarm-beta-rc external-existing --coordinator-url https://YOUR_COORDINATOR_HOST --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" --admin-token "$CROWDTENSOR_ADMIN_TOKEN" --json
+python scripts/public_swarm_inference_beta_rc_check.py --mode local-loopback --json
+python scripts/public_swarm_inference_beta_rc_check.py --mode package --target kaggle --json
+python scripts/public_swarm_inference_beta_rc_check.py --mode external-existing --json
+```
+
+It emits `public_swarm_inference_beta_rc_v1` through `scripts/public_swarm_inference_beta_rc_pack.py` and is checked by `scripts/public_swarm_inference_beta_rc_check.py`. The RC aggregates `public_swarm_product_beta_ready`, `p2p_lite_route_ready`, `p2p_lite_discovery_ready`, `cpu_fallback_ready`, and a product `serve` / `join` / `generate` loop that should report `serve_join_generate_loop_ready`, `remote_generate_session_ready`, and `public_swarm_generate_ready` when optional `[hf]` dependencies are installed. `package` preserves `private_artifacts_local_only` and `miner_join_pack_ready`; `external-existing` may report `external_runtime_verified` only against an already running Coordinator plus stage Miners. On hosts missing `transformers`, the real local loop reports `hf_dependencies_missing` with the operator action `python -m pip install -e '.[hf]'`. This RC is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p/DHT/NAT traversal, not Hivemind-level serving, and not large-model serving.
+
 Public Swarm GPU Inference Beta is the optional CUDA overlay for the same tiny GPT split proof:
 
 ```bash

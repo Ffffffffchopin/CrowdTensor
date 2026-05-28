@@ -87,6 +87,8 @@ REQUIRED_FILES = [
     "scripts/swarm_inference_beta_check.py",
     "scripts/public_swarm_inference_beta_pack.py",
     "scripts/public_swarm_inference_beta_check.py",
+    "scripts/public_swarm_inference_beta_rc_pack.py",
+    "scripts/public_swarm_inference_beta_rc_check.py",
     "scripts/public_swarm_gpu_inference_beta_pack.py",
     "scripts/public_swarm_gpu_inference_beta_check.py",
     "scripts/kaggle_real_llm_live_package.py",
@@ -1789,6 +1791,58 @@ def check_public_swarm_inference_beta_docs(root: Path) -> dict[str, Any]:
     return check_result("public_swarm_inference_beta_docs", not details, details)
 
 
+def check_public_swarm_inference_beta_rc_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Public Swarm Inference Beta RC",
+        "public_swarm_inference_beta_rc_v1",
+        "public_swarm_inference_beta_rc_check.py",
+        "public_swarm_inference_beta_rc_pack.py",
+        "crowdtensor public-swarm-beta-rc",
+        "public-swarm-beta-rc local-loopback",
+        "public-swarm-beta-rc package",
+        "public-swarm-beta-rc external-existing",
+        "public_swarm_inference_beta_rc_ready",
+        "serve_join_generate_loop_ready",
+        "remote_generate_session_ready",
+        "public_swarm_generate_ready",
+        "public_swarm_product_beta_ready",
+        "p2p_lite_route_ready",
+        "p2p_lite_discovery_ready",
+        "cpu_fallback_ready",
+        "private_artifacts_local_only",
+        "external_runtime_verified",
+        "hf_dependencies_missing",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not libp2p",
+        "not DHT",
+        "not NAT traversal",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"Public Swarm Inference Beta RC docs/CI must mention {fragment}")
+    return check_result("public_swarm_inference_beta_rc_docs", not details, details)
+
+
 def check_public_swarm_gpu_inference_beta_docs(root: Path) -> dict[str, Any]:
     details: list[str] = []
     combined = "\n".join(
@@ -2252,6 +2306,9 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python scripts/real_llm_internet_beta_check.py": "CI must run the real LLM Internet Beta check",
         "python scripts/swarm_inference_beta_check.py": "CI must run the Swarm Inference Beta check",
         "python scripts/public_swarm_inference_beta_check.py": "CI must run the Public Swarm Inference Beta check",
+        "python scripts/public_swarm_inference_beta_rc_check.py": "CI must run the Public Swarm Inference Beta RC local-loopback check",
+        "python scripts/public_swarm_inference_beta_rc_check.py --mode package": "CI must run the Public Swarm Inference Beta RC package check",
+        "python scripts/public_swarm_inference_beta_rc_check.py --mode external-existing": "CI must run the Public Swarm Inference Beta RC external-existing check",
         "python scripts/public_swarm_gpu_inference_beta_check.py": "CI must run the Public Swarm GPU Inference Beta smoke check",
         "python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-package": "CI must run the Public Swarm GPU Inference Beta Kaggle package check",
         "python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-auto": "CI must run the Public Swarm GPU Inference Beta Kaggle auto fake-runner check",
@@ -2332,6 +2389,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_public_swarm_inference_alpha_docs(gate_root),
         check_public_swarm_inference_alpha_rc_docs(gate_root),
         check_public_swarm_inference_beta_docs(gate_root),
+        check_public_swarm_inference_beta_rc_docs(gate_root),
         check_public_swarm_gpu_inference_beta_docs(gate_root),
         check_release_materials(gate_root),
         check_open_source_entrypoints(gate_root),

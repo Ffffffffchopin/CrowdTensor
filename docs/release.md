@@ -139,6 +139,19 @@ python scripts/public_swarm_inference_beta_check.py --mode local-loopback --base
 
 The `public_swarm_inference_beta_v1` report comes from `scripts/public_swarm_inference_beta_pack.py` or `crowdtensor public-swarm-beta`. `public-swarm-beta product-beta` is the product-shaped aggregate and must preserve `public_swarm_product_beta_ready`, `public_swarm_product_rc_ready`, `coordinator_product_surface_ready`, `session_protocol_ready`, `p2p_lite_discovery_ready`, `gpu_generation_evidence_import_ready`, `cpu_fallback_ready`, and `local_cpu_inference_ready`. It wraps the Product RC (`serve`, `join`, `generate`, `peer`), `session_protocol_v1`, `p2p_lite_peer_v1`, retained `gpu_sharded_generation_beta_v1` evidence, and the CPU inference fallback. `public-swarm-beta local-loopback` still wraps the two-stage real tiny GPT split path and must preserve `two_stage_split_inference_ready`, `local_loopback_ready`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`. `public-swarm-beta evidence-import` still imports retained Alpha RC evidence and must preserve `public_swarm_beta_evidence_import_ready`, `external_live_evidence_imported`, `stage0_live_requeue_evidence_ready`, and `stage1_live_requeue_evidence_ready`. The operator path covers `prepare`, `coordinator`, `miner`, `verify`, `collect`, and dry-run `clean`. It remains Coordinator-backed and read-only, not production Swarm Inference, not libp2p/DHT/NAT traversal, not Hivemind-level serving, and not large-model serving.
 
+Validate the Public Swarm Inference Beta RC before publishing the product path:
+
+```bash
+crowdtensor public-swarm-beta-rc local-loopback --base-port 9310 --max-new-tokens 2 --json
+crowdtensor public-swarm-beta-rc package --target kaggle --json
+crowdtensor public-swarm-beta-rc external-existing --coordinator-url https://YOUR_COORDINATOR_HOST --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" --admin-token "$CROWDTENSOR_ADMIN_TOKEN" --json
+python scripts/public_swarm_inference_beta_rc_check.py --mode local-loopback --json
+python scripts/public_swarm_inference_beta_rc_check.py --mode package --target kaggle --json
+python scripts/public_swarm_inference_beta_rc_check.py --mode external-existing --json
+```
+
+The `public_swarm_inference_beta_rc_v1` report comes from `scripts/public_swarm_inference_beta_rc_pack.py` or `crowdtensor public-swarm-beta-rc`; CI-safe validation is in `scripts/public_swarm_inference_beta_rc_check.py`. It must preserve `public_swarm_inference_beta_rc_ready`, `public_swarm_product_beta_ready`, `p2p_lite_route_ready`, `p2p_lite_discovery_ready`, `cpu_fallback_ready`, `serve_join_generate_loop_ready`, `remote_generate_session_ready`, and `public_swarm_generate_ready`. `public-swarm-beta-rc package` must preserve `private_artifacts_local_only` and `miner_join_pack_ready`; `public-swarm-beta-rc external-existing` may report `external_runtime_verified` only for a live controlled runtime. A release host without optional `[hf]` dependencies should report `hf_dependencies_missing` instead of claiming local runtime readiness. The RC is CPU-only by default, read-only, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 Validate the Public Swarm GPU Inference Beta smoke path on every release host, and run the CUDA loopback only when CUDA is actually available:
 
 ```bash
