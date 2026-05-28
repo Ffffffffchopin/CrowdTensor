@@ -2,7 +2,7 @@
 
 CrowdTensor is an open-source path toward fault-tolerant AI swarms built from ordinary home compute.
 
-`CrowdTensorD` is the current Alpha daemon/control plane. It validates the V1 mechanics needed before real home GPU aggregation, Swarm Inference, browser compute, and future P2P routing are added: task leasing, heartbeat recovery, checkpoint replay, result validation, replay audit, Miner admission, and CPU-only workload contracts.
+`CrowdTensorD` is the current Alpha daemon/control plane. It validates the V1 mechanics needed before real home GPU aggregation, Swarm Inference, browser compute, and future P2P routing are added: task leasing, heartbeat recovery, checkpoint replay, result validation, replay audit, Miner admission, CPU-first workload contracts, and a narrow optional CUDA tiny GPT split proof.
 
 ## What Works Today
 
@@ -10,6 +10,16 @@ CrowdTensor is an open-source path toward fault-tolerant AI swarms built from or
 - Connect controlled remote Python Miners with token-backed admission and retry behavior.
 - Validate timeout recovery, stale result rejection, checkpoint replay, result ledger, and Support Bundle generation.
 - Run deterministic tiny workloads shaped like future model contracts: `diloco_train`, `cpu_lora_mock`, `micro_transformer_lm`, `model_bundle_lm`, read-only `model_bundle_infer`, and optional read-only `external_llm_infer`.
+- Run a CPU-only Pipeline-Sharded Inference Alpha with `sharded_model_bundle_infer`, where one Miner produces activation hashes and a second Miner produces the final read-only result.
+- Run the CPU Pipeline-Sharded Inference Beta loopback proof, where `crowdtensor shard-infer-beta --mode remote-loopback` packages the same two-stage route as `remote_sharded_inference_beta_v1`.
+- Run a CPU-only Micro-LLM Pipeline-Sharded Inference Alpha/Beta with `micro_llm_sharded_infer`, where stage 0 emits hidden-state activation hashes and stage 1 performs deterministic tiny Transformer decode validation, optionally loaded from a dependency-free `micro_llm_artifact_v1` JSON package.
+- Run an optional Hugging Face tiny GPT split proof with `real_llm_sharded_infer`, where distinct stage Miners execute a real `sshleifer/tiny-gpt2` artifact through `hf_transformers_cpu` or explicit `hf_transformers_cuda`, pass hashed activation summaries, and validate the next-token result against a local full-model baseline. The optional `--real-llm-partition-mode stage-local` path moves only stage-owned modules to the selected runtime device and emits partition evidence such as `stage_local_partition_ready`, `stage0_partition_loaded`, `stage1_partition_loaded`, and `partition_parameter_split_valid`.
+- Run the Public Swarm Inference Alpha wrapper with `crowdtensor swarm-session`, which emits `public_swarm_inference_alpha_v1` through `scripts/public_swarm_inference_alpha_pack.py` and validates with `scripts/public_swarm_inference_alpha_check.py`. `--mode live-kaggle --failure-mode kill-stage0-after-claim` aggregates the cleanup-backed `swarm-infer-beta live` Kaggle proof, true external victim/rescue lease requeue evidence (`external_stage_requeue_ready`, `live_stage0_requeue_ready` or `live_stage1_requeue_ready`, `live_requeue_summary`), and mandatory `local-generated` stage requeue evidence. A ready report should include `public_swarm_inference_alpha_ready`, `public_swarm_session_ready`, `local_stage_requeue_ready`, `public_swarm_live_requeue_ready`, `public_swarm_live_kaggle_ready`, `stage_requeue_ready`, `external_runtime_verified`, `kaggle_kernels_deleted`, and `token_rotation_required`. The wrapper prunes child debug artifacts by default and retains the top-level public JSON/Markdown evidence; use `--keep-child-artifacts` only for local debugging. It is CPU-only and read-only, not production Swarm Inference, not P2P, and not large-model serving.
+- Build the Public Swarm Inference Alpha RC artifact with `crowdtensor public-swarm-alpha-rc`, which emits `public_swarm_inference_alpha_rc_v1` through `scripts/public_swarm_inference_alpha_rc_pack.py` and validates with `scripts/public_swarm_inference_alpha_rc_check.py`. The default `evidence-import` mode audits retained live reports for both `stage0_live_requeue_evidence_ready` and `stage1_live_requeue_evidence_ready`, plus `public_swarm_live_requeue_evidence_ready`, `public_swarm_alpha_rc_evidence_imported`, `public_swarm_alpha_private_artifacts_absent`, and `public_swarm_inference_alpha_rc_ready`. The retained evidence paths are `dist/public-swarm-inference-alpha-live-stage0-requeue-20260527165830/public_swarm_inference_alpha.json`, `dist/public-swarm-inference-alpha-live-stage1-requeue-20260527170600/public_swarm_inference_alpha.json`, and `dist/public-swarm-inference-alpha-live-requeue-summary.json`. `local-smoke` is CI-safe and does not create Kaggle resources. This RC is CPU-only and read-only, not production Swarm Inference, not P2P, and not large-model serving.
+- Run Public Swarm Inference Beta with `crowdtensor public-swarm-beta`, which emits `public_swarm_inference_beta_v1` through `scripts/public_swarm_inference_beta_pack.py` and validates with `scripts/public_swarm_inference_beta_check.py`. `public-swarm-beta product-beta` is the product-shaped aggregate: it requires `public_swarm_product_beta_ready`, `public_swarm_product_rc_ready`, `coordinator_product_surface_ready`, `session_protocol_ready`, `p2p_lite_discovery_ready`, `gpu_generation_evidence_import_ready`, and `cpu_fallback_ready` by combining `crowdtensor serve` / `join` / `generate` / `peer`, `session_protocol_v1`, P2P-lite discovery, retained GPU sharded generation evidence, and the CPU inference fallback. `public-swarm-beta local-loopback` and `public-swarm-beta evidence-import` remain available for the legacy CPU-only split proof and retained Alpha RC import. This is Coordinator-backed, read-only Beta evidence, not production Swarm Inference, not libp2p/DHT/NAT traversal, not Hivemind-level serving, and not large-model serving.
+- Run Public Swarm GPU Inference Beta with `crowdtensor public-swarm-gpu-beta`, which emits `public_swarm_gpu_inference_beta_v1` through `scripts/public_swarm_gpu_inference_beta_pack.py` and validates with `scripts/public_swarm_gpu_inference_beta_check.py`. `public-swarm-gpu-beta local-smoke` is CI-safe on CPU-only hosts and reports `public_swarm_gpu_beta_smoke_ready` without claiming usable GPU inference. `public-swarm-gpu-beta local-loopback` requires explicit `hf_transformers_cuda`, CUDA-capable stage Miners advertising `real_llm_sharded_cuda_stage0`, `real_llm_sharded_cuda_stage1`, or `real_llm_sharded_cuda_both`, and should report `public_swarm_gpu_beta_ready`, `gpu_runtime_ready`, `cuda_runtime_available`, `hf_transformers_cuda_ready`, `gpu_stage0_ready`, `gpu_stage1_ready`, plus stage-local partition readiness codes. `public-swarm-gpu-beta kaggle-package` writes private Kaggle GPU stage templates and should report `kaggle_gpu_package_ready`; `public-swarm-gpu-beta evidence-import` promotes a completed GPU report with `external_gpu_runtime_verified`. This is read-only optional CUDA tiny GPT split evidence, not production Swarm Inference, not P2P, not a GPU pooling marketplace, and not large-model serving.
+- Run the GPU sharded generation Beta with `crowdtensor gpu-generate`, which emits `gpu_sharded_generation_beta_v1` through `scripts/gpu_sharded_generation_beta_pack.py` and validates with `scripts/gpu_sharded_generation_beta_check.py`. It wraps the CUDA Public Swarm GPU path with `--max-new-tokens` generation chaining, defaults to `sshleifer/tiny-gpt2`, `hf_transformers_cuda`, and stage-local two-stage partitioning, and provides `local-loopback`, `kaggle-auto`, and `evidence-import` modes. A ready report must include `gpu_sharded_generation_ready`, `multi_token_generation_ready`, `generated_token_count >= max_new_tokens`, `distinct_stage_miners`, stage-local partition readiness, and redacted generation summaries with `generated_text_hash` but no raw generated text or generated token ids. This is a tiny GPT CUDA multi-token Beta proof, not production Swarm Inference, not Hivemind-level serving, not P2P, not a GPU marketplace, and not large-model serving.
+- Build the Public Swarm Product RC with `crowdtensor public-swarm-product-rc`, which emits `public_swarm_product_rc_v1` through `scripts/public_swarm_product_rc_pack.py` and validates with `scripts/public_swarm_product_rc_check.py`. It adds the user-facing `crowdtensor serve`, `crowdtensor join`, `crowdtensor generate`, and `crowdtensor peer` surfaces, extracts `session_protocol_v1`, and adds `p2p_lite_peer_v1` HTTP-gossip route discovery. This remains Coordinator-backed task execution: P2P-lite only discovers Coordinator/Miner routes and is not libp2p, DHT, NAT traversal, decentralized security, Hivemind-level serving, or large-model serving.
 - Try browser-native experiments for WebRTC tensor transport, browser Worker compute probes, and a browser Miner bridge.
 
 ## What Is Not Ready
@@ -17,11 +27,13 @@ CrowdTensor is an open-source path toward fault-tolerant AI swarms built from or
 This Alpha is not yet:
 
 - a production DePIN network
-- a real LLM training or inference platform
+- a real LLM training or production inference platform
 - a reward, staking, or payment system
 - a complete P2P/NAT traversal network
+- libp2p/DHT routing; current `crowdtensor peer` is P2P-lite HTTP-gossip discovery only
 - a hardened public-internet security model
-- a GPU, WebGPU, PyTorch, or Transformers benchmark
+- a GPU, WebGPU, PyTorch, or Transformers throughput benchmark
+- production GPU multi-machine LLM serving; `crowdtensor gpu-generate` is a tiny GPT CUDA Beta proof only
 
 The current workloads are intentionally small and deterministic so the runtime can be tested without GPU access or external model dependencies.
 
@@ -41,7 +53,7 @@ For a fresh-clone onboarding check that avoids system pip / PEP 668 issues and v
 python scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
 ```
 
-The `onboarding_gate_v1` report creates a temporary venv, runs `python -m pip install -e .[dev]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, and `crowdtensor release-ready --allow-dirty`. It is an Alpha onboarding gate, not production Swarm Inference readiness.
+The `onboarding_gate_v1` report creates a temporary venv, runs `python -m pip install -e .[dev]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, `crowdtensor cpu-infer --mode local`, and `crowdtensor release-ready --allow-dirty`. It is an Alpha onboarding gate, not production Swarm Inference readiness.
 
 The install creates these console commands:
 
@@ -72,6 +84,270 @@ crowdtensor local-proof --json
 ```
 
 The `crowdtensor/cli.py` entrypoint writes a `local_proof_summary_v1` report under `dist/local-proof` by running Doctor, the runtime matrix, the CPU-only read-only home-compute demo, and the Demo Manifest path. This is not production Swarm Inference; it is a safe local proof that the current checkout can execute the Alpha CPU control-plane path without claiming real LLM serving, GPU pooling, P2P routing, or WebGPU shards.
+
+For the CPU-only inference Beta aggregate path, run:
+
+```bash
+crowdtensor cpu-infer --mode local --json
+```
+
+The `cpu_inference_beta_v1` report is the recommended CPU inference Beta proof for new users. It wraps `crowdtensor home-infer` and `crowdtensor llm-infer --mock`, writes JSON/Markdown under `dist/cpu-infer`, and summarizes safe read-only `model_bundle_infer` plus fixed-prompt `external_llm_infer` evidence without raw prompts, `output_text`, token values, lease material, or raw inference payloads. Maintainers can also run `python scripts/cpu_inference_beta_check.py --mode local`, `python scripts/cpu_inference_beta_check.py --mode remote-loopback --workload model-bundle`, and `python scripts/cpu_inference_beta_check.py --mode remote-loopback --workload external-llm` to validate the local and loopback remote-demo proof. `--mode remote-existing` wraps an already running `remote-demo doctor/verify/collect` flow with operator-provided tokens. This is CPU-only, read-only, not production Swarm Inference, not P2P, and not arbitrary public prompt serving.
+
+For the current release-candidate CPU inference proof, run:
+
+```bash
+crowdtensor cpu-infer --mode beta-rc --json
+```
+
+The `cpu_inference_beta_rc_v1` report is the top-level CPU Inference Beta RC artifact. It uses `scripts/cpu_inference_beta_rc_pack.py` to aggregate the local CPU inference Beta, remote-loopback CPU inference Beta, Real two-machine CPU inference Beta rehearsal, Kaggle Remote Miner Beta artifact preparation, `miner_join_pack_v1`, `scripts/kaggle_remote_miner_beta_check.py`, and `demo_manifest_v1`. CI validates it with `scripts/cpu_inference_beta_rc_check.py` and requires `cpu_inference_beta_rc_ready`, `local_cpu_inference_ready`, `remote_loopback_ready`, `two_machine_rehearsal_ready`, `kaggle_remote_miner_artifacts_ready`, `miner_join_pack_ready`, and `cpu_miner_beta_ready`. If a live Kaggle report exists, pass `--kaggle-real-runtime-report dist/kaggle-real-runtime/kaggle_real_runtime_acceptance.json` to import `kaggle_real_runtime_acceptance_v1` as real external runtime evidence and surface `real_runtime_evidence_ready`. This remains CPU-only, read-only, not production Swarm Inference, not P2P, not a GPU/TPU workload path, and not arbitrary prompt serving.
+
+For the first model-execution-graph split proof, run:
+
+```bash
+crowdtensor shard-infer --json
+```
+
+The Pipeline-Sharded Inference Alpha emits `sharded_inference_cli_v1` and writes `sharded_inference_evidence_v1` under `dist/shard-infer`. It uses the CPU-only read-only `sharded_model_bundle_infer` / `sharded_model_bundle_infer_v1` workload and `sharded_inference_session_v1`: stage 0 produces activation hashes and byte counts, stage 1 consumes the accepted activation payload and must match the single-task `model_bundle_infer` baseline. CI validates this with `scripts/sharded_inference_check.py` and readiness codes such as `stage_0_accepted`, `stage_1_accepted`, `activation_transport_ready`, `baseline_match`, and `sharded_inference_ready`; add `--failure-mode kill-stage-after-claim` to require `stage_requeue_ready`. This is CPU-only and read-only; it is not production Swarm Inference, not P2P, not GPU/TPU pooling, and not real LLM sharding.
+
+For the larger CPU Pipeline-Sharded Inference Beta proof, run:
+
+```bash
+crowdtensor shard-infer-beta --mode remote-loopback --json
+```
+
+The Beta wrapper emits `remote_sharded_inference_beta_v1` through `scripts/remote_sharded_inference_beta_pack.py`, validates it with `scripts/remote_sharded_inference_beta_check.py`, and adds mode-level readiness codes such as `remote_sharded_inference_ready`, `remote_sharded_loopback_ready`, and `local_sharded_inference_ready`. Use `--failure-mode kill-stage-after-claim` to include the same `stage_requeue_ready` lease-timeout rescue proof while preserving activation hashes, `baseline_match`, CPU-only read-only semantics, and redaction of raw activation/logit payloads. This is still not production Swarm Inference, not P2P, not GPU/TPU pooling, and not real LLM sharding.
+
+The same workload is available in the controlled two-machine helper as `crowdtensor remote-demo --workload sharded-model-bundle`. Its loopback check emits `remote_sharded_inference_acceptance_v1`, `remote_sharded_inference_observability_v1`, `remote_python_sharded_model_bundle_infer`, and `remote_two_machine_sharded_ready` while keeping the same CPU-only/read-only/not production boundaries.
+
+For the deterministic tiny Transformer split proof, run:
+
+```bash
+crowdtensor micro-llm-shard-infer --decode-steps 3 --json
+```
+
+The Micro-LLM Pipeline-Sharded Inference Alpha emits `micro_llm_sharded_cli_v1` and writes `micro_llm_sharded_evidence_v1` under `dist/micro-llm-shard-infer`. It uses the CPU-only read-only `micro_llm_sharded_infer` / `micro_llm_sharded_infer_v1` workload and `micro_llm_sharded_session_v1`: stage 0 produces hidden-state activation hashes for fixed tiny Transformer contexts, stage 1 performs the lm-head decode and must report `baseline_match` plus `decoded_tokens_match` for the configured `decode_steps`. CI validates this with `scripts/micro_llm_sharded_inference_check.py` and readiness codes `stage_0_accepted`, `stage_1_accepted`, `activation_transport_ready`, `baseline_match`, `decoded_tokens_match`, and `micro_llm_sharded_ready`; add `--failure-mode kill-stage-after-claim` to require `stage_requeue_ready`. This is CPU-only and read-only; it is not production Swarm Inference, not P2P, not GPU/TPU pooling, and not GGUF/llama.cpp or large LLM serving.
+
+To run the same tiny Transformer from an explicit dependency-free file artifact, first build the artifact:
+
+```bash
+crowdtensor micro-llm-artifact --output-dir dist/micro-llm-artifact --json
+```
+
+Then pass it into the split proof:
+
+```bash
+crowdtensor micro-llm-shard-infer \
+  --micro-llm-artifact dist/micro-llm-artifact \
+  --prompt-texts arn,ten \
+  --stage-mode split \
+  --require-distinct-stage-miners \
+  --decode-steps 3 \
+  --json
+```
+
+This emits `micro_llm_artifact_v1` and records the artifact id, tokenizer schema, and artifact hash in session/evidence summaries with readiness codes such as `artifact_loaded` and `micro_llm_artifact_ready`. The artifact is a tiny JSON package (`manifest.json`, `config.json`, `tokenizer.json`, `weights.json`) for deterministic CPU validation; it is not a Hugging Face, GGUF, llama.cpp, or large-model artifact.
+
+For the stage-aware split proof, run `crowdtensor micro-llm-shard-infer --stage-mode split --require-distinct-stage-miners --decode-steps 3 --json` or `python scripts/stage_aware_micro_llm_sharded_check.py --base-port 9085 --request-count 2 --decode-steps 3 --require-distinct-stage-miners`. Miners advertise stage capabilities such as `micro_llm_sharded_stage0`, `micro_llm_sharded_stage1`, or `micro_llm_sharded_both`; the Coordinator only leases stage 0 to a stage-0-capable Miner and stage 1 to a stage-1-capable Miner. Successful evidence includes `distinct_stage_miners` and `stage_assignment_valid`, and stage-specific failure modes `--failure-mode kill-stage0-after-claim` / `--failure-mode kill-stage1-after-claim` preserve `stage_requeue_ready`.
+
+For the Remote Micro-LLM Pipeline-Sharded Inference Beta proof, run:
+
+```bash
+crowdtensor micro-llm-shard-infer-beta --mode remote-loopback --decode-steps 3 --json
+```
+
+The Beta wrapper emits `remote_micro_llm_sharded_beta_v1` through `scripts/remote_micro_llm_sharded_beta_pack.py`, validates it with `scripts/remote_micro_llm_sharded_beta_check.py`, and adds readiness codes such as `remote_micro_llm_sharded_ready`, `remote_micro_llm_sharded_loopback_ready`, and `local_micro_llm_sharded_inference_ready`. The controlled two-machine helper also accepts `crowdtensor remote-demo --workload micro-llm-sharded`; its loopback check emits `remote_micro_llm_sharded_acceptance_v1`, `remote_micro_llm_sharded_observability_v1`, `remote_python_micro_llm_sharded_infer`, and `remote_two_machine_micro_llm_sharded_ready` while preserving activation hashes, `baseline_match`, `decoded_tokens_match`, CPU-only read-only semantics, and redaction of raw activation/logit payloads. This remains not production Swarm Inference, not P2P, not GPU/TPU pooling, and not GGUF/llama.cpp or arbitrary prompt serving.
+
+The Remote Micro-LLM stage-aware Beta path supports `crowdtensor micro-llm-shard-infer-beta --mode remote-loopback --stage-mode split --require-distinct-stage-miners --decode-steps 3 --json` and the two-machine helper supports `crowdtensor remote-demo verify --workload micro-llm-sharded --stage-mode split --require-distinct-stage-miners`. Prepare separate Miner join packs with `--stage-role stage0` and `--stage-role stage1` when proving distinct hosts; this is still a controlled two-machine task-level CPU proof, not model-scale production serving.
+
+The Micro-LLM Live Two-Node RC is the higher-level acceptance wrapper for that stage-aware path:
+
+```bash
+crowdtensor micro-llm-live-rc --mode local-generated --port 9182 --request-count 2 --decode-steps 3 --json
+python scripts/micro_llm_live_rc_check.py --base-port 9182 --request-count 2 --decode-steps 3
+```
+
+It emits `micro_llm_live_rc_v1` through `scripts/micro_llm_live_rc_pack.py`, generates `kaggle-upload-stage0` and `kaggle-upload-stage1`, starts a local Coordinator plus two independent stage Miner processes as `local-generated` stage-upload stand-ins, then imports the existing Kaggle/remote evidence chain. A ready report includes `micro_llm_live_rc_ready`, `local_generated_stage_upload_standins_ready`, `kaggle_micro_llm_sharded_ready`, and `stage_assignment_valid`. `--mode external-existing` verifies an already running public Coordinator plus two external stage Miners and only then may report `external_runtime_verified`. This is CPU-only, read-only toy two-stage micro-LLM evidence; it is not production Swarm Inference, not P2P, not GPU/TPU pooling, and not GGUF/llama.cpp or large-model sharding.
+
+For the optional Hugging Face tiny GPT split proof, install the HF runtime extra and run:
+
+```bash
+python -m pip install -e '.[dev,hf]'
+crowdtensor real-llm-shard-infer \
+  --stage-mode split \
+  --require-distinct-stage-miners \
+  --hf-model-id sshleifer/tiny-gpt2 \
+  --json
+```
+
+This emits `real_llm_sharded_cli_v1` and `real_llm_sharded_evidence_v1` for `real_llm_sharded_infer` / `real_llm_sharded_infer_v1`. The Coordinator creates a two-stage `real_llm_sharded_session_v1`, records a safe `real_llm_artifact_v1` summary, leases CPU stage 0 only to Miners advertising `real_llm_sharded_stage0` and CPU stage 1 only to Miners advertising `real_llm_sharded_stage1`, and expects `activation_transport_ready`, `baseline_match`, `decoded_tokens_match`, `real_llm_artifact_ready`, `stage_assignment_valid`, and `real_llm_sharded_ready`. Miner hosts must opt in with `--enable-hf-tiny-gpt-runtime`, optional `--hf-cache-dir`, and `--real-llm-stage-role stage0|stage1|both`. When `--real-llm-backend hf_transformers_cuda` is selected, routing uses `real_llm_sharded_cuda_stage0`, `real_llm_sharded_cuda_stage1`, and `real_llm_sharded_cuda_both`; CUDA is never an implicit fallback.
+
+The remote-shaped wrapper is:
+
+```bash
+crowdtensor real-llm-shard-infer-beta \
+  --mode remote-loopback \
+  --stage-mode split \
+  --require-distinct-stage-miners \
+  --hf-model-id sshleifer/tiny-gpt2 \
+  --json
+```
+
+It emits `remote_real_llm_sharded_beta_v1` through `scripts/remote_real_llm_sharded_beta_pack.py` and is checked by `scripts/remote_real_llm_sharded_beta_check.py` with readiness codes such as `remote_real_llm_sharded_ready`, `remote_real_llm_sharded_loopback_ready`, and `local_real_llm_sharded_inference_ready`. This is a CPU-only, read-only, optional [hf] / Transformers tiny-model evidence path; it is not production Swarm Inference, not P2P, not GPU/TPU pooling, not GGUF/llama.cpp serving, and not large-model serving.
+
+For the same real-weight path through the high-level two-machine operator wrapper, use `crowdtensor remote-demo --workload real-llm-sharded`. Install the optional HF runtime on the Coordinator and both stage Miner hosts first:
+
+```bash
+python -m pip install -e '.[hf]'
+
+crowdtensor remote-demo prepare \
+  --workload real-llm-sharded \
+  --stage-role stage0 \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id real-stage0 \
+  --output-dir dist/remote-real-llm-stage0 \
+  --json
+
+crowdtensor remote-demo prepare \
+  --workload real-llm-sharded \
+  --stage-role stage1 \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id real-stage1 \
+  --output-dir dist/remote-real-llm-stage1 \
+  --json
+```
+
+Run the generated stage0 and stage1 Miner launchers on two distinct hosts, then verify from the operator host:
+
+```bash
+crowdtensor remote-demo verify \
+  --workload real-llm-sharded \
+  --stage-mode split \
+  --require-distinct-stage-miners \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id real-stage0 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \
+  --output-dir dist/remote-real-llm-stage0 \
+  --json
+```
+
+This route emits `remote_real_llm_sharded_runbook_v1`, `remote_real_llm_sharded_acceptance_v1`, `remote_real_llm_sharded_observability_v1`, and `remote_real_llm_sharded_beta_v1` for `remote_python_real_llm_sharded_infer`. A ready run includes `remote_two_machine_real_llm_sharded_ready`, `real_llm_artifact_ready`, `activation_transport_ready`, `baseline_match`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`. If the optional runtime is missing, reports surface `hf_dependencies_missing` with the operator action `python -m pip install -e '.[hf]'`. Public artifacts keep raw prompts, hidden states, logits, activations, tokens, and runtime secrets out of summaries. This is still a controlled tiny GPT CPU split proof, not production Swarm Inference, not P2P, not GPU/TPU pooling, not GGUF/llama.cpp serving, and not large-model serving.
+
+The Real Small-LLM Sharded Inference Live RC is the higher-level generated-stage wrapper for the same real-weight path:
+
+```bash
+crowdtensor real-llm-live-rc --mode local-generated --port 9184 --request-count 1 --json
+python scripts/real_llm_live_rc_check.py --base-port 9184 --request-count 1
+```
+
+It emits `real_llm_live_rc_v1` through `scripts/real_llm_live_rc_pack.py`, generates `kaggle-upload-real-llm-stage0` and `kaggle-upload-real-llm-stage1`, starts a local Coordinator plus two independent stage Miner processes as `local-generated` stage-upload stand-ins, and verifies through `remote_real_llm_sharded_beta_v1`. A ready report includes `real_llm_live_rc_ready`, `local_generated_real_llm_stage_upload_standins_ready`, `remote_real_llm_sharded_ready`, `real_llm_artifact_ready`, `stage_assignment_valid`, and `decoded_tokens_match` while preserving `--enable-hf-tiny-gpt-runtime` and `--real-llm-stage-role` in generated Miner launchers. `--mode kaggle-generated` only prepares the two private upload packages and runbook; `--mode external-existing` verifies an already running public Coordinator plus two external stage Miners and only then may report `external_runtime_verified` and `kaggle_real_llm_sharded_ready`. This remains CPU-only and read-only; it is not production Swarm Inference, not P2P, not GPU/TPU pooling, not GGUF/llama.cpp serving, and not large-model serving.
+
+The Real Internet Swarm Inference Alpha is the wider milestone wrapper around the same tiny GPT split path:
+
+```bash
+crowdtensor real-llm-internet-alpha --mode local-generated --port 9187 --base-port 9188 --request-count 1 --json
+python scripts/real_llm_internet_alpha_check.py --port 9187 --base-port 9188 --request-count 1
+```
+
+It emits `real_llm_internet_alpha_v1` through `scripts/real_llm_internet_alpha_pack.py`. `local-generated` runs the real Live RC and also requires local stage-specific failure recovery through `stage_requeue_ready` and `real_llm_stage_requeue_ready`; a ready report includes `real_llm_internet_alpha_ready`, `real_llm_live_rc_ready`, `remote_real_llm_sharded_ready`, `real_llm_artifact_ready`, `decoded_tokens_match`, `activation_transport_ready`, `distinct_stage_miners`, and `stage_assignment_valid` while keeping `external_runtime_verified` false. `package` prepares the public Coordinator and two stage upload packages only. `external-existing` verifies an already running public Coordinator plus two external stage Miners and only then may report `external_runtime_verified`. Reports carry `token_rotation_required`, redact raw prompts, hidden states, logits, activations, tokens, and lease material, and remain CPU-only/read-only. This is not production Swarm Inference, not P2P, not GPU/TPU pooling, not GGUF/llama.cpp serving, and not large-model serving.
+
+The Real Internet Swarm Inference Beta is the side-effectful automation wrapper for that same external tiny GPT path:
+
+```bash
+crowdtensor real-llm-internet-beta \
+  --mode kaggle-auto \
+  --public-host 24.199.118.54 \
+  --port 9190 \
+  --base-port 9191 \
+  --request-count 2 \
+  --json
+
+python scripts/real_llm_internet_beta_check.py --port 9190 --base-port 9191 --request-count 2
+```
+
+It emits `real_llm_internet_beta_v1` through `scripts/real_llm_internet_beta_pack.py`. `kaggle-auto` generates the Alpha package, starts the temporary public Coordinator, creates two private Kaggle CPU script kernels by default or private Kaggle GPU kernels when `--real-llm-backend hf_transformers_cuda` is selected, waits for `external-existing` verification, deletes the temporary kernels, stops the Coordinator, and writes cleanup-backed evidence. A ready report must include `real_llm_internet_beta_ready`, `real_llm_internet_alpha_ready`, `external_runtime_verified`, both Kaggle stages seen, `decoded_tokens_match`, `distinct_stage_miners`, `stage_assignment_valid`, `kaggle_kernels_deleted`, and `token_rotation_required`. With CUDA selected, the CPU Coordinator uses metadata-only artifact inspection and the Kaggle Miners must provide torch CUDA. `scripts/real_llm_internet_beta_check.py` is CI-safe and validates the contract with a fake runner; it does not create Kaggle resources. The default path remains CPU-only; the CUDA path is optional read-only tiny GPT evidence, not production Swarm Inference, not P2P, not GPU pooling, and not large-model serving.
+
+The user-facing Swarm Inference Beta packages the same real tiny GPT split path as a two-stage operator workflow:
+
+```bash
+python -m pip install -e '.[hf]'
+crowdtensor swarm-infer-beta live \
+  --public-host 24.199.118.54 \
+  --port 9210 \
+  --base-port 9211 \
+  --request-count 2 \
+  --output-dir dist/swarm-inference-beta-live \
+  --json
+
+crowdtensor swarm-infer-beta prepare --coordinator-url https://YOUR_COORDINATOR_HOST --json
+crowdtensor swarm-infer-beta coordinator --json
+crowdtensor swarm-infer-beta miner --stage stage0 --json
+crowdtensor swarm-infer-beta miner --stage stage1 --json
+crowdtensor swarm-infer-beta verify --coordinator-url https://YOUR_COORDINATOR_HOST --json
+crowdtensor swarm-infer-beta collect --coordinator-url https://YOUR_COORDINATOR_HOST --json
+python scripts/swarm_inference_beta_check.py --json
+```
+
+It emits `swarm_inference_beta_v1` through `scripts/swarm_inference_beta_pack.py`. `swarm-infer-beta live` is the side-effectful `kaggle-auto` path: it wraps `real_llm_internet_beta_v1`, starts a temporary public Coordinator, pushes two private Kaggle CPU stage kernels, verifies `external_runtime_verified`, deletes the kernels, writes `support_bundle.json`, removes local live private artifacts and raw runtime state by default, and only then may report `swarm_inference_beta_live_ready`, `swarm_inference_beta_ready`, `two_machine_swarm_inference_ready`, `real_llm_internet_beta_ready`, `kaggle_kernels_deleted`, `swarm_inference_beta_live_private_artifacts_cleaned`, and `token_rotation_required`. Pass `--keep-live-private-artifacts` only when debugging failed live runs; do not publish or commit those files. `swarm-infer-beta prepare` creates `operator.private.env`, stage-specific `miner.private.env` files, a hashed `miner_registry.json`, stage0/stage1 join packs, `SWARM_INFERENCE_BETA.md`, and command wrappers. `swarm-infer-beta verify` wraps the existing `remote_real_llm_sharded_beta_v1` route, requires `real_llm_split_route_ready`, `decoded_tokens_match`, `distinct_stage_miners`, `stage_assignment_valid`, and reports `swarm_inference_beta_ready` plus `two_machine_swarm_inference_ready` when the controlled split proof completes. It can import retained `real_llm_internet_beta_v1` evidence as `external_beta_evidence_imported` without pretending it was a fresh live run. `swarm-infer-beta collect` gathers redacted evidence/support, and `swarm-infer-beta clean` is dry-run by default. This is CPU-only, read-only, not production Swarm Inference, not P2P, and not large-model serving.
+
+Public Swarm Inference Alpha RC is the release-candidate evidence layer for the same proof:
+
+```bash
+crowdtensor public-swarm-alpha-rc --mode evidence-import --json
+python scripts/public_swarm_inference_alpha_rc_check.py --mode local-smoke
+```
+
+It emits `public_swarm_inference_alpha_rc_v1` through `scripts/public_swarm_inference_alpha_rc_pack.py`. `evidence-import` reads retained public reports for the completed live stage0/stage1 victim-rescue runs, verifies `stage0_live_requeue_evidence_ready`, `stage1_live_requeue_evidence_ready`, `public_swarm_live_requeue_evidence_ready`, `public_swarm_live_requeue_summary_ready`, `public_swarm_alpha_private_artifacts_absent`, `public_swarm_alpha_rc_evidence_imported`, and `public_swarm_inference_alpha_rc_ready`, then writes JSON/Markdown under `dist/public-swarm-inference-alpha-rc`. The current retained proof set is `dist/public-swarm-inference-alpha-live-stage0-requeue-20260527165830/public_swarm_inference_alpha.json`, `dist/public-swarm-inference-alpha-live-stage1-requeue-20260527170600/public_swarm_inference_alpha.json`, and `dist/public-swarm-inference-alpha-live-requeue-summary.json`. `local-smoke` only runs the CI-safe contract path and does not create Kaggle resources. This remains CPU-only, read-only, not production Swarm Inference, not P2P, and not large-model serving.
+
+Public Swarm Inference Beta is the ordinary user entrypoint for the current Coordinator-backed product surface:
+
+```bash
+crowdtensor public-swarm-beta product-beta --json
+python scripts/public_swarm_inference_beta_check.py --mode product-beta --json
+
+# Legacy CPU-only split proof and retained Alpha RC import remain available:
+crowdtensor public-swarm-beta local-loopback --base-port 9290 --request-count 1 --json
+crowdtensor public-swarm-beta evidence-import --json
+crowdtensor public-swarm-beta prepare --coordinator-url https://YOUR_COORDINATOR_HOST --json
+crowdtensor public-swarm-beta coordinator --json
+crowdtensor public-swarm-beta miner --stage stage0 --json
+crowdtensor public-swarm-beta miner --stage stage1 --json
+crowdtensor public-swarm-beta verify --coordinator-url https://YOUR_COORDINATOR_HOST --json
+crowdtensor public-swarm-beta collect --coordinator-url https://YOUR_COORDINATOR_HOST --json
+crowdtensor public-swarm-beta clean --json
+```
+
+It emits `public_swarm_inference_beta_v1` through `scripts/public_swarm_inference_beta_pack.py`. `product-beta` aggregates the Product RC (`serve`, `join`, `generate`, `peer`), `session_protocol_v1`, `p2p_lite_peer_v1`, retained `gpu_sharded_generation_beta_v1` evidence, and the local CPU inference fallback. A ready report requires `public_swarm_inference_beta_ready`, `public_swarm_product_beta_ready`, `public_swarm_product_rc_ready`, `coordinator_product_surface_ready`, `session_protocol_ready`, `p2p_lite_discovery_ready`, `gpu_generation_evidence_import_ready`, `cpu_fallback_ready`, and `local_cpu_inference_ready`. `public-swarm-beta local-loopback` still wraps `remote_real_llm_sharded_beta_v1` in split mode and requires `two_stage_split_inference_ready`, `local_loopback_ready`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`; `public-swarm-beta evidence-import` still imports retained Alpha RC evidence with `public_swarm_beta_evidence_import_ready`, `external_live_evidence_imported`, `stage0_live_requeue_evidence_ready`, and `stage1_live_requeue_evidence_ready`. This is Coordinator-backed, read-only Beta evidence, not production Swarm Inference, not libp2p/DHT/NAT traversal, not Hivemind-level serving, and not large-model serving.
+
+Public Swarm GPU Inference Beta is the optional CUDA overlay for the same tiny GPT split proof:
+
+```bash
+python -m pip install -e '.[hf]'
+crowdtensor public-swarm-gpu-beta local-smoke --json
+crowdtensor public-swarm-gpu-beta local-loopback --base-port 9321 --request-count 1 --json
+crowdtensor public-swarm-gpu-beta kaggle-package --output-dir dist/public-swarm-gpu-beta-kaggle --json
+crowdtensor public-swarm-gpu-beta kaggle-auto --public-host 24.199.118.54 --port 9320 --base-port 9321 --kaggle-owner YOUR_KAGGLE_USERNAME --request-count 1 --json
+crowdtensor public-swarm-gpu-beta evidence-import --gpu-report dist/public-swarm-gpu-beta/public_swarm_gpu_inference_beta.json --json
+python scripts/public_swarm_gpu_inference_beta_check.py --mode local-smoke
+python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-auto
+```
+
+It emits `public_swarm_gpu_inference_beta_v1` through `scripts/public_swarm_gpu_inference_beta_pack.py`. The CI-safe `public-swarm-gpu-beta local-smoke` path records CUDA availability and should include `public_swarm_gpu_beta_smoke_ready`, but it must not claim `public_swarm_gpu_beta_ready` on CPU-only hosts. The real `public-swarm-gpu-beta local-loopback` path selects `hf_transformers_cuda`, requires `cuda_runtime_available`, `hf_transformers_cuda_ready`, `gpu_runtime_ready`, `gpu_stage0_ready`, `gpu_stage1_ready`, and the stage-local partition codes `stage_local_partition_ready`, `stage0_partition_loaded`, `stage1_partition_loaded`, and `partition_parameter_split_valid`; it schedules only Miners advertising `real_llm_sharded_cuda_stage0`, `real_llm_sharded_cuda_stage1`, or `real_llm_sharded_cuda_both`. `public-swarm-gpu-beta kaggle-package` prepares private Kaggle GPU stage templates and should report `kaggle_gpu_package_ready`. The side-effectful `public-swarm-gpu-beta kaggle-auto` path starts a temporary CPU-capable public Coordinator, defers CUDA runtime checks to private Kaggle GPU stage Miners, pushes private Kaggle GPU kernels, verifies `external_gpu_runtime_verified`, and deletes those kernels before it may report `public_swarm_gpu_beta_kaggle_auto_ready`, `kaggle_kernels_deleted`, and `token_rotation_required`; `scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-auto` is fake-runner only and does not create Kaggle resources. Kaggle CUDA kernels default to a compatibility-pinned tiny runtime (`torch==2.7.1+cu118`, `torchvision==0.22.1+cu118`, `transformers==4.40.2`) so older Kaggle GPUs such as Tesla P100 can execute the proof. `--real-llm-partition-mode stage-local` is the default for the GPU Beta overlay; it proves stage-owned module placement and parameter-count evidence, not production memory scheduling or model-scale serving. The retained stage-local Kaggle GPU proof is `dist/public-swarm-gpu-beta-stage-local-live-20260528064520-shortslug/public_swarm_gpu_inference_beta_kaggle_auto.json`; the older runtime-pin proof at `dist/public-swarm-gpu-beta-live-20260528-runtimepin/public_swarm_gpu_inference_beta_kaggle_auto.json` is historical pre-stage-local evidence. `public-swarm-gpu-beta evidence-import` imports a completed GPU report and should report `external_gpu_runtime_verified`. This is read-only optional CUDA tiny GPT evidence, not production Swarm Inference, not P2P, not a GPU pooling marketplace, and not large-model serving.
+
+For the multi-token generation wrapper over the same CUDA split path:
+
+```bash
+crowdtensor gpu-generate evidence-import \
+  --gpu-report dist/gpu-sharded-generation-beta-kaggle-20260528095658/gpu_sharded_generation_beta_kaggle_auto.json \
+  --max-new-tokens 16 \
+  --json
+python scripts/gpu_sharded_generation_beta_check.py \
+  --gpu-report dist/gpu-sharded-generation-beta-kaggle-20260528095658/gpu_sharded_generation_beta_kaggle_auto.json \
+  --max-new-tokens 16 \
+  --json
+```
+
+`crowdtensor gpu-generate` emits `gpu_sharded_generation_beta_v1` and is documented in `docs/gpu-sharded-generation-beta.md`. The retained Kaggle GPU proof at `dist/gpu-sharded-generation-beta-kaggle-20260528095658/gpu_sharded_generation_beta_kaggle_auto.json` reports 16 generated tokens, `generated_text_hash`, `multi_token_generation_ready`, `external_gpu_runtime_verified`, `kaggle_kernels_deleted`, distinct stage Miners, and stage-local partition evidence without retaining private env files or raw generated payloads.
 
 To produce the shortest shareable local read-only inference proof:
 
@@ -109,7 +385,7 @@ Check what this machine can run:
 python3 scripts/runtime_matrix.py --json
 ```
 
-The runtime capability matrix reports CPU-only workload readiness, optional browser support, optional external LLM command/HTTP runtime configuration, and a hardware/runtime matrix with `hardware_targets`, `recommended_routes`, `matched_capabilities`, `missing_capabilities`, target and route `diagnosis_codes`, `operator_action`, top-level `diagnosis_summary`, and `hardware_diagnosis_summary`. It does not print token, URL, or API key values.
+The runtime capability matrix reports CPU-only workload readiness, optional browser support, optional external LLM command/HTTP runtime configuration, and a hardware/runtime matrix with `hardware_targets`, `recommended_routes`, `matched_capabilities`, `missing_capabilities`, target and route `diagnosis_codes`, `operator_action`, top-level `diagnosis_summary`, and `hardware_diagnosis_summary`. The `nvidia_cuda` target now describes the optional `hf_transformers_cuda` tiny GPT split route: without CUDA it reports `nvidia_cuda_optional_missing`, with partial runtime it reports `nvidia_cuda_detected_adapter_unavailable`, and only a complete CUDA + optional HF runtime can recommend `crowdtensor public-swarm-gpu-beta local-loopback`. It does not print token, URL, or API key values.
 
 Run the matrix-guided home-compute demo:
 
@@ -165,7 +441,7 @@ python3 scripts/demo_manifest_pack.py \
 
 The `demo_manifest_v1` artifact indexes `runtime_matrix.json`, `remote_compute_evidence_v1`, `external_llm_evidence_v1`, `support_bundle`, and `remote_compute_observability_v1` summaries in one safe JSON/Markdown pair. It is the recommended handoff artifact for showing what this checkout can run today. The external LLM entry uses deterministic mock evidence by default and does not expose raw prompts, `output_text`, runtime URL, or API key. CI validates the path with `scripts/demo_manifest_check.py`.
 
-Run the recommended high-level two-machine remote home-compute demo:
+Run the Real two-machine CPU inference Beta. This is the 15-minute two-machine CPU inference Beta path for a Coordinator host and a Miner host:
 
 ```bash
 crowdtensor remote-demo prepare \
@@ -176,7 +452,7 @@ crowdtensor remote-demo prepare \
   --json
 ```
 
-After starting the generated Coordinator command on the operator host and `crowdtensor-miner` command on the Miner host, verify the same read-only session:
+After starting the generated Coordinator command on the Coordinator host and the generated `crowdtensor-miner` command on the Miner host, verify the same read-only session:
 
 ```bash
 . dist/remote-home-compute/operator.private.env
@@ -210,7 +486,80 @@ crowdtensor remote-demo collect \
 
 Use `crowdtensor remote-demo clean --output-dir dist/remote-home-compute --json` to dry-run cleanup of known generated artifacts; add `--apply` to delete public generated files and `--include-private` only when you intentionally want to remove `operator.private.env`, `miner.private.env`, and `miner_registry.json`.
 
-The `crowdtensor remote-demo` path emits `remote_home_compute_demo_v1` and is the preferred operator wrapper for the controlled Beta-shaped home-compute demo. It reuses `scripts/remote_home_compute_demo_pack.py`, `operator.private.env`, `miner.private.env`, `POST /admin/inference-sessions`, `model_bundle_infer`, `remote_python_model_bundle_infer`, `remote_compute_evidence_v1`, and `remote_demo_observability_v1`. `remote-demo doctor`, `remote-demo collect`, and `remote-demo clean` emit `remote_home_compute_doctor_v1`, `remote_home_compute_collect_v1`, and `remote_home_compute_cleanup_v1`; `scripts/remote_home_compute_demo_check.py` validates prepare, doctor, verify, collect, and clean for the local stand-ins. This is not production Swarm Inference, not P2P routing, and not GPU pooling; real two-machine use still requires operator-provided TLS, VPN, tunnel, or another trusted network path.
+The `crowdtensor remote-demo` path emits `remote_home_compute_demo_v1` and is the preferred operator wrapper for the controlled Beta-shaped home-compute demo. It reuses `scripts/remote_home_compute_demo_pack.py`, `operator.private.env`, `miner.private.env`, `POST /admin/inference-sessions`, `model_bundle_infer`, `remote_python_model_bundle_infer`, `remote_compute_evidence_v1`, and `remote_demo_observability_v1`. `remote-demo doctor`, `remote-demo collect`, and `remote-demo clean` emit `remote_home_compute_doctor_v1`, `remote_home_compute_collect_v1`, and `remote_home_compute_cleanup_v1`; `scripts/remote_home_compute_demo_check.py` validates prepare, doctor, verify, collect, and clean for the local stand-ins. `scripts/remote_two_machine_beta_check.py` emits `remote_two_machine_beta_check_v1` in CI and requires `remote_two_machine_inference_ready`, `remote_two_machine_external_llm_ready`, and `remote_two_machine_beta_ready` from the loopback stand-in before this path is considered healthy. This is task-level remote CPU inference, not model sharding, not production Swarm Inference, not P2P routing, and not GPU pooling; real two-machine use still requires operator-provided TLS, VPN, tunnel, or trusted network.
+
+Run the Kaggle Remote Miner Beta when you want a real external temporary CPU Miner without exposing a Coordinator from Kaggle:
+
+```bash
+crowdtensor remote-demo prepare \
+  --target kaggle \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id kaggle-cpu-1 \
+  --output-dir dist/remote-home-compute-kaggle \
+  --json
+```
+
+Upload only `miner.private.env` and the generated `kaggle_remote_miner.py` to the Kaggle Notebook, then run the script from a checkout installed with `python -m pip install -e .`. Keep `operator.private.env` on the operator side, then use the normal `remote-demo doctor`, `remote-demo verify`, and `remote-demo collect` commands against the same Coordinator URL. `scripts/kaggle_remote_miner_beta_check.py` emits `kaggle_remote_miner_beta_check_v1`, validates `--target kaggle`, requires `kaggle_remote_miner_prepare_ready` and `kaggle_remote_miner_beta_ready`, and confirms the protocol through a local loopback stand-in. Kaggle is treated as an outbound Miner environment; GPU/TPU workload adapters are not enabled by this path, and it remains not production Swarm Inference and not P2P.
+
+Use Kaggle Real Runtime Acceptance when you want to prove an actual Kaggle CPU Notebook can connect outbound to a public operator-owned Coordinator. The current temporary HTTP target is `24.199.118.54`, and generated tokens must be rotated after the run:
+
+```bash
+crowdtensor remote-demo kaggle-real \
+  --action prepare \
+  --public-host 24.199.118.54 \
+  --port 9180 \
+  --miner-id kaggle-cpu-1 \
+  --output-dir dist/kaggle-real-runtime \
+  --json
+```
+
+Start the generated `start_coordinator.sh`, upload only `dist/kaggle-real-runtime/kaggle-upload/miner.private.env` and `dist/kaggle-real-runtime/kaggle-upload/kaggle_remote_miner.py` to Kaggle, run `python kaggle_remote_miner.py --env-file miner.private.env`, then verify:
+
+```bash
+crowdtensor remote-demo kaggle-real \
+  --action verify \
+  --public-host 24.199.118.54 \
+  --port 9180 \
+  --output-dir dist/kaggle-real-runtime \
+  --json
+```
+
+This emits `kaggle_real_runtime_acceptance_v1` through `scripts/kaggle_real_runtime_acceptance_pack.py`; CI runs `scripts/kaggle_real_runtime_acceptance_check.py` for artifact safety only. A real ready report carries `kaggle_artifacts_ready`, `coordinator_public_ready`, `kaggle_miner_seen`, `kaggle_result_accepted`, and `kaggle_real_runtime_ready`. `operator.private.env` stays off Kaggle, `token_rotation_required` is reported, and temporary HTTP is not production security. This path is CPU-only `model_bundle_infer`, read-only, not production Swarm Inference, not P2P, and not GPU/TPU workload execution.
+
+The same real-runtime wrapper can prepare the stage-aware micro-LLM split proof. It creates two Kaggle-only upload packages, `kaggle-upload-stage0` and `kaggle-upload-stage1`, backed by distinct hashed Miner identities:
+
+```bash
+crowdtensor remote-demo kaggle-real \
+  --action prepare \
+  --workload micro-llm-sharded \
+  --stage-mode split \
+  --decode-steps 3 \
+  --public-host 24.199.118.54 \
+  --port 9180 \
+  --miner-id kaggle-cpu-1 \
+  --output-dir dist/kaggle-real-runtime \
+  --json
+```
+
+Upload `kaggle-upload-stage0` to one private Kaggle Notebook and `kaggle-upload-stage1` to a second private Kaggle Notebook. After both Notebooks run `python kaggle_remote_miner.py --env-file miner.private.env`, verify with the same `--workload micro-llm-sharded --stage-mode split --decode-steps 3` flags. A live success adds `kaggle_micro_llm_stage0_seen`, `kaggle_micro_llm_stage1_seen`, `kaggle_micro_llm_stage_assignment_valid`, `stage_assignment_valid`, and `kaggle_micro_llm_sharded_ready`.
+
+For Kaggle CLI-driven operator runs, `scripts/kaggle_micro_llm_live_package.py` can turn the prepared `kaggle-upload-stage0` / `kaggle-upload-stage1` directories into private Kaggle dataset and script-kernel upload folders. Default mode keeps source and stage env files in a private dataset; `--inline-kernel-payload` embeds the source tarball and stage `miner.private.env` in each private kernel source for cases where Kaggle dataset mounting is unreliable. Inline mode is a controlled fallback only: do not publish those kernels, do not commit generated kernel code, delete the temporary Kaggle kernels/dataset after the run, and rotate the generated Miner tokens. This remains a deterministic toy two-stage pipeline, not large-model sharding, not GGUF/llama.cpp serving, and not production Swarm Inference.
+
+The first artifact-backed live Kaggle split proof was completed with public Coordinator `24.199.118.54:9180`, two private Kaggle CPU script kernels acting as stage 0 and stage 1 Miners, and `micro_llm_artifact_v1`. The retained local evidence is `dist/kaggle-micro-llm-live/external-real/kaggle_real_runtime_acceptance.json`; it reports `ok: true`, `artifact_loaded`, `micro_llm_artifact_ready`, `kaggle_micro_llm_stage0_seen`, `kaggle_micro_llm_stage1_seen`, `kaggle_micro_llm_stage_assignment_valid`, `stage_assignment_valid`, `baseline_match`, `decoded_tokens_match`, and `kaggle_micro_llm_sharded_ready`. The temporary Kaggle kernels/dataset used for that proof were deleted after evidence collection.
+
+For the same proof as a release-candidate acceptance pack, use `crowdtensor micro-llm-live-rc`. The default `local-generated` mode is CI-safe and starts local stand-ins from the generated stage upload packages; it must report `local_generated_stage_upload_standins_ready` but must not claim `external_runtime_verified`. Pass `--micro-llm-artifact dist/micro-llm-artifact` to make the RC use the same file-backed model package. A ready artifact-backed report should carry `micro_llm_live_rc_ready`, `kaggle_micro_llm_sharded_ready`, `artifact_loaded`, `micro_llm_artifact_ready`, `distinct_stage_miners`, and `stage_assignment_valid` while keeping raw activations and token material out of public artifacts. After two real Kaggle Notebooks or two real machines are already running, rerun with `--mode external-existing --coordinator-url http://24.199.118.54:9180 --kaggle-output-dir dist/kaggle-real-runtime ...` to verify external runtime evidence.
+
+For the real-weight tiny Hugging Face split path, use `crowdtensor real-llm-live-rc`. `local-generated` validates the generated `kaggle-upload-real-llm-stage0` and `kaggle-upload-real-llm-stage1` packages through local stand-ins and should report `local_generated_real_llm_stage_upload_standins_ready`; `kaggle-generated` prepares those two packages and the operator runbook only; `external-existing` verifies an already running public Coordinator plus two external stage Miners and only then may report `external_runtime_verified` and `kaggle_real_llm_sharded_ready`. Generated Miner launchers use `--enable-hf-tiny-gpt-runtime` and `--real-llm-stage-role stage0|stage1`. `scripts/kaggle_real_llm_live_package.py` emits `kaggle_real_llm_live_package_v1` and can package those real LLM stage uploads as private Kaggle dataset/script-kernel folders; a ready package reports `kaggle_real_llm_live_package_ready`. `--inline-kernel-payload` is the temporary fallback for Kaggle input-mount issues and embeds stage `miner.private.env` into private kernel source, so delete the temporary kernels/dataset and rotate tokens after proof.
+
+For a single milestone artifact around the real-weight split path, use `crowdtensor real-llm-internet-alpha`. `local-generated` aggregates `real_llm_live_rc_v1` with local stage0/stage1 requeue checks and must include `real_llm_internet_alpha_ready`, `real_llm_stage_requeue_ready`, and `stage_requeue_ready` without claiming `external_runtime_verified`. `package` generates the public runbook and stage uploads without a live claim. `external-existing` is the only mode that can report `external_runtime_verified` after two already running external stage Miners complete. The same boundary applies: CPU-only, read-only, not production Swarm Inference, not P2P, not large-model serving, and token rotation is required after temporary public HTTP runs.
+
+The first Real Internet Swarm Inference Alpha external proof completed with public Coordinator `24.199.118.54:9187`, two private Kaggle CPU script kernels acting as `internet-real-llm-stage0` and `internet-real-llm-stage1`, and `sshleifer/tiny-gpt2`. The retained local evidence is `dist/real-llm-internet-alpha-external/real_llm_internet_alpha.json`; it reports `ok: true`, `external_runtime_verified`, `real_llm_internet_alpha_ready`, `kaggle_real_llm_stage0_seen`, `kaggle_real_llm_stage1_seen`, `kaggle_real_llm_sharded_ready`, `real_llm_artifact_ready`, `baseline_match`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`. Temporary Kaggle kernels were deleted after evidence collection and the report marks token rotation required. This is CPU-only, read-only `real_llm_sharded_infer` evidence, not production Swarm Inference, not P2P, not GPU/TPU pooling, not GGUF/llama.cpp serving, and not large-model serving.
+
+For the automated version of that external proof, use `crowdtensor real-llm-internet-beta`. Its `kaggle-auto` mode wraps `real_llm_internet_alpha_v1`, `kaggle_real_llm_live_package_v1`, and external `real_llm_live_rc_v1` evidence into one `real_llm_internet_beta_v1` report. It should only claim `real_llm_internet_beta_ready` after `external_runtime_verified` is present and both temporary private Kaggle kernels are deleted, producing `kaggle_kernels_deleted`. The default path is CPU-only; `--real-llm-backend hf_transformers_cuda` is the optional CUDA tiny GPT path where a CPU Coordinator schedules metadata-only CUDA sessions and Kaggle GPU Miners perform runtime execution. Temporary public HTTP tokens must be rotated after the run, and this remains not production Swarm Inference, not P2P, not GPU pooling, and not large-model serving.
+
+The first real-weight live Kaggle split proof was completed with public Coordinator `24.199.118.54:9184`, two private Kaggle CPU script kernels acting as `kaggle-real-llm-stage0` and `kaggle-real-llm-stage1`, and `sshleifer/tiny-gpt2` through `hf_transformers_cpu`. The retained local evidence is `dist/real-llm-live-goal-external/real_llm_live_rc.json`; it reports `ok: true`, `external_runtime_verified`, `kaggle_real_llm_stage0_seen`, `kaggle_real_llm_stage1_seen`, `kaggle_real_llm_sharded_ready`, `real_llm_artifact_ready`, `baseline_match`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`. Temporary Kaggle kernels/dataset were deleted after evidence collection. This is CPU-only, read-only `real_llm_sharded_infer` evidence for `sshleifer/tiny-gpt2`, not production Swarm Inference, not P2P, not GPU/TPU pooling, not GGUF/llama.cpp serving, and not large-model serving.
+
+The current Public Swarm GPU Inference Beta Kaggle proof completed with public Coordinator `24.199.118.54:9320`, two private Kaggle GPU script kernels, and `sshleifer/tiny-gpt2` through `hf_transformers_cuda` with `--real-llm-partition-mode stage-local`. The retained local evidence is `dist/public-swarm-gpu-beta-stage-local-live-20260528064520-shortslug/public_swarm_gpu_inference_beta_kaggle_auto.json`; it reports `ok: true`, `public_swarm_gpu_beta_kaggle_auto_ready`, `external_gpu_runtime_verified`, `cuda_runtime_available`, `hf_transformers_cuda_ready`, `gpu_stage0_ready`, `gpu_stage1_ready`, `stage_local_partition_ready`, `stage0_partition_loaded`, `stage1_partition_loaded`, `partition_parameter_split_valid`, `stage_gpu_memory_reduced`, `activation_transport_ready`, `baseline_match`, `decoded_tokens_match`, `distinct_stage_miners`, `stage_assignment_valid`, and `kaggle_kernels_deleted`. The GPU Sharded Generation Beta proof completed with public Coordinator `24.199.118.54:9360`, two private Kaggle GPU stage kernels, `--max-new-tokens 16`, and retained evidence at `dist/gpu-sharded-generation-beta-kaggle-20260528095658/gpu_sharded_generation_beta_kaggle_auto.json`; it reports `gpu_multi_machine_generation_ready`, `multi_token_generation_ready`, `generated_token_count: 16`, `generated_text_hash`, `external_gpu_runtime_verified`, and `kaggle_kernels_deleted`. The older `dist/public-swarm-gpu-beta-live-20260528-runtimepin/public_swarm_gpu_inference_beta_kaggle_auto.json` proof remains retained as historical pre-stage-local CUDA runtime-pin evidence. The generated Kaggle runtime pins `torch==2.7.1+cu118`, `torchvision==0.22.1+cu118`, and `transformers==4.40.2`; tokens must still be rotated after every temporary public HTTP proof. These are tiny read-only CUDA split proofs, not production Swarm Inference, not P2P, not a GPU pooling marketplace, and not large-model serving.
 
 The same high-level wrapper can run the first remote external LLM runtime proof. This creates a read-only `external_llm_infer` session, expects the remote Miner to advertise a mock, command, or OpenAI-compatible operator-owned runtime, and emits `remote_external_llm_evidence_v1` plus `remote_external_llm_observability_v1` without raw prompts, `output_text`, runtime URL, API key, lease token, or idempotency material:
 

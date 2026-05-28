@@ -62,7 +62,26 @@ class ReleaseGateTests(unittest.TestCase):
                 "cleanup_docs",
                 "remote_cli_docs",
                 "remote_home_compute_demo_docs",
+                "remote_two_machine_beta_docs",
+                "kaggle_remote_miner_beta_docs",
+                "kaggle_real_runtime_acceptance_docs",
                 "home_inference_cli_docs",
+                "cpu_inference_beta_docs",
+                "cpu_inference_beta_rc_docs",
+                "sharded_inference_docs",
+                "remote_sharded_inference_beta_docs",
+                "micro_llm_sharded_inference_docs",
+                "remote_micro_llm_sharded_beta_docs",
+                "micro_llm_live_rc_docs",
+                "real_llm_sharded_beta_docs",
+                "real_llm_live_rc_docs",
+                "real_llm_internet_alpha_docs",
+                "real_llm_internet_beta_docs",
+                "swarm_inference_beta_docs",
+                "public_swarm_inference_alpha_docs",
+                "public_swarm_inference_alpha_rc_docs",
+                "public_swarm_inference_beta_docs",
+                "public_swarm_gpu_inference_beta_docs",
                 "release_materials",
                 "open_source_entrypoints",
                 "project_memory",
@@ -539,6 +558,78 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("model_bundle_inference_scenario_v1" in detail for detail in details))
         self.assertTrue(any("request_trace" in detail for detail in details))
 
+    def test_cpu_inference_beta_docs_must_describe_beta_entrypoint(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/onboarding_gate.py",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No CPU inference Beta docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "cpu_inference_beta_docs")
+        self.assertTrue(any("crowdtensor cpu-infer" in detail for detail in details))
+        self.assertTrue(any("cpu_inference_beta_v1" in detail for detail in details))
+        self.assertTrue(any("--mode remote-loopback" in detail for detail in details))
+
+    def test_cpu_inference_beta_rc_docs_must_describe_release_candidate_entrypoint(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No CPU Inference Beta RC docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "cpu_inference_beta_rc_docs")
+        self.assertTrue(any("CPU Inference Beta RC" in detail for detail in details))
+        self.assertTrue(any("cpu_inference_beta_rc_v1" in detail for detail in details))
+        self.assertTrue(any("--mode beta-rc" in detail for detail in details))
+
+    def test_kaggle_remote_miner_beta_docs_must_describe_kaggle_target(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]:
+            (tmp_root / relative).write_text("No Kaggle Remote Miner Beta docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "kaggle_remote_miner_beta_docs")
+        self.assertTrue(any("Kaggle Remote Miner Beta" in detail for detail in details))
+        self.assertTrue(any("--target kaggle" in detail for detail in details))
+        self.assertTrue(any("kaggle_remote_miner_beta_check_v1" in detail for detail in details))
+
     def test_release_materials_must_describe_release_flow(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
         (tmp_root / "README.md").write_text("No release materials here.\n", encoding="utf-8")
@@ -726,6 +817,237 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("--skip-runtime-matrix" in detail for detail in details))
         self.assertTrue(any("diagnosis_summary" in detail for detail in details))
         self.assertTrue(any("operator_action" in detail for detail in details))
+
+    def test_real_llm_sharded_beta_docs_must_describe_optional_hf_split_path(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/protocol.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No real LLM sharded docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "real_llm_sharded_beta_docs")
+        self.assertTrue(any("real_llm_sharded_infer" in detail for detail in details))
+        self.assertTrue(any("real_llm_artifact_v1" in detail for detail in details))
+        self.assertTrue(any("remote_real_llm_sharded_beta_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor remote-demo --workload real-llm-sharded" in detail for detail in details))
+        self.assertTrue(any("remote_real_llm_sharded_acceptance_v1" in detail for detail in details))
+        self.assertTrue(any("remote_python_real_llm_sharded_infer" in detail for detail in details))
+        self.assertTrue(any("hf_dependencies_missing" in detail for detail in details))
+        self.assertTrue(any("--enable-hf-tiny-gpt-runtime" in detail for detail in details))
+        self.assertTrue(any("real_llm_sharded_stage0" in detail for detail in details))
+        self.assertTrue(any("optional [hf]" in detail for detail in details))
+
+    def test_real_llm_live_rc_docs_must_describe_generated_external_path(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No real LLM live RC docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "real_llm_live_rc_docs")
+        self.assertTrue(any("real_llm_live_rc_v1" in detail for detail in details))
+        self.assertTrue(any("real_llm_live_rc_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor real-llm-live-rc" in detail for detail in details))
+        self.assertTrue(any("kaggle-upload-real-llm-stage0" in detail for detail in details))
+        self.assertTrue(any("external_runtime_verified" in detail for detail in details))
+
+    def test_real_llm_internet_alpha_docs_must_describe_ready_and_requeue_path(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No real LLM Internet Alpha docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "real_llm_internet_alpha_docs")
+        self.assertTrue(any("real_llm_internet_alpha_v1" in detail for detail in details))
+        self.assertTrue(any("real_llm_internet_alpha_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor real-llm-internet-alpha" in detail for detail in details))
+        self.assertTrue(any("real_llm_stage_requeue_ready" in detail for detail in details))
+        self.assertTrue(any("stage_requeue_ready" in detail for detail in details))
+
+    def test_real_llm_internet_beta_docs_must_describe_kaggle_auto_cleanup_path(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No real LLM Internet Beta docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "real_llm_internet_beta_docs")
+        self.assertTrue(any("real_llm_internet_beta_v1" in detail for detail in details))
+        self.assertTrue(any("real_llm_internet_beta_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor real-llm-internet-beta" in detail for detail in details))
+        self.assertTrue(any("kaggle-auto" in detail for detail in details))
+        self.assertTrue(any("kaggle_kernels_deleted" in detail for detail in details))
+        self.assertTrue(any("external_stage_requeue_ready" in detail for detail in details))
+
+    def test_public_swarm_inference_alpha_docs_must_describe_session_entrypoint(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No Public Swarm Inference Alpha docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "public_swarm_inference_alpha_docs")
+        self.assertTrue(any("public_swarm_inference_alpha_v1" in detail for detail in details))
+        self.assertTrue(any("public_swarm_inference_alpha_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor swarm-session" in detail for detail in details))
+        self.assertTrue(any("local_stage_requeue_ready" in detail for detail in details))
+        self.assertTrue(any("public_swarm_live_requeue_ready" in detail for detail in details))
+        self.assertTrue(any("live-kaggle" in detail for detail in details))
+
+    def test_public_swarm_inference_alpha_rc_docs_must_describe_release_candidate(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No Public Swarm Inference Alpha RC docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "public_swarm_inference_alpha_rc_docs")
+        self.assertTrue(any("public_swarm_inference_alpha_rc_v1" in detail for detail in details))
+        self.assertTrue(any("public_swarm_inference_alpha_rc_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor public-swarm-alpha-rc" in detail for detail in details))
+        self.assertTrue(any("stage0_live_requeue_evidence_ready" in detail for detail in details))
+        self.assertTrue(any("evidence-import" in detail for detail in details))
+
+    def test_public_swarm_inference_beta_docs_must_describe_user_beta(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No Public Swarm Inference Beta docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "public_swarm_inference_beta_docs")
+        self.assertTrue(any("public_swarm_inference_beta_v1" in detail for detail in details))
+        self.assertTrue(any("public_swarm_inference_beta_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor public-swarm-beta" in detail for detail in details))
+        self.assertTrue(any("public-swarm-beta product-beta" in detail for detail in details))
+        self.assertTrue(any("public_swarm_product_beta_ready" in detail for detail in details))
+        self.assertTrue(any("p2p_lite_discovery_ready" in detail for detail in details))
+        self.assertTrue(any("cpu_fallback_ready" in detail for detail in details))
+        self.assertTrue(any("local_loopback_ready" in detail for detail in details))
+        self.assertTrue(any("external_live_evidence_imported" in detail for detail in details))
+
+    def test_public_swarm_gpu_inference_beta_docs_must_describe_optional_cuda_beta(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/protocol.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No Public Swarm GPU Inference Beta docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "public_swarm_gpu_inference_beta_docs")
+        self.assertTrue(any("public_swarm_gpu_inference_beta_v1" in detail for detail in details))
+        self.assertTrue(any("public_swarm_gpu_inference_beta_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor public-swarm-gpu-beta" in detail for detail in details))
+        self.assertTrue(any("hf_transformers_cuda" in detail for detail in details))
+        self.assertTrue(any("kaggle_gpu_package_ready" in detail for detail in details))
+        self.assertTrue(any("public_swarm_gpu_beta_kaggle_auto_ready" in detail for detail in details))
+        ci_details = failed_details(report, "ci_workflow")
+        self.assertTrue(any("Public Swarm GPU Inference Beta Kaggle package" in detail for detail in ci_details))
+        self.assertTrue(any("Public Swarm GPU Inference Beta Kaggle auto" in detail for detail in ci_details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

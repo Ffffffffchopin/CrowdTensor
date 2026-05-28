@@ -30,6 +30,12 @@ jobs:
         run: python scripts/doctor.py --json
       - name: Local proof CLI
         run: crowdtensor local-proof --output-dir /tmp/crowdtensor-local-proof --base-port 8960 --request-count 4 --json
+      - name: CPU inference Beta
+        run: python scripts/cpu_inference_beta_check.py --mode local --base-port 8970
+      - name: CPU inference Beta remote loopback
+        run: python scripts/cpu_inference_beta_check.py --mode remote-loopback --workload model-bundle --base-port 8972
+      - name: CPU inference Beta remote external LLM loopback
+        run: python scripts/cpu_inference_beta_check.py --mode remote-loopback --workload external-llm --base-port 8974
       - name: Runtime matrix
         run: python scripts/runtime_matrix_check.py
       - name: Home-compute demo
@@ -46,8 +52,66 @@ jobs:
         run: python scripts/remote_home_compute_demo_check.py --port 8920
       - name: Remote external LLM demo
         run: python scripts/remote_home_compute_demo_check.py --port 8921 --workload external-llm --request-count 3
+      - name: Remote sharded inference demo
+        run: python scripts/remote_home_compute_demo_check.py --port 8922 --workload sharded-model-bundle --request-count 3
+      - name: Remote micro-LLM sharded inference demo
+        run: python scripts/remote_home_compute_demo_check.py --port 8923 --workload micro-llm-sharded --request-count 2 --decode-steps 3
+      - name: Stage-aware remote micro-LLM sharded inference demo
+        run: python scripts/remote_home_compute_demo_check.py --port 8924 --workload micro-llm-sharded --request-count 2 --decode-steps 3 --stage-mode split --require-distinct-stage-miners
       # The remote_home_compute_demo_check loopback exercises remote-demo prepare,
       # remote-demo doctor, remote-demo verify, remote-demo collect, and remote-demo clean.
+      - name: Real two-machine CPU inference Beta loopback
+        run: python scripts/remote_two_machine_beta_check.py --workload all --base-port 9050
+      - name: Kaggle Remote Miner Beta loopback
+        run: python scripts/kaggle_remote_miner_beta_check.py --port 9060
+      - name: Kaggle Real Runtime Acceptance artifacts
+        run: python scripts/kaggle_real_runtime_acceptance_check.py --port 9180
+      - name: Kaggle Real Runtime Micro-LLM split artifacts
+        run: python scripts/kaggle_real_runtime_acceptance_check.py --port 9181 --workload micro-llm-sharded --stage-mode split --request-count 2 --decode-steps 3
+      - name: CPU Inference Beta RC
+        run: python scripts/cpu_inference_beta_rc_check.py --quick --base-port 9070
+      - name: Pipeline-sharded inference Alpha
+        run: python scripts/sharded_inference_check.py --base-port 9080
+      - name: CPU Pipeline-Sharded Inference Beta loopback
+        run: python scripts/remote_sharded_inference_beta_check.py --mode remote-loopback --base-port 9082
+      - name: Micro-LLM Pipeline-Sharded Inference Alpha
+        run: python scripts/micro_llm_sharded_inference_check.py --base-port 9084 --request-count 2 --decode-steps 3
+      - name: Stage-aware Micro-LLM Pipeline-Sharded Inference Alpha
+        run: python scripts/stage_aware_micro_llm_sharded_check.py --base-port 9085 --request-count 2 --decode-steps 3 --require-distinct-stage-miners
+      - name: Remote Micro-LLM Pipeline-Sharded Inference Beta loopback
+        run: python scripts/remote_micro_llm_sharded_beta_check.py --mode remote-loopback --base-port 9086 --request-count 2 --decode-steps 3
+      - name: Stage-aware Remote Micro-LLM Pipeline-Sharded Inference Beta loopback
+        run: python scripts/remote_micro_llm_sharded_beta_check.py --mode remote-loopback --base-port 9087 --request-count 2 --decode-steps 3 --stage-mode split --require-distinct-stage-miners
+      - name: Micro-LLM Live Two-Node RC local generated
+        run: python scripts/micro_llm_live_rc_check.py --base-port 9182 --request-count 2 --decode-steps 3
+      - name: Install optional HF runtime
+        run: python -m pip install -e '.[hf]'
+      - name: Real Small-LLM Sharded Inference Beta loopback
+        run: python scripts/remote_real_llm_sharded_beta_check.py --mode remote-loopback --base-port 9184 --stage-mode split --require-distinct-stage-miners --timeout-seconds 300
+      - name: Real Small-LLM remote-demo loopback
+        run: python scripts/remote_home_compute_demo_check.py --port 9185 --workload real-llm-sharded --request-count 1 --stage-mode split --require-distinct-stage-miners --verify-timeout 300 --command-timeout 360
+      - name: Real Small-LLM Sharded Inference Live RC local generated
+        run: python scripts/real_llm_live_rc_check.py --base-port 9186 --request-count 1 --timeout-seconds 300
+      - name: Real Internet Swarm Inference Alpha local generated
+        run: python scripts/real_llm_internet_alpha_check.py --port 9187 --base-port 9188 --request-count 1 --timeout-seconds 300
+      - name: Real Internet Swarm Inference Beta contract
+        run: python scripts/real_llm_internet_beta_check.py --port 9190 --base-port 9191 --request-count 2 --timeout-seconds 300
+      - name: Swarm Inference Beta contract
+        run: python scripts/swarm_inference_beta_check.py --coordinator-url http://127.0.0.1:9200 --request-count 2
+      - name: Public Swarm Inference Beta local loopback
+        run: python scripts/public_swarm_inference_beta_check.py --mode local-loopback --base-port 9290 --request-count 1 --timeout-seconds 300
+      - name: Public Swarm Inference Beta product aggregate
+        run: python scripts/public_swarm_inference_beta_check.py --mode product-beta --base-port 9292 --request-count 1 --timeout-seconds 300
+      - name: Public Swarm GPU Inference Beta local smoke
+        run: python scripts/public_swarm_gpu_inference_beta_check.py --mode local-smoke
+      - name: Public Swarm GPU Inference Beta Kaggle package
+        run: python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-package
+      - name: Public Swarm GPU Inference Beta Kaggle auto contract
+        run: python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-auto
+      - name: Public Swarm Inference Alpha contract
+        run: python scripts/public_swarm_inference_alpha_check.py --json
+      - name: Public Swarm Inference Alpha RC local smoke
+        run: python scripts/public_swarm_inference_alpha_rc_check.py --mode local-smoke
       - name: Demo manifest
         run: python scripts/demo_manifest_check.py --base-port 8914
       - name: Support Bundle

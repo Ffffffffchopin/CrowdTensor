@@ -317,6 +317,28 @@ def command_plan(args: argparse.Namespace, *, venv_dir: Path, output_dir: Path) 
             "diagnosis": "llm_infer_failed",
         },
         {
+            "name": "cpu_infer_beta",
+            "command": [
+                crowdtensor,
+                "cpu-infer",
+                "--mode",
+                "local",
+                "--output-dir",
+                str(output_dir / "cpu-infer"),
+                "--base-port",
+                str(args.base_port + 25),
+                "--request-count",
+                str(args.request_count),
+                "--external-llm-request-count",
+                str(args.external_llm_request_count),
+                "--timeout-seconds",
+                str(args.timeout_seconds),
+                "--json",
+            ],
+            "expect_json": True,
+            "diagnosis": "cpu_infer_failed",
+        },
+        {
             "name": "release_ready_smoke",
             "command": [
                 crowdtensor,
@@ -403,6 +425,12 @@ def build_onboarding_gate(args: argparse.Namespace, *, runner: Runner = subproce
             kind="llm_inference_cli_summary",
             schema="llm_inference_cli_v1",
         ),
+        "cpu_inference_beta_json": artifact_entry(
+            output_dir / "cpu-infer" / "cpu_inference_beta.json",
+            output_dir,
+            kind="cpu_inference_beta",
+            schema="cpu_inference_beta_v1",
+        ),
         "release_readiness_json": artifact_entry(
             output_dir / "release-ready" / "release_readiness.json",
             output_dir,
@@ -461,6 +489,7 @@ def build_onboarding_gate(args: argparse.Namespace, *, runner: Runner = subproce
         ],
         "recommended_next_commands": [
             "crowdtensor local-proof --json",
+            "crowdtensor cpu-infer --mode local --json",
             "crowdtensor home-infer --scenario-id route-baseline --json",
             "crowdtensor llm-infer --mock --json",
             "crowdtensor release-ready --json",

@@ -46,6 +46,10 @@ REQUIRED_FILES = [
     "scripts/remote_demo_acceptance_check.py",
     "scripts/remote_home_compute_demo_pack.py",
     "scripts/remote_home_compute_demo_check.py",
+    "scripts/remote_two_machine_beta_check.py",
+    "scripts/kaggle_remote_miner_beta_check.py",
+    "scripts/kaggle_real_runtime_acceptance_pack.py",
+    "scripts/kaggle_real_runtime_acceptance_check.py",
     "scripts/demo_manifest_pack.py",
     "scripts/demo_manifest_check.py",
     "scripts/onboarding_gate.py",
@@ -57,6 +61,35 @@ REQUIRED_FILES = [
     "scripts/multi_miner_scenario_sweep_check.py",
     "scripts/runtime_matrix.py",
     "scripts/runtime_matrix_check.py",
+    "scripts/cpu_inference_beta_pack.py",
+    "scripts/cpu_inference_beta_check.py",
+    "scripts/cpu_inference_beta_rc_pack.py",
+    "scripts/cpu_inference_beta_rc_check.py",
+    "scripts/sharded_inference_evidence_pack.py",
+    "scripts/sharded_inference_check.py",
+    "scripts/remote_sharded_inference_beta_pack.py",
+    "scripts/remote_sharded_inference_beta_check.py",
+    "scripts/micro_llm_sharded_inference_evidence_pack.py",
+    "scripts/micro_llm_sharded_inference_check.py",
+    "scripts/stage_aware_micro_llm_sharded_check.py",
+    "scripts/remote_micro_llm_sharded_beta_pack.py",
+    "scripts/remote_micro_llm_sharded_beta_check.py",
+    "scripts/real_llm_sharded_inference_evidence_pack.py",
+    "scripts/remote_real_llm_sharded_beta_pack.py",
+    "scripts/remote_real_llm_sharded_beta_check.py",
+    "scripts/real_llm_live_rc_pack.py",
+    "scripts/real_llm_live_rc_check.py",
+    "scripts/real_llm_internet_alpha_pack.py",
+    "scripts/real_llm_internet_alpha_check.py",
+    "scripts/real_llm_internet_beta_pack.py",
+    "scripts/real_llm_internet_beta_check.py",
+    "scripts/swarm_inference_beta_pack.py",
+    "scripts/swarm_inference_beta_check.py",
+    "scripts/public_swarm_inference_beta_pack.py",
+    "scripts/public_swarm_inference_beta_check.py",
+    "scripts/public_swarm_gpu_inference_beta_pack.py",
+    "scripts/public_swarm_gpu_inference_beta_check.py",
+    "scripts/kaggle_real_llm_live_package.py",
     "scripts/home_compute_demo.py",
     "scripts/home_compute_demo_check.py",
     "scripts/home_compute_evidence_pack.py",
@@ -846,6 +879,13 @@ def check_remote_home_compute_demo_docs(root: Path) -> dict[str, Any]:
         "remote_external_llm_evidence_v1",
         "remote_external_llm_observability_v1",
         "--workload external-llm",
+        "--workload real-llm-sharded",
+        "remote_python_real_llm_sharded_infer",
+        "remote_real_llm_sharded_runbook_v1",
+        "remote_real_llm_sharded_acceptance_v1",
+        "remote_real_llm_sharded_observability_v1",
+        "remote_real_llm_sharded_beta_v1",
+        "remote_two_machine_real_llm_sharded_ready",
         "operator.private.env",
         "miner.private.env",
         "not production",
@@ -854,6 +894,130 @@ def check_remote_home_compute_demo_docs(root: Path) -> dict[str, Any]:
         if fragment not in combined:
             details.append(f"remote home-compute demo docs/CI must mention {fragment}")
     return check_result("remote_home_compute_demo_docs", not details, details)
+
+
+def check_remote_two_machine_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Real two-machine CPU inference Beta",
+        "remote_two_machine_beta_check.py",
+        "remote_two_machine_beta_check_v1",
+        "remote_two_machine_inference_ready",
+        "remote_two_machine_external_llm_ready",
+        "remote_two_machine_beta_ready",
+        "15-minute two-machine CPU inference Beta",
+        "Coordinator host",
+        "Miner host",
+        "operator-provided TLS, VPN, tunnel, or trusted network",
+        "not model sharding",
+        "not P2P",
+    ]:
+        if fragment not in combined:
+            details.append(f"remote two-machine Beta docs/CI must mention {fragment}")
+    return check_result("remote_two_machine_beta_docs", not details, details)
+
+
+def check_kaggle_remote_miner_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Kaggle Remote Miner Beta",
+        "kaggle_remote_miner_beta_check.py",
+        "kaggle_remote_miner_beta_check_v1",
+        "--target kaggle",
+        "kaggle_remote_miner.py",
+        "kaggle_remote_miner_prepare_ready",
+        "kaggle_remote_miner_beta_ready",
+        "miner.private.env",
+        "operator.private.env",
+        "outbound",
+        "GPU/TPU workload",
+        "not production",
+        "not P2P",
+    ]:
+        if fragment not in combined:
+            details.append(f"Kaggle Remote Miner Beta docs/CI must mention {fragment}")
+    return check_result("kaggle_remote_miner_beta_docs", not details, details)
+
+
+def check_kaggle_real_runtime_acceptance_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Kaggle Real Runtime Acceptance",
+        "kaggle_real_runtime_acceptance_v1",
+        "kaggle_real_runtime_acceptance_pack.py",
+        "kaggle_real_runtime_acceptance_check.py",
+        "remote-demo kaggle-real",
+        "24.199.118.54",
+        "temporary HTTP",
+        "kaggle_real_runtime_ready",
+        "coordinator_public_ready",
+        "kaggle_artifacts_ready",
+        "kaggle_miner_seen",
+        "kaggle_result_accepted",
+        "micro-llm-sharded",
+        "kaggle-upload-stage0",
+        "kaggle-upload-stage1",
+        "kaggle_micro_llm_sharded_ready",
+        "kaggle_micro_llm_stage0_seen",
+        "kaggle_micro_llm_stage1_seen",
+        "kaggle_micro_llm_stage_assignment_valid",
+        "stage_assignment_valid",
+        "toy two-stage pipeline",
+        "not large-model sharding",
+        "token_rotation_required",
+        "operator.private.env",
+        "miner.private.env",
+        "not production",
+        "not P2P",
+    ]:
+        if fragment not in combined:
+            details.append(f"Kaggle real runtime acceptance docs/CI must mention {fragment}")
+    return check_result("kaggle_real_runtime_acceptance_docs", not details, details)
 
 
 def check_home_inference_cli_docs(root: Path) -> dict[str, Any]:
@@ -888,6 +1052,799 @@ def check_home_inference_cli_docs(root: Path) -> dict[str, Any]:
         if fragment not in combined:
             details.append(f"home inference CLI docs must mention {fragment}")
     return check_result("home_inference_cli_docs", not details, details)
+
+
+def check_cpu_inference_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            "scripts/onboarding_gate.py",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "crowdtensor cpu-infer",
+        "cpu_inference_beta_v1",
+        "cpu_inference_beta_pack.py",
+        "cpu_inference_beta_check.py",
+        "--mode local",
+        "--mode remote-loopback",
+        "--mode remote-existing",
+        "CPU-only",
+        "read-only",
+        "home-infer",
+        "llm-infer",
+        "remote-demo",
+        "not production Swarm Inference",
+        "not P2P",
+        "crowdtensor/cli.py",
+    ]:
+        if fragment not in combined:
+            details.append(f"CPU inference Beta docs/CI must mention {fragment}")
+    return check_result("cpu_inference_beta_docs", not details, details)
+
+
+def check_cpu_inference_beta_rc_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "CPU Inference Beta RC",
+        "cpu_inference_beta_rc_v1",
+        "cpu_inference_beta_rc_pack.py",
+        "cpu_inference_beta_rc_check.py",
+        "--mode beta-rc",
+        "cpu_inference_beta_rc_ready",
+        "local_cpu_inference_ready",
+        "remote_loopback_ready",
+        "two_machine_rehearsal_ready",
+        "kaggle_remote_miner_artifacts_ready",
+        "miner_join_pack_v1",
+        "miner_join_pack_ready",
+        "cpu_miner_beta_ready",
+        "--kaggle-real-runtime-report",
+        "real_runtime_evidence_ready",
+        "Kaggle Remote Miner Beta",
+        "demo_manifest_v1",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+    ]:
+        if fragment not in combined:
+            details.append(f"CPU Inference Beta RC docs/CI must mention {fragment}")
+    return check_result("cpu_inference_beta_rc_docs", not details, details)
+
+
+def check_sharded_inference_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Pipeline-Sharded Inference Alpha",
+        "sharded_model_bundle_infer",
+        "sharded_model_bundle_infer_v1",
+        "sharded_inference_session_v1",
+        "sharded_inference_evidence_v1",
+        "sharded_inference_check.py",
+        "crowdtensor shard-infer",
+        "stage_0_accepted",
+        "stage_1_accepted",
+        "activation_transport_ready",
+        "baseline_match",
+        "stage_requeue_ready",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+    ]:
+        if fragment not in combined:
+            details.append(f"sharded inference docs/CI must mention {fragment}")
+    return check_result("sharded_inference_docs", not details, details)
+
+
+def check_remote_sharded_inference_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "CPU Pipeline-Sharded Inference Beta",
+        "remote_sharded_inference_beta_v1",
+        "remote_sharded_inference_beta_check.py",
+        "remote_sharded_inference_beta_pack.py",
+        "crowdtensor shard-infer-beta",
+        "--mode remote-loopback",
+        "remote_sharded_inference_ready",
+        "remote_sharded_loopback_ready",
+        "local_sharded_inference_ready",
+        "sharded-model-bundle",
+        "remote_sharded_inference_acceptance_v1",
+        "remote_sharded_inference_observability_v1",
+        "remote_python_sharded_model_bundle_infer",
+        "remote_two_machine_sharded_ready",
+        "stage_requeue_ready",
+        "activation hashes",
+        "baseline_match",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not real LLM sharding",
+    ]:
+        if fragment not in combined:
+            details.append(f"remote sharded inference Beta docs/CI must mention {fragment}")
+    return check_result("remote_sharded_inference_beta_docs", not details, details)
+
+
+def check_micro_llm_sharded_inference_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Micro-LLM Pipeline-Sharded Inference Alpha",
+        "micro_llm_sharded_infer",
+        "micro_llm_sharded_infer_v1",
+        "micro_llm_sharded_session_v1",
+        "micro_llm_sharded_evidence_v1",
+        "micro_llm_sharded_inference_check.py",
+        "stage_aware_micro_llm_sharded_check.py",
+        "crowdtensor micro-llm-shard-infer",
+        "micro_llm_sharded_stage0",
+        "micro_llm_sharded_stage1",
+        "--require-distinct-stage-miners",
+        "distinct_stage_miners",
+        "stage_assignment_valid",
+        "decode_steps",
+        "decoded_tokens_match",
+        "activation_transport_ready",
+        "baseline_match",
+        "stage_requeue_ready",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not GGUF/llama.cpp",
+    ]:
+        if fragment not in combined:
+            details.append(f"micro-LLM sharded inference docs/CI must mention {fragment}")
+    return check_result("micro_llm_sharded_inference_docs", not details, details)
+
+
+def check_remote_micro_llm_sharded_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Remote Micro-LLM Pipeline-Sharded Inference Beta",
+        "remote_micro_llm_sharded_beta_v1",
+        "remote_micro_llm_sharded_beta_check.py",
+        "remote_micro_llm_sharded_beta_pack.py",
+        "crowdtensor micro-llm-shard-infer-beta",
+        "--mode remote-loopback",
+        "--stage-mode split",
+        "--require-distinct-stage-miners",
+        "remote_micro_llm_sharded_ready",
+        "remote_micro_llm_sharded_loopback_ready",
+        "local_micro_llm_sharded_inference_ready",
+        "micro-llm-sharded",
+        "remote_micro_llm_sharded_acceptance_v1",
+        "remote_micro_llm_sharded_observability_v1",
+        "remote_python_micro_llm_sharded_infer",
+        "remote_two_machine_micro_llm_sharded_ready",
+        "decoded_tokens_match",
+        "distinct_stage_miners",
+        "stage_assignment_valid",
+        "activation hashes",
+        "baseline_match",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not GGUF/llama.cpp",
+    ]:
+        if fragment not in combined:
+            details.append(f"remote micro-LLM sharded Beta docs/CI must mention {fragment}")
+    return check_result("remote_micro_llm_sharded_beta_docs", not details, details)
+
+
+def check_micro_llm_live_rc_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Micro-LLM Live Two-Node RC",
+        "micro_llm_live_rc_v1",
+        "micro_llm_live_rc_check.py",
+        "micro_llm_live_rc_pack.py",
+        "crowdtensor micro-llm-live-rc",
+        "local-generated",
+        "external-existing",
+        "local_generated_stage_upload_standins_ready",
+        "external_runtime_verified",
+        "micro_llm_live_rc_ready",
+        "kaggle_micro_llm_sharded_ready",
+        "kaggle-upload-stage0",
+        "kaggle-upload-stage1",
+        "stage_assignment_valid",
+        "toy two-stage micro-LLM",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not GGUF/llama.cpp",
+    ]:
+        if fragment not in combined:
+            details.append(f"micro-LLM live RC docs/CI must mention {fragment}")
+    return check_result("micro_llm_live_rc_docs", not details, details)
+
+
+def check_real_llm_sharded_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/protocol.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Real Small-LLM Sharded Inference Beta",
+        "real_llm_sharded_infer",
+        "real_llm_sharded_infer_v1",
+        "real_llm_artifact_v1",
+        "real_llm_sharded_evidence_v1",
+        "remote_real_llm_sharded_beta_v1",
+        "real_llm_sharded_inference_evidence_pack.py",
+        "remote_real_llm_sharded_beta_pack.py",
+        "remote_real_llm_sharded_beta_check.py",
+        "crowdtensor real-llm-shard-infer",
+        "crowdtensor real-llm-shard-infer-beta",
+        "crowdtensor remote-demo --workload real-llm-sharded",
+        "--enable-hf-tiny-gpt-runtime",
+        "--hf-cache-dir",
+        "--real-llm-stage-role",
+        "real_llm_sharded_stage0",
+        "real_llm_sharded_stage1",
+        "real_llm_sharded_both",
+        "real_llm_artifact_ready",
+        "activation_transport_ready",
+        "baseline_match",
+        "decoded_tokens_match",
+        "stage_assignment_valid",
+        "remote_real_llm_sharded_ready",
+        "remote_two_machine_real_llm_sharded_ready",
+        "remote_real_llm_sharded_acceptance_v1",
+        "remote_real_llm_sharded_observability_v1",
+        "remote_python_real_llm_sharded_infer",
+        "hf_dependencies_missing",
+        "hf_transformers_cpu",
+        "optional [hf]",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not GGUF/llama.cpp",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"real LLM sharded Beta docs/CI must mention {fragment}")
+    return check_result("real_llm_sharded_beta_docs", not details, details)
+
+
+def check_real_llm_live_rc_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Real Small-LLM Sharded Inference Live RC",
+        "real_llm_live_rc_v1",
+        "real_llm_live_rc_check.py",
+        "real_llm_live_rc_pack.py",
+        "kaggle_real_llm_live_package.py",
+        "kaggle_real_llm_live_package_v1",
+        "crowdtensor real-llm-live-rc",
+        "local-generated",
+        "kaggle-generated",
+        "external-existing",
+        "kaggle_real_llm_live_package_ready",
+        "kaggle-upload-real-llm-stage0",
+        "kaggle-upload-real-llm-stage1",
+        "local_generated_real_llm_stage_upload_standins_ready",
+        "external_runtime_verified",
+        "kaggle_real_llm_stage0_seen",
+        "kaggle_real_llm_stage1_seen",
+        "kaggle_real_llm_sharded_ready",
+        "real_llm_artifact_ready",
+        "--enable-hf-tiny-gpt-runtime",
+        "--real-llm-stage-role",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"real LLM live RC docs/CI must mention {fragment}")
+    return check_result("real_llm_live_rc_docs", not details, details)
+
+
+def check_real_llm_internet_alpha_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Real Internet Swarm Inference Alpha",
+        "real_llm_internet_alpha_v1",
+        "real_llm_internet_alpha_check.py",
+        "real_llm_internet_alpha_pack.py",
+        "crowdtensor real-llm-internet-alpha",
+        "local-generated",
+        "package",
+        "external-existing",
+        "real_llm_internet_alpha_ready",
+        "real_llm_stage_requeue_ready",
+        "stage_requeue_ready",
+        "external_runtime_verified",
+        "token_rotation_required",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"real LLM Internet Alpha docs/CI must mention {fragment}")
+    return check_result("real_llm_internet_alpha_docs", not details, details)
+
+
+def check_real_llm_internet_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Real Internet Swarm Inference Beta",
+        "real_llm_internet_beta_v1",
+        "real_llm_internet_beta_check.py",
+        "real_llm_internet_beta_pack.py",
+        "crowdtensor real-llm-internet-beta",
+        "kaggle-auto",
+        "kaggle_kernels_deleted",
+        "real_llm_internet_beta_ready",
+        "real_llm_internet_alpha_ready",
+        "external_runtime_verified",
+        "external_stage_requeue_ready",
+        "live_stage0_requeue_ready",
+        "live_stage1_requeue_ready",
+        "live_requeue_summary",
+        "--failure-mode",
+        "token_rotation_required",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"real LLM Internet Beta docs/CI must mention {fragment}")
+    return check_result("real_llm_internet_beta_docs", not details, details)
+
+
+def check_swarm_inference_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Swarm Inference Beta",
+        "swarm_inference_beta_v1",
+        "swarm_inference_beta_check.py",
+        "swarm_inference_beta_pack.py",
+        "crowdtensor swarm-infer-beta",
+        "swarm-infer-beta live",
+        "kaggle-auto",
+        "swarm-infer-beta prepare",
+        "swarm-infer-beta verify",
+        "swarm-infer-beta collect",
+        "swarm_inference_beta_ready",
+        "swarm_inference_beta_live_ready",
+        "two_machine_swarm_inference_ready",
+        "real_llm_split_route_ready",
+        "real_llm_internet_beta_ready",
+        "kaggle_kernels_deleted",
+        "external_stage_requeue_ready",
+        "live_requeue_summary",
+        "swarm_inference_beta_live_private_artifacts_cleaned",
+        "--failure-mode",
+        "--keep-live-private-artifacts",
+        "token_rotation_required",
+        "external_beta_evidence_imported",
+        "stage0",
+        "stage1",
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"Swarm Inference Beta docs/CI must mention {fragment}")
+    return check_result("swarm_inference_beta_docs", not details, details)
+
+
+def check_public_swarm_inference_alpha_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Public Swarm Inference Alpha",
+        "public_swarm_inference_alpha_v1",
+        "public_swarm_inference_alpha_check.py",
+        "public_swarm_inference_alpha_pack.py",
+        "crowdtensor swarm-session",
+        "live-kaggle",
+        "local-generated",
+        "public_swarm_inference_alpha_ready",
+        "public_swarm_session_ready",
+        "local_stage_requeue_ready",
+        "public_swarm_live_requeue_ready",
+        "external_stage_requeue_ready",
+        "public_swarm_live_kaggle_ready",
+        "stage_requeue_ready",
+        "external_runtime_verified",
+        "kaggle_kernels_deleted",
+        "token_rotation_required",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"Public Swarm Inference Alpha docs/CI must mention {fragment}")
+    return check_result("public_swarm_inference_alpha_docs", not details, details)
+
+
+def check_public_swarm_inference_alpha_rc_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Public Swarm Inference Alpha RC",
+        "public_swarm_inference_alpha_rc_v1",
+        "public_swarm_inference_alpha_rc_check.py",
+        "public_swarm_inference_alpha_rc_pack.py",
+        "crowdtensor public-swarm-alpha-rc",
+        "evidence-import",
+        "local-smoke",
+        "public_swarm_inference_alpha_rc_ready",
+        "public_swarm_alpha_rc_evidence_imported",
+        "stage0_live_requeue_evidence_ready",
+        "stage1_live_requeue_evidence_ready",
+        "public_swarm_live_requeue_evidence_ready",
+        "public_swarm_alpha_private_artifacts_absent",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"Public Swarm Inference Alpha RC docs/CI must mention {fragment}")
+    return check_result("public_swarm_inference_alpha_rc_docs", not details, details)
+
+
+def check_public_swarm_inference_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Public Swarm Inference Beta",
+        "public_swarm_inference_beta_v1",
+        "public_swarm_inference_beta_check.py",
+        "public_swarm_inference_beta_pack.py",
+        "crowdtensor public-swarm-beta",
+        "public-swarm-beta product-beta",
+        "public-swarm-beta local-loopback",
+        "public-swarm-beta evidence-import",
+        "public_swarm_inference_beta_ready",
+        "public_swarm_product_beta_ready",
+        "public_swarm_product_rc_ready",
+        "coordinator_product_surface_ready",
+        "session_protocol_ready",
+        "p2p_lite_discovery_ready",
+        "gpu_generation_evidence_import_ready",
+        "cpu_fallback_ready",
+        "public_swarm_beta_evidence_import_ready",
+        "two_stage_split_inference_ready",
+        "local_loopback_ready",
+        "external_live_evidence_imported",
+        "stage0_live_requeue_evidence_ready",
+        "stage1_live_requeue_evidence_ready",
+        "decoded_tokens_match",
+        "distinct_stage_miners",
+        "stage_assignment_valid",
+        "prepare",
+        "coordinator",
+        "miner",
+        "verify",
+        "collect",
+        "clean",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not libp2p",
+        "not DHT",
+        "not NAT traversal",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"Public Swarm Inference Beta docs/CI must mention {fragment}")
+    return check_result("public_swarm_inference_beta_docs", not details, details)
+
+
+def check_public_swarm_gpu_inference_beta_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/protocol.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Public Swarm GPU Inference Beta",
+        "public_swarm_gpu_inference_beta_v1",
+        "public_swarm_gpu_inference_beta_check.py",
+        "public_swarm_gpu_inference_beta_pack.py",
+        "crowdtensor public-swarm-gpu-beta",
+        "public-swarm-gpu-beta local-smoke",
+        "public-swarm-gpu-beta local-loopback",
+        "public-swarm-gpu-beta kaggle-package",
+        "public-swarm-gpu-beta kaggle-auto",
+        "public-swarm-gpu-beta evidence-import",
+        "hf_transformers_cuda",
+        "real_llm_sharded_cuda_stage0",
+        "real_llm_sharded_cuda_stage1",
+        "real_llm_sharded_cuda_both",
+        "public_swarm_gpu_beta_smoke_ready",
+        "public_swarm_gpu_beta_ready",
+        "public_swarm_gpu_beta_kaggle_auto_ready",
+        "gpu_runtime_ready",
+        "cuda_runtime_available",
+        "hf_transformers_cuda_ready",
+        "gpu_stage0_ready",
+        "gpu_stage1_ready",
+        "kaggle_gpu_package_ready",
+        "kaggle_kernels_deleted",
+        "token_rotation_required",
+        "external_gpu_runtime_verified",
+        "read-only",
+        "not production Swarm Inference",
+        "not P2P",
+        "not a GPU pooling marketplace",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"Public Swarm GPU Inference Beta docs/CI must mention {fragment}")
+    return check_result("public_swarm_gpu_inference_beta_docs", not details, details)
 
 
 def check_release_materials(root: Path) -> dict[str, Any]:
@@ -1280,10 +2237,30 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python scripts/remote_demo_runbook_check.py": "CI must run the remote demo runbook check",
         "python scripts/remote_demo_acceptance_check.py": "CI must run the remote demo acceptance check",
         "python scripts/remote_home_compute_demo_check.py": "CI must run the remote home-compute demo check",
+        "python scripts/remote_two_machine_beta_check.py": "CI must run the remote two-machine Beta aggregate check",
+        "python scripts/kaggle_remote_miner_beta_check.py": "CI must run the Kaggle Remote Miner Beta check",
+        "python scripts/cpu_inference_beta_rc_check.py": "CI must run the CPU Inference Beta RC check",
+        "python scripts/sharded_inference_check.py": "CI must run the sharded inference check",
+        "python scripts/remote_sharded_inference_beta_check.py": "CI must run the remote sharded inference Beta check",
+        "python scripts/micro_llm_sharded_inference_check.py": "CI must run the micro-LLM sharded inference check",
+        "python scripts/remote_micro_llm_sharded_beta_check.py": "CI must run the remote micro-LLM sharded inference Beta check",
+        "python scripts/stage_aware_micro_llm_sharded_check.py": "CI must run the stage-aware micro-LLM sharded inference check",
+        "python scripts/micro_llm_live_rc_check.py": "CI must run the micro-LLM live two-node RC check",
+        "python scripts/remote_real_llm_sharded_beta_check.py": "CI must run the real LLM sharded Beta check",
+        "python scripts/real_llm_live_rc_check.py": "CI must run the real LLM live RC check",
+        "python scripts/real_llm_internet_alpha_check.py": "CI must run the real LLM Internet Alpha check",
+        "python scripts/real_llm_internet_beta_check.py": "CI must run the real LLM Internet Beta check",
+        "python scripts/swarm_inference_beta_check.py": "CI must run the Swarm Inference Beta check",
+        "python scripts/public_swarm_inference_beta_check.py": "CI must run the Public Swarm Inference Beta check",
+        "python scripts/public_swarm_gpu_inference_beta_check.py": "CI must run the Public Swarm GPU Inference Beta smoke check",
+        "python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-package": "CI must run the Public Swarm GPU Inference Beta Kaggle package check",
+        "python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-auto": "CI must run the Public Swarm GPU Inference Beta Kaggle auto fake-runner check",
+        "python scripts/remote_home_compute_demo_check.py --port 9185 --workload real-llm-sharded": "CI must run the real LLM sharded remote-demo loopback check",
         "remote-demo doctor": "CI/docs must cover the remote-demo doctor workflow",
         "remote-demo collect": "CI/docs must cover the remote-demo collect workflow",
         "remote-demo clean": "CI/docs must cover the remote-demo clean workflow",
         "--workload external-llm": "CI must run the external LLM remote-demo loopback check",
+        "--workload micro-llm-sharded": "CI must run the micro-LLM sharded remote-demo loopback check",
         "python scripts/support_bundle.py": "CI must build support bundle",
         "python scripts/security_preflight.py --json": "CI must run the security preflight",
         "browser_acceptance_pack.py": "CI must run or skip the browser acceptance pack",
@@ -1336,7 +2313,26 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_cleanup_docs(gate_root),
         check_remote_cli_docs(gate_root),
         check_remote_home_compute_demo_docs(gate_root),
+        check_remote_two_machine_beta_docs(gate_root),
+        check_kaggle_remote_miner_beta_docs(gate_root),
+        check_kaggle_real_runtime_acceptance_docs(gate_root),
         check_home_inference_cli_docs(gate_root),
+        check_cpu_inference_beta_docs(gate_root),
+        check_cpu_inference_beta_rc_docs(gate_root),
+        check_sharded_inference_docs(gate_root),
+        check_remote_sharded_inference_beta_docs(gate_root),
+        check_micro_llm_sharded_inference_docs(gate_root),
+        check_remote_micro_llm_sharded_beta_docs(gate_root),
+        check_micro_llm_live_rc_docs(gate_root),
+        check_real_llm_sharded_beta_docs(gate_root),
+        check_real_llm_live_rc_docs(gate_root),
+        check_real_llm_internet_alpha_docs(gate_root),
+        check_real_llm_internet_beta_docs(gate_root),
+        check_swarm_inference_beta_docs(gate_root),
+        check_public_swarm_inference_alpha_docs(gate_root),
+        check_public_swarm_inference_alpha_rc_docs(gate_root),
+        check_public_swarm_inference_beta_docs(gate_root),
+        check_public_swarm_gpu_inference_beta_docs(gate_root),
         check_release_materials(gate_root),
         check_open_source_entrypoints(gate_root),
         check_project_memory(gate_root),

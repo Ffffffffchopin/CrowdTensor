@@ -69,6 +69,8 @@ class FakeRunner:
             return "home_infer"
         if "llm-infer" in command:
             return "llm_infer_mock"
+        if "cpu-infer" in command:
+            return "cpu_infer_beta"
         if "release-ready" in command:
             return "release_ready_smoke"
         return "unknown"
@@ -95,6 +97,9 @@ class FakeRunner:
         if step == "llm_infer_mock":
             (output_dir / "llm_inference_cli_summary.json").write_text("{}", encoding="utf-8")
             return json.dumps({"schema": "llm_inference_cli_v1", "ok": True, "diagnosis_codes": ["external_llm_evidence_ready"]})
+        if step == "cpu_infer_beta":
+            (output_dir / "cpu_inference_beta.json").write_text("{}", encoding="utf-8")
+            return json.dumps({"schema": "cpu_inference_beta_v1", "ok": True, "diagnosis_codes": ["cpu_inference_beta_ready"]})
         if step == "release_ready_smoke":
             (output_dir / "release_readiness.json").write_text("{}", encoding="utf-8")
             return json.dumps({
@@ -125,6 +130,7 @@ class OnboardingGateTests(unittest.TestCase):
             "local-proof",
             "home-infer",
             "llm-infer --mock",
+            "cpu-infer --mode local",
             "release-ready --allow-dirty",
         ]:
             self.assertTrue(any(fragment in command for command in joined_commands), fragment)
@@ -135,6 +141,10 @@ class OnboardingGateTests(unittest.TestCase):
         persisted = json.loads((tmp_root / "onboarding.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["artifacts"]["onboarding_gate_json"]["present"])
         self.assertEqual(persisted["artifacts"]["onboarding_gate_json"]["schema"], "onboarding_gate_v1")
+        self.assertEqual(
+            summary["payload_summaries"]["cpu_infer_beta"]["schema"],
+            "cpu_inference_beta_v1",
+        )
 
     def test_install_failure_short_circuits_runtime_steps(self) -> None:
         tmp_root = Path(self._tmp_dir())
