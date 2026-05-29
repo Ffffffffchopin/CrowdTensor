@@ -259,6 +259,21 @@ python scripts/public_swarm_operator_preview_check.py --mode evidence-import --j
 
 This emits `public_swarm_operator_preview_v1` through `scripts/public_swarm_operator_preview_pack.py` and is checked by `scripts/public_swarm_operator_preview_check.py`. It is the top-level user-facing preview aggregate over Developer Preview, Live Preview RC, release readiness, Support Bundle diagnostics, CPU fallback, and retained GPU generation evidence. A ready report preserves `public_swarm_operator_preview_ready`, `operator_preview_user_path_ready`, `operator_preview_local_smoke_ready`, `operator_preview_package_ready`, `operator_preview_live_kaggle_ready`, `operator_preview_evidence_import_ready`, `serve_join_generate_ready` or package-mode `miner_join_pack_ready` plus `private_artifacts_local_only`, `cpu_fallback_ready`, `live_preview_ready`, `support_bundle_ready`, `release_readiness_ready`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is available. CPU-only hosts that lack optional HF dependencies report `developer_preview_degraded` plus `operator_preview_cpu_fallback_user_path_ready`; retained evidence imports may report `operator_preview_retained_evidence_ready`. If live Kaggle execution is blocked by optional `[hf]` dependencies, Kaggle, or external runtime availability, the report records `external_runtime_blocked` and falls back to retained redacted Live Preview RC evidence. It is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
 
+For the Public Swarm v0.2 Usable Inference Trial:
+
+```bash
+crowdtensor swarm-trial local-loopback --json
+crowdtensor swarm-trial package --public-host 24.199.118.54 --json
+crowdtensor swarm-trial live-kaggle --public-host 24.199.118.54 --kaggle-owner YOUR_KAGGLE_USERNAME --json
+crowdtensor swarm-trial evidence-import --json
+python scripts/public_swarm_trial_check.py --mode local-loopback --json
+python scripts/public_swarm_trial_check.py --mode package --json
+python scripts/public_swarm_trial_check.py --mode live-kaggle --json
+python scripts/public_swarm_trial_check.py --mode evidence-import --json
+```
+
+This emits `public_swarm_trial_v1` through `scripts/public_swarm_trial_pack.py` and is checked by `scripts/public_swarm_trial_check.py`. `swarm-trial local-loopback` is the ordinary `serve` / `join stage0` / `join stage1` / `generate` trial when optional `[hf]` dependencies are present; `swarm-trial package` writes the shareable runbook and join material; `swarm-trial live-kaggle` uses the controlled external proof path; `swarm-trial evidence-import` imports retained Operator Preview and GPU generation evidence. Ready reports preserve `public_swarm_trial_ready`, `serve_join_generate_trial_ready`, `stage0_join_ready`, `stage1_join_ready`, `generate_ready`, `generated_token_count_ready`, `support_bundle_ready`, `cpu_fallback_ready`, `private_artifacts_cleaned`, `operator_preview_import_ready`, `gpu_generation_evidence_import_ready`, and live `token_rotation_required`. CPU-only hosts without optional `[hf]` dependencies may report `swarm_trial_degraded_cpu_fallback_ready` and `external_runtime_blocked` instead of claiming a fresh real-weight generation loop. It is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, not GPU marketplace, and not large-model serving.
+
 For the Public Swarm Live Preview RC:
 
 ```bash

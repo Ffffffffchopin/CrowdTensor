@@ -12,7 +12,7 @@ license = { file = "LICENSE" }
 authors = [
   { name = "CrowdTensorD contributors" }
 ]
-keywords = ["distributed-ai", "depin", "diloco", "swarm-training", "fastapi"]
+keywords = ["distributed-ai", "depin", "diloco", "swarm-training", "swarm-trial", "fastapi"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

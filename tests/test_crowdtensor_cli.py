@@ -1536,6 +1536,60 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "public_swarm_operator_preview_v1")
 
+    def test_swarm_trial_wraps_pack_and_redacts_tokens(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_trial_pack.py", command[1])
+            self.assertEqual(command[2], "live-kaggle")
+            self.assertIn("--product-beta-report", command)
+            self.assertIn("--operator-preview-report", command)
+            self.assertIn("--live-stage0-report", command)
+            self.assertIn("--live-stage1-report", command)
+            self.assertIn("--release-readiness-report", command)
+            self.assertIn("--kaggle-owner", command)
+            return completed({
+                "schema": "public_swarm_trial_v1",
+                "ok": True,
+                "mode": "live-kaggle",
+                "diagnosis_codes": [
+                    "public_swarm_trial_ready",
+                    "observer-secret",
+                ],
+            })
+
+        args = cli.parse_args([
+            "swarm-trial",
+            "live-kaggle",
+            "--output-dir",
+            str(output_dir),
+            "--kaggle-owner",
+            "owner",
+            "--failure-mode",
+            "kill-stage0-after-claim",
+        ])
+        summary = cli.build_public_swarm_trial(args, runner=fake_runner)
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "public_swarm_trial_v1")
+        self.assertEqual(summary["cli_schema"], "public_swarm_trial_cli_v1")
+        self.assertEqual(summary["mode"], "live-kaggle")
+        self.assertNotIn("observer-secret", serialized)
+        self.assertTrue(calls)
+
+    def test_main_swarm_trial_json_outputs_summary(self) -> None:
+        summary = {"schema": "public_swarm_trial_v1", "ok": True}
+        with patch.object(cli, "build_public_swarm_trial", return_value=summary), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["swarm-trial", "evidence-import", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "public_swarm_trial_v1")
+
     def test_public_swarm_gpu_beta_wraps_gpu_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
 

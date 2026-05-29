@@ -138,6 +138,14 @@ jobs:
         run: python scripts/public_swarm_operator_preview_check.py --mode live-kaggle --base-port 9374 --port 9375 --timeout-seconds 300
       - name: Public Swarm v0.1 Operator Preview evidence-import
         run: python scripts/public_swarm_operator_preview_check.py --mode evidence-import --base-port 9376 --port 9377 --timeout-seconds 300
+      - name: Public Swarm v0.2 Usable Inference Trial local loopback
+        run: python scripts/public_swarm_trial_check.py --mode local-loopback --base-port 9380 --port 9381 --timeout-seconds 300
+      - name: Public Swarm v0.2 Usable Inference Trial package
+        run: python scripts/public_swarm_trial_check.py --mode package --base-port 9382 --port 9383 --timeout-seconds 300
+      - name: Public Swarm v0.2 Usable Inference Trial live-kaggle contract
+        run: python scripts/public_swarm_trial_check.py --mode live-kaggle --base-port 9384 --port 9385 --timeout-seconds 300
+      - name: Public Swarm v0.2 Usable Inference Trial evidence-import
+        run: python scripts/public_swarm_trial_check.py --mode evidence-import --base-port 9386 --port 9387 --timeout-seconds 300
       - name: Public Swarm GPU Inference Beta local smoke
         run: python scripts/public_swarm_gpu_inference_beta_check.py --mode local-smoke
       - name: Public Swarm GPU Inference Beta Kaggle package
