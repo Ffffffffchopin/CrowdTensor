@@ -169,6 +169,21 @@ python scripts/public_swarm_developer_preview_check.py --mode evidence-import --
 
 The `public_swarm_developer_preview_v1` report comes from `scripts/public_swarm_developer_preview_pack.py` or `crowdtensor preview`; CI-safe validation is in `scripts/public_swarm_developer_preview_check.py`. It must preserve `developer_preview_ready`, `public_swarm_developer_preview_ready`, `local_two_stage_generation_ready`, `serve_join_generate_ready`, `product_beta_ready`, `support_bundle_ready`, `cpu_fallback_ready`, `local_cpu_inference_ready`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is present. A release host without optional `[hf]` dependencies should report `hf_dependencies_missing` instead of claiming local runtime readiness. The Developer Preview is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
 
+Validate the Public Swarm Live Preview RC before presenting retained or fresh public-Kaggle evidence as a shareable preview milestone:
+
+```bash
+crowdtensor live-preview local-smoke --json
+crowdtensor live-preview package --public-host 24.199.118.54 --json
+crowdtensor live-preview live-kaggle --public-host 24.199.118.54 --failure-mode kill-stage0-after-claim --json
+crowdtensor live-preview evidence-import --developer-preview-report dist/public-swarm-developer-preview/public_swarm_developer_preview.json --alpha-rc-report dist/public-swarm-inference-alpha-rc/public_swarm_inference_alpha_rc.json --json
+python scripts/public_swarm_live_preview_rc_check.py --mode local-smoke --json
+python scripts/public_swarm_live_preview_rc_check.py --mode package --json
+python scripts/public_swarm_live_preview_rc_check.py --mode live-kaggle --json
+python scripts/public_swarm_live_preview_rc_check.py --mode evidence-import --json
+```
+
+The `public_swarm_live_preview_rc_v1` report comes from `scripts/public_swarm_live_preview_rc_pack.py` or `crowdtensor live-preview`. It aggregates Public Swarm Developer Preview evidence, the Public Swarm Alpha live-Kaggle proof, retained Public Swarm Alpha RC evidence, Support Bundle diagnostics, and optional retained GPU generation evidence. Ready reports must preserve `public_swarm_live_preview_rc_ready`, `public_swarm_live_preview_local_smoke_ready`, `public_swarm_live_preview_package_ready`, `public_swarm_live_preview_live_kaggle_ready`, `public_swarm_live_preview_evidence_import_ready`, `external_stage_requeue_ready`, `kaggle_kernels_deleted`, `private_artifacts_cleaned`, `token_rotation_required`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is present. `live-preview live-kaggle` is side-effectful and should be run twice for fresh RC proof, once with `--failure-mode kill-stage0-after-claim` and once with `--failure-mode kill-stage1-after-claim`; the fresh retained RC reports are `dist/public-swarm-live-preview-rc-live-stage0-20260529043801-rc/public_swarm_live_preview_rc.json` and `dist/public-swarm-live-preview-rc-live-stage1-20260529044328-rc/public_swarm_live_preview_rc.json`. The default `--kernel-slug-prefix ct-live-preview` is intentionally short so victim/rescue suffixes fit Kaggle's 45-character kernel slug limit. CI uses `scripts/public_swarm_live_preview_rc_check.py --mode live-kaggle` as a fake-runner contract and must not create Kaggle resources. This Live Preview RC is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 Validate the Public Swarm Inference Beta RC before publishing the product path:
 
 ```bash

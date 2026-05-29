@@ -64,6 +64,7 @@ PUBLIC_SWARM_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_inference_beta_cli_v1"
 PUBLIC_SWARM_INFERENCE_BETA_RC_CLI_SCHEMA = "public_swarm_inference_beta_rc_cli_v1"
 PUBLIC_SWARM_PRODUCT_BETA_CLI_SCHEMA = "public_swarm_product_beta_cli_v1"
 PUBLIC_SWARM_DEVELOPER_PREVIEW_CLI_SCHEMA = "public_swarm_developer_preview_cli_v1"
+PUBLIC_SWARM_LIVE_PREVIEW_RC_CLI_SCHEMA = "public_swarm_live_preview_rc_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
@@ -2735,6 +2736,138 @@ def build_public_swarm_developer_preview(args: argparse.Namespace, *, runner: Ru
     })
 
 
+def build_public_swarm_live_preview_rc(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "live_preview_mode", "local-smoke")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "public_swarm_live_preview_rc_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--public-host",
+        args.public_host,
+        "--bind-host",
+        args.bind_host,
+        "--port",
+        str(args.port),
+        "--base-port",
+        str(args.base_port),
+        "--ready-url",
+        args.ready_url,
+        "--coordinator-url",
+        args.coordinator_url,
+        "--target",
+        args.target,
+        "--miner-id-prefix",
+        args.miner_id_prefix,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--gpu-report",
+        args.gpu_report,
+        "--developer-preview-report",
+        args.developer_preview_report,
+        "--alpha-rc-report",
+        args.alpha_rc_report,
+        "--request-count",
+        str(args.request_count),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--cpu-request-count",
+        str(args.cpu_request_count),
+        "--external-llm-request-count",
+        str(args.external_llm_request_count),
+        "--failure-mode",
+        args.failure_mode,
+        "--kaggle-owner",
+        args.kaggle_owner,
+        "--dataset-title",
+        args.dataset_title,
+        "--kernel-title-prefix",
+        args.kernel_title_prefix,
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--remote-timeout-seconds",
+        str(args.remote_timeout_seconds),
+        "--cpu-timeout-seconds",
+        str(args.cpu_timeout_seconds),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--process-exit-timeout",
+        str(args.process_exit_timeout),
+        "--poll-interval",
+        str(args.poll_interval),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--kaggle-push-timeout-seconds",
+        str(args.kaggle_push_timeout_seconds),
+        "--kaggle-delete-timeout-seconds",
+        str(args.kaggle_delete_timeout_seconds),
+        "--kaggle-status-timeout-seconds",
+        str(args.kaggle_status_timeout_seconds),
+        "--kaggle-status-poll-interval",
+        str(args.kaggle_status_poll_interval),
+        "--lease-seconds",
+        str(args.lease_seconds),
+        "--compute-seconds",
+        str(args.compute_seconds),
+        "--victim-compute-seconds",
+        str(args.victim_compute_seconds),
+        "--heartbeat-interval",
+        str(args.heartbeat_interval),
+        "--idle-sleep",
+        str(args.idle_sleep),
+        "--claim-observe-timeout",
+        str(args.claim_observe_timeout),
+        "--requeue-timeout",
+        str(args.requeue_timeout),
+        "--max-request-attempts",
+        str(args.max_request_attempts),
+        "--json",
+    ]
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if args.dataset_slug:
+        command.extend(["--dataset-slug", args.dataset_slug])
+    if args.kernel_slug_prefix:
+        command.extend(["--kernel-slug-prefix", args.kernel_slug_prefix])
+    if args.inline_kernel_payload:
+        command.append("--inline-kernel-payload")
+    else:
+        command.append("--no-inline-kernel-payload")
+    if args.skip_kaggle_cleanup:
+        command.append("--skip-kaggle-cleanup")
+    if args.keep_live_private_artifacts:
+        command.append("--keep-live-private-artifacts")
+    if args.keep_child_artifacts:
+        command.append("--keep-child-artifacts")
+    step, payload = run_json_step(
+        "public_swarm_live_preview_rc",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.remote_timeout_seconds), float(args.cpu_timeout_seconds), 60.0) + 960.0,
+    )
+    if payload:
+        payload = sanitize(redact_values(payload))
+        payload.setdefault("cli_schema", PUBLIC_SWARM_LIVE_PREVIEW_RC_CLI_SCHEMA)
+        return payload
+    return sanitize({
+        "schema": "public_swarm_live_preview_rc_v1",
+        "cli_schema": PUBLIC_SWARM_LIVE_PREVIEW_RC_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["public_swarm_live_preview_rc_failed"],
+        "limitations": [
+            "Coordinator-backed Public Swarm Live Preview RC; not production Swarm Inference",
+            "Does not provide libp2p, DHT, NAT traversal, GPU marketplace, large-model serving, training, payments, or staking",
+        ],
+    })
+
+
 def build_public_swarm_gpu_inference_beta(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -4364,6 +4497,22 @@ def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_public_swarm_live_preview_rc(report: dict[str, Any]) -> None:
+    preview = report.get("live_preview") if isinstance(report.get("live_preview"), dict) else {}
+    print("CrowdTensor Public Swarm Live Preview RC")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  ready: {preview.get('ready')}")
+    print(f"  external_runtime_verified: {preview.get('external_runtime_verified')}")
+    print(f"  fresh_live_kaggle_run: {preview.get('fresh_live_kaggle_run')}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     print("CrowdTensor Public Swarm GPU Inference Beta")
@@ -5286,6 +5435,66 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     preview.add_argument("--http-timeout", type=float, default=10.0)
     preview.add_argument("--json", action="store_true")
 
+    live_preview = subparsers.add_parser(
+        "live-preview",
+        help="Build the Public Swarm Live Preview RC artifact.",
+    )
+    live_preview.add_argument("live_preview_mode", choices=["local-smoke", "package", "live-kaggle", "evidence-import"])
+    live_preview.add_argument("--output-dir", default="dist/public-swarm-live-preview-rc")
+    live_preview.add_argument("--public-host", default="24.199.118.54")
+    live_preview.add_argument("--bind-host", default="0.0.0.0")
+    live_preview.add_argument("--port", type=int, default=9340)
+    live_preview.add_argument("--base-port", type=int, default=9341)
+    live_preview.add_argument("--ready-url", default="")
+    live_preview.add_argument("--coordinator-url", default="")
+    live_preview.add_argument("--target", choices=["local", "kaggle"], default="kaggle")
+    live_preview.add_argument("--miner-id-prefix", default="public-swarm-live-preview")
+    live_preview.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    live_preview.add_argument("--hf-cache-dir", default="")
+    live_preview.add_argument(
+        "--gpu-report",
+        default=(
+            "dist/gpu-sharded-generation-beta-kaggle-20260528095658/"
+            "gpu_sharded_generation_beta_kaggle_auto.json"
+        ),
+    )
+    live_preview.add_argument("--developer-preview-report", default="dist/public-swarm-developer-preview/public_swarm_developer_preview.json")
+    live_preview.add_argument("--alpha-rc-report", default="dist/public-swarm-inference-alpha-rc/public_swarm_inference_alpha_rc.json")
+    live_preview.add_argument("--request-count", type=int, default=2)
+    live_preview.add_argument("--max-new-tokens", type=int, default=2)
+    live_preview.add_argument("--cpu-request-count", type=int, default=1)
+    live_preview.add_argument("--external-llm-request-count", type=int, default=1)
+    live_preview.add_argument("--failure-mode", choices=["none", "kill-stage0-after-claim", "kill-stage1-after-claim"], default="kill-stage0-after-claim")
+    live_preview.add_argument("--kaggle-owner", default="")
+    live_preview.add_argument("--dataset-slug", default="")
+    live_preview.add_argument("--dataset-title", default="CrowdTensor Public Swarm Live Preview RC")
+    live_preview.add_argument("--kernel-slug-prefix", default="ct-live-preview")
+    live_preview.add_argument("--kernel-title-prefix", default="CrowdTensor Public Swarm Live Preview RC")
+    live_preview.add_argument("--inline-kernel-payload", action=argparse.BooleanOptionalAction, default=True)
+    live_preview.add_argument("--skip-kaggle-cleanup", action="store_true")
+    live_preview.add_argument("--keep-live-private-artifacts", action="store_true")
+    live_preview.add_argument("--keep-child-artifacts", action="store_true")
+    live_preview.add_argument("--timeout-seconds", type=float, default=300.0)
+    live_preview.add_argument("--remote-timeout-seconds", type=float, default=300.0)
+    live_preview.add_argument("--cpu-timeout-seconds", type=float, default=180.0)
+    live_preview.add_argument("--startup-timeout", type=float, default=60.0)
+    live_preview.add_argument("--process-exit-timeout", type=float, default=20.0)
+    live_preview.add_argument("--poll-interval", type=float, default=1.0)
+    live_preview.add_argument("--http-timeout", type=float, default=30.0)
+    live_preview.add_argument("--kaggle-push-timeout-seconds", type=float, default=180.0)
+    live_preview.add_argument("--kaggle-delete-timeout-seconds", type=float, default=120.0)
+    live_preview.add_argument("--kaggle-status-timeout-seconds", type=float, default=300.0)
+    live_preview.add_argument("--kaggle-status-poll-interval", type=float, default=5.0)
+    live_preview.add_argument("--lease-seconds", type=float, default=15.0)
+    live_preview.add_argument("--compute-seconds", type=float, default=0.2)
+    live_preview.add_argument("--victim-compute-seconds", type=float, default=45.0)
+    live_preview.add_argument("--heartbeat-interval", type=float, default=0.1)
+    live_preview.add_argument("--idle-sleep", type=float, default=0.2)
+    live_preview.add_argument("--claim-observe-timeout", type=float, default=180.0)
+    live_preview.add_argument("--requeue-timeout", type=float, default=120.0)
+    live_preview.add_argument("--max-request-attempts", type=int, default=240)
+    live_preview.add_argument("--json", action="store_true")
+
     public_swarm_gpu_beta = subparsers.add_parser(
         "public-swarm-gpu-beta",
         help="Prepare, smoke-check, or validate optional CUDA Public Swarm Inference Beta.",
@@ -5672,7 +5881,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_demo_kaggle_real.add_argument("--task-id", default="")
     remote_demo_kaggle_real.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if args.command in {"local-proof", "serve", "join", "generate", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "preview", "public-swarm-gpu-beta", "gpu-generate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "serve", "join", "generate", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "preview", "live-preview", "public-swarm-gpu-beta", "gpu-generate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -5934,6 +6143,44 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             ]
             if missing:
                 raise SystemExit(f"external-existing requires: {', '.join('--' + item.replace('_', '-') for item in missing)}")
+    if args.command == "live-preview":
+        if args.request_count < 1 or args.request_count > 4:
+            raise SystemExit("--request-count must be between 1 and 4")
+        if args.cpu_request_count < 1 or args.cpu_request_count > 4:
+            raise SystemExit("--cpu-request-count must be between 1 and 4")
+        if args.external_llm_request_count < 1 or args.external_llm_request_count > 4:
+            raise SystemExit("--external-llm-request-count must be between 1 and 4")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        if args.base_port < 1 or args.port < 1:
+            raise SystemExit("--base-port and --port must be positive")
+        for name in [
+            "timeout_seconds",
+            "remote_timeout_seconds",
+            "cpu_timeout_seconds",
+            "startup_timeout",
+            "process_exit_timeout",
+            "poll_interval",
+            "http_timeout",
+            "kaggle_push_timeout_seconds",
+            "kaggle_delete_timeout_seconds",
+            "kaggle_status_timeout_seconds",
+            "kaggle_status_poll_interval",
+            "lease_seconds",
+            "victim_compute_seconds",
+            "heartbeat_interval",
+            "idle_sleep",
+            "claim_observe_timeout",
+            "requeue_timeout",
+        ]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+        if args.compute_seconds < 0:
+            raise SystemExit("--compute-seconds must be non-negative")
+        if args.max_request_attempts < 1:
+            raise SystemExit("--max-request-attempts must be at least 1")
+        if args.live_preview_mode == "live-kaggle" and not args.kaggle_owner and not os.environ.get("KAGGLE_USERNAME"):
+            raise SystemExit("--kaggle-owner or KAGGLE_USERNAME is required for live-kaggle")
     if args.command == "public-swarm-gpu-beta":
         if args.request_count > 4:
             raise SystemExit("--request-count must be between 1 and 4")
@@ -6407,6 +6654,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(summary, sort_keys=True))
         else:
             print_public_swarm_developer_preview(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "live-preview":
+        summary = build_public_swarm_live_preview_rc(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_public_swarm_live_preview_rc(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "public-swarm-gpu-beta":
         summary = build_public_swarm_gpu_inference_beta(args)

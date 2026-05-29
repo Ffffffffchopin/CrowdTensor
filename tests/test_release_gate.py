@@ -84,6 +84,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "public_swarm_inference_beta_rc_docs",
                 "public_swarm_product_beta_docs",
                 "public_swarm_developer_preview_docs",
+                "public_swarm_live_preview_rc_docs",
                 "public_swarm_gpu_inference_beta_docs",
                 "release_materials",
                 "open_source_entrypoints",

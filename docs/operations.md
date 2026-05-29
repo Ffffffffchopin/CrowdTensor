@@ -184,6 +184,21 @@ python scripts/public_swarm_inference_alpha_rc_check.py --mode local-smoke
 
 This emits `public_swarm_inference_alpha_rc_v1` through `scripts/public_swarm_inference_alpha_rc_pack.py`. The `evidence-import` mode audits retained reports for `stage0_live_requeue_evidence_ready`, `stage1_live_requeue_evidence_ready`, `public_swarm_live_requeue_evidence_ready`, `public_swarm_alpha_rc_evidence_imported`, `public_swarm_alpha_private_artifacts_absent`, and `public_swarm_inference_alpha_rc_ready`; the current retained stage reports are under `dist/public-swarm-inference-alpha-live-stage0-requeue-20260527165830` and `dist/public-swarm-inference-alpha-live-stage1-requeue-20260527170600`. `local-smoke` is CI-safe and does not create Kaggle resources. It remains CPU-only, read-only, not production Swarm Inference, not P2P, and not large-model serving.
 
+Use Public Swarm Live Preview RC when you want the broadest public-preview evidence bundle over the current Coordinator-backed stack:
+
+```bash
+crowdtensor live-preview local-smoke --json
+crowdtensor live-preview package --public-host 24.199.118.54 --json
+crowdtensor live-preview live-kaggle --public-host 24.199.118.54 --failure-mode kill-stage0-after-claim --json
+crowdtensor live-preview evidence-import --json
+python scripts/public_swarm_live_preview_rc_check.py --mode local-smoke --json
+python scripts/public_swarm_live_preview_rc_check.py --mode package --json
+python scripts/public_swarm_live_preview_rc_check.py --mode live-kaggle --json
+python scripts/public_swarm_live_preview_rc_check.py --mode evidence-import --json
+```
+
+`crowdtensor live-preview` emits `public_swarm_live_preview_rc_v1` through `scripts/public_swarm_live_preview_rc_pack.py`. The `live-preview local-smoke` path validates the Developer Preview and Public Swarm Alpha contracts without external side effects; `live-preview package` creates the public runbook; `live-preview live-kaggle` wraps the side-effectful public Kaggle proof and must report `public_swarm_live_preview_live_kaggle_ready`, `external_stage_requeue_ready`, `kaggle_kernels_deleted`, `private_artifacts_cleaned`, and `token_rotation_required`; `live-preview evidence-import` promotes retained Developer Preview and Alpha RC reports as `public_swarm_live_preview_evidence_import_ready`. Fresh retained stage0/stage1 RC reports are `dist/public-swarm-live-preview-rc-live-stage0-20260529043801-rc/public_swarm_live_preview_rc.json` and `dist/public-swarm-live-preview-rc-live-stage1-20260529044328-rc/public_swarm_live_preview_rc.json`; use a short Kaggle slug prefix such as `ct-live-preview` so victim/rescue suffixes fit Kaggle's 45-character kernel slug limit. Optional retained GPU generation evidence is surfaced through `gpu_generation_evidence_import_ready`. This is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 Use Public Swarm Inference Beta as the ordinary user entrypoint for the current Coordinator-backed product surface:
 
 ```bash

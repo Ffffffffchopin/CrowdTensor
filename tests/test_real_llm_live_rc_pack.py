@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import py_compile
 import subprocess
 import tempfile
 import unittest
@@ -153,6 +154,11 @@ class RealLlmLiveRcPackTests(unittest.TestCase):
         self.assertIn("kaggle_real_llm_stage_upload_packages_ready", report["diagnosis_codes"])
         self.assertFalse(report["runtime_classification"]["external_runtime_verified"])
         self.assertNotIn("real_llm_live_rc_ready", report["diagnosis_codes"])
+        for stage in ["stage0", "stage1"]:
+            script = output_dir / f"kaggle-upload-real-llm-{stage}" / "kaggle_remote_miner.py"
+            py_compile.compile(str(script), doraise=True)
+        for package in report["stage_packages"]:
+            self.assertTrue(package["launcher_syntax_valid"])
 
     def test_external_existing_marks_external_runtime_verified_and_redacts_tokens(self) -> None:
         output_dir = self._tmp_dir()

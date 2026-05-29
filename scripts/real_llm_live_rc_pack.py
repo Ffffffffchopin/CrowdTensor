@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import secrets
@@ -414,8 +415,8 @@ env = os.environ.copy()
 env.update(load_env(Path(os.environ.get("CROWDTENSOR_MINER_ENV_FILE", "miner.private.env"))))
 env["CROWDTENSOR_REMOTE_ENVIRONMENT"] = "kaggle-real-llm"
 env.setdefault("PYTHONUNBUFFERED", "1")
-    command = [
-        "crowdtensor-miner",
+command = [
+    "crowdtensor-miner",
     "--coordinator",
     "{coordinator_url}",
     "--miner-id",
@@ -560,6 +561,7 @@ def write_stage_upload_package(args: argparse.Namespace, *, output_dir: Path, st
         "launcher_has_stage_role": "--real-llm-stage-role" in script_text and stage_role in script_text,
         "hf_runtime_enabled": "--enable-hf-tiny-gpt-runtime" in script_text,
         "hf_model_id_present": args.hf_model_id in script_text,
+        "launcher_syntax_valid": _python_syntax_valid(script_text, filename=str(script)),
     }
 
 
@@ -641,8 +643,29 @@ def stage_package_summary(output_dir: Path) -> list[dict[str, Any]]:
             "launcher_has_stage_role": "--real-llm-stage-role" in script_text and stage_role in script_text,
             "hf_runtime_enabled": "--enable-hf-tiny-gpt-runtime" in script_text,
             "hf_model_id_present": "sshleifer/tiny-gpt2" in script_text or "--hf-model-id" in script_text,
+            "launcher_syntax_valid": _python_syntax_valid(script_text, filename=str(script)) if script.is_file() else False,
         })
     return packages
+
+
+def _python_syntax_valid(source: str, *, filename: str = "<generated>") -> bool:
+    try:
+        ast.parse(source, filename=filename)
+    except SyntaxError:
+        return False
+    return True
+
+
+def stage_package_ready(package: dict[str, Any]) -> bool:
+    return bool(
+        package.get("miner_env_present")
+        and package.get("miner_script_present")
+        and package.get("runbook_present")
+        and package.get("operator_env_excluded")
+        and package.get("launcher_has_stage_role")
+        and package.get("hf_runtime_enabled")
+        and package.get("launcher_syntax_valid")
+    )
 
 
 def start_stage_miner(
@@ -944,15 +967,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
 def build_kaggle_generated(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
     generated, secret_values = prepare_generated_artifacts(args, output_dir=output_dir)
     packages = stage_package_summary(output_dir)
-    package_ok = all(
-        package.get("miner_env_present")
-        and package.get("miner_script_present")
-        and package.get("runbook_present")
-        and package.get("operator_env_excluded")
-        and package.get("launcher_has_stage_role")
-        and package.get("hf_runtime_enabled")
-        for package in packages
-    )
+    package_ok = all(stage_package_ready(package) for package in packages)
     codes = ["real_llm_artifact_ready"] if generated.get("artifact", {}).get("artifact_hash") else []
     if package_ok:
         codes.extend(["kaggle_real_llm_stage_upload_packages_ready", "real_llm_live_rc_prepare_ready"])
@@ -1108,15 +1123,7 @@ def build_local_generated(
 
     packages = stage_package_summary(output_dir)
     process_ok = all(item.get("ok") for item in processes if item.get("name", "").endswith("_miner"))
-    package_ok = all(
-        package.get("miner_env_present")
-        and package.get("miner_script_present")
-        and package.get("runbook_present")
-        and package.get("operator_env_excluded")
-        and package.get("launcher_has_stage_role")
-        and package.get("hf_runtime_enabled")
-        for package in packages
-    )
+    package_ok = all(stage_package_ready(package) for package in packages)
     codes = diagnosis_codes(verify_payload)
     if (generated.get("artifact") or {}).get("artifact_hash"):
         codes.append("real_llm_artifact_ready")
@@ -1297,7 +1304,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(
             f"- `{package.get('stage_role')}`: env=`{package.get('miner_env_present')}` "
             f"script=`{package.get('miner_script_present')}` role=`{package.get('launcher_has_stage_role')}` "
-            f"hf=`{package.get('hf_runtime_enabled')}`"
+            f"hf=`{package.get('hf_runtime_enabled')}` syntax=`{package.get('launcher_syntax_valid')}`"
         )
     lines.extend(["", "## Artifacts", ""])
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
