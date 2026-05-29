@@ -95,6 +95,8 @@ REQUIRED_FILES = [
     "scripts/public_swarm_developer_preview_check.py",
     "scripts/public_swarm_live_preview_rc_pack.py",
     "scripts/public_swarm_live_preview_rc_check.py",
+    "scripts/public_swarm_operator_preview_pack.py",
+    "scripts/public_swarm_operator_preview_check.py",
     "scripts/public_swarm_gpu_inference_beta_pack.py",
     "scripts/public_swarm_gpu_inference_beta_check.py",
     "scripts/kaggle_real_llm_live_package.py",
@@ -2005,6 +2007,65 @@ def check_public_swarm_live_preview_rc_docs(root: Path) -> dict[str, Any]:
     return check_result("public_swarm_live_preview_rc_docs", not details, details)
 
 
+def check_public_swarm_operator_preview_docs(root: Path) -> dict[str, Any]:
+    details: list[str] = []
+    combined = "\n".join(
+        read_text(root, path)
+        for path in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]
+        if (root / path).exists()
+    )
+    for fragment in [
+        "Public Swarm v0.1 Operator Preview",
+        "public_swarm_operator_preview_v1",
+        "public_swarm_operator_preview_check.py",
+        "public_swarm_operator_preview_pack.py",
+        "crowdtensor operator-preview",
+        "operator-preview local-smoke",
+        "operator-preview package",
+        "operator-preview live-kaggle",
+        "operator-preview evidence-import",
+        "public_swarm_operator_preview_ready",
+        "operator_preview_user_path_ready",
+        "operator_preview_local_smoke_ready",
+        "operator_preview_package_ready",
+        "operator_preview_live_kaggle_ready",
+        "operator_preview_evidence_import_ready",
+        "serve_join_generate_ready",
+        "miner_join_pack_ready",
+        "cpu_fallback_ready",
+        "developer_preview_degraded",
+        "operator_preview_cpu_fallback_user_path_ready",
+        "operator_preview_retained_evidence_ready",
+        "live_preview_ready",
+        "support_bundle_ready",
+        "release_readiness_ready",
+        "gpu_generation_evidence_import_ready",
+        "external_runtime_blocked",
+        "CPU-only",
+        "read-only",
+        "not production Swarm Inference",
+        "not libp2p",
+        "not DHT",
+        "not NAT traversal",
+        "not large-model",
+    ]:
+        if fragment not in combined:
+            details.append(f"Public Swarm v0.1 Operator Preview docs/CI must mention {fragment}")
+    return check_result("public_swarm_operator_preview_docs", not details, details)
+
+
 def check_public_swarm_gpu_inference_beta_docs(root: Path) -> dict[str, Any]:
     details: list[str] = []
     combined = "\n".join(
@@ -2482,6 +2543,10 @@ def check_ci_workflow(root: Path) -> dict[str, Any]:
         "python scripts/public_swarm_live_preview_rc_check.py --mode package": "CI must run the Public Swarm Live Preview RC package check",
         "python scripts/public_swarm_live_preview_rc_check.py --mode live-kaggle": "CI must run the Public Swarm Live Preview RC live-kaggle fake-runner check",
         "python scripts/public_swarm_live_preview_rc_check.py --mode evidence-import": "CI must run the Public Swarm Live Preview RC evidence-import check",
+        "python scripts/public_swarm_operator_preview_check.py": "CI must run the Public Swarm v0.1 Operator Preview local-smoke check",
+        "python scripts/public_swarm_operator_preview_check.py --mode package": "CI must run the Public Swarm v0.1 Operator Preview package check",
+        "python scripts/public_swarm_operator_preview_check.py --mode live-kaggle": "CI must run the Public Swarm v0.1 Operator Preview live-kaggle fake-runner check",
+        "python scripts/public_swarm_operator_preview_check.py --mode evidence-import": "CI must run the Public Swarm v0.1 Operator Preview evidence-import check",
         "python scripts/public_swarm_gpu_inference_beta_check.py": "CI must run the Public Swarm GPU Inference Beta smoke check",
         "python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-package": "CI must run the Public Swarm GPU Inference Beta Kaggle package check",
         "python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-auto": "CI must run the Public Swarm GPU Inference Beta Kaggle auto fake-runner check",
@@ -2566,6 +2631,7 @@ def run_release_gate(root: str | Path = ROOT) -> dict[str, Any]:
         check_public_swarm_product_beta_docs(gate_root),
         check_public_swarm_developer_preview_docs(gate_root),
         check_public_swarm_live_preview_rc_docs(gate_root),
+        check_public_swarm_operator_preview_docs(gate_root),
         check_public_swarm_gpu_inference_beta_docs(gate_root),
         check_release_materials(gate_root),
         check_open_source_entrypoints(gate_root),

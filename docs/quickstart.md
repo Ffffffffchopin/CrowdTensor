@@ -244,6 +244,21 @@ python scripts/public_swarm_developer_preview_check.py --mode evidence-import --
 
 This emits `public_swarm_developer_preview_v1` through `scripts/public_swarm_developer_preview_pack.py` and is checked by `scripts/public_swarm_developer_preview_check.py`. A ready local preview preserves `developer_preview_ready`, `public_swarm_developer_preview_ready`, `local_two_stage_generation_ready`, `serve_join_generate_ready`, `product_beta_ready`, `support_bundle_ready`, `cpu_fallback_ready`, `local_cpu_inference_ready`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is present. If optional `[hf]` dependencies are absent, the wrapped Product Beta path reports `hf_dependencies_missing`. It is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
 
+For the Public Swarm v0.1 Operator Preview:
+
+```bash
+crowdtensor operator-preview local-smoke --json
+crowdtensor operator-preview package --public-host 24.199.118.54 --json
+crowdtensor operator-preview live-kaggle --public-host 24.199.118.54 --failure-mode kill-stage0-after-claim --json
+crowdtensor operator-preview evidence-import --json
+python scripts/public_swarm_operator_preview_check.py --mode local-smoke --json
+python scripts/public_swarm_operator_preview_check.py --mode package --json
+python scripts/public_swarm_operator_preview_check.py --mode live-kaggle --json
+python scripts/public_swarm_operator_preview_check.py --mode evidence-import --json
+```
+
+This emits `public_swarm_operator_preview_v1` through `scripts/public_swarm_operator_preview_pack.py` and is checked by `scripts/public_swarm_operator_preview_check.py`. It is the top-level user-facing preview aggregate over Developer Preview, Live Preview RC, release readiness, Support Bundle diagnostics, CPU fallback, and retained GPU generation evidence. A ready report preserves `public_swarm_operator_preview_ready`, `operator_preview_user_path_ready`, `operator_preview_local_smoke_ready`, `operator_preview_package_ready`, `operator_preview_live_kaggle_ready`, `operator_preview_evidence_import_ready`, `serve_join_generate_ready` or package-mode `miner_join_pack_ready` plus `private_artifacts_local_only`, `cpu_fallback_ready`, `live_preview_ready`, `support_bundle_ready`, `release_readiness_ready`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is available. CPU-only hosts that lack optional HF dependencies report `developer_preview_degraded` plus `operator_preview_cpu_fallback_user_path_ready`; retained evidence imports may report `operator_preview_retained_evidence_ready`. If live Kaggle execution is blocked by optional `[hf]` dependencies, Kaggle, or external runtime availability, the report records `external_runtime_blocked` and falls back to retained redacted Live Preview RC evidence. It is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 For the Public Swarm Live Preview RC:
 
 ```bash

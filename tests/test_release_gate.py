@@ -85,6 +85,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "public_swarm_product_beta_docs",
                 "public_swarm_developer_preview_docs",
                 "public_swarm_live_preview_rc_docs",
+                "public_swarm_operator_preview_docs",
                 "public_swarm_gpu_inference_beta_docs",
                 "release_materials",
                 "open_source_entrypoints",
@@ -1116,6 +1117,40 @@ class ReleaseGateTests(unittest.TestCase):
         ci_details = failed_details(report, "ci_workflow")
         self.assertTrue(any("Public Swarm Developer Preview package" in detail for detail in ci_details))
         self.assertTrue(any("Public Swarm Developer Preview evidence-import" in detail for detail in ci_details))
+
+    def test_public_swarm_operator_preview_docs_must_describe_v01_operator_path(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        for relative in [
+            "README.md",
+            "docs/operations.md",
+            "docs/quickstart.md",
+            "docs/remote-miner.md",
+            "docs/release.md",
+            "docs/project-memory.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "CHANGELOG.md",
+            ".github/workflows/ci.yml",
+            "pyproject.toml",
+        ]:
+            (tmp_root / relative).write_text("No Public Swarm v0.1 Operator Preview docs here.\n", encoding="utf-8")
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        details = failed_details(report, "public_swarm_operator_preview_docs")
+        self.assertTrue(any("public_swarm_operator_preview_v1" in detail for detail in details))
+        self.assertTrue(any("public_swarm_operator_preview_check.py" in detail for detail in details))
+        self.assertTrue(any("crowdtensor operator-preview" in detail for detail in details))
+        self.assertTrue(any("operator_preview_user_path_ready" in detail for detail in details))
+        self.assertTrue(any("developer_preview_degraded" in detail for detail in details))
+        self.assertTrue(any("operator_preview_cpu_fallback_user_path_ready" in detail for detail in details))
+        self.assertTrue(any("operator_preview_retained_evidence_ready" in detail for detail in details))
+        self.assertTrue(any("release_readiness_ready" in detail for detail in details))
+        self.assertTrue(any("external_runtime_blocked" in detail for detail in details))
+        ci_details = failed_details(report, "ci_workflow")
+        self.assertTrue(any("Public Swarm v0.1 Operator Preview package" in detail for detail in ci_details))
+        self.assertTrue(any("Public Swarm v0.1 Operator Preview evidence-import" in detail for detail in ci_details))
 
     def test_public_swarm_gpu_inference_beta_docs_must_describe_optional_cuda_beta(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

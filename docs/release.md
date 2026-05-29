@@ -184,6 +184,21 @@ python scripts/public_swarm_live_preview_rc_check.py --mode evidence-import --js
 
 The `public_swarm_live_preview_rc_v1` report comes from `scripts/public_swarm_live_preview_rc_pack.py` or `crowdtensor live-preview`. It aggregates Public Swarm Developer Preview evidence, the Public Swarm Alpha live-Kaggle proof, retained Public Swarm Alpha RC evidence, Support Bundle diagnostics, and optional retained GPU generation evidence. Ready reports must preserve `public_swarm_live_preview_rc_ready`, `public_swarm_live_preview_local_smoke_ready`, `public_swarm_live_preview_package_ready`, `public_swarm_live_preview_live_kaggle_ready`, `public_swarm_live_preview_evidence_import_ready`, `external_stage_requeue_ready`, `kaggle_kernels_deleted`, `private_artifacts_cleaned`, `token_rotation_required`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is present. `live-preview live-kaggle` is side-effectful and should be run twice for fresh RC proof, once with `--failure-mode kill-stage0-after-claim` and once with `--failure-mode kill-stage1-after-claim`; the fresh retained RC reports are `dist/public-swarm-live-preview-rc-live-stage0-20260529043801-rc/public_swarm_live_preview_rc.json` and `dist/public-swarm-live-preview-rc-live-stage1-20260529044328-rc/public_swarm_live_preview_rc.json`. The default `--kernel-slug-prefix ct-live-preview` is intentionally short so victim/rescue suffixes fit Kaggle's 45-character kernel slug limit. CI uses `scripts/public_swarm_live_preview_rc_check.py --mode live-kaggle` as a fake-runner contract and must not create Kaggle resources. This Live Preview RC is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
 
+Validate the Public Swarm v0.1 Operator Preview before presenting the repository as an ordinary-user preview package:
+
+```bash
+crowdtensor operator-preview local-smoke --json
+crowdtensor operator-preview package --public-host 24.199.118.54 --json
+crowdtensor operator-preview live-kaggle --public-host 24.199.118.54 --failure-mode kill-stage0-after-claim --json
+crowdtensor operator-preview evidence-import --json
+python scripts/public_swarm_operator_preview_check.py --mode local-smoke --json
+python scripts/public_swarm_operator_preview_check.py --mode package --json
+python scripts/public_swarm_operator_preview_check.py --mode live-kaggle --json
+python scripts/public_swarm_operator_preview_check.py --mode evidence-import --json
+```
+
+The `public_swarm_operator_preview_v1` report comes from `scripts/public_swarm_operator_preview_pack.py` or `crowdtensor operator-preview`; CI-safe validation is in `scripts/public_swarm_operator_preview_check.py`. It aggregates Public Swarm Developer Preview, Public Swarm Live Preview RC, `release_readiness_v1`, Support Bundle diagnostics, CPU fallback, and retained `gpu_sharded_generation_beta_v1` evidence. Ready reports must preserve `public_swarm_operator_preview_ready`, `operator_preview_user_path_ready`, `operator_preview_local_smoke_ready`, `operator_preview_package_ready`, `operator_preview_live_kaggle_ready`, `operator_preview_evidence_import_ready`, `serve_join_generate_ready` for executable preview paths or `miner_join_pack_ready` / `private_artifacts_local_only` for package paths, `cpu_fallback_ready`, `live_preview_ready`, `support_bundle_ready`, `release_readiness_ready`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is present. CPU-only hosts that lack optional HF dependencies report `developer_preview_degraded` plus `operator_preview_cpu_fallback_user_path_ready`; retained evidence imports may report `operator_preview_retained_evidence_ready`. If `operator-preview live-kaggle` cannot complete because optional `[hf]`, Kaggle, or external runtime execution is unavailable, it must record `external_runtime_blocked` and import retained stage0/stage1 Live Preview RC evidence instead of claiming fresh external runtime evidence. The Operator Preview is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 Validate the Public Swarm Inference Beta RC before publishing the product path:
 
 ```bash
