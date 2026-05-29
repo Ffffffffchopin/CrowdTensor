@@ -153,6 +153,22 @@ python scripts/public_swarm_product_beta_check.py --mode external-existing --jso
 
 The `public_swarm_product_beta_v1` report comes from `scripts/public_swarm_product_beta_pack.py` or `crowdtensor public-swarm-product-beta`; CI-safe validation is in `scripts/public_swarm_product_beta_check.py`. It must preserve `public_swarm_product_beta_ready`, `public_swarm_product_beta_user_path_ready`, `serve_ready`, `stage0_join_ready`, `stage1_join_ready`, `generate_ready`, `support_bundle_ready`, `private_artifacts_cleaned`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`. `package` must preserve `private_artifacts_local_only` and `miner_join_pack_ready`; `external-existing` requires a live controlled runtime. A release host without optional `[hf]` dependencies should report `hf_dependencies_missing` instead of claiming local runtime readiness. The Product Beta is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
 
+Validate the Public Swarm Developer Preview before presenting the project as ordinary-user preview runnable:
+
+```bash
+python -m pip install -e '.[hf]'
+crowdtensor preview local --base-port 9330 --max-new-tokens 2 --json
+crowdtensor preview package --target kaggle --json
+crowdtensor preview external-existing --coordinator-url https://YOUR_COORDINATOR_HOST --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" --admin-token "$CROWDTENSOR_ADMIN_TOKEN" --json
+crowdtensor preview evidence-import --product-beta-report dist/public-swarm-product-beta/public_swarm_product_beta.json --json
+python scripts/public_swarm_developer_preview_check.py --mode local --json
+python scripts/public_swarm_developer_preview_check.py --mode package --target kaggle --json
+python scripts/public_swarm_developer_preview_check.py --mode external-existing --json
+python scripts/public_swarm_developer_preview_check.py --mode evidence-import --json
+```
+
+The `public_swarm_developer_preview_v1` report comes from `scripts/public_swarm_developer_preview_pack.py` or `crowdtensor preview`; CI-safe validation is in `scripts/public_swarm_developer_preview_check.py`. It must preserve `developer_preview_ready`, `public_swarm_developer_preview_ready`, `local_two_stage_generation_ready`, `serve_join_generate_ready`, `product_beta_ready`, `support_bundle_ready`, `cpu_fallback_ready`, `local_cpu_inference_ready`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is present. A release host without optional `[hf]` dependencies should report `hf_dependencies_missing` instead of claiming local runtime readiness. The Developer Preview is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 Validate the Public Swarm Inference Beta RC before publishing the product path:
 
 ```bash

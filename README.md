@@ -333,6 +333,22 @@ python scripts/public_swarm_product_beta_check.py --mode external-existing --jso
 
 It emits `public_swarm_product_beta_v1` through `scripts/public_swarm_product_beta_pack.py` and is checked by `scripts/public_swarm_product_beta_check.py`. `local-loopback` proves the user-facing `serve` / `join stage0` / `join stage1` / `generate` path and should preserve `public_swarm_product_beta_ready`, `public_swarm_product_beta_user_path_ready`, `serve_ready`, `stage0_join_ready`, `stage1_join_ready`, `generate_ready`, `serve_join_generate_loop_ready`, `remote_generate_session_ready`, `public_swarm_generate_ready`, `decoded_tokens_match`, `distinct_stage_miners`, `stage_assignment_valid`, `support_bundle_ready`, and `private_artifacts_cleaned`. `package` creates the two-machine/Kaggle join material while keeping `private_artifacts_local_only` and `miner_join_pack_ready`; `external-existing` verifies an already running Coordinator plus external stage Miners. Missing optional HF dependencies surface `hf_dependencies_missing`. This Product Beta is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
 
+Public Swarm Developer Preview is the larger ordinary-user preview path over Product Beta:
+
+```bash
+python -m pip install -e '.[hf]'
+crowdtensor preview local --base-port 9330 --max-new-tokens 2 --json
+crowdtensor preview package --target kaggle --json
+crowdtensor preview external-existing --coordinator-url https://YOUR_COORDINATOR_HOST --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" --admin-token "$CROWDTENSOR_ADMIN_TOKEN" --json
+crowdtensor preview evidence-import --product-beta-report dist/public-swarm-product-beta/public_swarm_product_beta.json --json
+python scripts/public_swarm_developer_preview_check.py --mode local --json
+python scripts/public_swarm_developer_preview_check.py --mode package --target kaggle --json
+python scripts/public_swarm_developer_preview_check.py --mode external-existing --json
+python scripts/public_swarm_developer_preview_check.py --mode evidence-import --json
+```
+
+It emits `public_swarm_developer_preview_v1` through `scripts/public_swarm_developer_preview_pack.py` and is checked by `scripts/public_swarm_developer_preview_check.py`. `preview local` wraps the Product Beta `serve` / `join stage0` / `join stage1` / `generate` path and should preserve `developer_preview_ready`, `public_swarm_developer_preview_ready`, `local_two_stage_generation_ready`, `serve_join_generate_ready`, `product_beta_ready`, `support_bundle_ready`, `cpu_fallback_ready`, `local_cpu_inference_ready`, `gpu_generation_evidence_import_ready` when retained GPU evidence is present, and the Product Beta `hf_dependencies_missing` behavior when optional `[hf]` dependencies are absent. `preview package` creates two-machine or Kaggle join material; `preview external-existing` verifies an already running controlled runtime; `preview evidence-import` imports retained redacted Product Beta and optional GPU generation reports. This Developer Preview is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 Public Swarm Inference Beta RC is the release-candidate layer for the current product path:
 
 ```bash

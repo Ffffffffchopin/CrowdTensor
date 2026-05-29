@@ -228,6 +228,22 @@ python scripts/public_swarm_product_beta_check.py --mode external-existing --jso
 
 This emits `public_swarm_product_beta_v1` through `scripts/public_swarm_product_beta_pack.py` and is checked by `scripts/public_swarm_product_beta_check.py`. A ready local path preserves `public_swarm_product_beta_ready`, `public_swarm_product_beta_user_path_ready`, `serve_ready`, `stage0_join_ready`, `stage1_join_ready`, `generate_ready`, `support_bundle_ready`, `private_artifacts_cleaned`, `decoded_tokens_match`, `distinct_stage_miners`, and `stage_assignment_valid`. If optional `[hf]` dependencies are absent, the local runtime path reports `hf_dependencies_missing`. It is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
 
+For the larger Public Swarm Developer Preview:
+
+```bash
+python -m pip install -e '.[hf]'
+crowdtensor preview local --base-port 9330 --max-new-tokens 2 --json
+crowdtensor preview package --target kaggle --json
+crowdtensor preview external-existing --coordinator-url https://YOUR_COORDINATOR_HOST --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" --admin-token "$CROWDTENSOR_ADMIN_TOKEN" --json
+crowdtensor preview evidence-import --product-beta-report dist/public-swarm-product-beta/public_swarm_product_beta.json --json
+python scripts/public_swarm_developer_preview_check.py --mode local --json
+python scripts/public_swarm_developer_preview_check.py --mode package --target kaggle --json
+python scripts/public_swarm_developer_preview_check.py --mode external-existing --json
+python scripts/public_swarm_developer_preview_check.py --mode evidence-import --json
+```
+
+This emits `public_swarm_developer_preview_v1` through `scripts/public_swarm_developer_preview_pack.py` and is checked by `scripts/public_swarm_developer_preview_check.py`. A ready local preview preserves `developer_preview_ready`, `public_swarm_developer_preview_ready`, `local_two_stage_generation_ready`, `serve_join_generate_ready`, `product_beta_ready`, `support_bundle_ready`, `cpu_fallback_ready`, `local_cpu_inference_ready`, and `gpu_generation_evidence_import_ready` when retained GPU evidence is present. If optional `[hf]` dependencies are absent, the wrapped Product Beta path reports `hf_dependencies_missing`. It is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
 For the Public Swarm Inference Beta RC:
 
 ```bash

@@ -8,6 +8,7 @@ CrowdTensorD is currently an experimental control plane for fault-tolerant distr
 
 ### Added
 
+- Public Swarm Developer Preview (`crowdtensor preview`, `public_swarm_developer_preview_v1`, `scripts/public_swarm_developer_preview_pack.py`, `scripts/public_swarm_developer_preview_check.py`) with `local`, `package`, `external-existing`, and `evidence-import` modes over Product Beta, CPU fallback, support bundle, optional retained GPU generation evidence, `developer_preview_ready`, `public_swarm_developer_preview_ready`, `local_two_stage_generation_ready`, `serve_join_generate_ready`, `product_beta_ready`, `support_bundle_ready`, `cpu_fallback_ready`, `local_cpu_inference_ready`, `gpu_generation_evidence_import_ready`, inherited `hf_dependencies_missing`, and explicit CPU-only-by-default/read-only/Coordinator-backed/not production/not libp2p/not DHT/not NAT traversal/not large-model boundaries.
 - Coordinator and Miner loop with task claims, heartbeats, lease timeout recovery, checkpoint replay, and result submission.
 - Deterministic CPU-only workload contracts, including dense toy training, CPU LoRA mock, micro Transformer LM, model bundle LM, read-only multi-request model bundle inference, and optional read-only `external_llm_infer_v1` adapter validation.
 - Runtime validation for finite values, tensor shape, loss/norm gates, deterministic replay audit, and low-frequency outer optimizer behavior.
