@@ -32,6 +32,7 @@ if str(ROOT / "scripts") not in sys.path:
 import public_swarm_inference_beta_pack as beta_pack  # noqa: E402
 import support_bundle  # noqa: E402
 from crowdtensor.real_llm import missing_hf_dependencies  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg  # noqa: E402
 
 
 SCHEMA = "public_swarm_inference_beta_rc_v1"
@@ -64,6 +65,7 @@ SECRET_FRAGMENTS = (
     '"generated_text":',
     '"generated_token_ids":',
     '"prompt_text":',
+    '"prompt_texts":',
 )
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -137,6 +139,25 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     if ok is not None:
         entry["ok"] = bool(ok)
     return entry
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+STREAM_READY_CODES = {
+    "public_swarm_generate_stream_ready",
+    "public_swarm_generate_stream_endpoint_ready",
+}
+
+
+def drop_unproven_stream_codes(codes: set[str], *, stream_ready: bool) -> set[str]:
+    if stream_ready:
+        return codes
+    return {code for code in codes if code not in STREAM_READY_CODES}
 
 
 def run_json_step(
@@ -271,7 +292,7 @@ def int_seconds(value: float | int | str) -> str:
 
 
 def product_beta_command(args: argparse.Namespace, output_dir: Path) -> list[str]:
-    return [
+    command = [
         sys.executable,
         str(ROOT / "scripts" / "public_swarm_inference_beta_pack.py"),
         "product-beta",
@@ -297,6 +318,9 @@ def product_beta_command(args: argparse.Namespace, output_dir: Path) -> list[str
         str(args.timeout_seconds),
         "--json",
     ]
+    if args.prompt_texts:
+        command.extend(["--prompt-texts", args.prompt_texts])
+    return command
 
 
 def run_product_beta(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -306,6 +330,171 @@ def run_product_beta(args: argparse.Namespace, *, output_dir: Path, runner: Runn
         runner=runner,
         timeout_seconds=float(args.timeout_seconds) + float(args.cpu_timeout_seconds) + 240.0,
     )
+
+
+def safe_batch_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    batch = payload.get("batch") if isinstance(payload.get("batch"), dict) else {}
+    if not batch:
+        return {"enabled": False, "batch_generation_ready": False}
+    raw_results = batch.get("results") if isinstance(batch.get("results"), list) else []
+    safe_results: list[dict[str, Any]] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        safe_results.append({
+            "request_id": item.get("request_id"),
+            "prompt_hash": item.get("prompt_hash"),
+            "generated_token_count": safe_int(item.get("generated_token_count")),
+            "max_new_tokens": item.get("max_new_tokens"),
+            "generated_text_hash": item.get("generated_text_hash"),
+            "decoded_tokens_match": item.get("decoded_tokens_match"),
+            "multi_token_generation_ready": bool(item.get("multi_token_generation_ready")),
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        })
+    result_identity_keys = [
+        str(item.get("request_id") or item.get("prompt_hash") or "")
+        for item in safe_results
+    ]
+    expected_request_count = safe_int(batch.get("expected_request_count") or batch.get("request_count"))
+    batch_identity_ready = bool(
+        expected_request_count > 0
+        and (
+            expected_request_count <= 1
+            or (
+                len(result_identity_keys) >= expected_request_count
+                and all(result_identity_keys[:expected_request_count])
+                and len(set(result_identity_keys[:expected_request_count])) == expected_request_count
+            )
+        )
+    )
+    return {
+        "enabled": bool(batch.get("enabled")),
+        "request_count": int(batch.get("request_count") or 0),
+        "expected_request_count": expected_request_count,
+        "observed_request_count": safe_int(batch.get("observed_request_count") or batch.get("request_count")),
+        "prompt_hashes": list(batch.get("prompt_hashes") or []),
+        "prompt_char_counts": list(batch.get("prompt_char_counts") or []),
+        "result_count": safe_int(batch.get("result_count") or len(safe_results)),
+        "results": safe_results,
+        "batch_identity_ready": batch_identity_ready,
+        "batch_generation_ready": bool(batch.get("batch_generation_ready") and batch_identity_ready),
+        "raw_prompts_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
+def safe_stream_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    stream = payload.get("stream") if isinstance(payload.get("stream"), dict) else {}
+    if not stream:
+        return {"enabled": False, "stream_generation_ready": False}
+    progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
+    events = stream.get("events") if isinstance(stream.get("events"), list) else []
+    safe_events: list[dict[str, Any]] = []
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        safe_events.append({
+            "schema": item.get("schema"),
+            "session_id": item.get("session_id"),
+            "task_id": item.get("task_id"),
+            "miner_id": item.get("miner_id"),
+            "stage_id": item.get("stage_id"),
+            "request_id": item.get("request_id"),
+            "prompt_hash": item.get("prompt_hash"),
+            "generated_token_count": int(item.get("generated_token_count") or 0),
+            "max_new_tokens": item.get("max_new_tokens"),
+            "generation_step": item.get("generation_step"),
+            "generated_text_hash": item.get("generated_text_hash"),
+            "decoded_tokens_match": item.get("decoded_tokens_match"),
+            "observed_at": item.get("observed_at"),
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        })
+    batch = payload.get("batch") if isinstance(payload.get("batch"), dict) else {}
+    generation = payload.get("generation") if isinstance(payload.get("generation"), dict) else {}
+    expected_request_count = max(
+        1,
+        safe_int(batch.get("expected_request_count") or batch.get("request_count") or generation.get("request_count") or progress.get("expected_request_count"), 1),
+    )
+    per_request_progress: list[dict[str, Any]] = []
+    raw_per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
+    for item in raw_per_request:
+        if not isinstance(item, dict):
+            continue
+        counts = item.get("observed_token_counts") if isinstance(item.get("observed_token_counts"), list) else []
+        per_request_progress.append({
+            "request_key": item.get("request_key"),
+            "request_id": item.get("request_id"),
+            "prompt_hash": item.get("prompt_hash"),
+            "event_count": safe_int(item.get("event_count")),
+            "observed_token_counts": [safe_int(value) for value in counts if safe_int(value, -1) >= 0],
+            "max_observed_token_count": safe_int(item.get("max_observed_token_count")),
+            "target_token_count": safe_int(item.get("target_token_count") or progress.get("max_new_tokens")),
+            "monotonic_progress": bool(item.get("monotonic_progress")),
+            "stream_progress_complete": bool(item.get("stream_progress_complete")),
+        })
+    stream_progress_complete = bool(progress.get("stream_progress_complete"))
+    monotonic_progress = bool(progress.get("monotonic_progress"))
+    per_request_complete = bool(progress.get("per_request_progress_complete"))
+    per_request_monotonic = bool(progress.get("per_request_monotonic_progress"))
+    stream_generation_ready = bool(stream.get("stream_generation_ready"))
+    if expected_request_count > 1:
+        stream_generation_ready = bool(
+            stream_generation_ready
+            and per_request_progress
+            and per_request_complete
+            and per_request_monotonic
+        )
+    elif not monotonic_progress:
+        stream_generation_ready = False
+    return {
+        "enabled": bool(stream.get("enabled")),
+        "requested": bool(stream.get("requested") or stream.get("enabled")),
+        "event_count": int(stream.get("event_count") or len(safe_events)),
+        "source": stream.get("source"),
+        "endpoint_ready": bool(stream.get("endpoint_ready")),
+        "progress": {
+            "stream_progress_complete": stream_progress_complete,
+            "all_token_events_ready": bool(progress.get("all_token_events_ready")),
+            "monotonic_progress": monotonic_progress,
+            "expected_request_count": expected_request_count,
+            "per_request_progress": per_request_progress,
+            "per_request_progress_complete": per_request_complete,
+            "per_request_monotonic_progress": per_request_monotonic,
+            "observed_token_counts": list(progress.get("observed_token_counts") or []),
+            "max_observed_token_count": int(progress.get("max_observed_token_count") or 0),
+            "max_new_tokens": progress.get("max_new_tokens"),
+            "source": progress.get("source") or stream.get("source") or "",
+        },
+        "events": safe_events,
+        "stream_generation_ready": stream_generation_ready,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
+def stream_evidence_ready(stream: dict[str, Any], batch: dict[str, Any] | None = None) -> bool:
+    if not isinstance(stream, dict) or stream.get("stream_generation_ready") is not True:
+        return False
+    progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
+    expected_request_count = max(
+        1,
+        safe_int(
+            progress.get("expected_request_count")
+            or (batch or {}).get("expected_request_count")
+            or (batch or {}).get("request_count"),
+            1,
+        ),
+    )
+    if expected_request_count > 1 or bool((batch or {}).get("enabled")):
+        return bool(
+            progress.get("per_request_progress")
+            and progress.get("per_request_progress_complete") is True
+            and progress.get("per_request_monotonic_progress") is True
+        )
+    return bool(progress.get("stream_progress_complete") is True and progress.get("monotonic_progress") is True)
 
 
 def run_p2p_route(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -547,6 +736,10 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
             str(args.http_timeout),
             "--json",
         ]
+        if args.prompt_texts:
+            generate_command.extend(["--prompt-texts", args.prompt_texts])
+        if args.stream_generation:
+            generate_command.append("--stream")
         completed = subprocess.run(
             generate_command,
             cwd=ROOT,
@@ -568,12 +761,18 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
                     proc.wait(timeout=miner_timeout)
                 except subprocess.TimeoutExpired:
                     terminate_process(proc, timeout=2.0)
-        codes = set(diagnosis_codes(generate_payload))
+        batch = safe_batch_summary(generate_payload)
+        stream = safe_stream_summary(generate_payload)
+        batch_ready = bool(not batch.get("enabled") or batch.get("batch_generation_ready"))
+        stream_ready = bool(not args.stream_generation or stream_evidence_ready(stream, batch))
+        codes = drop_unproven_stream_codes(set(diagnosis_codes(generate_payload)), stream_ready=stream_ready)
         generate_ready = bool(
             completed.returncode == 0
             and generate_payload.get("schema") == PRODUCT_CLI_SCHEMA
             and generate_payload.get("ok") is True
             and "public_swarm_generate_ready" in codes
+            and batch_ready
+            and stream_ready
         )
         stage0_clean = stage0.poll() == 0 if stage0 else False
         stage1_clean = stage1.poll() == 0 if stage1 else False
@@ -583,6 +782,12 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
                 "remote_generate_session_ready",
                 "public_swarm_generate_ready",
             })
+            if batch.get("enabled"):
+                codes.add("public_swarm_generate_batch_ready")
+            if stream_ready and args.stream_generation:
+                codes.add("public_swarm_generate_stream_ready")
+                if stream.get("endpoint_ready"):
+                    codes.add("public_swarm_generate_stream_endpoint_ready")
         else:
             if not generate_ready:
                 codes.add("generation_timeout")
@@ -605,6 +810,8 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
                 "schema": generate_payload.get("schema"),
                 "session": generate_payload.get("session") if isinstance(generate_payload.get("session"), dict) else {},
                 "generation": generate_payload.get("generation") if isinstance(generate_payload.get("generation"), dict) else {},
+                "batch": batch,
+                "stream": stream,
                 "route": generate_payload.get("route") if isinstance(generate_payload.get("route"), dict) else {},
             },
             "diagnosis_codes": sorted(codes),
@@ -682,7 +889,7 @@ def remote_real_existing_command(args: argparse.Namespace, output_dir: Path) -> 
 
 def generate_existing_command(args: argparse.Namespace, output_dir: Path) -> list[str]:
     del output_dir
-    return [
+    command = [
         sys.executable,
         "-m",
         "crowdtensor.cli",
@@ -707,6 +914,11 @@ def generate_existing_command(args: argparse.Namespace, output_dir: Path) -> lis
         str(args.http_timeout),
         "--json",
     ]
+    if args.prompt_texts:
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if args.stream_generation:
+        command.append("--stream")
+    return command
 
 
 def run_existing_generate(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -747,7 +959,21 @@ def build_common_report(
     p2p_codes = set(diagnosis_codes(p2p_payload))
     cpu_codes = set(diagnosis_codes(cpu_payload))
     body_codes = set(mode_body.get("diagnosis_codes") or [])
-    codes = set().union(product_codes, p2p_codes, cpu_codes, body_codes)
+    mode_batch = {}
+    mode_stream = {}
+    if isinstance(mode_body.get("generation"), dict):
+        generation_body = mode_body.get("generation") or {}
+        mode_batch = safe_batch_summary({"batch": generation_body.get("batch")})
+        mode_stream = safe_stream_summary({
+            "stream": generation_body.get("stream"),
+            "batch": mode_batch,
+            "generation": generation_body.get("generation") if isinstance(generation_body.get("generation"), dict) else {},
+        })
+    batch_requested = bool(mode_batch.get("enabled"))
+    stream_requested = bool(mode_stream.get("requested") or mode_stream.get("enabled"))
+    batch_ready = bool(mode_batch.get("enabled") and mode_batch.get("batch_generation_ready") is True)
+    stream_ready = stream_evidence_ready(mode_stream, mode_batch)
+    codes = drop_unproven_stream_codes(set().union(product_codes, p2p_codes, cpu_codes, body_codes), stream_ready=stream_ready)
     product_ready = bool(
         product_step.get("ok")
         and product_payload.get("schema") == BETA_SCHEMA
@@ -755,7 +981,11 @@ def build_common_report(
     )
     p2p_ready = bool(p2p_step.get("ok") and p2p_payload.get("schema") == P2P_CHECK_SCHEMA and "p2p_lite_discovery_ready" in p2p_codes)
     cpu_ready = bool(cpu_step.get("ok") and cpu_payload.get("schema") == CPU_BETA_SCHEMA and "cpu_inference_beta_ready" in cpu_codes)
-    mode_ready = bool(mode_body.get("ok"))
+    mode_ready = bool(
+        mode_body.get("ok")
+        and (not batch_requested or batch_ready)
+        and (not stream_requested or stream_ready)
+    )
     if product_ready:
         codes.add("public_swarm_product_beta_ready")
     else:
@@ -775,6 +1005,12 @@ def build_common_report(
             "read_only_workload",
             "not_production",
         })
+        if batch_ready:
+            codes.add("public_swarm_generate_batch_ready")
+        if stream_ready:
+            codes.add("public_swarm_generate_stream_ready")
+            if mode_stream.get("endpoint_ready"):
+                codes.add("public_swarm_generate_stream_endpoint_ready")
     else:
         codes.add("public_swarm_inference_beta_rc_blocked")
     report = {
@@ -789,9 +1025,13 @@ def build_common_report(
             "p2p_lite_route_ready": p2p_ready,
             "cpu_fallback_ready": cpu_ready,
             "mode_ready": mode_ready,
+            "batch_requested": batch_requested,
+            "stream_requested": stream_requested,
             "workload_type": WORKLOAD_TYPE,
             "hf_model_id": args.hf_model_id,
             "max_new_tokens": args.max_new_tokens,
+            "batch": mode_batch if mode_batch else {"enabled": False, "batch_generation_ready": False},
+            "stream": mode_stream if mode_stream else {"enabled": False, "stream_generation_ready": False},
         },
         "steps": [product_step, p2p_step, cpu_step] + mode_steps,
         "payload_summaries": {
@@ -928,6 +1168,8 @@ def build_local_loopback(args: argparse.Namespace, *, output_dir: Path, runner: 
             "coordinator_url": product_loop.get("coordinator_url"),
             "diagnosis_codes": product_loop.get("diagnosis_codes") or [],
             "generation": (product_loop.get("generation") or {}).get("generation"),
+            "batch": (product_loop.get("generation") or {}).get("batch"),
+            "stream": (product_loop.get("generation") or {}).get("stream"),
         }
     }
     return build_common_report(
@@ -1042,21 +1284,33 @@ def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runne
     cpu_step, cpu_payload = run_cpu_fallback(args, output_dir=output_dir / "cpu-fallback", runner=runner)
     generate_step, generate_payload = run_existing_generate(args, output_dir=output_dir / "external-generate", runner=runner)
     remote_step, remote_payload = run_existing_remote_evidence(args, output_dir=output_dir / "external-remote-real", runner=runner)
-    generate_codes = set(diagnosis_codes(generate_payload))
     remote_codes = set(diagnosis_codes(remote_payload))
+    generate_batch = safe_batch_summary(generate_payload)
+    generate_stream = safe_stream_summary(generate_payload)
+    generate_batch_ready = bool(not generate_batch.get("enabled") or generate_batch.get("batch_generation_ready"))
+    generate_stream_ready = bool(not args.stream_generation or stream_evidence_ready(generate_stream, generate_batch))
+    generate_codes = drop_unproven_stream_codes(set(diagnosis_codes(generate_payload)), stream_ready=generate_stream_ready)
     generate_ready = bool(
         generate_step.get("ok")
         and generate_payload.get("schema") == PRODUCT_CLI_SCHEMA
         and "public_swarm_generate_ready" in generate_codes
+        and generate_batch_ready
+        and generate_stream_ready
     )
     remote_ready = bool(
         remote_step.get("ok")
         and remote_payload.get("schema") == REMOTE_REAL_SCHEMA
         and "remote_real_llm_sharded_existing_ready" in remote_codes
     )
-    codes = set(generate_codes) | set(remote_codes)
+    codes = drop_unproven_stream_codes(set(generate_codes) | set(remote_codes), stream_ready=generate_stream_ready)
     if generate_ready:
         codes.update({"remote_generate_session_ready", "serve_join_generate_loop_ready"})
+        if generate_batch.get("enabled"):
+            codes.add("public_swarm_generate_batch_ready")
+        if generate_stream_ready and args.stream_generation:
+            codes.add("public_swarm_generate_stream_ready")
+            if generate_stream.get("endpoint_ready"):
+                codes.add("public_swarm_generate_stream_endpoint_ready")
     else:
         codes.add("remote_generate_session_blocked")
     if remote_ready:
@@ -1066,6 +1320,7 @@ def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runne
     mode_body = {
         "ok": bool(generate_ready and remote_ready),
         "coordinator_url": args.coordinator_url,
+        "generation": {"batch": generate_batch, "stream": generate_stream},
         "diagnosis_codes": sorted(codes),
         "artifacts": {
             "remote_real_llm_sharded_beta_json": artifact_entry(
@@ -1094,6 +1349,8 @@ def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runne
                 "ok": generate_payload.get("ok"),
                 "diagnosis_codes": diagnosis_codes(generate_payload),
                 "generation": generate_payload.get("generation") if isinstance(generate_payload.get("generation"), dict) else {},
+                "batch": generate_batch,
+                "stream": generate_stream,
             },
             "remote_existing_real_llm": {
                 "schema": remote_payload.get("schema"),
@@ -1131,6 +1388,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--gpu-report", default=DEFAULT_GPU_REPORT)
     parser.add_argument("--prompt-text", default=DEFAULT_PROMPT)
+    parser.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
+    parser.add_argument("--stream-generation", action="store_true")
     parser.add_argument("--scenario-id", default="route-baseline")
     parser.add_argument("--request-count", type=int, default=1)
     parser.add_argument("--max-new-tokens", type=int, default=2)
@@ -1157,6 +1416,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--external-llm-request-count must be between 1 and 4")
     if args.max_new_tokens < 2 or args.max_new_tokens > 32:
         raise SystemExit("--max-new-tokens must be between 2 and 32")
+    try:
+        parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     for name in [
         "timeout_seconds",
         "remote_timeout_seconds",

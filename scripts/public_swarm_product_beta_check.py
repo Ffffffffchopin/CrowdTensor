@@ -26,8 +26,6 @@ COMMON_REQUIRED_CODES = {
     "public_swarm_product_beta_ready",
     "public_swarm_product_beta_user_path_ready",
     "support_bundle_ready",
-    "p2p_lite_route_ready",
-    "p2p_lite_discovery_ready",
     "cpu_fallback_ready",
     "local_cpu_inference_ready",
     "read_only_workload",

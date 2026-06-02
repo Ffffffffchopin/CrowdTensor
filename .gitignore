@@ -5,6 +5,7 @@ __pycache__/
 state/
 dist/
 build/
+node_modules/
 *.egg-info/
 .coverage
 htmlcov/

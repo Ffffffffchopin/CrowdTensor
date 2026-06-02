@@ -30,6 +30,166 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
             "crowdtensor-real-llm-beta-test",
         ])
 
+    def _write_json(self, path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    def _external_generation_payload(self, *, generated_tokens: int | None = 16) -> dict:
+        generation = {
+            "max_new_tokens": 16,
+            "generated_text_hash": "sha256:external-16",
+            "decoded_tokens_match": True,
+            "multi_token_generation_ready": True,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        }
+        if generated_tokens is not None:
+            generation["generated_token_count"] = generated_tokens
+        return {
+            "schema": pack.SCHEMA,
+            "ok": True,
+            "mode": "kaggle-auto",
+            "workload": {
+                "workload_type": pack.WORKLOAD_TYPE,
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "max_new_tokens": 16,
+                "request_count": 1,
+            },
+            "generation": generation,
+            "diagnosis_codes": [
+                "real_llm_internet_beta_ready",
+                "external_runtime_verified",
+                "generation_complete",
+                "multi_token_generation_ready",
+                "decoded_tokens_match",
+                "distinct_stage_miners",
+                "stage_assignment_valid",
+                "kaggle_kernels_deleted",
+            ],
+        }
+
+    def _external_requeue_payload(self) -> dict:
+        payload = self._external_generation_payload(generated_tokens=8)
+        payload["diagnosis_codes"].extend([
+            "external_stage_requeue_ready",
+            "live_stage0_requeue_ready",
+            "live_requeue_victim_claim_observed",
+            "live_requeue_victim_kernel_deleted",
+            "live_requeue_lease_timeout_observed",
+            "live_requeue_rescue_result_accepted",
+        ])
+        payload["live_requeue_summary"] = {
+            "enabled": True,
+            "failure_mode": "kill-stage0-after-claim",
+            "target_stage": "stage0",
+            "victim_miner_id": "internet-real-llm-beta-stage0-victim",
+            "rescue_miner_id": "internet-real-llm-beta-stage0-rescue",
+            "claim_observed": True,
+            "victim_kernel_deleted": True,
+            "lease_expired": "<redacted>",
+            "rescued_result": True,
+            "victim_result_accepted": False,
+        }
+        return payload
+
+    def test_evidence_import_combines_token_target_generation_and_requeue(self) -> None:
+        output_dir = self._tmp_dir()
+        generation_path = output_dir / "sources" / "generation.json"
+        requeue_path = output_dir / "sources" / "requeue.json"
+        self._write_json(generation_path, self._external_generation_payload(generated_tokens=16))
+        self._write_json(requeue_path, self._external_requeue_payload())
+
+        args = pack.parse_args([
+            "--mode",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "import"),
+            "--generation-report",
+            str(generation_path),
+            "--requeue-report",
+            str(requeue_path),
+            "--max-new-tokens",
+            "16",
+        ])
+        report = pack.build_report(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["runtime_classification"]["external_runtime_verified"])
+        self.assertTrue(report["runtime_classification"]["stage_requeue_verified"])
+        self.assertEqual(report["generation"]["generated_token_count"], 16)
+        self.assertTrue(report["generation"]["token_target_ready"])
+        self.assertIs(report["live_requeue_summary"]["lease_expired"], True)
+        self.assertIn("real_llm_internet_beta_evidence_import_ready", report["diagnosis_codes"])
+        self.assertIn("external_generated_token_target_ready", report["diagnosis_codes"])
+
+    def test_evidence_import_blocks_when_generation_token_count_missing(self) -> None:
+        output_dir = self._tmp_dir()
+        generation_path = output_dir / "sources" / "generation.json"
+        requeue_path = output_dir / "sources" / "requeue.json"
+        self._write_json(generation_path, self._external_generation_payload(generated_tokens=None))
+        self._write_json(requeue_path, self._external_requeue_payload())
+
+        args = pack.parse_args([
+            "--mode",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "import"),
+            "--generation-report",
+            str(generation_path),
+            "--requeue-report",
+            str(requeue_path),
+            "--max-new-tokens",
+            "16",
+        ])
+        report = pack.build_report(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["generation"]["generated_token_count"], 0)
+        self.assertFalse(report["generation"]["token_target_ready"])
+        self.assertIn("external_generated_token_target_missing", report["diagnosis_codes"])
+        self.assertIn("external generated token target", report["not_completed"])
+
+    def test_evidence_import_preserves_imported_cuda_generation_metadata(self) -> None:
+        output_dir = self._tmp_dir()
+        generation_path = output_dir / "sources" / "gpu-generation.json"
+        requeue_path = output_dir / "sources" / "requeue.json"
+        generation = self._external_generation_payload(generated_tokens=16)
+        generation["schema"] = "public_swarm_gpu_inference_beta_v1"
+        generation["workload"]["real_llm_backend"] = "hf_transformers_cuda"
+        generation["workload"]["real_llm_partition_mode"] = "stage-local"
+        generation["workload"]["torch_spec"] = "torch==2.7.1+cu118 torchvision==0.22.1+cu118"
+        generation["workload"]["torch_index_url"] = "https://download.pytorch.org/whl/cu118"
+        generation["workload"]["transformers_spec"] = "transformers==4.40.2"
+        self._write_json(generation_path, generation)
+        self._write_json(requeue_path, self._external_requeue_payload())
+
+        args = pack.parse_args([
+            "--mode",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "import"),
+            "--generation-report",
+            str(generation_path),
+            "--requeue-report",
+            str(requeue_path),
+            "--max-new-tokens",
+            "16",
+        ])
+        report = pack.build_report(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["workload"]["real_llm_backend"], "hf_transformers_cuda")
+        self.assertEqual(report["workload"]["real_llm_partition_mode"], "stage_local")
+        self.assertTrue(report["safety"]["gpu_backend_selected"])
+        self.assertFalse(report["safety"]["cpu_only_workload"])
+        self.assertFalse(report["safety"]["coordinator_cuda_runtime_required"])
+        self.assertTrue(report["safety"]["miner_cuda_runtime_required"])
+        self.assertEqual(report["workload"]["torch_spec"], "torch==2.7.1+cu118 torchvision==0.22.1+cu118")
+        self.assertEqual(report["workload"]["torch_index_url"], "https://download.pytorch.org/whl/cu118")
+        self.assertEqual(report["workload"]["transformers_spec"], "transformers==4.40.2")
+        self.assertEqual(report["artifacts"]["generation_report"]["schema"], "public_swarm_gpu_inference_beta_v1")
+        self.assertEqual(report["artifacts"]["requeue_report"]["schema"], pack.SCHEMA)
+
     def test_kaggle_auto_success_aggregates_alpha_external_and_cleanup(self) -> None:
         output_dir = self._tmp_dir()
         report = pack.build_report(

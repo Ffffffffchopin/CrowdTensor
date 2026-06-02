@@ -46,6 +46,9 @@ MAX_REQUESTS = 4
 MAX_PROMPT_CHARS = 256
 MAX_NEW_TOKENS = 32
 ROUND_DIGITS = 8
+_MODEL_CACHE: dict[tuple[str, str, str, bool], tuple[Any, Any, Any]] = {}
+_STAGE0_KV_CACHE: dict[tuple[str, str, str, int, str], dict[str, Any]] = {}
+_STAGE1_KV_CACHE: dict[tuple[str, str, str, int, str], dict[str, Any]] = {}
 
 
 def missing_hf_dependencies() -> list[str]:
@@ -175,6 +178,135 @@ def _round_nested(value: Any) -> Any:
 
 def _prompt_hash(prompt: str) -> str:
     return "sha256:" + hashlib.sha256(str(prompt).encode("utf-8")).hexdigest()
+
+
+def _ensure_batched_hidden(hidden: Any) -> Any:
+    if int(getattr(hidden, "ndim", 0)) == 2:
+        return hidden.unsqueeze(0)
+    return hidden
+
+
+def _stage0_cache_key(*, spec: dict[str, Any], request: dict[str, Any], split_index: int) -> tuple[str, str, str, int, str]:
+    return (
+        str(spec.get("session_id") or ""),
+        str(request.get("request_id") or ""),
+        str(spec.get("artifact_hash") or ""),
+        int(split_index),
+        str(spec.get("miner_id") or ""),
+    )
+
+
+def _stage1_cache_key(*, spec: dict[str, Any], activation: dict[str, Any], split_index: int) -> tuple[str, str, str, int, str]:
+    return (
+        str(spec.get("session_id") or activation.get("session_id") or ""),
+        str(activation.get("request_id") or ""),
+        str(spec.get("artifact_hash") or activation.get("artifact_hash") or ""),
+        int(split_index),
+        str(spec.get("miner_id") or ""),
+    )
+
+
+def _block_output_hidden_and_present(output: Any) -> tuple[Any, Any | None]:
+    if not isinstance(output, (tuple, list)):
+        return output, None
+    hidden = output[0]
+    present = getattr(output, "present", None)
+    if present is None:
+        present = getattr(output, "past_key_values", None)
+    if present is None and isinstance(output, (tuple, list)) and len(output) > 1:
+        present = output[1]
+    return hidden, present
+
+
+def _new_dynamic_cache(
+    model: Any,
+    stored_layers: list[Any] | None = None,
+    device: Any | None = None,
+    *,
+    layer_indices: list[int] | None = None,
+) -> Any | None:
+    try:
+        from transformers.cache_utils import DynamicCache  # type: ignore
+    except Exception:
+        return None
+    try:
+        cache = DynamicCache(config=getattr(model, "config", None))
+    except Exception:
+        try:
+            cache = DynamicCache()
+        except Exception:
+            return None
+    if not stored_layers:
+        return cache
+    indices = list(layer_indices or range(len(stored_layers)))
+    try:
+        layers = list(cache.layers)
+    except Exception:
+        layers = []
+    if not layers:
+        ddp_cache_data = []
+        for layer in stored_layers:
+            values = list(layer or [])
+            if len(values) < 2 or values[0] is None or values[1] is None:
+                return None
+            values = [value.to(device) for value in values[:2]] if device is not None else values[:2]
+            ddp_cache_data.append(tuple(values))
+        try:
+            return DynamicCache(ddp_cache_data=ddp_cache_data)
+        except Exception:
+            return None
+    if len(indices) != len(stored_layers):
+        return None
+    try:
+        for layer_index, stored in zip(indices, stored_layers):
+            values = list(stored or [])
+            if len(values) < 2 or values[0] is None or values[1] is None:
+                return None
+            key_value = [value.to(device) for value in values[:2]] if device is not None else values[:2]
+            layers[int(layer_index)].update(key_value[0], key_value[1])
+    except Exception:
+        return None
+    return cache
+
+
+def _cache_layer_values(layer: Any) -> list[Any]:
+    keys = getattr(layer, "keys", None)
+    values = getattr(layer, "values", None)
+    if keys is not None and values is not None:
+        return [keys, values]
+    try:
+        return list(layer or [])
+    except TypeError:
+        return []
+
+
+def _cache_layers(cache: Any, *, split: int, layer_indices: list[int] | None = None) -> list[Any]:
+    rows: list[Any] = []
+    indices = list(layer_indices or range(split))
+    try:
+        layers = list(cache.layers)
+    except Exception:
+        try:
+            layers = list(iter(cache))
+        except TypeError:
+            return rows
+    for index in indices:
+        if int(index) < 0 or int(index) >= len(layers):
+            return []
+        layer = layers[int(index)]
+        values = _cache_layer_values(layer)
+        if len(values) < 2 or values[0] is None or values[1] is None:
+            return []
+        rows.append(tuple(value.detach().cpu() for value in values[:2]))
+    return rows if len(rows) == len(indices) else []
+
+
+def clear_real_llm_runtime_caches() -> None:
+    """Clear in-process model/runtime caches used by tests and short-lived Miners."""
+
+    _MODEL_CACHE.clear()
+    _STAGE0_KV_CACHE.clear()
+    _STAGE1_KV_CACHE.clear()
 
 
 def _activation_hash(activation: dict[str, Any]) -> str:
@@ -335,12 +467,17 @@ def _load_model_and_tokenizer(
 
     resolved_backend = resolve_backend(backend)
     device = torch.device("cuda:0" if resolved_backend == BACKEND_CUDA else "cpu")
+    cache_key = (str(model_id), str(cache_dir or ""), resolved_backend, bool(move_model))
+    if cache_key in _MODEL_CACHE:
+        return _MODEL_CACHE[cache_key]
     tokenizer = AutoTokenizer.from_pretrained(model_id, **_cache_kwargs(cache_dir))
     model = AutoModelForCausalLM.from_pretrained(model_id, **_cache_kwargs(cache_dir))
     if move_model:
         model.to(device)
     model.eval()
-    return tokenizer, model, device
+    loaded = (tokenizer, model, device)
+    _MODEL_CACHE[cache_key] = loaded
+    return loaded
 
 
 def _gpt2_parts(model: Any) -> tuple[Any, list[Any]]:
@@ -560,7 +697,7 @@ def real_llm_sharded_inference_spec_for(
     return spec
 
 
-def _tokenize_prompt(tokenizer: Any, prompt: str):
+def _tokenize_prompt(tokenizer: Any, prompt: str, *, generated_token_ids: list[int] | None = None):
     import torch  # type: ignore
 
     encoded = tokenizer(str(prompt), return_tensors="pt", add_special_tokens=True)
@@ -568,6 +705,10 @@ def _tokenize_prompt(tokenizer: Any, prompt: str):
     if input_ids is None or int(input_ids.numel()) <= 0:
         eos_id = getattr(tokenizer, "eos_token_id", None)
         input_ids = torch.tensor([[int(eos_id or 0)]], dtype=torch.long)
+    continuation = [int(value) for value in list(generated_token_ids or [])]
+    if continuation:
+        continuation_ids = torch.tensor([continuation], dtype=torch.long)
+        input_ids = torch.cat([input_ids, continuation_ids], dim=1)
     return input_ids
 
 
@@ -584,12 +725,61 @@ def _stage0_activation(
 
     transformer, blocks = _gpt2_parts(model)
     split = max(1, min(int(split_index), len(blocks) - 1))
-    input_ids = _tokenize_prompt(tokenizer, str(request.get("prompt") or "")).to(device)
+    generated_prefix_token_ids = [int(value) for value in list(request.get("generated_token_ids") or [])]
+    input_ids = _tokenize_prompt(
+        tokenizer,
+        str(request.get("prompt") or ""),
+        generated_token_ids=generated_prefix_token_ids,
+    ).to(device)
     position_ids = torch.arange(input_ids.shape[1], dtype=torch.long, device=input_ids.device).unsqueeze(0)
+    cache_key = _stage0_cache_key(spec=spec, request=request, split_index=split)
+    cached = _STAGE0_KV_CACHE.get(cache_key) if generated_prefix_token_ids else None
+    cache_ready = False
+    cache_hit = False
+    cache_tokens_before = 0
+    hidden = None
     with torch.no_grad():
-        hidden = transformer.wte(input_ids) + transformer.wpe(position_ids)
-        for block in blocks[:split]:
-            hidden = block(hidden)[0]
+        if cached and int(cached.get("input_token_count") or 0) == int(input_ids.shape[1]) - 1:
+            previous_hidden = cached.get("hidden")
+            past_key_values = list(cached.get("past_key_values") or [])
+            cache = _new_dynamic_cache(model, stored_layers=past_key_values, device=device)
+            if previous_hidden is not None and cache is not None:
+                cache_hit = True
+                cache_tokens_before = int(cached.get("input_token_count") or 0)
+                next_input_ids = input_ids[:, -1:]
+                next_position_ids = position_ids[:, -1:]
+                hidden_delta = transformer.wte(next_input_ids) + transformer.wpe(next_position_ids)
+                for block, past in zip(blocks[:split], past_key_values):
+                    output = block(hidden_delta, past_key_values=cache, use_cache=True)
+                    block_hidden, _present = _block_output_hidden_and_present(output)
+                    hidden_delta = _ensure_batched_hidden(block_hidden)
+                next_past_key_values = _cache_layers(cache, split=split)
+                if len(next_past_key_values) == split:
+                    hidden = torch.cat([previous_hidden.to(device), hidden_delta], dim=1)
+                    _STAGE0_KV_CACHE[cache_key] = {
+                        "input_token_count": int(input_ids.shape[1]),
+                        "hidden": hidden.detach().cpu(),
+                        "past_key_values": next_past_key_values,
+                    }
+                    cache_ready = True
+        if hidden is None:
+            hidden = transformer.wte(input_ids) + transformer.wpe(position_ids)
+            cache = _new_dynamic_cache(model)
+            for block in blocks[:split]:
+                if cache is not None:
+                    output = block(hidden, past_key_values=cache, use_cache=True)
+                else:
+                    output = block(hidden, use_cache=True)
+                block_hidden, _present = _block_output_hidden_and_present(output)
+                hidden = _ensure_batched_hidden(block_hidden)
+            past_key_values = _cache_layers(cache, split=split) if cache is not None else []
+            if len(past_key_values) == split:
+                _STAGE0_KV_CACHE[cache_key] = {
+                    "input_token_count": int(input_ids.shape[1]),
+                    "hidden": hidden.detach().cpu(),
+                    "past_key_values": past_key_values,
+                }
+                cache_ready = True
     hidden_state = _round_nested(hidden.detach().cpu().tolist())
     activation = {
         "schema_version": REAL_LLM_ACTIVATION_SCHEMA_VERSION,
@@ -607,6 +797,16 @@ def _stage0_activation(
         "position_ids": [int(value) for value in position_ids.detach().cpu().tolist()[0]],
         "hidden_shape": [int(value) for value in hidden.shape],
         "hidden_state": hidden_state,
+        "prompt_token_count": int(input_ids.shape[1] - len(generated_prefix_token_ids)),
+        "generated_prefix_token_count": len(generated_prefix_token_ids),
+        "input_token_count": int(input_ids.shape[1]),
+        "token_continuation_ready": bool(generated_prefix_token_ids),
+        "kv_cache_schema": "real_llm_stage0_kv_cache_v1",
+        "kv_cache_ready": cache_ready,
+        "kv_cache_hit": cache_hit,
+        "kv_cache_tokens_before": cache_tokens_before,
+        "kv_cache_tokens_after": int(input_ids.shape[1]),
+        "kv_cache_stage": "stage0_prefix",
     }
     activation["activation_hash"] = _activation_hash(activation)
     return activation
@@ -629,12 +829,71 @@ def _stage1_result(
     input_ids = torch.tensor([list(activation.get("input_ids") or [])], dtype=torch.long, device=device)
     if input_ids.numel() <= 0:
         raise ValueError("real LLM activation input_ids are empty")
-    hidden = torch.tensor(activation.get("hidden_state"), dtype=torch.float32, device=device)
+    hidden = _ensure_batched_hidden(torch.tensor(activation.get("hidden_state"), dtype=torch.float32, device=device))
     if hidden.ndim != 3 or hidden.shape[0] != 1:
         raise ValueError("real LLM activation hidden_state has invalid shape")
+    cache_key = _stage1_cache_key(spec=spec, activation=activation, split_index=split)
+    input_token_ids = [int(value) for value in list(activation.get("input_ids") or [])]
+    generated_prefix_token_ids = [int(value) for value in list(activation.get("generated_token_ids") or [])]
+    suffix_layer_indices = list(range(split, len(blocks)))
+    cached = _STAGE1_KV_CACHE.get(cache_key) if generated_prefix_token_ids else None
+    cache_ready = False
+    cache_hit = False
+    cache_tokens_before = 0
     with torch.no_grad():
-        for block in blocks[split:]:
-            hidden = block(hidden)[0]
+        if (
+            cached
+            and int(cached.get("input_token_count") or 0) == int(hidden.shape[1]) - 1
+            and list(cached.get("input_token_ids") or []) == input_token_ids[:-1]
+        ):
+            previous_hidden = cached.get("hidden")
+            past_key_values = list(cached.get("past_key_values") or [])
+            cache = _new_dynamic_cache(
+                model,
+                stored_layers=past_key_values,
+                device=device,
+                layer_indices=suffix_layer_indices,
+            )
+            if previous_hidden is not None and cache is not None:
+                cache_tokens_before = int(cached.get("input_token_count") or 0)
+                hidden_delta = hidden[:, -1:, :]
+                for block in blocks[split:]:
+                    output = block(hidden_delta, past_key_values=cache, use_cache=True)
+                    block_hidden, _present = _block_output_hidden_and_present(output)
+                    hidden_delta = _ensure_batched_hidden(block_hidden)
+                next_past_key_values = _cache_layers(cache, split=len(blocks), layer_indices=suffix_layer_indices)
+                if len(next_past_key_values) == len(suffix_layer_indices):
+                    hidden = torch.cat([previous_hidden.to(device), hidden_delta], dim=1)
+                    _STAGE1_KV_CACHE[cache_key] = {
+                        "input_token_count": int(hidden.shape[1]),
+                        "input_token_ids": input_token_ids,
+                        "hidden": hidden.detach().cpu(),
+                        "past_key_values": next_past_key_values,
+                    }
+                    cache_ready = True
+                    cache_hit = True
+        if not cache_ready:
+            cache = _new_dynamic_cache(model)
+            for block in blocks[split:]:
+                if cache is not None:
+                    output = block(hidden, past_key_values=cache, use_cache=True)
+                else:
+                    output = block(hidden, use_cache=True)
+                block_hidden, _present = _block_output_hidden_and_present(output)
+                hidden = _ensure_batched_hidden(block_hidden)
+            past_key_values = (
+                _cache_layers(cache, split=len(blocks), layer_indices=suffix_layer_indices)
+                if cache is not None
+                else []
+            )
+            if len(past_key_values) == len(suffix_layer_indices):
+                _STAGE1_KV_CACHE[cache_key] = {
+                    "input_token_count": int(hidden.shape[1]),
+                    "input_token_ids": input_token_ids,
+                    "hidden": hidden.detach().cpu(),
+                    "past_key_values": past_key_values,
+                }
+                cache_ready = True
         hidden = transformer.ln_f(hidden)
         logits = model.lm_head(hidden)
         next_token_id = int(torch.argmax(logits[0, -1, :]).item())
@@ -666,6 +925,12 @@ def _stage1_result(
         "generated_text_hash": _generated_text_hash(generated_text),
         "baseline_match": next_token_id == baseline_next_token_id and next_text == baseline_text,
         "baseline_device": str(baseline_device or device),
+        "kv_cache_schema": "real_llm_stage1_kv_cache_v1",
+        "kv_cache_ready": cache_ready,
+        "kv_cache_hit": cache_hit,
+        "kv_cache_tokens_before": cache_tokens_before,
+        "kv_cache_tokens_after": int(input_ids.shape[1]),
+        "kv_cache_stage": "stage1_suffix",
     }
     result["output_hash"] = _output_hash(result)
     return result

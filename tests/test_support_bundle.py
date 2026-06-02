@@ -108,11 +108,22 @@ class SupportBundleTests(unittest.TestCase):
             "token": "secret",
             "nested": {
                 "lease_token": "lease",
+                "lease_expired": True,
                 "token_rotation_required": True,
                 "weights": [1, 2],
                 "safe": "value",
                 "local_delta": [0.1],
                 "idempotency_key": "idem",
+                "generated_token_count": 2,
+                "generated_token_ids_public": False,
+                "multi_token_generation_ready": True,
+                "all_token_events_ready": True,
+                "complete_token_count": 2,
+                "observed_token_counts": [1, 2],
+                "max_observed_token_count": 2,
+                "required_generated_token_count": 2,
+                "target_token_count": 2,
+                "token_target_ready": True,
             },
         }
 
@@ -120,10 +131,21 @@ class SupportBundleTests(unittest.TestCase):
 
         self.assertEqual(sanitized["token"], "<redacted>")
         self.assertEqual(sanitized["nested"]["lease_token"], "<redacted>")
+        self.assertIs(sanitized["nested"]["lease_expired"], True)
         self.assertIs(sanitized["nested"]["token_rotation_required"], True)
         self.assertEqual(sanitized["nested"]["weights"], "<redacted>")
         self.assertEqual(sanitized["nested"]["local_delta"], "<redacted>")
         self.assertEqual(sanitized["nested"]["safe"], "value")
+        self.assertEqual(sanitized["nested"]["generated_token_count"], 2)
+        self.assertIs(sanitized["nested"]["generated_token_ids_public"], False)
+        self.assertIs(sanitized["nested"]["multi_token_generation_ready"], True)
+        self.assertIs(sanitized["nested"]["all_token_events_ready"], True)
+        self.assertEqual(sanitized["nested"]["complete_token_count"], 2)
+        self.assertEqual(sanitized["nested"]["observed_token_counts"], [1, 2])
+        self.assertEqual(sanitized["nested"]["max_observed_token_count"], 2)
+        self.assertEqual(sanitized["nested"]["required_generated_token_count"], 2)
+        self.assertEqual(sanitized["nested"]["target_token_count"], 2)
+        self.assertIs(sanitized["nested"]["token_target_ready"], True)
 
     def test_broken_json_report_fails_cli(self) -> None:
         tmp_root = Path(self._tmp_dir())

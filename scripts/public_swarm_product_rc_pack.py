@@ -159,11 +159,14 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         timeout_seconds=args.timeout_seconds,
     )
     gpu_report = import_gpu_generation(args, output_dir)
-    ok = all(report.get("ok") for report in cli_reports.values())
-    ok = bool(ok and session_payload.get("ok") and p2p_payload.get("ok") and gpu_report.get("ok"))
+    product_surface_ready = all(
+        cli_reports[name].get("ok")
+        for name in ["serve", "join_stage0", "join_stage1", "generate"]
+    )
+    ok = bool(product_surface_ready and session_payload.get("ok") and p2p_payload.get("ok") and gpu_report.get("ok"))
     diagnosis_codes = {
         "public_swarm_product_rc_ready" if ok else "public_swarm_product_rc_blocked",
-        "coordinator_product_surface_ready" if all(cli_reports[name].get("ok") for name in ["serve", "join_stage0", "join_stage1", "generate"]) else "coordinator_product_surface_blocked",
+        "coordinator_product_surface_ready" if product_surface_ready else "coordinator_product_surface_blocked",
         "session_protocol_ready" if session_payload.get("ok") else "session_protocol_blocked",
         "p2p_lite_discovery_ready" if p2p_payload.get("ok") else "p2p_lite_discovery_blocked",
         "gpu_generation_evidence_import_ready" if gpu_report.get("ok") else "gpu_generation_evidence_import_blocked",

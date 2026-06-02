@@ -38,7 +38,25 @@ SENSITIVE_FRAGMENTS = (
     "idempotency",
 )
 SAFE_SENSITIVE_NAMED_FIELDS = {
+    "all_token_events_ready",
+    "complete_token_count",
+    "external_generated_token_count",
+    "generated_token_count",
+    "generated_token_count_ready",
+    "generated_token_ids_public",
+    "lease_expired",
+    "max_observed_token_count",
+    "multi_token_generation_ready",
+    "tiny_gpt2_multi_token_ready",
+    "next_token_redacted",
+    "observed_token_counts",
+    "peer_secret_gossiped",
+    "required_generated_token_count",
+    "target_token_count",
+    "token_target_ready",
     "token_rotation_required",
+    "private_kernel_payload_contains_miner_token",
+    "private_kernel_payload_contains_peer_secret",
 }
 
 

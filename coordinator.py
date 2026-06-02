@@ -377,6 +377,7 @@ def create_app(
         workload_type: str = WORKLOAD_MODEL_BUNDLE_INFER
         prompt: str | None = None
         prompt_texts: list[str] | None = None
+        hf_model_id: str = ""
         partition_mode: str = ""
 
     def require_admin(token: str | None) -> None:
@@ -554,6 +555,55 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.get("/admin/session-stream")
+    def admin_session_stream(
+        limit: int = Query(default=50, ge=0, le=500),
+        session_id: str = Query(default=""),
+        workload_type: str = Query(default=WORKLOAD_REAL_LLM_SHARDED_INFER),
+        max_new_tokens: int = Query(default=0, ge=0, le=32),
+        x_crowdtensor_admin_token: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(x_crowdtensor_admin_token)
+
+        def query_value(value, default):
+            if hasattr(value, "default"):
+                value = value.default
+            return default if value is None else value
+
+        limit_value = query_value(limit, 50)
+        session_value = str(query_value(session_id, "") or "")
+        workload_value = str(query_value(workload_type, WORKLOAD_REAL_LLM_SHARDED_INFER) or "")
+        max_tokens_value = int(query_value(max_new_tokens, 0) or 0)
+        events = store.session_stream_events(
+            session_id=session_value,
+            max_new_tokens=max_tokens_value or None,
+            limit=limit_value,
+            workload_type=workload_value,
+        )
+        counts = [int(event.get("generated_token_count") or 0) for event in events]
+        complete = bool(
+            max_tokens_value > 0
+            and all(count in counts for count in range(1, max_tokens_value + 1))
+        )
+        return {
+            "schema": "admin_session_stream_v1",
+            "ok": bool(session_value),
+            "session_id": session_value,
+            "workload_type": workload_value,
+            "max_new_tokens": max_tokens_value or None,
+            "event_count": len(events),
+            "events": events,
+            "progress_counts": counts,
+            "stream_progress_complete": complete,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "diagnosis_codes": (
+                ["session_stream_progress_complete"]
+                if complete
+                else (["session_stream_progress_ready"] if events else ["session_stream_pending"])
+            ),
+        }
+
     @app.post("/admin/inference-sessions")
     def admin_inference_sessions(
         request: InferenceSessionRequest,
@@ -621,6 +671,7 @@ def create_app(
                     ),
                     required_runtime=request.runtime,
                     required_backend=request.backend,
+                    model_id=request.hf_model_id,
                     llm_backend=llm_backend,
                     partition_mode=request.partition_mode,
                     required_protocol_version=DEFAULT_PROTOCOL_VERSION,

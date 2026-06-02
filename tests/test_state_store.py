@@ -27,6 +27,7 @@ from crowdtensor.protocol import (
     REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
     REAL_LLM_SHARDED_STAGE0_CAPABILITY,
     REAL_LLM_SHARDED_STAGE1_CAPABILITY,
+    STATUS_COMPLETED,
 )
 from crowdtensor.real_llm import WORKLOAD_TYPE as WORKLOAD_REAL_LLM_SHARDED_INFER
 from crowdtensor.model_bundle import WORKLOAD_TYPE as WORKLOAD_MODEL_BUNDLE_LM
@@ -3109,12 +3110,282 @@ class StateStoreTests(unittest.TestCase):
                 attempt=stage1_claim["attempt"],
                 sharded_inference_result=stage1_result,
             )
-            next_stage0_claim = store.claim_task("stage0-b", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            stream_events = store.session_stream_events(
+                session_id=session["session_id"],
+                max_new_tokens=2,
+            )
+            self.assertEqual(len(stream_events), 1)
+            self.assertEqual(stream_events[0]["schema"], "session_stream_event_v1")
+            self.assertEqual(stream_events[0]["generated_token_count"], 1)
+            self.assertEqual(stream_events[0]["generation_step"], 0)
+            self.assertEqual(stream_events[0]["generated_text_hash"], stage1_result_row["generated_text_hash"])
+            public_text = json.dumps(stream_events, sort_keys=True)
+            self.assertNotIn(" useful", public_text)
+            self.assertNotIn('"generated_token_ids":', public_text)
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("stage0-b", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            next_stage0_claim = store.claim_task("stage0-a", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
             self.assertEqual(next_stage0_claim["workload_spec"]["generation_step"], 1)
             next_request = next_stage0_claim["workload_spec"]["requests"][0]
-            self.assertEqual(next_request["prompt"], "The future of open AI is useful")
+            self.assertEqual(next_request["prompt"], "The future of open AI is")
             self.assertEqual(next_request["generated_token_ids"], [42])
             self.assertEqual(next_request["generated_text"], " useful")
+
+    def test_session_stream_events_keep_batch_request_progress_separate(self) -> None:
+        session_id = "session-batch-stream"
+        rows = [
+            {
+                "task_id": "batch-step0",
+                "session_id": session_id,
+                "miner_id": "stage1-a",
+                "terminal_at": 1.0,
+                "validation": {
+                    "session_id": session_id,
+                    "stage_id": 1,
+                    "generation_step": 0,
+                    "generated_token_count": 1,
+                    "max_new_tokens": 2,
+                    "generated_text_hash": "sha256:aggregate",
+                    "decoded_tokens_match": True,
+                    "inference_results": [
+                        {
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:p1",
+                            "generation_step": 0,
+                            "generated_token_count": 1,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:r1s0",
+                            "generated_text": " raw one",
+                            "generated_token_ids": [1],
+                            "decoded_tokens_match": True,
+                        },
+                        {
+                            "request_id": "req-2",
+                            "prompt_hash": "sha256:p2",
+                            "generation_step": 0,
+                            "generated_token_count": 1,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:r2s0",
+                            "generated_text": " raw two",
+                            "generated_token_ids": [2],
+                            "decoded_tokens_match": True,
+                        },
+                    ],
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp), lease_seconds=5, inner_steps=10, backlog=1)
+            store._tasks = {
+                row["task_id"]: {
+                    "task_id": row["task_id"],
+                    "status": STATUS_COMPLETED,
+                    "workload_type": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                    "workload_metadata": {"session_id": session_id},
+                }
+                for row in rows
+            }
+            store._result_ledger_entry = lambda task, _event: next(row for row in rows if row["task_id"] == task["task_id"])  # type: ignore[method-assign]
+
+            stream_events = store.session_stream_events(session_id=session_id, max_new_tokens=2)
+
+        encoded = json.dumps(stream_events, sort_keys=True)
+        self.assertEqual(len(stream_events), 2)
+        self.assertEqual(
+            [(event["request_id"], event["generated_token_count"]) for event in stream_events],
+            [("req-1", 1), ("req-2", 1)],
+        )
+        self.assertNotIn(" raw ", encoded)
+        self.assertNotIn('"generated_token_ids":', encoded)
+
+    def test_real_llm_generation_stage_affinity_keeps_session_stage_on_same_miner(self) -> None:
+        artifact = {
+            "schema": "real_llm_artifact_v1",
+            "artifact_hash": "sha256:test-real-llm-affinity-artifact",
+            "model_id": "sshleifer/tiny-gpt2",
+            "backend": "hf_transformers_cuda",
+            "split_index": 1,
+            "num_hidden_layers": 2,
+            "hidden_size": 2,
+            "vocab_size": 128,
+            "read_only": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "crowdtensor.state_store.inspect_real_llm_artifact",
+            return_value=artifact,
+        ):
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
+            session = store.create_real_llm_sharded_inference_session(
+                request_count=1,
+                max_new_tokens=2,
+                prompt_texts=["The future of open AI is"],
+                required_runtime="python-cli",
+                required_backend="cuda",
+                llm_backend="hf_transformers_cuda",
+            )
+
+            stage0_claim = store.claim_task("stage0-a", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            activation = {
+                "schema_version": "real_llm_activation_v1",
+                "session_id": session["session_id"],
+                "request_id": "req-1",
+                "prompt_hash": stage0_claim["workload_spec"]["requests"][0]["prompt_hash"],
+                "model_id": "sshleifer/tiny-gpt2",
+                "artifact_hash": artifact["artifact_hash"],
+                "split_index": 1,
+                "generation_step": 0,
+                "max_new_tokens": 2,
+                "generated_token_ids": [],
+                "generated_text": "",
+                "input_ids": [1, 2],
+                "position_ids": [0, 1],
+                "hidden_shape": [1, 2, 2],
+                "hidden_state": [[[0.1, 0.2], [0.3, 0.4]]],
+            }
+            activation["activation_hash"] = real_activation_hash = "sha256:" + hashlib.sha256(
+                json.dumps({
+                    "artifact_hash": activation["artifact_hash"],
+                    "hidden_shape": activation["hidden_shape"],
+                    "hidden_state": activation["hidden_state"],
+                    "input_ids": activation["input_ids"],
+                    "model_id": activation["model_id"],
+                    "position_ids": activation["position_ids"],
+                    "request_id": activation["request_id"],
+                    "schema_version": activation["schema_version"],
+                    "session_id": activation["session_id"],
+                    "split_index": activation["split_index"],
+                }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            store.complete_task(
+                stage0_claim["task_id"],
+                lease_token=stage0_claim["lease_token"],
+                attempt=stage0_claim["attempt"],
+                sharded_inference_result={
+                    "schema_version": "real_llm_sharded_infer_v1",
+                    "type": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                    "session_id": session["session_id"],
+                    "stage_id": 0,
+                    "stage_count": 2,
+                    "model_id": "sshleifer/tiny-gpt2",
+                    "backend": "hf_transformers_cuda",
+                    "partition_mode": "full",
+                    "artifact_schema": "real_llm_artifact_v1",
+                    "artifact_hash": artifact["artifact_hash"],
+                    "split_index": 1,
+                    "max_new_tokens": 2,
+                    "generation_step": 0,
+                    "request_count": 1,
+                    "activation_count": 1,
+                    "activation_bytes": 10,
+                    "activation_hashes": [real_activation_hash],
+                    "activation_transport_ready": True,
+                    "activation_results": [activation],
+                    "real_llm_artifact_ready": True,
+                },
+            )
+            stage1_claim = store.claim_task("stage1-a", capabilities=self._real_llm_cuda_stage_capabilities("stage1"))
+            self.assertEqual(stage1_claim["workload_spec"]["stage_affinity"]["miner_id"], "stage1-a")
+            stage1_result_row = {
+                "request_id": "req-1",
+                "prompt_hash": activation["prompt_hash"],
+                "model_id": "sshleifer/tiny-gpt2",
+                "artifact_hash": artifact["artifact_hash"],
+                "activation_hash": real_activation_hash,
+                "generation_step": 0,
+                "max_new_tokens": 2,
+                "next_token_id": 42,
+                "next_token_text": " useful",
+                "baseline_next_token_id": 42,
+                "baseline_next_token_text": " useful",
+                "generated_token_ids": [42],
+                "generated_token_count": 1,
+                "generated_text": " useful",
+                "generated_text_hash": "sha256:" + hashlib.sha256(b" useful").hexdigest(),
+                "baseline_match": True,
+            }
+            stage1_result_row["output_hash"] = "sha256:" + hashlib.sha256(
+                json.dumps({
+                    "activation_hash": real_activation_hash,
+                    "artifact_hash": artifact["artifact_hash"],
+                    "baseline_match": True,
+                    "baseline_next_token_id": 42,
+                    "model_id": "sshleifer/tiny-gpt2",
+                    "next_token_id": 42,
+                    "request_id": "req-1",
+                }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            store.complete_task(
+                stage1_claim["task_id"],
+                lease_token=stage1_claim["lease_token"],
+                attempt=stage1_claim["attempt"],
+                sharded_inference_result={
+                    "schema_version": "real_llm_sharded_infer_v1",
+                    "type": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                    "session_id": session["session_id"],
+                    "stage_id": 1,
+                    "stage_count": 2,
+                    "model_id": "sshleifer/tiny-gpt2",
+                    "backend": "hf_transformers_cuda",
+                    "partition_mode": "full",
+                    "artifact_schema": "real_llm_artifact_v1",
+                    "artifact_hash": artifact["artifact_hash"],
+                    "split_index": 1,
+                    "max_new_tokens": 2,
+                    "generation_step": 0,
+                    "request_count": 1,
+                    "activation_count": 1,
+                    "activation_hashes": [real_activation_hash],
+                    "activation_transport_ready": True,
+                    "inference_results": [stage1_result_row],
+                    "inference_result": stage1_result_row,
+                    "baseline_match": True,
+                    "decoded_tokens_match": True,
+                    "generated_token_ids": [42],
+                    "generated_token_count": 1,
+                    "generated_text": " useful",
+                    "generated_text_hash": stage1_result_row["generated_text_hash"],
+                    "real_llm_artifact_ready": True,
+                },
+            )
+
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task("stage0-b", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            next_stage0_claim = store.claim_task("stage0-a", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            self.assertEqual(next_stage0_claim["workload_spec"]["generation_step"], 1)
+            self.assertEqual(next_stage0_claim["workload_spec"]["stage_affinity"]["miner_id"], "stage0-a")
+
+    def test_real_llm_stage_affinity_allows_rescue_after_requeue(self) -> None:
+        artifact = {
+            "schema": "real_llm_artifact_v1",
+            "artifact_hash": "sha256:test-real-llm-affinity-rescue-artifact",
+            "model_id": "sshleifer/tiny-gpt2",
+            "backend": "hf_transformers_cuda",
+            "split_index": 1,
+            "num_hidden_layers": 2,
+            "hidden_size": 2,
+            "vocab_size": 128,
+            "read_only": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "crowdtensor.state_store.inspect_real_llm_artifact",
+            return_value=artifact,
+        ):
+            store = StateStore(tmp, lease_seconds=0.01, inner_steps=10, backlog=0)
+            store.create_real_llm_sharded_inference_session(
+                request_count=1,
+                max_new_tokens=1,
+                required_runtime="python-cli",
+                required_backend="cuda",
+                llm_backend="hf_transformers_cuda",
+            )
+            first_claim = store.claim_task("stage0-a", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+            self.assertEqual(first_claim["workload_spec"]["stage_affinity"]["miner_id"], "stage0-a")
+            store.reap_expired(now=first_claim["lease_expires_at"] + 0.001)
+
+            rescue_claim = store.claim_task("stage0-rescue", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
+
+            self.assertEqual(rescue_claim["attempt"], 2)
+            self.assertEqual(rescue_claim["workload_spec"]["stage_affinity"]["miner_id"], "stage0-rescue")
 
     def test_requeue_preserves_task_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

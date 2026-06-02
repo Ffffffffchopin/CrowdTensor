@@ -39,6 +39,8 @@ from kaggle_real_llm_live_package import DEFAULT_TRANSFORMERS_SPEC  # noqa: E402
 
 SCHEMA = "real_llm_internet_beta_v1"
 MODE_KAGGLE_AUTO = "kaggle-auto"
+MODE_EVIDENCE_IMPORT = "evidence-import"
+MODES = [MODE_KAGGLE_AUTO, MODE_EVIDENCE_IMPORT]
 DEFAULT_PUBLIC_HOST = "24.199.118.54"
 DEFAULT_PORT = 9190
 DEFAULT_BASE_PORT = 9191
@@ -55,6 +57,20 @@ FAILURE_MODES = {
     FAILURE_KILL_STAGE0_AFTER_CLAIM,
     FAILURE_KILL_STAGE1_AFTER_CLAIM,
 }
+LIVE_REQUEUE_SUMMARY_FIELDS = (
+    "enabled",
+    "failure_mode",
+    "target_stage",
+    "victim_miner_id",
+    "rescue_miner_id",
+    "claim_observed",
+    "victim_kernel_deleted",
+    "lease_expired",
+    "rescue_miner_used",
+    "rescued_result",
+    "accepted_result_after_requeue",
+    "victim_result_accepted",
+)
 KAGGLE_CODE_URL = re.compile(r"https://www\.kaggle\.com/code/([^/\s]+)/([^/\s]+)")
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -297,6 +313,131 @@ def generation_summary(payload: dict[str, Any]) -> dict[str, Any]:
             elif isinstance(value, list):
                 pending.extend(entry for entry in value if isinstance(entry, dict))
     return best
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def first_string_value(payload: dict[str, Any], key: str) -> str:
+    pending: list[Any] = [payload]
+    seen: set[int] = set()
+    while pending:
+        item = pending.pop(0)
+        if not isinstance(item, dict):
+            continue
+        marker = id(item)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return value
+        for nested in item.values():
+            if isinstance(nested, dict):
+                pending.append(nested)
+            elif isinstance(nested, list):
+                pending.extend(entry for entry in nested if isinstance(entry, dict))
+    return ""
+
+
+def imported_backend_from_payload(payload: dict[str, Any], fallback: str) -> str:
+    observed = first_string_value(payload, "real_llm_backend")
+    if not observed:
+        return fallback
+    try:
+        return normalize_real_llm_backend(observed)
+    except ValueError:
+        return fallback
+
+
+def imported_partition_mode_from_payload(payload: dict[str, Any], fallback: str) -> str:
+    observed = first_string_value(payload, "real_llm_partition_mode")
+    if not observed:
+        return fallback
+    try:
+        return normalize_real_llm_partition_mode(observed)
+    except ValueError:
+        return fallback
+
+
+def imported_string_from_payload(payload: dict[str, Any], key: str, fallback: str) -> str:
+    observed = first_string_value(payload, key)
+    return observed or fallback
+
+
+def safety_summary_for_backend(args: argparse.Namespace, *, cleanup_ok: bool, real_llm_backend: str) -> dict[str, Any]:
+    summary = safety_summary(args, cleanup_ok=cleanup_ok)
+    gpu_backend = real_llm_backend == REAL_LLM_BACKEND_CUDA
+    summary["cpu_only_workload"] = not gpu_backend
+    summary["gpu_backend_selected"] = gpu_backend
+    summary["coordinator_cuda_runtime_required"] = False if gpu_backend else None
+    summary["miner_cuda_runtime_required"] = gpu_backend
+    summary["not_gpu_tpu_pooling"] = not gpu_backend
+    return summary
+
+
+def safe_live_requeue_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    codes = set(diagnosis_codes(payload))
+    best: dict[str, Any] = {}
+    best_score = -1
+    pending: list[Any] = [payload]
+    seen: set[int] = set()
+    while pending:
+        item = pending.pop(0)
+        if not isinstance(item, dict):
+            continue
+        marker = id(item)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        summary = item.get("live_requeue_summary") if isinstance(item.get("live_requeue_summary"), dict) else {}
+        if summary:
+            score = sum(1 for field in LIVE_REQUEUE_SUMMARY_FIELDS if field in summary)
+            if score > best_score:
+                best = summary
+                best_score = score
+        for value in item.values():
+            if isinstance(value, dict):
+                pending.append(value)
+            elif isinstance(value, list):
+                pending.extend(entry for entry in value if isinstance(entry, dict))
+    safe = {field: best.get(field) for field in LIVE_REQUEUE_SUMMARY_FIELDS if field in best}
+    if safe.get("lease_expired") == "<redacted>" and "live_requeue_lease_timeout_observed" in codes:
+        safe["lease_expired"] = True
+    return safe
+
+
+def live_requeue_detail_ready(summary: dict[str, Any]) -> bool:
+    return bool(
+        summary.get("claim_observed") is True
+        and summary.get("victim_kernel_deleted") is True
+        and summary.get("lease_expired") is True
+        and (summary.get("rescue_miner_used") is True or summary.get("rescue_miner_used") is None)
+        and summary.get("rescued_result") is True
+        and summary.get("victim_result_accepted") is False
+    )
+
+
+def model_summary(payloads: list[dict[str, Any]], expected_hf_model_id: str) -> dict[str, Any]:
+    observed = sorted({
+        str(value)
+        for payload in payloads
+        for value in [first_string_value(payload, "hf_model_id")]
+        if value
+    })
+    observed_id = observed[0] if len(observed) == 1 else ""
+    return {
+        "expected_hf_model_id": expected_hf_model_id,
+        "observed_hf_model_id": observed_id,
+        "observed_hf_model_ids": observed,
+        "model_id_present": bool(observed_id),
+        "model_id_match": bool(observed_id and observed_id == expected_hf_model_id),
+        "compatible": bool(observed_id and observed_id == expected_hf_model_id),
+    }
 
 
 def run_json_step(
@@ -1292,6 +1433,183 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
     return report
 
 
+def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    generation_payload = load_json(Path(args.generation_report)) if args.generation_report else {}
+    requeue_payload = load_json(Path(args.requeue_report)) if args.requeue_report else {}
+    real_llm_backend = imported_backend_from_payload(generation_payload, args.real_llm_backend)
+    real_llm_partition_mode = imported_partition_mode_from_payload(generation_payload, args.real_llm_partition_mode)
+    torch_spec = imported_string_from_payload(generation_payload, "torch_spec", args.torch_spec)
+    torch_index_url = imported_string_from_payload(generation_payload, "torch_index_url", args.torch_index_url)
+    transformers_spec = imported_string_from_payload(generation_payload, "transformers_spec", args.transformers_spec)
+    generation = generation_summary(generation_payload)
+    generated_token_count = safe_int(generation.get("generated_token_count"))
+    token_target_ready = generated_token_count >= int(args.max_new_tokens)
+    generation_codes = set(diagnosis_codes(generation_payload))
+    generation_required = {
+        "external_runtime_verified",
+        "decoded_tokens_match",
+        "distinct_stage_miners",
+        "stage_assignment_valid",
+    }
+    if args.max_new_tokens > 1:
+        generation_required.add("multi_token_generation_ready")
+    generation_ready = bool(
+        generation_payload.get("ok") is True
+        and generation_required.issubset(generation_codes)
+        and token_target_ready
+    )
+
+    requeue_codes = set(diagnosis_codes(requeue_payload))
+    requeue = safe_live_requeue_summary(requeue_payload)
+    requeue_ready = bool(
+        requeue_payload.get("ok") is True
+        and "external_stage_requeue_ready" in requeue_codes
+        and ("live_stage0_requeue_ready" in requeue_codes or "live_stage1_requeue_ready" in requeue_codes)
+        and live_requeue_detail_ready(requeue)
+    )
+    model = model_summary([generation_payload, requeue_payload], args.hf_model_id)
+    cleanup_ready = bool(
+        "kaggle_kernels_deleted" in generation_codes
+        and ("kaggle_kernels_deleted" in requeue_codes or requeue_payload.get("ok") is True)
+    )
+    ok = bool(generation_ready and requeue_ready and model["compatible"] and cleanup_ready)
+    codes = set(diagnosis_codes(generation_payload, requeue_payload, extra=["token_rotation_required"]))
+    if generation_ready:
+        codes.update({
+            "real_llm_internet_beta_generation_import_ready",
+            "external_runtime_verified",
+            "generation_complete",
+        })
+    else:
+        codes.add("real_llm_internet_beta_generation_import_blocked")
+    if token_target_ready:
+        codes.add("external_generated_token_target_ready")
+    else:
+        codes.add("external_generated_token_target_missing")
+    if requeue_ready:
+        codes.update({
+            "external_stage_requeue_ready",
+            f"live_{requeue.get('target_stage')}_requeue_ready" if requeue.get("target_stage") else "live_stage_requeue_ready",
+            "live_requeue_victim_claim_observed",
+            "live_requeue_victim_kernel_deleted",
+            "live_requeue_lease_timeout_observed",
+            "live_requeue_rescue_result_accepted",
+        })
+    else:
+        codes.add("external_stage_requeue_blocked")
+    if model["compatible"]:
+        codes.add("real_llm_internet_beta_model_metadata_ready")
+    else:
+        codes.add("real_llm_internet_beta_model_metadata_mismatch")
+    if cleanup_ready:
+        codes.add("kaggle_kernels_deleted")
+    if ok:
+        codes.update({"real_llm_internet_beta_ready", "real_llm_internet_beta_evidence_import_ready"})
+    else:
+        codes.add("real_llm_internet_beta_blocked")
+
+    report = {
+        "schema": SCHEMA,
+        "generated_at": utc_now(),
+        "ok": ok,
+        "mode": args.mode,
+        "output_dir": str(output_dir),
+        "coordinator_url": args.coordinator_url,
+        "public_host": args.public_host,
+        "port": args.port,
+        "base_port": args.base_port,
+        "miner_id": args.miner_id,
+        "workload": {
+            "workload_type": WORKLOAD_TYPE,
+            "stage_mode": "split",
+            "request_count": args.request_count,
+            "max_new_tokens": args.max_new_tokens,
+            "hf_model_id": args.hf_model_id,
+            "real_llm_backend": real_llm_backend,
+            "real_llm_partition_mode": real_llm_partition_mode,
+            "torch_spec": torch_spec,
+            "torch_index_url": torch_index_url,
+            "transformers_spec": transformers_spec,
+            "prompt_text_count": len(DEFAULT_PROMPTS),
+            "require_distinct_stage_miners": True,
+        },
+        "runtime_classification": {
+            "kaggle_auto": False,
+            "package_only": False,
+            "external_runtime_verified": generation_ready,
+            "kaggle_notebook_verified": generation_ready,
+            "local_generated_stage_upload_standins": False,
+            "stage_requeue_verified": requeue_ready,
+            "evidence_import": True,
+        },
+        "payload_summaries": {
+            "generation_report": summarize_payload(generation_payload),
+            "requeue_report": summarize_payload(requeue_payload),
+        },
+        "generation": {
+            **generation,
+            "generated_token_count": generated_token_count,
+            "required_generated_token_count": args.max_new_tokens,
+            "token_target_ready": token_target_ready,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        },
+        "model": model,
+        "live_requeue_summary": requeue,
+        "kaggle_lifecycle": {
+            "owner": args.kaggle_owner,
+            "kernel_slug_prefix": args.kernel_slug_prefix or f"crowdtensor-real-llm-beta-{args.port}",
+            "kernels_deleted": cleanup_ready,
+            "cleanup_required": True,
+            "token_rotation_required": True,
+        },
+        "diagnosis_codes": sorted(set(codes)),
+        "artifacts": {
+            **base_artifacts(output_dir, ok=ok),
+            "generation_report": artifact_entry(
+                Path(args.generation_report),
+                output_dir,
+                kind="real_llm_internet_beta_generation_source",
+                schema=str(generation_payload.get("schema") or ""),
+                ok=generation_payload.get("ok") if generation_payload else None,
+            ),
+            "requeue_report": artifact_entry(
+                Path(args.requeue_report),
+                output_dir,
+                kind="real_llm_internet_beta_requeue_source",
+                schema=str(requeue_payload.get("schema") or ""),
+                ok=requeue_payload.get("ok") if requeue_payload else None,
+            ),
+        },
+        "source_reports": {
+            "generation_report": str(Path(args.generation_report).resolve()) if args.generation_report else "",
+            "requeue_report": str(Path(args.requeue_report).resolve()) if args.requeue_report else "",
+        },
+        "safety": safety_summary_for_backend(args, cleanup_ok=cleanup_ready, real_llm_backend=real_llm_backend),
+        "operator_action": [
+            "Import only retained external reports that expose safe generated_token_count evidence.",
+            "Rotate generated Coordinator and Miner tokens after every temporary public HTTP run.",
+            "Treat this as read-only Beta evidence, not production public serving.",
+        ],
+        "limitations": [
+            "evidence-import combines retained external generation and requeue reports; it does not create a fresh Kaggle run.",
+            "Read-only tiny Hugging Face GPT split proof; optional CUDA backend is not production Swarm Inference.",
+            "No NAT traversal, GPU pooling marketplace, GGUF/llama.cpp serving, large-model serving, training, payments, or arbitrary prompt serving.",
+        ],
+        "not_completed": [] if ok else [
+            item for item, ready in [
+                ("external generation report", generation_ready),
+                ("external generated token target", token_target_ready),
+                ("external requeue report", requeue_ready),
+                ("external model metadata", model["compatible"]),
+                ("Kaggle cleanup evidence", cleanup_ready),
+            ]
+            if not ready
+        ],
+    }
+    return persist_report(report, output_dir=output_dir, secret_values=[])
+
+
 def build_report(
     args: argparse.Namespace,
     *,
@@ -1302,6 +1620,8 @@ def build_report(
 ) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    if args.mode == MODE_EVIDENCE_IMPORT:
+        return build_evidence_import(args, output_dir=output_dir)
 
     steps: list[dict[str, Any]] = []
     alpha_payload: dict[str, Any] = {}
@@ -1776,8 +2096,10 @@ def default_kaggle_owner() -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the real Internet Swarm Inference Beta Kaggle automation.")
-    parser.add_argument("--mode", choices=[MODE_KAGGLE_AUTO], default=MODE_KAGGLE_AUTO)
+    parser.add_argument("--mode", choices=MODES, default=MODE_KAGGLE_AUTO)
     parser.add_argument("--output-dir", default="dist/real-llm-internet-beta-kaggle-auto")
+    parser.add_argument("--generation-report", default="")
+    parser.add_argument("--requeue-report", default="")
     parser.add_argument("--public-host", default=DEFAULT_PUBLIC_HOST)
     parser.add_argument("--bind-host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -1836,6 +2158,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.real_llm_backend == REAL_LLM_BACKEND_CUDA and not args.torch_spec:
         args.torch_spec = DEFAULT_CUDA_TORCH_RUNTIME_SPEC
         args.torch_index_url = args.torch_index_url or DEFAULT_CUDA_TORCH_INDEX_URL
+    if args.mode == MODE_EVIDENCE_IMPORT:
+        if not args.generation_report:
+            raise SystemExit("--generation-report is required in evidence-import mode")
+        if not args.requeue_report:
+            raise SystemExit("--requeue-report is required in evidence-import mode")
+        args.kaggle_owner = args.kaggle_owner or "retained-evidence"
     if not args.kaggle_owner:
         raise SystemExit("--kaggle-owner is required or KAGGLE_USERNAME/~/.kaggle/kaggle.json must be configured")
     for name in [

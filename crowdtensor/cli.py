@@ -9,12 +9,14 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,12 +30,35 @@ try:
 except Exception:  # pragma: no cover - fallback for unusual packaging layouts
     support_bundle = None
 
-from crowdtensor.p2p_lite import PEER_SCHEMA, fetch_peer_catalog, post_announce, sanitize_peer
+from crowdtensor.p2p_lite import (
+    PEER_SCHEMA,
+    fetch_peer_catalog,
+    post_announce,
+    sanitize_peer,
+    sign_peer_announcement,
+    stable_peer_id,
+)
+from crowdtensor.real_p2p import (
+    DEFAULT_DISCOVERY_BACKEND,
+    PROVIDER_RECORD_SCHEMA,
+    DISCOVERY_BACKENDS,
+    LIBP2P_KAD_BACKEND,
+    LIBP2P_KAD_COMPAT_BACKEND,
+    build_provider_record,
+    fetch_provider_catalog,
+    post_provider_record,
+    post_route_lookup,
+)
 from crowdtensor.session_protocol import (
     build_route_decision,
     build_session_request,
     coordinator_payload_for_request,
+    peer_backend_compatible,
+    peer_model_compatible,
+    required_stage_capabilities,
     safe_generation_summary,
+    safe_stream_event,
+    safe_stream_events,
 )
 
 
@@ -68,10 +93,22 @@ PUBLIC_SWARM_DEVELOPER_PREVIEW_CLI_SCHEMA = "public_swarm_developer_preview_cli_
 PUBLIC_SWARM_LIVE_PREVIEW_RC_CLI_SCHEMA = "public_swarm_live_preview_rc_cli_v1"
 PUBLIC_SWARM_OPERATOR_PREVIEW_CLI_SCHEMA = "public_swarm_operator_preview_cli_v1"
 PUBLIC_SWARM_TRIAL_CLI_SCHEMA = "public_swarm_trial_cli_v1"
+PUBLIC_SWARM_PREVIEW_V04_CLI_SCHEMA = "public_swarm_preview_v04_cli_v1"
+P2P_SWARM_INFERENCE_V06_CLI_SCHEMA = "p2p_swarm_inference_v06_cli_v1"
+PUBLIC_P2P_SWARM_INFERENCE_V1_RC_CLI_SCHEMA = "public_p2p_swarm_inference_v1_rc_cli_v1"
+REAL_P2P_SWARM_INFERENCE_CORE_RC_CLI_SCHEMA = "real_p2p_swarm_inference_core_rc_cli_v1"
+PETALS_CLASS_P2P_CANDIDATE_CLI_SCHEMA = "petals_class_p2p_candidate_cli_v1"
+PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA = "public_real_llm_swarm_beta_cli_v1"
+USABLE_SWARM_INFERENCE_CLI_SCHEMA = "usable_swarm_inference_cli_v1"
+PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 P2P_LITE_CLI_SCHEMA = "p2p_lite_cli_v1"
+P2PD_CLI_SCHEMA = "p2pd_cli_v1"
+REAL_P2P_CLI_SCHEMA = "real_p2p_cli_v1"
+P2P_DAEMON_CLI_SCHEMA = "p2p_daemon_cli_v1"
+DEFAULT_P2P_BOOTSTRAP = "http://127.0.0.1:8788"
 SECRET_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
     "CROWDTENSOR_OBSERVER_TOKEN",
@@ -120,6 +157,117 @@ def request_json_url(
     with urlopen(request, timeout=timeout) as response:
         raw = response.read().decode("utf-8")
         return json.loads(raw) if raw else {}
+
+
+def stream_progress_summary(
+    events: list[dict[str, Any]],
+    *,
+    max_new_tokens: int,
+    source: str = "admin-session-stream",
+    expected_request_count: int = 1,
+) -> dict[str, Any]:
+    counts = [int(event.get("generated_token_count") or 0) for event in events if isinstance(event, dict)]
+    target = max(1, int(max_new_tokens))
+    monotonic = counts == sorted(counts) and len(counts) == len(set(counts))
+    expected_counts = list(range(1, target + 1))
+    complete = bool(expected_counts and all(count in counts for count in expected_counts))
+    expected_requests = max(1, int(expected_request_count or 1))
+    per_request: dict[str, dict[str, Any]] = {}
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        request_key = str(event.get("request_id") or event.get("prompt_hash") or "request-1")
+        entry = per_request.setdefault(
+            request_key,
+            {
+                "request_id": event.get("request_id"),
+                "prompt_hash": event.get("prompt_hash"),
+                "observed_token_counts": [],
+            },
+        )
+        try:
+            generated_count = int(event.get("generated_token_count") or 0)
+        except (TypeError, ValueError):
+            generated_count = 0
+        if generated_count > 0:
+            entry["observed_token_counts"].append(generated_count)
+        entry.setdefault("first_event_index", index)
+        entry["last_event_index"] = index
+    per_request_progress: list[dict[str, Any]] = []
+    for request_key, entry in sorted(per_request.items(), key=lambda item: int(item[1].get("first_event_index") or 0)):
+        request_counts = list(entry.get("observed_token_counts") or [])
+        request_monotonic = request_counts == sorted(request_counts) and len(request_counts) == len(set(request_counts))
+        request_complete = bool(expected_counts and all(count in request_counts for count in expected_counts))
+        per_request_progress.append({
+            "request_key": request_key,
+            "request_id": entry.get("request_id"),
+            "prompt_hash": entry.get("prompt_hash"),
+            "event_count": len(request_counts),
+            "observed_token_counts": request_counts,
+            "max_observed_token_count": max(request_counts) if request_counts else 0,
+            "target_token_count": target,
+            "monotonic_progress": request_monotonic,
+            "stream_progress_complete": request_complete,
+        })
+    per_request_complete = bool(
+        len(per_request_progress) >= expected_requests
+        and all(item.get("stream_progress_complete") for item in per_request_progress[:expected_requests])
+    )
+    per_request_monotonic = bool(
+        len(per_request_progress) >= expected_requests
+        and all(item.get("monotonic_progress") for item in per_request_progress[:expected_requests])
+    )
+    observations: list[float] = []
+    for event in events:
+        if not isinstance(event, dict) or event.get("observed_at") is None:
+            continue
+        try:
+            observations.append(float(event.get("observed_at")))
+        except (TypeError, ValueError):
+            continue
+    latency: dict[str, Any] = {
+        "first_event_observed_at": observations[0] if observations else None,
+        "last_event_observed_at": observations[-1] if observations else None,
+        "event_span_seconds": (
+            round(observations[-1] - observations[0], 6)
+            if len(observations) >= 2
+            else 0.0
+        ),
+    }
+    return {
+        "source": source,
+        "event_count": len(events),
+        "progress_counts": counts,
+        "monotonic_counts_ready": monotonic,
+        "monotonic_progress": monotonic,
+        "all_token_events_ready": complete,
+        "stream_progress_complete": complete,
+        "expected_request_count": expected_requests,
+        "per_request_progress": per_request_progress,
+        "per_request_progress_complete": per_request_complete,
+        "per_request_monotonic_progress": per_request_monotonic,
+        "complete_token_count": max(counts) if counts else 0,
+        "observed_token_counts": counts,
+        "max_observed_token_count": max(counts) if counts else 0,
+        "target_token_count": target,
+        "max_new_tokens": target,
+        "latency": latency,
+    }
+
+
+def parse_prompt_texts_arg(primary: str = "", batch: str = "") -> list[str]:
+    if str(batch or "").strip():
+        prompts = [item.strip() for item in str(batch).split(",") if item.strip()]
+    else:
+        prompts = [str(primary or "").strip()] if str(primary or "").strip() else []
+    if not prompts:
+        raise ValueError("prompt_text is required")
+    if len(prompts) > 4:
+        raise ValueError("prompt_texts must contain at most 4 prompts")
+    for prompt in prompts:
+        if len(prompt) > 256:
+            raise ValueError("prompt_text must be at most 256 characters")
+    return prompts
 
 
 def redacted_command(command: list[str], sensitive_flags: set[str]) -> list[str]:
@@ -2505,6 +2653,10 @@ def build_public_swarm_inference_beta_rc(args: argparse.Namespace, *, runner: Ru
         str(args.http_timeout),
         "--json",
     ]
+    if getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if getattr(args, "stream_generation", False):
+        command.append("--stream-generation")
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     if args.coordinator_url:
@@ -2601,6 +2753,10 @@ def build_public_swarm_product_beta(args: argparse.Namespace, *, runner: Runner 
         str(args.http_timeout),
         "--json",
     ]
+    if getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if getattr(args, "stream_generation", False):
+        command.append("--stream-generation")
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     if args.coordinator_url:
@@ -2639,6 +2795,286 @@ def build_public_swarm_product_beta(args: argparse.Namespace, *, runner: Runner 
         "limitations": [
             "Coordinator-backed Public Swarm Product Beta; not production Swarm Inference",
             "Does not provide libp2p, DHT, NAT traversal, GPU marketplace, large-model serving, training, payments, or staking",
+        ],
+    })
+
+
+def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "public_real_llm_swarm_beta_mode", "release")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "public_real_llm_swarm_beta_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--product-report",
+        args.product_report,
+        "--external-report",
+        args.external_report,
+        "--p2p-report",
+        args.p2p_report,
+        "--usable-report",
+        args.usable_report,
+        "--public-swarm-v2-report",
+        args.public_swarm_v2_report,
+        "--public-swarm-v2-preview-report",
+        args.public_swarm_v2_preview_report,
+        "--public-swarm-v2-real-p2p-report",
+        args.public_swarm_v2_real_p2p_report,
+        "--p2p-runtime-smoke-report",
+        args.p2p_runtime_smoke_report,
+        "--p2p-external-report",
+        args.p2p_external_report,
+        "--p2p-requeue-report",
+        args.p2p_requeue_report,
+        "--p2p-batch-stream-report",
+        args.p2p_batch_stream_report,
+        "--gpu-report",
+        args.gpu_report,
+        "--public-host",
+        args.public_host,
+        "--bind-host",
+        args.bind_host,
+        "--port",
+        str(args.port),
+        "--base-port",
+        str(args.base_port),
+        "--p2p-port",
+        str(args.p2p_port),
+        "--p2p-libp2p-port",
+        str(args.p2p_libp2p_port),
+        "--public-swarm-v2-p2p-port",
+        str(args.public_swarm_v2_p2p_port),
+        "--public-swarm-v2-coordinator-port",
+        str(args.public_swarm_v2_coordinator_port),
+        "--public-swarm-v2-real-p2p-port",
+        str(args.public_swarm_v2_real_p2p_port),
+        "--public-swarm-v2-real-p2p-coordinator-port",
+        str(args.public_swarm_v2_real_p2p_coordinator_port),
+        "--public-swarm-v2-real-p2p-libp2p-port",
+        str(args.public_swarm_v2_real_p2p_libp2p_port),
+        "--public-swarm-v2-real-p2p-discovery-backend",
+        args.public_swarm_v2_real_p2p_discovery_backend,
+        "--public-swarm-v2-backend",
+        args.public_swarm_v2_backend,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--prompt-text",
+        args.prompt_text,
+        "--request-count",
+        str(args.request_count),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--cpu-request-count",
+        str(args.cpu_request_count),
+        "--external-llm-request-count",
+        str(args.external_llm_request_count),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--public-swarm-v2-timeout-seconds",
+        str(args.public_swarm_v2_timeout_seconds),
+        "--remote-timeout-seconds",
+        str(args.remote_timeout_seconds),
+        "--cpu-timeout-seconds",
+        str(args.cpu_timeout_seconds),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--process-exit-timeout",
+        str(args.process_exit_timeout),
+        "--poll-interval",
+        str(args.poll_interval),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--json",
+    ]
+    if getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if getattr(args, "stream_generation", False):
+        command.append("--stream-generation")
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    step, payload = run_json_step(
+        "public_real_llm_swarm_beta",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.remote_timeout_seconds), float(args.cpu_timeout_seconds), 60.0) + 600.0,
+    )
+    if payload:
+        payload = sanitize(redact_values(payload))
+        payload.setdefault("cli_schema", PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA)
+        return payload
+    return sanitize({
+        "schema": "public_real_llm_swarm_beta_v1",
+        "cli_schema": PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["public_real_llm_swarm_beta_failed"],
+        "limitations": [
+            "Coordinator-backed Public Real-LLM Swarm Inference Beta; not production Hivemind/Petals parity",
+            "Does not provide Coordinator-free P2P execution, production NAT traversal, economics, anti-Sybil security, or large-model serving",
+        ],
+    })
+
+
+def build_usable_swarm_inference(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "usable_swarm_mode", "local")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "usable_swarm_inference_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--p2p-report",
+        args.p2p_report,
+        "--swarm-id",
+        args.swarm_id,
+        "--public-host",
+        args.public_host,
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--backend",
+        args.backend,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--prompt-text",
+        args.prompt_text,
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--preview-v04-report",
+        args.preview_v04_report,
+        "--product-mvp-report",
+        args.product_mvp_report,
+        "--optional-model-report",
+        args.optional_model_report,
+        "--json",
+    ]
+    if getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if getattr(args, "stream_generation", False):
+        command.append("--stream-generation")
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    step, payload = run_json_step(
+        "usable_swarm_inference",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 1200.0,
+    )
+    if payload:
+        payload = sanitize(redact_values(payload))
+        payload.setdefault("cli_schema", USABLE_SWARM_INFERENCE_CLI_SCHEMA)
+        return payload
+    return sanitize({
+        "schema": "usable_swarm_inference_v1",
+        "cli_schema": USABLE_SWARM_INFERENCE_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["usable_swarm_inference_failed"],
+        "limitations": [
+            "Coordinator-backed user-facing P2P discovery path for tiny/small real-LLM split inference",
+            "Does not provide full Hivemind/Petals production parity, Coordinator-free execution, production NAT traversal, an economic system, or large-model throughput",
+        ],
+    })
+
+
+def build_public_swarm_inference_v2(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "public_swarm_v2_mode", "local")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "public_swarm_inference_v2_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--usable-report",
+        args.usable_report,
+        "--preview-report",
+        args.preview_report,
+        "--real-p2p-report",
+        args.real_p2p_report,
+        "--gpu-report",
+        args.gpu_report,
+        "--fresh-external-attempt-report",
+        args.fresh_external_attempt_report,
+        "--public-host",
+        args.public_host,
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--real-p2p-port",
+        str(args.real_p2p_port),
+        "--real-p2p-coordinator-port",
+        str(args.real_p2p_coordinator_port),
+        "--real-p2p-libp2p-port",
+        str(args.real_p2p_libp2p_port),
+        "--real-p2p-discovery-backend",
+        args.real_p2p_discovery_backend,
+        "--backend",
+        args.backend,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--prompt-text",
+        args.prompt_text,
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--json",
+    ]
+    if getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if getattr(args, "stream_generation", False):
+        command.append("--stream-generation")
+    if getattr(args, "fresh_external_report", False):
+        command.append("--fresh-external-report")
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    step, payload = run_json_step(
+        "public_swarm_inference_v2",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 1800.0,
+    )
+    if payload:
+        payload = sanitize(redact_values(payload))
+        payload.setdefault("cli_schema", PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA)
+        return payload
+    return sanitize({
+        "schema": "public_swarm_inference_v2",
+        "cli_schema": PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["public_swarm_inference_v2_failed"],
+        "limitations": [
+            "Coordinator-backed public preview; not full Hivemind/Petals production parity",
+            "Does not provide Coordinator-free P2P execution, production NAT traversal, economics, anti-Sybil security, or large-model serving",
         ],
     })
 
@@ -3171,6 +3607,490 @@ def build_public_swarm_trial(args: argparse.Namespace, *, runner: Runner = subpr
     }
 
 
+def build_public_swarm_preview_v04(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "preview_v04_mode", "evidence-import")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "public_swarm_preview_v04_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--backend",
+        args.backend,
+        "--public-host",
+        args.public_host,
+        "--bind-host",
+        args.bind_host,
+        "--port",
+        str(args.port),
+        "--base-port",
+        str(args.base_port),
+        "--target",
+        args.target,
+        "--miner-id-prefix",
+        args.miner_id_prefix,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--optional-model-id",
+        args.optional_model_id,
+        "--gpu-report",
+        args.gpu_report,
+        "--live-stage0-report",
+        args.live_stage0_report,
+        "--live-stage1-report",
+        args.live_stage1_report,
+        "--product-mvp-report",
+        args.product_mvp_report,
+        "--optional-model-report",
+        args.optional_model_report,
+        "--product-beta-report",
+        args.product_beta_report,
+        "--prompt-text",
+        args.prompt_text,
+        "--request-count",
+        str(args.request_count),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--kaggle-owner",
+        args.kaggle_owner,
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--remote-timeout-seconds",
+        str(args.remote_timeout_seconds),
+        "--cpu-timeout-seconds",
+        str(args.cpu_timeout_seconds),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--session-queue-timeout",
+        str(args.session_queue_timeout),
+        "--miner-timeout",
+        str(args.miner_timeout),
+        "--generate-timeout",
+        str(args.generate_timeout),
+        "--json",
+    ]
+    if args.run_optional_model:
+        command.append("--run-optional-model")
+    if args.require_optional_model_ready:
+        command.append("--require-optional-model-ready")
+    if args.require_hf_runtime:
+        command.append("--require-hf-runtime")
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    step, payload = run_json_step(
+        "public_swarm_preview_v04",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.remote_timeout_seconds), float(args.cpu_timeout_seconds), float(args.miner_timeout), float(args.generate_timeout), 60.0) + 1500.0,
+    )
+    if payload:
+        payload = redact_values(payload)
+        payload.setdefault("cli_schema", PUBLIC_SWARM_PREVIEW_V04_CLI_SCHEMA)
+        return payload
+    return {
+        "schema": "public_swarm_preview_v04_v1",
+        "cli_schema": PUBLIC_SWARM_PREVIEW_V04_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["public_swarm_preview_v04_failed"],
+        "limitations": [
+            "Coordinator-backed Public Swarm Preview v0.4; not production Swarm Inference",
+            "Does not provide libp2p, DHT, NAT traversal, GPU marketplace, large-model serving, training, payments, or staking",
+        ],
+    }
+
+
+def build_p2p_swarm_inference_v06(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "p2p_swarm_v06_mode", "evidence-import")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "p2p_swarm_inference_v06_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--swarm-id",
+        args.swarm_id,
+        "--public-host",
+        args.public_host,
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--backend",
+        args.backend,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--prompt-text",
+        args.prompt_text,
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--preview-v04-report",
+        args.preview_v04_report,
+        "--product-mvp-report",
+        args.product_mvp_report,
+        "--optional-model-report",
+        args.optional_model_report,
+        "--p2p-discovery-report",
+        args.p2p_discovery_report,
+        "--json",
+    ]
+    if getattr(args, "peer_secret", ""):
+        command.extend(["--peer-secret", args.peer_secret])
+    if getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if getattr(args, "stream_generation", False):
+        command.append("--stream-generation")
+    if getattr(args, "require_signed", False):
+        command.append("--require-signed")
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if args.peer_bootstrap:
+        command.extend(["--peer-bootstrap", args.peer_bootstrap])
+    if args.admin_token:
+        command.extend(["--admin-token", args.admin_token])
+    if args.verify_generate:
+        command.append("--verify-generate")
+    if mode == "kaggle-auto":
+        command.extend([
+            "--kaggle-push-timeout-seconds",
+            str(args.kaggle_push_timeout_seconds),
+            "--kaggle-delete-timeout-seconds",
+            str(args.kaggle_delete_timeout_seconds),
+            "--kaggle-stage-timeout-seconds",
+            str(args.kaggle_stage_timeout_seconds),
+        ])
+        if args.kaggle_owner:
+            command.extend(["--kaggle-owner", args.kaggle_owner])
+        if args.kernel_slug_prefix:
+            command.extend(["--kernel-slug-prefix", args.kernel_slug_prefix])
+        if args.skip_kaggle_cleanup:
+            command.append("--skip-kaggle-cleanup")
+    step, payload = run_json_step(
+        "p2p_swarm_inference_v06",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + (900.0 if mode == "kaggle-auto" else 300.0),
+        redact_secrets=[getattr(args, "peer_secret", ""), getattr(args, "admin_token", "")],
+    )
+    if payload:
+        payload = redact_values(payload)
+        payload.setdefault("cli_schema", P2P_SWARM_INFERENCE_V06_CLI_SCHEMA)
+        return payload
+    return {
+        "schema": "p2p_swarm_inference_v06_v1",
+        "cli_schema": P2P_SWARM_INFERENCE_V06_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["p2p_swarm_inference_v06_failed"],
+        "limitations": [
+            "P2P discovery/routing prototype with Coordinator result-ledger fallback",
+            "Does not provide production NAT traversal, decentralized security, economic system, large-model throughput, or Hivemind/Petals parity",
+        ],
+    }
+
+
+def build_public_p2p_swarm_inference_v1_rc(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "public_p2p_v1_rc_mode", "evidence-import")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "public_p2p_swarm_inference_v1_rc_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--swarm-id",
+        args.swarm_id,
+        "--public-host",
+        args.public_host,
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--backend",
+        args.backend,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--prompt-text",
+        args.prompt_text,
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--v06-local-report",
+        args.v06_local_report,
+        "--v06-external-report",
+        args.v06_external_report,
+        "--v06-kaggle-report",
+        args.v06_kaggle_report,
+        "--json",
+    ]
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if args.peer_secret:
+        command.extend(["--peer-secret", args.peer_secret])
+    if args.signed_local_report:
+        command.extend(["--signed-local-report", args.signed_local_report])
+    if mode == "kaggle-auto":
+        command.extend([
+            "--kaggle-stage-timeout-seconds",
+            str(args.kaggle_stage_timeout_seconds),
+            "--kaggle-push-timeout-seconds",
+            str(args.kaggle_push_timeout_seconds),
+            "--kaggle-delete-timeout-seconds",
+            str(args.kaggle_delete_timeout_seconds),
+        ])
+        if args.kaggle_owner:
+            command.extend(["--kaggle-owner", args.kaggle_owner])
+        if args.kernel_slug_prefix:
+            command.extend(["--kernel-slug-prefix", args.kernel_slug_prefix])
+        if args.skip_kaggle_cleanup:
+            command.append("--skip-kaggle-cleanup")
+    step, payload = run_json_step(
+        "public_p2p_swarm_inference_v1_rc",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + (1500.0 if mode == "kaggle-auto" else 900.0),
+        redact_secrets=[args.peer_secret],
+    )
+    if payload:
+        payload = redact_values(payload, [args.peer_secret])
+        payload.setdefault("cli_schema", PUBLIC_P2P_SWARM_INFERENCE_V1_RC_CLI_SCHEMA)
+        return sanitize(payload)
+    return sanitize({
+        "schema": "public_p2p_swarm_inference_v1_rc_v1",
+        "cli_schema": PUBLIC_P2P_SWARM_INFERENCE_V1_RC_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["public_p2p_swarm_inference_v1_rc_failed"],
+        "limitations": [
+            "Signed P2P public-preview RC with Coordinator result-ledger fallback",
+            "Does not provide production NAT traversal, libp2p DHT, decentralized security, economic system, large-model throughput, or Hivemind/Petals production parity",
+        ],
+    })
+
+
+def build_real_p2p_swarm_inference_core_rc(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "real_p2p_rc_mode", "local-smoke")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "real_p2p_swarm_inference_core_rc_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--swarm-id",
+        args.swarm_id,
+        "--public-host",
+        args.public_host,
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--libp2p-port",
+        str(args.libp2p_port),
+        "--backend",
+        args.backend,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--prompt-text",
+        args.prompt_text,
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--session-queue-timeout",
+        str(args.session_queue_timeout),
+        "--miner-timeout",
+        str(args.miner_timeout),
+        "--generate-timeout",
+        str(args.generate_timeout),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--discovery-backend",
+        args.discovery_backend,
+        "--json",
+    ]
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if getattr(args, "stream_generation", False):
+        command.append("--stream-generation")
+    if args.peer_secret:
+        command.extend(["--peer-secret", args.peer_secret])
+    if mode == "external-existing":
+        command.extend(["--peer-bootstrap", args.peer_bootstrap])
+        if args.admin_token:
+            command.extend(["--admin-token", args.admin_token])
+        if args.verify_generate:
+            command.append("--verify-generate")
+    if mode == "evidence-import" and args.real_p2p_report:
+        command.extend(["--real-p2p-report", args.real_p2p_report])
+    if mode in {"kaggle-auto", "kaggle-connectivity", "kaggle-runtime-smoke"}:
+        command.extend([
+            "--kaggle-push-timeout-seconds",
+            str(args.kaggle_push_timeout_seconds),
+            "--kaggle-delete-timeout-seconds",
+            str(args.kaggle_delete_timeout_seconds),
+            "--kaggle-stage-timeout-seconds",
+            str(args.kaggle_stage_timeout_seconds),
+        ])
+        if hasattr(args, "kaggle_status_poll_seconds"):
+            command.extend(["--kaggle-status-poll-seconds", str(args.kaggle_status_poll_seconds)])
+        command.extend([
+            "--failure-mode",
+            args.failure_mode,
+            "--lease-seconds",
+            str(args.lease_seconds),
+            "--compute-seconds",
+            str(args.compute_seconds),
+            "--victim-compute-seconds",
+            str(args.victim_compute_seconds),
+            "--claim-observe-timeout",
+            str(args.claim_observe_timeout),
+            "--requeue-timeout",
+            str(args.requeue_timeout),
+            "--max-request-attempts",
+            str(args.max_request_attempts),
+        ])
+        if args.kaggle_owner:
+            command.extend(["--kaggle-owner", args.kaggle_owner])
+        if args.kernel_slug_prefix:
+            command.extend(["--kernel-slug-prefix", args.kernel_slug_prefix])
+        if args.skip_kaggle_cleanup:
+            command.append("--skip-kaggle-cleanup")
+    step, payload = run_json_step(
+        "real_p2p_swarm_inference_core_rc",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), float(args.generate_timeout), float(getattr(args, "kaggle_stage_timeout_seconds", 60.0)), 60.0) + (1200.0 if mode in {"kaggle-auto", "kaggle-runtime-smoke"} else 300.0),
+        redact_secrets=[args.peer_secret, args.admin_token],
+    )
+    if payload:
+        payload = redact_values(payload, [args.peer_secret, args.admin_token])
+        payload.setdefault("cli_schema", REAL_P2P_SWARM_INFERENCE_CORE_RC_CLI_SCHEMA)
+        return sanitize(payload)
+    return sanitize({
+        "schema": "real_p2p_swarm_inference_core_rc_v1",
+        "cli_schema": REAL_P2P_SWARM_INFERENCE_CORE_RC_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["real_p2p_swarm_inference_core_rc_failed"],
+        "limitations": [
+            "Real P2P provider-record discovery with Coordinator result-ledger fallback",
+            "Does not provide Hivemind/Petals production parity, economics, large-model throughput, or complete anti-Sybil security",
+        ],
+    })
+
+
+def build_petals_class_p2p_candidate(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "petals_candidate_mode", "evidence-import")
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "petals_class_p2p_candidate_pack.py"),
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--local-report",
+        args.local_report,
+        "--runtime-smoke-report",
+        args.runtime_smoke_report,
+        "--external-report",
+        args.external_report,
+        "--public-host",
+        args.public_host,
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--libp2p-port",
+        str(args.libp2p_port),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--session-queue-timeout",
+        str(args.session_queue_timeout),
+        "--miner-timeout",
+        str(args.miner_timeout),
+        "--generate-timeout",
+        str(args.generate_timeout),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--json",
+    ]
+    if args.requeue_report:
+        command.extend(["--requeue-report", args.requeue_report])
+    if args.peer_scoring_report:
+        command.extend(["--peer-scoring-report", args.peer_scoring_report])
+    if args.allow_retained_alpha_without_requeue:
+        command.append("--allow-retained-alpha-without-requeue")
+    step, payload = run_json_step(
+        "petals_class_p2p_candidate",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(
+            float(args.timeout_seconds),
+            float(args.startup_timeout),
+            float(args.generate_timeout),
+            float(args.miner_timeout),
+            60.0,
+        ) + (900.0 if mode == "local-smoke" else 120.0),
+    )
+    if payload:
+        payload = sanitize(redact_values(payload))
+        payload.setdefault("cli_schema", PETALS_CLASS_P2P_CANDIDATE_CLI_SCHEMA)
+        return payload
+    return sanitize({
+        "schema": "petals_class_p2p_candidate_v1",
+        "cli_schema": PETALS_CLASS_P2P_CANDIDATE_CLI_SCHEMA,
+        "ok": False,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "step": step,
+        "diagnosis_codes": ["petals_class_p2p_candidate_failed"],
+        "limitations": [
+            "Petals-class P2P candidate aggregate with Coordinator result-ledger fallback",
+            "Does not provide full Hivemind/Petals production parity, complete NAT traversal, economics, anti-Sybil security, or large-model throughput",
+        ],
+    })
+
+
 def build_public_swarm_gpu_inference_beta(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -3446,6 +4366,194 @@ def _serve_task_lane(args: argparse.Namespace) -> str:
     return f"python-cli:cpu:0:real_llm_sharded_infer"
 
 
+def _p2p_stage_capabilities(*, backend: str, stage: str) -> list[str]:
+    if stage == "both":
+        return required_stage_capabilities(backend=backend, stage_mode="split")
+    return required_stage_capabilities(backend=backend, stage_mode=stage)
+
+
+def build_p2p_peer(
+    *,
+    swarm_id: str,
+    peer_id: str,
+    role: str,
+    coordinator_url: str = "",
+    peer_url: str = "",
+    backend: str = "",
+    stage_role: str = "",
+    hf_model_id: str = "",
+    ttl_seconds: float = 60.0,
+) -> dict[str, Any]:
+    capabilities: dict[str, Any] = {
+        "runtime": "python-cli",
+        "health": "ready",
+    }
+    if backend:
+        capabilities["backend"] = backend
+    if hf_model_id:
+        capabilities["hf_model_id"] = hf_model_id
+    if stage_role:
+        capabilities["real_llm_sharded_stage_role"] = stage_role
+        capabilities["real_llm_sharded_stage_capabilities"] = _p2p_stage_capabilities(backend=backend or "cpu", stage=stage_role)
+    urls = {}
+    if coordinator_url:
+        urls["coordinator"] = coordinator_url
+    if peer_url:
+        urls["peer"] = peer_url
+    return sanitize_peer({
+        "schema": PEER_SCHEMA,
+        "swarm_id": swarm_id,
+        "peer_id": peer_id,
+        "role": role,
+        "urls": urls,
+        "backend": backend,
+        "stage_role": stage_role,
+        "capabilities": capabilities,
+        "ttl_seconds": ttl_seconds,
+    })
+
+
+def maybe_sign_p2p_peer(peer: dict[str, Any], peer_secret: str = "") -> dict[str, Any]:
+    return sanitize_peer(sign_peer_announcement(peer, peer_secret)) if peer_secret else peer
+
+
+def _p2p_backend(args: argparse.Namespace) -> str:
+    return str(getattr(args, "p2p_backend", "lite") or "lite")
+
+
+def _p2p_route_source(args: argparse.Namespace) -> str:
+    if not getattr(args, "p2p", False):
+        return "peer-bootstrap" if getattr(args, "peer_bootstrap", "") else "coordinator-url"
+    return "real-p2p-discovery" if _p2p_backend(args) == "real" else "p2p-discovery"
+
+
+def announce_p2p_peer(bootstrap: str, peer: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+    payload = post_announce(bootstrap, peer, timeout=timeout)
+    return {
+        "ok": bool(payload.get("ok")),
+        "schema": payload.get("schema") or "p2p_lite_announce_v1",
+        "peer_id": peer.get("peer_id"),
+        "bootstrap": bootstrap,
+    }
+
+
+def announce_real_p2p_provider(
+    bootstrap: str,
+    peer: dict[str, Any],
+    *,
+    timeout: float,
+    record_secret: str = "",
+) -> dict[str, Any]:
+    record = build_provider_record(peer, record_secret)
+    payload = post_provider_record(bootstrap, record, timeout=timeout)
+    response_record = payload.get("record") if isinstance(payload.get("record"), dict) else {}
+    return {
+        "ok": bool(payload.get("ok")),
+        "schema": payload.get("schema") or "real_p2p_announce_v1",
+        "peer_id": peer.get("peer_id"),
+        "record_id": response_record.get("record_id") or record.get("record_id"),
+        "bootstrap": bootstrap,
+        "provider_schema": PROVIDER_RECORD_SCHEMA,
+    }
+
+
+def announce_discovery_peer(
+    bootstrap: str,
+    peer: dict[str, Any],
+    *,
+    timeout: float,
+    backend: str = "lite",
+    peer_secret: str = "",
+) -> dict[str, Any]:
+    if backend == "real":
+        return announce_real_p2p_provider(bootstrap, peer, timeout=timeout, record_secret=peer_secret)
+    return announce_p2p_peer(bootstrap, maybe_sign_p2p_peer(peer, peer_secret), timeout=timeout)
+
+
+class DiscoveryRefreshThread:
+    def __init__(
+        self,
+        *,
+        bootstrap: str,
+        peer: dict[str, Any],
+        timeout: float,
+        backend: str,
+        peer_secret: str,
+        interval_seconds: float,
+    ) -> None:
+        self.bootstrap = bootstrap
+        self.peer = peer
+        self.timeout = timeout
+        self.backend = backend
+        self.peer_secret = peer_secret
+        self.interval_seconds = max(1.0, float(interval_seconds))
+        self.stop_event = threading.Event()
+        self.last_result: dict[str, Any] = {}
+        self.refresh_count = 0
+        self.failure_count = 0
+        self._thread = threading.Thread(target=self._run, name="crowdtensor-discovery-refresh", daemon=True)
+
+    def start(self) -> "DiscoveryRefreshThread":
+        self._thread.start()
+        return self
+
+    def stop(self) -> dict[str, Any]:
+        self.stop_event.set()
+        self._thread.join(timeout=max(1.0, min(5.0, self.interval_seconds)))
+        return {
+            "schema": "discovery_refresh_v1",
+            "refresh_count": self.refresh_count,
+            "failure_count": self.failure_count,
+            "last_result": self.last_result,
+            "interval_seconds": self.interval_seconds,
+        }
+
+    def _announce_once(self) -> dict[str, Any]:
+        peer = dict(self.peer)
+        peer.pop("last_seen", None)
+        peer.pop("expires_at", None)
+        peer.pop("peer_signature", None)
+        peer.pop("peer_identity", None)
+        return announce_discovery_peer(
+            self.bootstrap,
+            peer,
+            timeout=self.timeout,
+            backend=self.backend,
+            peer_secret=self.peer_secret,
+        )
+
+    def _run_once(self) -> dict[str, Any]:
+        try:
+            self.last_result = self._announce_once()
+            if self.last_result.get("ok"):
+                self.refresh_count += 1
+            else:
+                self.failure_count += 1
+        except Exception as exc:
+            self.failure_count += 1
+            self.last_result = {"ok": False, "error": type(exc).__name__, "detail": str(exc)[:200]}
+        return self.last_result
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.interval_seconds):
+            self._run_once()
+
+
+def maybe_start_discovery_refresh(args: argparse.Namespace, peer: dict[str, Any], *, bootstrap: str) -> DiscoveryRefreshThread | None:
+    if not getattr(args, "p2p", False):
+        return None
+    ttl = max(1.0, float(getattr(args, "ttl_seconds", 60.0)))
+    interval = max(1.0, min(30.0, ttl / 3.0))
+    return DiscoveryRefreshThread(
+        bootstrap=bootstrap,
+        peer=peer,
+        timeout=float(getattr(args, "http_timeout", 5.0)),
+        backend=_p2p_backend(args),
+        peer_secret=str(getattr(args, "peer_secret", "")),
+        interval_seconds=interval,
+    ).start()
+
+
 def build_serve_command(args: argparse.Namespace) -> list[str]:
     command = [
         sys.executable,
@@ -3468,6 +4576,8 @@ def build_serve_command(args: argparse.Namespace) -> list[str]:
         "hf_transformers_cuda" if args.profile == "gpu-generation" else "hf_transformers_cpu",
         "--real-llm-partition-mode",
         "stage-local",
+        "--lease-seconds",
+        str(args.lease_seconds),
     ]
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
@@ -3491,27 +4601,74 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             "diagnosis_codes": ["public_bind_requires_explicit_ack"],
             "safety": {"public_bind_requires_explicit_ack": True},
         })
+    p2p_bootstrap = args.peer_bootstrap or DEFAULT_P2P_BOOTSTRAP
+    peer_announce: dict[str, Any] = {}
+    if args.p2p:
+        p2p_backend = _p2p_backend(args)
+        peer = build_p2p_peer(
+            swarm_id=args.swarm_id,
+            peer_id=args.peer_id or stable_peer_id(f"{args.swarm_id}:coordinator:{args.public_host}:{args.port}"),
+            role="coordinator",
+            coordinator_url=f"http://{args.public_host}:{args.port}",
+            peer_url=args.peer_url,
+            backend="cuda" if args.profile == "gpu-generation" else "cpu",
+            hf_model_id=args.hf_model_id,
+            ttl_seconds=args.ttl_seconds,
+        )
+        try:
+            peer_announce = announce_discovery_peer(
+                p2p_bootstrap,
+                peer,
+                timeout=args.http_timeout,
+                backend=p2p_backend,
+                peer_secret=args.peer_secret,
+            )
+        except Exception as exc:
+            peer_announce = {"ok": False, "error": type(exc).__name__, "detail": str(exc)[:200], "bootstrap": p2p_bootstrap}
+    else:
+        peer = {}
+
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
-        "ok": True,
+        "ok": bool(not args.p2p or peer_announce.get("ok")),
         "mode": "serve",
         "profile": args.profile,
         "coordinator_url": f"http://{args.public_host}:{args.port}",
+        "p2p": {
+            "enabled": bool(args.p2p),
+            "backend": _p2p_backend(args) if args.p2p else "",
+            "bootstrap": p2p_bootstrap if args.p2p else "",
+            "announce": peer_announce,
+        },
         "command": redacted_command(command, {"--admin-token", "--miner-token", "--observer-token"}),
         "printed_only": not args.run,
-        "diagnosis_codes": ["serve_command_ready"],
+        "diagnosis_codes": ["serve_command_ready"] + (
+            [("real_p2p_coordinator_announce_ready" if _p2p_backend(args) == "real" else "p2p_coordinator_announce_ready")]
+            if args.p2p and peer_announce.get("ok")
+            else []
+        ),
         "safety": {
             "admin_token_from_env_supported": bool(os.environ.get("CROWDTENSOR_ADMIN_TOKEN")),
             "public_bind_explicit": public_bind,
             "not_production": True,
-            "not_p2p_task_execution": True,
+            "p2p_discovery_enabled": bool(args.p2p),
+            "coordinator_result_fallback": True,
         },
     }
+    if args.p2p and not peer_announce.get("ok"):
+        report["diagnosis_codes"] = [
+            "real_p2p_coordinator_announce_failed" if _p2p_backend(args) == "real" else "p2p_coordinator_announce_failed"
+        ]
     if not args.run:
         return sanitize(report)
-    completed = runner(command, cwd=str(ROOT), text=True)
+    refresh = maybe_start_discovery_refresh(args, peer, bootstrap=p2p_bootstrap) if peer_announce.get("ok") else None
+    try:
+        completed = runner(command, cwd=str(ROOT), text=True)
+    finally:
+        if refresh is not None:
+            report["p2p"]["refresh"] = refresh.stop()
     report["returncode"] = completed.returncode
-    report["ok"] = completed.returncode == 0
+    report["ok"] = bool(report.get("ok") and completed.returncode == 0)
     return sanitize(report)
 
 
@@ -3542,6 +4699,18 @@ def build_join_command(args: argparse.Namespace, *, coordinator_url: str) -> lis
         command.append("--once")
     if args.max_tasks > 0:
         command.extend(["--max-tasks", str(args.max_tasks)])
+    if getattr(args, "max_runtime_seconds", 0.0) > 0:
+        command.extend(["--max-runtime-seconds", str(args.max_runtime_seconds)])
+    if getattr(args, "compute_seconds", 0.0) > 0:
+        command.extend(["--compute-seconds", str(args.compute_seconds)])
+    if getattr(args, "max_request_attempts", 3) != 3:
+        command.extend(["--max-request-attempts", str(args.max_request_attempts)])
+    if getattr(args, "retry_base_sleep", 0.2) != 0.2:
+        command.extend(["--retry-base-sleep", str(args.retry_base_sleep)])
+    if getattr(args, "retry_max_sleep", 2.0) != 2.0:
+        command.extend(["--retry-max-sleep", str(args.retry_max_sleep)])
+    if getattr(args, "idle_sleep", 2.0) != 2.0:
+        command.extend(["--idle-sleep", str(args.idle_sleep)])
     return command
 
 
@@ -3558,11 +4727,57 @@ def resolve_coordinator_from_bootstrap(bootstrap_url: str, *, timeout: float = 5
     return "", peer_list
 
 
+def resolve_coordinator_from_discovery(
+    bootstrap_url: str,
+    *,
+    timeout: float = 5.0,
+    backend: str = "lite",
+    session_request: dict[str, Any] | None = None,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    if backend == "real":
+        payload = fetch_provider_catalog(bootstrap_url, timeout=timeout)
+    else:
+        payload = fetch_peer_catalog(bootstrap_url, timeout=timeout)
+    peers = payload.get("peers") if isinstance(payload, dict) else []
+    peer_list = [peer for peer in peers if isinstance(peer, dict)]
+    expected_model_id = str((session_request or {}).get("hf_model_id") or "")
+    expected_backend = str((session_request or {}).get("backend") or "")
+    for peer in peer_list:
+        if peer.get("role") != "coordinator":
+            continue
+        urls = peer.get("urls") if isinstance(peer.get("urls"), dict) else {}
+        coordinator = str(urls.get("coordinator") or peer.get("coordinator_url") or "")
+        if not coordinator:
+            continue
+        if expected_model_id and not peer_model_compatible(peer, expected_model_id):
+            continue
+        if expected_backend and not peer_backend_compatible(peer, expected_backend):
+            continue
+        return coordinator, peer_list, payload
+    return "", peer_list, payload
+
+
 def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     coordinator_url = args.coordinator_url
+    p2p_bootstrap = args.peer_bootstrap or (DEFAULT_P2P_BOOTSTRAP if args.p2p else "")
+    p2p_backend = _p2p_backend(args)
     peers: list[dict[str, Any]] = []
-    if not coordinator_url and args.peer_bootstrap:
-        coordinator_url, peers = resolve_coordinator_from_bootstrap(args.peer_bootstrap, timeout=args.http_timeout)
+    catalog_payload: dict[str, Any] = {}
+    route_probe_request = build_session_request(
+        prompt_text="join",
+        backend=args.backend,
+        hf_model_id=args.hf_model_id,
+        stage_mode="split",
+        max_new_tokens=1,
+        route_source=_p2p_route_source(args),
+    )
+    if not coordinator_url and p2p_bootstrap:
+        coordinator_url, peers, catalog_payload = resolve_coordinator_from_discovery(
+            p2p_bootstrap,
+            timeout=args.http_timeout,
+            backend=p2p_backend if args.p2p else "lite",
+            session_request=route_probe_request,
+        )
     if not coordinator_url:
         return sanitize({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -3570,62 +4785,171 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             "mode": "join",
             "diagnosis_codes": ["coordinator_route_missing"],
         })
+    peer_announce: dict[str, Any] = {}
+    if args.p2p:
+        peer = build_p2p_peer(
+            swarm_id=args.swarm_id,
+            peer_id=args.peer_id or args.miner_id,
+            role="miner",
+            peer_url=args.peer_url,
+            backend=args.backend,
+            stage_role=args.stage,
+            hf_model_id=args.hf_model_id,
+            ttl_seconds=args.ttl_seconds,
+        )
+        try:
+            peer_announce = announce_discovery_peer(
+                p2p_bootstrap,
+                peer,
+                timeout=args.http_timeout,
+                backend=p2p_backend,
+                peer_secret=args.peer_secret,
+            )
+        except Exception as exc:
+            peer_announce = {"ok": False, "error": type(exc).__name__, "detail": str(exc)[:200], "bootstrap": p2p_bootstrap}
+    else:
+        peer = {}
     command = build_join_command(args, coordinator_url=coordinator_url)
+    ready = bool(not args.p2p or peer_announce.get("ok"))
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
-        "ok": True,
+        "ok": ready,
         "mode": "join",
         "coordinator_url": coordinator_url,
-        "peer_bootstrap_used": bool(args.peer_bootstrap),
+        "peer_bootstrap_used": bool(p2p_bootstrap),
         "peer_count": len(peers),
-        "command": redacted_command(command, {"--miner-token"}),
+        "p2p": {
+            "enabled": bool(args.p2p),
+            "backend": p2p_backend if args.p2p else "",
+            "bootstrap": p2p_bootstrap if args.p2p else "",
+            "announce": peer_announce,
+            "stage_capabilities": _p2p_stage_capabilities(backend=args.backend, stage=args.stage),
+            "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
+        },
+        "command": redacted_command(command, {"--miner-token", "--peer-secret"}),
         "printed_only": not args.run,
-        "diagnosis_codes": ["join_command_ready"],
+        "diagnosis_codes": ["join_command_ready"] + (
+            [("real_p2p_stage_miner_announce_ready" if p2p_backend == "real" else "p2p_stage_miner_announce_ready")]
+            if args.p2p and peer_announce.get("ok")
+            else []
+        ),
         "safety": {
             "tokens_redacted_in_report": True,
             "not_production": True,
-            "not_p2p_task_execution": True,
+            "p2p_discovery_enabled": bool(args.p2p),
+            "coordinator_result_fallback": True,
         },
     }
+    if args.p2p and not peer_announce.get("ok"):
+        report["diagnosis_codes"] = [
+            "real_p2p_stage_miner_announce_failed" if p2p_backend == "real" else "p2p_stage_miner_announce_failed"
+        ]
+        if not args.run:
+            return sanitize(redact_values(report, [args.miner_token, args.peer_secret]))
     if args.run:
-        completed = runner(command, cwd=str(ROOT), text=True)
+        refresh = maybe_start_discovery_refresh(args, peer, bootstrap=p2p_bootstrap) if peer_announce.get("ok") else None
+        try:
+            completed = runner(command, cwd=str(ROOT), text=True)
+        finally:
+            if refresh is not None:
+                report["p2p"]["refresh"] = refresh.stop()
         report["returncode"] = completed.returncode
-        report["ok"] = completed.returncode == 0
-    return sanitize(redact_values(report, [args.miner_token]))
+        report["ok"] = bool(ready and completed.returncode == 0)
+    return sanitize(redact_values(report, [args.miner_token, args.peer_secret]))
 
 
 def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
-    prompt_text = str(args.prompt_text or "")
+    prompt_texts = parse_prompt_texts_arg(args.prompt_text, getattr(args, "prompt_texts", ""))
+    prompt_text = prompt_texts[0]
+    batch_enabled = len(prompt_texts) > 1
+    p2p_backend = _p2p_backend(args)
+    stream_enabled = bool(getattr(args, "stream", False))
     session_request = build_session_request(
         prompt_text=prompt_text,
+        prompt_texts=prompt_texts,
         backend=args.backend,
+        hf_model_id=args.hf_model_id,
         stage_mode="split",
         max_new_tokens=args.max_new_tokens,
         scenario_id=args.scenario_id,
-        route_source="peer-bootstrap" if args.peer_bootstrap else "coordinator-url",
+        route_source=_p2p_route_source(args),
     )
     coordinator_url = args.coordinator_url
+    p2p_bootstrap = args.peer_bootstrap or (DEFAULT_P2P_BOOTSTRAP if args.p2p else "")
     peers: list[dict[str, Any]] = []
-    if args.peer_bootstrap:
-        resolved_url, peers = resolve_coordinator_from_bootstrap(args.peer_bootstrap, timeout=args.http_timeout)
+    catalog_payload: dict[str, Any] = {}
+    route_lookup_payload: dict[str, Any] = {}
+    if p2p_bootstrap:
+        resolved_url, peers, catalog_payload = resolve_coordinator_from_discovery(
+            p2p_bootstrap,
+            timeout=args.http_timeout,
+            backend=p2p_backend if args.p2p else "lite",
+            session_request=session_request,
+        )
         coordinator_url = coordinator_url or resolved_url
+        if args.p2p and p2p_backend == "real":
+            try:
+                route_lookup_payload = post_route_lookup(
+                    p2p_bootstrap,
+                    session_request,
+                    coordinator_url=coordinator_url,
+                    timeout=args.http_timeout,
+                )
+            except Exception as exc:
+                route_lookup_payload = {"ok": False, "error": type(exc).__name__, "detail": str(exc)[:200]}
     route = build_route_decision(session_request, coordinator_url=coordinator_url, peer_catalog=peers)
+    if route_lookup_payload.get("route"):
+        route = route_lookup_payload["route"]
+    effective_coordinator_url = str(route.get("coordinator_url") or coordinator_url or "")
+    route_ready_code = "real_p2p_generate_route_ready" if p2p_backend == "real" else "p2p_generate_route_ready"
     if args.dry_run:
         return sanitize({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
-            "ok": bool(route.get("coordinator_url_present")),
+            "ok": bool(route.get("usable_now") if args.p2p else route.get("coordinator_url_present")),
             "mode": "generate",
             "dry_run": True,
             "session_request": session_request,
+            "batch": session_request.get("batch"),
             "route": route,
-            "diagnosis_codes": ["generate_dry_run_ready" if route.get("coordinator_url_present") else "coordinator_route_missing"],
+            "p2p": {
+                "enabled": bool(args.p2p),
+                "backend": p2p_backend if args.p2p else "",
+                "bootstrap": p2p_bootstrap if args.p2p else "",
+                "peer_count": len(peers),
+                "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
+                "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
+            },
+            "diagnosis_codes": [
+                route_ready_code if args.p2p and route.get("usable_now") else (
+                    "generate_dry_run_ready" if route.get("coordinator_url_present") else "coordinator_route_missing"
+                )
+            ],
         })
-    if not coordinator_url:
+    if args.p2p and not route.get("usable_now"):
         return sanitize({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
             "session_request": session_request,
+            "batch": session_request.get("batch"),
+            "route": route,
+            "p2p": {
+                "enabled": True,
+                "backend": p2p_backend,
+                "bootstrap": p2p_bootstrap,
+                "peer_count": len(peers),
+                "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
+                "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
+            },
+            "diagnosis_codes": ["generate_route_unavailable"],
+        })
+    if not effective_coordinator_url:
+        return sanitize({
+            "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
+            "ok": False,
+            "mode": "generate",
+            "session_request": session_request,
+            "batch": session_request.get("batch"),
             "route": route,
             "diagnosis_codes": ["coordinator_route_missing"],
         })
@@ -3635,18 +4959,20 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "ok": False,
             "mode": "generate",
             "session_request": session_request,
+            "batch": session_request.get("batch"),
             "route": route,
             "diagnosis_codes": ["admin_token_required"],
         })
-    private_payload = coordinator_payload_for_request(session_request, prompt_text=prompt_text)
+    private_payload = coordinator_payload_for_request(session_request, prompt_text=prompt_text, prompt_texts=prompt_texts)
+    session_create_timeout = max(float(args.http_timeout), min(float(args.timeout_seconds), 30.0))
     try:
         session = request_json_url(
             "POST",
-            coordinator_url,
+            effective_coordinator_url,
             "/admin/inference-sessions",
             private_payload,
             admin_token=args.admin_token,
-            timeout=args.http_timeout,
+            timeout=session_create_timeout,
         )
     except Exception as exc:
         detail = str(exc)[:240]
@@ -3669,63 +4995,278 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "ok": False,
             "mode": "generate",
             "session_request": session_request,
+            "batch": session_request.get("batch"),
             "route": route,
             "diagnosis_codes": diagnosis,
             "error": type(exc).__name__,
             "detail": detail,
         })
     result_row: dict[str, Any] | None = None
+    stream_events: list[dict[str, Any]] = []
+    stream_seen_keys: set[tuple[str, int]] = set()
+    stream_source = "disabled" if not stream_enabled else "admin-session-stream"
+    stream_endpoint_ready = False
     deadline = time.monotonic() + args.timeout_seconds
     while time.monotonic() <= deadline:
         session_id = str(session.get("session_id") or "")
+        stream_payload: dict[str, Any] = {}
+        stream_endpoint_ready_this_poll = False
+        if stream_enabled and session_id:
+            stream_query = urlencode({
+                "session_id": session_id,
+                "workload_type": "real_llm_sharded_infer",
+                "limit": args.admin_results_limit,
+                "max_new_tokens": args.max_new_tokens,
+            })
+            try:
+                stream_payload = request_json_url(
+                    "GET",
+                    effective_coordinator_url,
+                    f"/admin/session-stream?{stream_query}",
+                    admin_token=args.admin_token,
+                    timeout=args.http_timeout,
+                )
+            except HTTPError as exc:
+                if exc.code == 404:
+                    stream_source = "admin-results-ledger-fallback"
+                else:
+                    stream_payload = {}
+            except Exception:
+                stream_payload = {}
+            else:
+                stream_endpoint_ready_this_poll = bool(stream_payload.get("schema") == "admin_session_stream_v1")
+                if stream_endpoint_ready_this_poll:
+                    stream_endpoint_ready = True
+                    stream_source = "admin-session-stream"
+                    payload_events = stream_payload.get("events") if isinstance(stream_payload, dict) else []
+                    if isinstance(payload_events, list):
+                        for event in payload_events:
+                            if not isinstance(event, dict):
+                                continue
+                            generated_count = int(event.get("generated_token_count") or 0)
+                            request_key = str(event.get("request_id") or event.get("prompt_hash") or "")
+                            stream_key = (request_key, generated_count)
+                            if generated_count > 0 and stream_key not in stream_seen_keys:
+                                stream_events.append(event)
+                                stream_seen_keys.add(stream_key)
+                                if not args.json:
+                                    print(
+                                        "stream "
+                                        f"{event.get('generated_token_count')}/{event.get('max_new_tokens')} "
+                                        f"hash={event.get('generated_text_hash')}",
+                                        flush=True,
+                                    )
         query = f"/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit={args.admin_results_limit}"
         if session_id:
             query += f"&session_id={session_id}"
         try:
-            ledger = request_json_url("GET", coordinator_url, query, admin_token=args.admin_token, timeout=args.http_timeout)
+            ledger = request_json_url("GET", effective_coordinator_url, query, admin_token=args.admin_token, timeout=args.http_timeout)
         except Exception:
             ledger = {}
         rows = ledger.get("results") if isinstance(ledger, dict) else []
         if isinstance(rows, list):
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                validation = row.get("validation") if isinstance(row.get("validation"), dict) else {}
-                if int(validation.get("generated_token_count") or 0) >= args.max_new_tokens:
+            ledger_rows = [row for row in rows if isinstance(row, dict)]
+            if stream_enabled and not stream_endpoint_ready_this_poll:
+                def _stream_sort_key(row: dict[str, Any]) -> tuple[int, int]:
+                    validation = row.get("validation") if isinstance(row.get("validation"), dict) else {}
+                    return (
+                        int(validation.get("generated_token_count") or 0),
+                        int(row.get("event_index") or 0),
+                    )
+
+                for row in sorted(ledger_rows, key=_stream_sort_key):
+                    for event in safe_stream_events(
+                        row,
+                        max_new_tokens=args.max_new_tokens,
+                        observed_at=row.get("terminal_at"),
+                    ):
+                        generated_count = int(event.get("generated_token_count") or 0)
+                        request_key = str(event.get("request_id") or event.get("prompt_hash") or "")
+                        stream_key = (request_key, generated_count)
+                        if generated_count <= 0 or stream_key in stream_seen_keys:
+                            continue
+                        stream_events.append(event)
+                        stream_seen_keys.add(stream_key)
+                        stream_source = (
+                            "admin-session-stream-with-ledger-fallback"
+                            if stream_endpoint_ready
+                            else "admin-results-ledger-fallback"
+                        )
+                        if not args.json:
+                            print(
+                                "stream "
+                                f"{event.get('generated_token_count')}/{event.get('max_new_tokens')} "
+                                f"hash={event.get('generated_text_hash')}",
+                                flush=True,
+                            )
+            for row in ledger_rows:
+                row_generation = safe_generation_summary(row, max_new_tokens=args.max_new_tokens)
+                if (
+                    row_generation.get("multi_token_generation_ready")
+                    and int(row_generation.get("request_count") or 1) >= len(prompt_texts)
+                    and (not batch_enabled or row_generation.get("batch_generation_ready"))
+                ):
                     result_row = row
                     break
         if result_row:
             break
         time.sleep(args.poll_interval)
     generation = safe_generation_summary(result_row or {}, max_new_tokens=args.max_new_tokens)
-    ok = bool(result_row and generation.get("multi_token_generation_ready"))
+    batch_ready = bool(
+        result_row
+        and generation.get("request_count") == len(prompt_texts)
+        and (not batch_enabled or generation.get("batch_generation_ready"))
+    )
+    ok = bool(result_row and generation.get("multi_token_generation_ready") and batch_ready)
+    stream_progress = stream_progress_summary(
+        stream_events,
+        max_new_tokens=args.max_new_tokens,
+        source=stream_source,
+        expected_request_count=len(prompt_texts),
+    )
+    stream_ready = bool(
+        stream_enabled
+        and ok
+        and (
+            (
+                stream_progress.get("stream_progress_complete")
+                and stream_progress.get("monotonic_progress")
+            )
+            if not batch_enabled
+            else (
+                stream_progress.get("per_request_progress_complete")
+                and stream_progress.get("per_request_monotonic_progress")
+            )
+        )
+    )
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": ok,
         "mode": "generate",
         "dry_run": False,
         "session_request": session_request,
+        "batch": {
+            "enabled": batch_enabled,
+            "request_count": len(prompt_texts),
+            "expected_request_count": len(prompt_texts),
+            "observed_request_count": int(generation.get("observed_request_count") or generation.get("request_count") or 0),
+            "prompt_hashes": session_request.get("prompt_hashes") or [],
+            "prompt_char_counts": session_request.get("prompt_char_counts") or [],
+            "batch_generation_ready": batch_ready,
+            "raw_prompts_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        },
         "route": route,
+        "p2p": {
+            "enabled": bool(args.p2p),
+            "backend": p2p_backend if args.p2p else "",
+            "bootstrap": p2p_bootstrap if args.p2p else "",
+            "peer_count": len(peers),
+            "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
+            "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
+        },
         "session": {
             "schema": session.get("schema"),
             "session_id": session.get("session_id"),
             "workload_type": session.get("workload_type"),
             "max_new_tokens": session.get("max_new_tokens"),
             "backend": session.get("backend"),
+            "hf_model_id": session.get("model_id") or args.hf_model_id,
         },
         "generation": generation,
-        "diagnosis_codes": ["public_swarm_generate_ready"] if ok else ["generation_timeout"],
+        "stream": {
+            "enabled": stream_enabled,
+            "event_count": len(stream_events),
+            "events": stream_events,
+            "source": stream_source,
+            "endpoint_ready": stream_endpoint_ready,
+            "stream_generation_ready": stream_ready,
+            "progress": stream_progress,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        },
+        "diagnosis_codes": (
+            ["public_swarm_generate_ready"]
+            + (["public_swarm_generate_batch_ready"] if batch_ready and batch_enabled else [])
+            + (["public_swarm_generate_stream_ready"] if stream_ready else [])
+            + (["public_swarm_generate_stream_endpoint_ready"] if stream_ready and stream_endpoint_ready else [])
+            + ([route_ready_code] if args.p2p and route.get("usable_now") else [])
+            if ok
+            else ["generation_timeout"]
+        ),
         "safety": {
             "raw_prompt_public": False,
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
             "not_production": True,
-            "not_p2p_task_execution": True,
+            "p2p_discovery_enabled": bool(args.p2p),
+            "coordinator_result_fallback": True,
         },
     }
-    if args.include_output and result_row:
-        report["local_output_note"] = "Raw generated text stays in Coordinator ledger; this public CLI summary only exposes hashes."
+    if (args.include_output or not args.json) and result_row and not args.json:
+        validation = result_row.get("validation") if isinstance(result_row.get("validation"), dict) else {}
+        generated_text = str(validation.get("generated_text") or "")
+        report["local_output"] = {
+            "generated_text": generated_text,
+            "display_only": True,
+            "public_artifact_safe": False,
+        }
+        report["local_output_note"] = "Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only."
+    elif args.include_output:
+        report["local_output_note"] = "Raw generated text is suppressed in JSON/public output; rerun without --json for local display."
     return sanitize(redact_values(report, [args.admin_token]))
+
+
+def print_product_generate(report: dict[str, Any]) -> None:
+    print("CrowdTensor generate")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    session = report.get("session") if isinstance(report.get("session"), dict) else {}
+    if session:
+        print(
+            "  session: "
+            f"{session.get('session_id')} "
+            f"workload={session.get('workload_type')} "
+            f"backend={session.get('backend')}"
+        )
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    if generation:
+        print(
+            "  generation: "
+            f"{generation.get('generated_token_count')}/{generation.get('max_new_tokens')} "
+            f"hash={generation.get('generated_text_hash')}"
+        )
+    batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
+    if batch.get("enabled"):
+        print(
+            "  batch: "
+            f"requests={batch.get('request_count')} "
+            f"ready={batch.get('batch_generation_ready')}"
+        )
+    stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
+    if stream.get("enabled"):
+        progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
+        print(
+            "  stream_events: "
+            f"{stream.get('event_count')} "
+            f"source={stream.get('source')} "
+            f"complete={progress.get('stream_progress_complete')}"
+        )
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    if local_output.get("generated_text"):
+        print(f"  output: {local_output.get('generated_text')}")
+    route = report.get("route") if isinstance(report.get("route"), dict) else {}
+    if route:
+        missing = route.get("missing_capabilities") or []
+        print(
+            "  route: "
+            f"source={route.get('route_source')} "
+            f"coordinator={route.get('coordinator_url_present')} "
+            f"missing={','.join(missing) if missing else 'none'}"
+        )
+    if report.get("local_output_note"):
+        print(f"  note: {report.get('local_output_note')}")
 
 
 def build_peer_cli(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
@@ -3769,17 +5310,23 @@ def build_peer_cli(args: argparse.Namespace, *, runner: Runner = subprocess.run)
             command.extend(["--stage-capability", capability])
         for bootstrap in args.bootstrap or []:
             command.extend(["--bootstrap", bootstrap])
+        if args.peer_secret:
+            command.extend(["--peer-secret", args.peer_secret])
+        if args.require_signed:
+            command.append("--require-signed")
+        if args.signature_max_age_seconds != 3600.0:
+            command.extend(["--signature-max-age-seconds", str(args.signature_max_age_seconds)])
         if args.print_peer:
             command.append("--print-peer")
         if not args.run:
-            return sanitize({
+            return sanitize(redact_values({
                 "schema": P2P_LITE_CLI_SCHEMA,
                 "ok": True,
                 "mode": "daemon",
-                "command": command,
+                "command": redacted_command(command, {"--peer-secret"}),
                 "printed_only": True,
                 "diagnosis_codes": ["p2p_lite_daemon_command_ready"],
-            })
+            }, [args.peer_secret]))
         completed = runner(command, cwd=str(ROOT), text=True)
         return sanitize({
             "schema": P2P_LITE_CLI_SCHEMA,
@@ -3827,15 +5374,170 @@ def build_peer_cli(args: argparse.Namespace, *, runner: Runner = subprocess.run)
             },
             "ttl_seconds": args.ttl_seconds,
         })
+        peer = maybe_sign_p2p_peer(peer, args.peer_secret)
         payload = post_announce(args.bootstrap, peer, timeout=args.http_timeout)
-        return sanitize({
+        return sanitize(redact_values({
             "schema": P2P_LITE_CLI_SCHEMA,
             "ok": bool(payload.get("ok")),
             "mode": "announce",
             "peer_id": peer.get("peer_id"),
+            "identity_verified": bool(((payload.get("peer") or {}) if isinstance(payload.get("peer"), dict) else {}).get("identity_verified")),
             "diagnosis_codes": ["p2p_lite_announce_ready" if payload.get("ok") else "p2p_lite_announce_failed"],
-        })
+        }, [args.peer_secret]))
     raise SystemExit(f"unknown peer action: {action}")
+
+
+def build_p2pd_cli(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "p2p_lite_daemon.py"),
+        "--host",
+        args.host,
+        "--port",
+        str(args.port),
+        "--swarm-id",
+        args.swarm_id,
+        "--role",
+        args.role,
+        "--ttl-seconds",
+        str(args.ttl_seconds),
+    ]
+    if args.peer_id:
+        command.extend(["--peer-id", args.peer_id])
+    if args.peer_url:
+        command.extend(["--peer-url", args.peer_url])
+    if args.coordinator_url:
+        command.extend(["--coordinator-url", args.coordinator_url])
+    if args.backend:
+        command.extend(["--backend", args.backend])
+    if args.stage_role:
+        command.extend(["--stage-role", args.stage_role])
+    for capability in args.stage_capability or []:
+        command.extend(["--stage-capability", capability])
+    for bootstrap in args.bootstrap or []:
+        command.extend(["--bootstrap", bootstrap])
+    if args.peer_secret:
+        command.extend(["--peer-secret", args.peer_secret])
+    if args.require_signed:
+        command.append("--require-signed")
+    if args.signature_max_age_seconds != 3600.0:
+        command.extend(["--signature-max-age-seconds", str(args.signature_max_age_seconds)])
+    if args.print_peer:
+        command.append("--print-peer")
+    report = {
+        "schema": P2PD_CLI_SCHEMA,
+        "ok": True,
+        "mode": "p2pd",
+        "command": redacted_command(command, {"--peer-secret"}),
+        "printed_only": not args.run,
+        "diagnosis_codes": ["p2pd_command_ready"] + (["p2p_signed_announce_required"] if args.require_signed else []),
+        "safety": {
+            "tokens_gossiped": False,
+            "raw_prompts_gossiped": False,
+            "activations_gossiped": False,
+            "peer_secret_gossiped": False,
+            "signed_announcement_required": bool(args.require_signed),
+            "coordinator_result_fallback": True,
+            "not_production": True,
+            "not_dht": True,
+            "not_nat_traversal": True,
+        },
+    }
+    if not args.run:
+        return sanitize(redact_values(report, [args.peer_secret]))
+    completed = runner(command, cwd=str(ROOT), text=True)
+    report["returncode"] = completed.returncode
+    report["ok"] = completed.returncode == 0
+    report["diagnosis_codes"] = ["p2pd_exited"]
+    return sanitize(redact_values(report, [args.peer_secret]))
+
+
+def build_p2p_daemon_cli(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "real_p2p_daemon.py"),
+        "--host",
+        args.host,
+        "--port",
+        str(args.port),
+        "--swarm-id",
+        args.swarm_id,
+        "--role",
+        args.role,
+        "--ttl-seconds",
+        str(args.ttl_seconds),
+        "--discovery-backend",
+        args.discovery_backend,
+    ]
+    if args.public_host:
+        command.extend(["--public-host", args.public_host])
+    if args.node_id:
+        command.extend(["--node-id", args.node_id])
+    if args.peer_url:
+        command.extend(["--peer-url", args.peer_url])
+    if args.coordinator_url:
+        command.extend(["--coordinator-url", args.coordinator_url])
+    if args.backend:
+        command.extend(["--backend", args.backend])
+    if args.stage_role:
+        command.extend(["--stage-role", args.stage_role])
+    for capability in args.stage_capability or []:
+        command.extend(["--stage-capability", capability])
+    for bootstrap in args.bootstrap or []:
+        command.extend(["--bootstrap", bootstrap])
+    if args.record_secret:
+        command.extend(["--record-secret", args.record_secret])
+    if args.require_signed:
+        command.append("--require-signed")
+    if args.signature_max_age_seconds != 3600.0:
+        command.extend(["--signature-max-age-seconds", str(args.signature_max_age_seconds)])
+    if getattr(args, "libp2p_host", "127.0.0.1") != "127.0.0.1":
+        command.extend(["--libp2p-host", args.libp2p_host])
+    if getattr(args, "libp2p_port", 0):
+        command.extend(["--libp2p-port", str(args.libp2p_port)])
+    if getattr(args, "libp2p_public_host", ""):
+        command.extend(["--libp2p-public-host", args.libp2p_public_host])
+    if getattr(args, "peer_key_file", ""):
+        command.extend(["--peer-key-file", args.peer_key_file])
+    if getattr(args, "kad_protocol", "/crowdtensor/kad/1.0.0") != "/crowdtensor/kad/1.0.0":
+        command.extend(["--kad-protocol", args.kad_protocol])
+    if args.print_record:
+        command.append("--print-record")
+    libp2p_backend = args.discovery_backend in {LIBP2P_KAD_BACKEND, LIBP2P_KAD_COMPAT_BACKEND}
+    report = {
+        "schema": P2P_DAEMON_CLI_SCHEMA,
+        "ok": True,
+        "mode": "p2p-daemon",
+        "command": redacted_command(command, {"--record-secret"}),
+        "printed_only": not args.run,
+        "diagnosis_codes": ["p2p_daemon_command_ready", "real_p2p_provider_store_ready", "replaceable_discovery_backend_ready"]
+        + (["libp2p_discovery_backend_ready", "p2p_peer_identity_ready", "p2p_provider_dht_ready"] if libp2p_backend else [])
+        + (["real_p2p_signed_provider_record_required"] if args.require_signed else []),
+        "safety": {
+            "tokens_gossiped": False,
+            "raw_prompts_gossiped": False,
+            "activations_gossiped": False,
+            "peer_secret_gossiped": False,
+            "signed_provider_record_required": bool(args.require_signed),
+            "coordinator_result_fallback": True,
+            "not_production": True,
+            "replaceable_discovery_backend": True,
+            "discovery_backend": args.discovery_backend,
+            "libp2p_runtime_ready": libp2p_backend,
+            "dht_runtime_ready": libp2p_backend,
+            "provider_record_transport": "libp2p-stream" if libp2p_backend else "http-provider-store",
+            "nat_traversal_ready": False,
+            "relay_ready": False,
+            "hivemind_petals_parity": False,
+        },
+    }
+    if not args.run:
+        return sanitize(redact_values(report, [args.record_secret]))
+    completed = runner(command, cwd=str(ROOT), text=True)
+    report["returncode"] = completed.returncode
+    report["ok"] = completed.returncode == 0
+    report["diagnosis_codes"] = ["p2p_daemon_exited"]
+    return sanitize(redact_values(report, [args.record_secret]))
 
 
 def build_public_swarm_product_rc(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
@@ -4786,6 +6488,76 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    print("CrowdTensor Public Real-LLM Swarm Inference Beta")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  ready: {beta.get('ready')}")
+    print(f"  cpu_default_ready: {beta.get('cpu_default_ready')}")
+    print(f"  external_two_stage_ready: {beta.get('external_two_stage_ready')}")
+    print(f"  external_stage_requeue_ready: {beta.get('external_stage_requeue_ready')}")
+    print(f"  p2p_ready_product_beta: {beta.get('p2p_ready_product_beta')}")
+    print(f"  cuda_optional_fail_closed_ready: {beta.get('cuda_optional_fail_closed_ready')}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_usable_swarm_inference(report: dict[str, Any]) -> None:
+    usable = report.get("usable_swarm") if isinstance(report.get("usable_swarm"), dict) else {}
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
+    print("CrowdTensor Usable Swarm Inference v1")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  ready: {usable.get('ready')}")
+    print(f"  p2p route ready: {p2p.get('route_ready')}")
+    print(f"  real generate ready: {p2p.get('real_generate_ready')}")
+    print(f"  generated tokens: {p2p.get('generated_token_count')}/{p2p.get('max_new_tokens')}")
+    print(f"  distinct stage miners: {p2p.get('distinct_stage_miners')}")
+    print(f"  stage rescue ready: {p2p.get('stage_rescue_ready') and p2p.get('real_stage_rescue_ready')}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
+    v2 = report.get("public_swarm_v2") if isinstance(report.get("public_swarm_v2"), dict) else {}
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    local = readiness.get("local_p2p_generate") if isinstance(readiness.get("local_p2p_generate"), dict) else {}
+    external = readiness.get("external_validation") if isinstance(readiness.get("external_validation"), dict) else {}
+    p2p = readiness.get("p2p_route_hardening") if isinstance(readiness.get("p2p_route_hardening"), dict) else {}
+    cuda = readiness.get("cuda_optional") if isinstance(readiness.get("cuda_optional"), dict) else {}
+    perf = readiness.get("performance") if isinstance(readiness.get("performance"), dict) else {}
+    print("CrowdTensor Public Swarm Inference v2")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  ready: {v2.get('ready')}")
+    print(f"  local tokens: {local.get('generated_token_count')}/{local.get('max_new_tokens')}")
+    print(f"  local accepted rows: {local.get('accepted_rows')} ready={local.get('accepted_rows_ready')}")
+    print(f"  kv cache ready: {local.get('kv_cache_ready')}")
+    print(f"  batch ready: {local.get('batch_ready')}")
+    print(f"  stream ready: {local.get('stream_ready')}")
+    print(f"  p2p route: {p2p.get('preferred_route')} ready={p2p.get('ready')}")
+    print(f"  external ready: {external.get('ready')} tokens={external.get('generated_token_count')}/{external.get('max_new_tokens')} accepted_rows={external.get('accepted_rows')} rows_ready={external.get('accepted_rows_ready')}")
+    print(f"  model match: local={((local.get('model') or {}).get('compatible') if isinstance(local.get('model'), dict) else None)} external={((external.get('model') or {}).get('compatible') if isinstance(external.get('model'), dict) else None)} p2p={((p2p.get('model') or {}).get('compatible') if isinstance(p2p.get('model'), dict) else None)}")
+    print(f"  cuda fail-closed: {cuda.get('fail_closed_ready')}")
+    print(f"  performance: latency={perf.get('stage_latency_ready')} throughput={perf.get('throughput_summary_ready')} memory={perf.get('memory_or_vram_summary_ready')}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
     preview = report.get("developer_preview") if isinstance(report.get("developer_preview"), dict) else {}
     print("CrowdTensor Public Swarm Developer Preview")
@@ -4847,6 +6619,26 @@ def print_public_swarm_trial(report: dict[str, Any]) -> None:
     print(f"  degraded_cpu_fallback_ready: {trial.get('degraded_cpu_fallback_ready')}")
     print(f"  gpu_generation_ready: {trial.get('gpu_generation_ready')}")
     print(f"  external_runtime_verified: {trial.get('external_runtime_verified')}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
+    preview = report.get("preview") if isinstance(report.get("preview"), dict) else {}
+    print("CrowdTensor Public Swarm Inference Preview v0.4")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  ready: {preview.get('ready')}")
+    print(f"  external_two_stage_generation_ready: {preview.get('external_two_stage_generation_ready')}")
+    print(f"  external_stage_requeue_ready: {preview.get('external_stage_requeue_ready')}")
+    print(f"  stage_latency_ready: {preview.get('stage_latency_ready')}")
+    print(f"  throughput_summary_ready: {preview.get('throughput_summary_ready')}")
+    print(f"  memory_or_vram_summary_ready: {preview.get('memory_or_vram_summary_ready')}")
+    print(f"  optional_model_ready: {preview.get('optional_model_ready')}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -4945,6 +6737,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     serve.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
     serve.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
     serve.add_argument("--hf-cache-dir", default="")
+    serve.add_argument("--lease-seconds", type=float, default=15.0)
+    serve.add_argument("--p2p", action="store_true", help="announce this Coordinator to a p2pd bootstrap before printing/running")
+    serve.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
+    serve.add_argument("--peer-bootstrap", default=DEFAULT_P2P_BOOTSTRAP)
+    serve.add_argument("--swarm-id", default="default")
+    serve.add_argument("--peer-id", default="")
+    serve.add_argument("--peer-url", default="")
+    serve.add_argument("--ttl-seconds", type=float, default=60.0)
+    serve.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
+    serve.add_argument("--http-timeout", type=float, default=5.0)
     serve.add_argument("--i-understand-public-bind", action="store_true")
     serve.add_argument("--run", action="store_true")
     serve.add_argument("--json", action="store_true")
@@ -4952,6 +6754,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     join = subparsers.add_parser("join", help="Print or run a product-facing Miner command.")
     join.add_argument("--coordinator-url", default="")
     join.add_argument("--peer-bootstrap", default="")
+    join.add_argument("--p2p", action="store_true", help="discover Coordinator and announce stage capability through p2pd")
+    join.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
+    join.add_argument("--swarm-id", default="default")
+    join.add_argument("--peer-id", default="")
+    join.add_argument("--peer-url", default="")
+    join.add_argument("--ttl-seconds", type=float, default=60.0)
+    join.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
     join.add_argument("--miner-id", default="public-swarm-miner")
     join.add_argument("--stage", choices=["stage0", "stage1", "both"], default="both")
     join.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
@@ -4960,25 +6769,83 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     join.add_argument("--hf-cache-dir", default="")
     join.add_argument("--once", action="store_true")
     join.add_argument("--max-tasks", type=int, default=0)
+    join.add_argument("--max-runtime-seconds", type=float, default=0.0)
+    join.add_argument("--compute-seconds", type=float, default=0.0)
+    join.add_argument("--max-request-attempts", type=int, default=3)
+    join.add_argument("--retry-base-sleep", type=float, default=0.2)
+    join.add_argument("--retry-max-sleep", type=float, default=2.0)
+    join.add_argument("--idle-sleep", type=float, default=2.0)
     join.add_argument("--http-timeout", type=float, default=5.0)
     join.add_argument("--run", action="store_true")
     join.add_argument("--json", action="store_true")
 
     generate = subparsers.add_parser("generate", help="Create a bounded public product generation session.")
-    generate.add_argument("--prompt-text", required=True)
+    generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default="")
+    generate.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
     generate.add_argument("--scenario-id", default="public-swarm-product-rc")
     generate.add_argument("--max-new-tokens", type=int, default=16)
     generate.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    generate.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
     generate.add_argument("--coordinator-url", default="")
     generate.add_argument("--peer-bootstrap", default="")
+    generate.add_argument("--p2p", action="store_true", help="resolve Coordinator and stage peers through p2pd")
+    generate.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
     generate.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
     generate.add_argument("--timeout-seconds", type=float, default=120.0)
     generate.add_argument("--poll-interval", type=float, default=1.0)
-    generate.add_argument("--http-timeout", type=float, default=10.0)
+    generate.add_argument("--http-timeout", type=float, default=30.0)
     generate.add_argument("--admin-results-limit", type=int, default=50)
     generate.add_argument("--dry-run", action="store_true")
     generate.add_argument("--include-output", action="store_true")
+    generate.add_argument("--stream", action="store_true", help="emit safe per-token progress while waiting for the final result")
     generate.add_argument("--json", action="store_true")
+
+    p2pd = subparsers.add_parser("p2pd", help="Print or run the P2P discovery daemon command.")
+    p2pd.add_argument("--host", default="127.0.0.1")
+    p2pd.add_argument("--port", type=int, default=8788)
+    p2pd.add_argument("--swarm-id", default="default")
+    p2pd.add_argument("--peer-id", default="")
+    p2pd.add_argument("--role", choices=["coordinator", "miner", "observer"], default="observer")
+    p2pd.add_argument("--peer-url", default="")
+    p2pd.add_argument("--coordinator-url", default="")
+    p2pd.add_argument("--backend", choices=["", "cpu", "cuda"], default="")
+    p2pd.add_argument("--stage-role", choices=["", "stage0", "stage1", "both"], default="")
+    p2pd.add_argument("--stage-capability", action="append", default=[])
+    p2pd.add_argument("--bootstrap", action="append", default=[])
+    p2pd.add_argument("--ttl-seconds", type=float, default=60.0)
+    p2pd.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
+    p2pd.add_argument("--require-signed", action="store_true")
+    p2pd.add_argument("--signature-max-age-seconds", type=float, default=3600.0)
+    p2pd.add_argument("--print-peer", action="store_true")
+    p2pd.add_argument("--run", action="store_true")
+    p2pd.add_argument("--json", action="store_true")
+
+    p2p_daemon = subparsers.add_parser("p2p-daemon", help="Print or run the real-P2P provider discovery daemon command.")
+    p2p_daemon.add_argument("--host", default="127.0.0.1")
+    p2p_daemon.add_argument("--port", type=int, default=8888)
+    p2p_daemon.add_argument("--public-host", default="")
+    p2p_daemon.add_argument("--swarm-id", default="default")
+    p2p_daemon.add_argument("--node-id", default="")
+    p2p_daemon.add_argument("--role", choices=["coordinator", "miner", "observer"], default="observer")
+    p2p_daemon.add_argument("--peer-url", default="")
+    p2p_daemon.add_argument("--coordinator-url", default="")
+    p2p_daemon.add_argument("--backend", choices=["", "cpu", "cuda"], default="")
+    p2p_daemon.add_argument("--stage-role", choices=["", "stage0", "stage1", "both"], default="")
+    p2p_daemon.add_argument("--stage-capability", action="append", default=[])
+    p2p_daemon.add_argument("--bootstrap", action="append", default=[])
+    p2p_daemon.add_argument("--ttl-seconds", type=float, default=60.0)
+    p2p_daemon.add_argument("--record-secret", "--peer-secret", dest="record_secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
+    p2p_daemon.add_argument("--require-signed", action="store_true")
+    p2p_daemon.add_argument("--signature-max-age-seconds", type=float, default=3600.0)
+    p2p_daemon.add_argument("--discovery-backend", default=DEFAULT_DISCOVERY_BACKEND)
+    p2p_daemon.add_argument("--libp2p-host", default="127.0.0.1")
+    p2p_daemon.add_argument("--libp2p-port", type=int, default=0)
+    p2p_daemon.add_argument("--libp2p-public-host", default="")
+    p2p_daemon.add_argument("--peer-key-file", default="")
+    p2p_daemon.add_argument("--kad-protocol", default="/crowdtensor/kad/1.0.0")
+    p2p_daemon.add_argument("--print-record", action="store_true")
+    p2p_daemon.add_argument("--run", action="store_true")
+    p2p_daemon.add_argument("--json", action="store_true")
 
     peer = subparsers.add_parser("peer", help="Run or query the P2P-lite discovery layer.")
     peer_subparsers = peer.add_subparsers(dest="peer_action", required=True)
@@ -4999,6 +6866,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     peer_daemon.add_argument("--stage-capability", action="append", default=[])
     peer_daemon.add_argument("--bootstrap", action="append", default=[])
     peer_daemon.add_argument("--ttl-seconds", type=float, default=60.0)
+    peer_daemon.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
+    peer_daemon.add_argument("--require-signed", action="store_true")
+    peer_daemon.add_argument("--signature-max-age-seconds", type=float, default=3600.0)
     peer_daemon.add_argument("--print-peer", action="store_true")
     peer_daemon.add_argument("--run", action="store_true")
     peer_daemon.add_argument("--json", action="store_true")
@@ -5022,6 +6892,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     peer_announce.add_argument("--stage-role", choices=["", "stage0", "stage1", "both"], default="")
     peer_announce.add_argument("--stage-capability", action="append", default=[])
     peer_announce.add_argument("--ttl-seconds", type=float, default=60.0)
+    peer_announce.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
     peer_announce.add_argument("--http-timeout", type=float, default=5.0)
     peer_announce.add_argument("--json", action="store_true")
 
@@ -5680,6 +7551,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     public_swarm_beta_rc.add_argument("--prompt-text", default="CrowdTensor public beta RC")
+    public_swarm_beta_rc.add_argument("--prompt-texts", default="")
+    public_swarm_beta_rc.add_argument("--stream-generation", action="store_true")
     public_swarm_beta_rc.add_argument("--scenario-id", default="route-baseline")
     public_swarm_beta_rc.add_argument("--request-count", type=int, default=1)
     public_swarm_beta_rc.add_argument("--max-new-tokens", type=int, default=2)
@@ -5719,6 +7592,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     public_swarm_product_beta.add_argument("--prompt-text", default="CrowdTensor product beta")
+    public_swarm_product_beta.add_argument("--prompt-texts", default="")
+    public_swarm_product_beta.add_argument("--stream-generation", action="store_true")
     public_swarm_product_beta.add_argument("--scenario-id", default="route-baseline")
     public_swarm_product_beta.add_argument("--request-count", type=int, default=1)
     public_swarm_product_beta.add_argument("--max-new-tokens", type=int, default=2)
@@ -5734,6 +7609,148 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     public_swarm_product_beta.add_argument("--poll-interval", type=float, default=1.0)
     public_swarm_product_beta.add_argument("--http-timeout", type=float, default=10.0)
     public_swarm_product_beta.add_argument("--json", action="store_true")
+
+    public_real_llm_swarm_beta = subparsers.add_parser(
+        "public-real-llm-swarm-beta",
+        help="Build the top-level Public Real-LLM Swarm Inference Beta v1 artifact.",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "public_real_llm_swarm_beta_mode",
+        choices=["release", "local-smoke", "local-model-variant", "package", "evidence-import"],
+        nargs="?",
+        default="release",
+    )
+    public_real_llm_swarm_beta.add_argument("--output-dir", default="dist/public-real-llm-swarm-beta")
+    public_real_llm_swarm_beta.add_argument("--product-report", default="dist/public-swarm-product-beta/public_swarm_product_beta.json")
+    public_real_llm_swarm_beta.add_argument(
+        "--external-report",
+        default="dist/goal-final-infer-real-llm-internet-beta-import-16tok-gpu-summary-20260602/real_llm_internet_beta.json",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "--p2p-report",
+        default="dist/goal-final-infer-petals-candidate-16tok-batch-stream-composed-20260602/petals_class_p2p_candidate.json",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "--usable-report",
+        default="dist/goal-final-infer-usable-swarm-16tok-kv-cache-20260601/usable_swarm_inference.json",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "--public-swarm-v2-report",
+        default="dist/public-swarm-inference-v2/public_swarm_inference_v2.json",
+    )
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-preview-report", default="dist/public-swarm-preview-v04-final/public_swarm_preview_v04.json")
+    public_real_llm_swarm_beta.add_argument(
+        "--public-swarm-v2-real-p2p-report",
+        default="dist/goal-final-infer-real-p2p-core-fresh-16tok-import-strict-20260601/real_p2p_swarm_inference_core_rc.json",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "--p2p-runtime-smoke-report",
+        default="dist/real-p2p-libp2p-kaggle-runtime-smoke-20260531-r6/real_p2p_swarm_inference_core_rc.json",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "--p2p-external-report",
+        default="dist/goal-final-infer-fresh-real-p2p-kaggle-16tok-20260601/real_p2p_swarm_inference_core_rc.json",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "--p2p-requeue-report",
+        default="dist/petals-p2p-candidate-live-stage0-20260531-r6/real_p2p_swarm_inference_core_rc.json",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "--p2p-batch-stream-report",
+        default="dist/goal-final-infer-public-swarm-v2-batch-stream-16tok-20260602/public_swarm_inference_v2.json",
+    )
+    public_real_llm_swarm_beta.add_argument(
+        "--gpu-report",
+        default="dist/public-swarm-gpu-beta-live-20260528-runtimepin/public_swarm_gpu_inference_beta_kaggle_auto.json",
+    )
+    public_real_llm_swarm_beta.add_argument("--base-port", type=int, default=9340)
+    public_real_llm_swarm_beta.add_argument("--port", type=int, default=9340)
+    public_real_llm_swarm_beta.add_argument("--p2p-port", type=int, default=9860)
+    public_real_llm_swarm_beta.add_argument("--p2p-libp2p-port", type=int, default=10860)
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-p2p-port", type=int, default=9888)
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-coordinator-port", type=int, default=9889)
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-real-p2p-port", type=int, default=9890)
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-real-p2p-coordinator-port", type=int, default=9891)
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-real-p2p-libp2p-port", type=int, default=0)
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-real-p2p-discovery-backend", choices=sorted(DISCOVERY_BACKENDS), default="http-provider-store")
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-backend", choices=["cpu", "cuda"], default="cpu")
+    public_real_llm_swarm_beta.add_argument("--public-host", default="127.0.0.1")
+    public_real_llm_swarm_beta.add_argument("--bind-host", default="127.0.0.1")
+    public_real_llm_swarm_beta.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    public_real_llm_swarm_beta.add_argument("--hf-cache-dir", default="")
+    public_real_llm_swarm_beta.add_argument("--prompt-text", default="CrowdTensor public real LLM swarm beta")
+    public_real_llm_swarm_beta.add_argument("--prompt-texts", default="")
+    public_real_llm_swarm_beta.add_argument("--stream-generation", action="store_true")
+    public_real_llm_swarm_beta.add_argument("--request-count", type=int, default=1)
+    public_real_llm_swarm_beta.add_argument("--max-new-tokens", type=int, default=16)
+    public_real_llm_swarm_beta.add_argument("--cpu-request-count", type=int, default=1)
+    public_real_llm_swarm_beta.add_argument("--external-llm-request-count", type=int, default=1)
+    public_real_llm_swarm_beta.add_argument("--timeout-seconds", type=float, default=300.0)
+    public_real_llm_swarm_beta.add_argument("--public-swarm-v2-timeout-seconds", type=float, default=420.0)
+    public_real_llm_swarm_beta.add_argument("--remote-timeout-seconds", type=float, default=240.0)
+    public_real_llm_swarm_beta.add_argument("--cpu-timeout-seconds", type=float, default=180.0)
+    public_real_llm_swarm_beta.add_argument("--startup-timeout", type=float, default=45.0)
+    public_real_llm_swarm_beta.add_argument("--process-exit-timeout", type=float, default=20.0)
+    public_real_llm_swarm_beta.add_argument("--poll-interval", type=float, default=1.0)
+    public_real_llm_swarm_beta.add_argument("--http-timeout", type=float, default=10.0)
+    public_real_llm_swarm_beta.add_argument("--json", action="store_true")
+
+    usable_swarm = subparsers.add_parser(
+        "usable-swarm",
+        help="Build the Usable Swarm Inference v1 artifact for the p2pd/serve/join/generate path.",
+    )
+    usable_swarm.add_argument("usable_swarm_mode", choices=["local", "package", "evidence-import"], nargs="?", default="local")
+    usable_swarm.add_argument("--output-dir", default="dist/usable-swarm-inference-v1")
+    usable_swarm.add_argument("--p2p-report", default="dist/goal-final-infer-p2p-v06-16tok-kv-cache-20260601/p2p_swarm_inference_v06.json")
+    usable_swarm.add_argument("--swarm-id", default="usable-swarm-v1")
+    usable_swarm.add_argument("--public-host", default="127.0.0.1")
+    usable_swarm.add_argument("--p2p-port", type=int, default=9788)
+    usable_swarm.add_argument("--coordinator-port", type=int, default=9789)
+    usable_swarm.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    usable_swarm.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    usable_swarm.add_argument("--hf-cache-dir", default="")
+    usable_swarm.add_argument("--prompt-text", default="CrowdTensor usable swarm inference")
+    usable_swarm.add_argument("--prompt-texts", default="")
+    usable_swarm.add_argument("--stream-generation", action="store_true")
+    usable_swarm.add_argument("--max-new-tokens", type=int, default=8)
+    usable_swarm.add_argument("--startup-timeout", type=float, default=45.0)
+    usable_swarm.add_argument("--timeout-seconds", type=float, default=240.0)
+    usable_swarm.add_argument("--http-timeout", type=float, default=10.0)
+    usable_swarm.add_argument("--preview-v04-report", default="dist/public-swarm-preview-v04-final/public_swarm_preview_v04.json")
+    usable_swarm.add_argument("--product-mvp-report", default="dist/public-swarm-preview-v04-distilgpt2-strict/product-mvp/product_swarm_mvp_check.json")
+    usable_swarm.add_argument("--optional-model-report", default="dist/public-swarm-preview-v04-distilgpt2-strict/optional-model-mvp/product_swarm_mvp_check.json")
+    usable_swarm.add_argument("--json", action="store_true")
+
+    public_swarm_v2 = subparsers.add_parser(
+        "public-swarm-v2",
+        help="Build the Public Swarm Inference v2 artifact for the 16-token P2P path.",
+    )
+    public_swarm_v2.add_argument("public_swarm_v2_mode", choices=["local", "local-model-variant", "package", "evidence-import"], nargs="?", default="local")
+    public_swarm_v2.add_argument("--output-dir", default="dist/public-swarm-inference-v2")
+    public_swarm_v2.add_argument("--usable-report", default="dist/goal-final-infer-usable-swarm-16tok-kv-cache-20260601/usable_swarm_inference.json")
+    public_swarm_v2.add_argument("--preview-report", default="dist/public-swarm-preview-v04-final/public_swarm_preview_v04.json")
+    public_swarm_v2.add_argument("--real-p2p-report", default="dist/goal-final-infer-real-p2p-core-fresh-16tok-import-strict-20260601/real_p2p_swarm_inference_core_rc.json")
+    public_swarm_v2.add_argument("--gpu-report", default="dist/public-swarm-gpu-beta-live-20260528-runtimepin/public_swarm_gpu_inference_beta_kaggle_auto.json")
+    public_swarm_v2.add_argument("--fresh-external-report", action="store_true")
+    public_swarm_v2.add_argument("--fresh-external-attempt-report", default="")
+    public_swarm_v2.add_argument("--public-host", default="127.0.0.1")
+    public_swarm_v2.add_argument("--p2p-port", type=int, default=9888)
+    public_swarm_v2.add_argument("--coordinator-port", type=int, default=9889)
+    public_swarm_v2.add_argument("--real-p2p-port", type=int, default=9890)
+    public_swarm_v2.add_argument("--real-p2p-coordinator-port", type=int, default=9891)
+    public_swarm_v2.add_argument("--real-p2p-libp2p-port", type=int, default=0)
+    public_swarm_v2.add_argument("--real-p2p-discovery-backend", choices=sorted(DISCOVERY_BACKENDS), default="http-provider-store")
+    public_swarm_v2.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    public_swarm_v2.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    public_swarm_v2.add_argument("--hf-cache-dir", default="")
+    public_swarm_v2.add_argument("--prompt-text", default="CrowdTensor Public Swarm Inference v2")
+    public_swarm_v2.add_argument("--prompt-texts", default="")
+    public_swarm_v2.add_argument("--stream-generation", action="store_true")
+    public_swarm_v2.add_argument("--max-new-tokens", type=int, default=16)
+    public_swarm_v2.add_argument("--startup-timeout", type=float, default=60.0)
+    public_swarm_v2.add_argument("--timeout-seconds", type=float, default=420.0)
+    public_swarm_v2.add_argument("--http-timeout", type=float, default=30.0)
+    public_swarm_v2.add_argument("--json", action="store_true")
 
     preview = subparsers.add_parser(
         "preview",
@@ -5995,6 +8012,201 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     swarm_trial.add_argument("--requeue-timeout", type=float, default=120.0)
     swarm_trial.add_argument("--max-request-attempts", type=int, default=240)
     swarm_trial.add_argument("--json", action="store_true")
+
+    preview_v04 = subparsers.add_parser(
+        "preview-v04",
+        help="Build the Public Swarm Inference Preview v0.4 artifact.",
+    )
+    preview_v04.add_argument("preview_v04_mode", choices=["local-smoke", "package", "evidence-import"])
+    preview_v04.add_argument("--output-dir", default="dist/public-swarm-preview-v04")
+    preview_v04.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    preview_v04.add_argument("--public-host", default="24.199.118.54")
+    preview_v04.add_argument("--bind-host", default="0.0.0.0")
+    preview_v04.add_argument("--port", type=int, default=9440)
+    preview_v04.add_argument("--base-port", type=int, default=9441)
+    preview_v04.add_argument("--target", choices=["local", "kaggle"], default="kaggle")
+    preview_v04.add_argument("--miner-id-prefix", default="public-swarm-preview-v04")
+    preview_v04.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    preview_v04.add_argument("--optional-model-id", choices=["distilgpt2", "gpt2"], default="distilgpt2")
+    preview_v04.add_argument("--run-optional-model", action="store_true")
+    preview_v04.add_argument("--require-optional-model-ready", action="store_true")
+    preview_v04.add_argument("--require-hf-runtime", action="store_true")
+    preview_v04.add_argument("--hf-cache-dir", default="")
+    preview_v04.add_argument(
+        "--gpu-report",
+        default=(
+            "dist/gpu-sharded-generation-beta-kaggle-20260528095658/"
+            "gpu_sharded_generation_beta_kaggle_auto.json"
+        ),
+    )
+    preview_v04.add_argument(
+        "--live-stage0-report",
+        default=(
+            "dist/public-swarm-live-preview-rc-live-stage0-20260529043801-rc/"
+            "public_swarm_live_preview_rc.json"
+        ),
+    )
+    preview_v04.add_argument(
+        "--live-stage1-report",
+        default=(
+            "dist/public-swarm-live-preview-rc-live-stage1-20260529044328-rc/"
+            "public_swarm_live_preview_rc.json"
+        ),
+    )
+    preview_v04.add_argument("--product-mvp-report", default="dist/product-swarm-mvp/product_swarm_mvp_check.json")
+    preview_v04.add_argument("--optional-model-report", default="")
+    preview_v04.add_argument("--product-beta-report", default="dist/public-swarm-product-beta/public_swarm_product_beta.json")
+    preview_v04.add_argument("--prompt-text", default="CrowdTensor preview v0.4")
+    preview_v04.add_argument("--request-count", type=int, default=1)
+    preview_v04.add_argument("--max-new-tokens", type=int, default=2)
+    preview_v04.add_argument("--kaggle-owner", default="")
+    preview_v04.add_argument("--timeout-seconds", type=float, default=300.0)
+    preview_v04.add_argument("--remote-timeout-seconds", type=float, default=300.0)
+    preview_v04.add_argument("--cpu-timeout-seconds", type=float, default=180.0)
+    preview_v04.add_argument("--startup-timeout", type=float, default=60.0)
+    preview_v04.add_argument("--session-queue-timeout", type=float, default=45.0)
+    preview_v04.add_argument("--miner-timeout", type=float, default=240.0)
+    preview_v04.add_argument("--generate-timeout", type=float, default=240.0)
+    preview_v04.add_argument("--json", action="store_true")
+
+    p2p_v06 = subparsers.add_parser(
+        "p2p-swarm-v06",
+        help="Build the P2P Swarm Inference v0.6 prototype evidence artifact.",
+    )
+    p2p_v06.add_argument("p2p_swarm_v06_mode", choices=["local-smoke", "package", "evidence-import", "external-existing", "kaggle-auto"])
+    p2p_v06.add_argument("--output-dir", default="dist/p2p-swarm-inference-v06")
+    p2p_v06.add_argument("--swarm-id", default="p2p-v06")
+    p2p_v06.add_argument("--public-host", default="24.199.118.54")
+    p2p_v06.add_argument("--p2p-port", type=int, default=9560)
+    p2p_v06.add_argument("--coordinator-port", type=int, default=9561)
+    p2p_v06.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    p2p_v06.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    p2p_v06.add_argument("--hf-cache-dir", default="")
+    p2p_v06.add_argument("--prompt-text", default="CrowdTensor P2P v0.6")
+    p2p_v06.add_argument("--prompt-texts", default="")
+    p2p_v06.add_argument("--stream-generation", action="store_true")
+    p2p_v06.add_argument("--max-new-tokens", type=int, default=2)
+    p2p_v06.add_argument("--startup-timeout", type=float, default=30.0)
+    p2p_v06.add_argument("--timeout-seconds", type=float, default=90.0)
+    p2p_v06.add_argument("--http-timeout", type=float, default=5.0)
+    p2p_v06.add_argument("--preview-v04-report", default="dist/public-swarm-preview-v04-final/public_swarm_preview_v04.json")
+    p2p_v06.add_argument("--product-mvp-report", default="dist/public-swarm-preview-v04-distilgpt2-strict/product-mvp/product_swarm_mvp_check.json")
+    p2p_v06.add_argument("--optional-model-report", default="dist/public-swarm-preview-v04-distilgpt2-strict/optional-model-mvp/product_swarm_mvp_check.json")
+    p2p_v06.add_argument("--p2p-discovery-report", default="")
+    p2p_v06.add_argument("--peer-bootstrap", default="")
+    p2p_v06.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
+    p2p_v06.add_argument("--require-signed", action="store_true")
+    p2p_v06.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    p2p_v06.add_argument("--verify-generate", action="store_true")
+    p2p_v06.add_argument("--kaggle-owner", default=os.environ.get("KAGGLE_USERNAME", ""))
+    p2p_v06.add_argument("--kernel-slug-prefix", default="")
+    p2p_v06.add_argument("--kaggle-push-timeout-seconds", type=float, default=240.0)
+    p2p_v06.add_argument("--kaggle-delete-timeout-seconds", type=float, default=120.0)
+    p2p_v06.add_argument("--kaggle-stage-timeout-seconds", type=float, default=600.0)
+    p2p_v06.add_argument("--skip-kaggle-cleanup", action="store_true")
+    p2p_v06.add_argument("--json", action="store_true")
+
+    public_p2p_v1_rc = subparsers.add_parser(
+        "public-p2p-v1-rc",
+        help="Build the signed Public P2P Swarm Inference v1.0 RC artifact.",
+    )
+    public_p2p_v1_rc.add_argument("public_p2p_v1_rc_mode", choices=["local-smoke", "package", "evidence-import", "kaggle-auto"])
+    public_p2p_v1_rc.add_argument("--output-dir", default="dist/public-p2p-swarm-inference-v1-rc")
+    public_p2p_v1_rc.add_argument("--swarm-id", default="public-p2p-v1-rc")
+    public_p2p_v1_rc.add_argument("--public-host", default="24.199.118.54")
+    public_p2p_v1_rc.add_argument("--p2p-port", type=int, default=9660)
+    public_p2p_v1_rc.add_argument("--coordinator-port", type=int, default=9661)
+    public_p2p_v1_rc.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    public_p2p_v1_rc.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    public_p2p_v1_rc.add_argument("--hf-cache-dir", default="")
+    public_p2p_v1_rc.add_argument("--prompt-text", default="CrowdTensor public P2P v1 RC")
+    public_p2p_v1_rc.add_argument("--max-new-tokens", type=int, default=2)
+    public_p2p_v1_rc.add_argument("--startup-timeout", type=float, default=30.0)
+    public_p2p_v1_rc.add_argument("--timeout-seconds", type=float, default=120.0)
+    public_p2p_v1_rc.add_argument("--http-timeout", type=float, default=10.0)
+    public_p2p_v1_rc.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
+    public_p2p_v1_rc.add_argument("--signed-local-report", default="")
+    public_p2p_v1_rc.add_argument("--v06-local-report", default="dist/p2p-swarm-inference-v06-local-smoke-refresh2/p2p_swarm_inference_v06.json")
+    public_p2p_v1_rc.add_argument("--v06-external-report", default="dist/p2p-swarm-inference-v06-kaggle-auto-final/p2p_swarm_inference_v06.json")
+    public_p2p_v1_rc.add_argument("--v06-kaggle-report", default="dist/p2p-swarm-inference-v06-kaggle-auto-final/kaggle-auto/p2p_v06_kaggle_auto.json")
+    public_p2p_v1_rc.add_argument("--kaggle-owner", default=os.environ.get("KAGGLE_USERNAME", ""))
+    public_p2p_v1_rc.add_argument("--kernel-slug-prefix", default="")
+    public_p2p_v1_rc.add_argument("--kaggle-push-timeout-seconds", type=float, default=240.0)
+    public_p2p_v1_rc.add_argument("--kaggle-delete-timeout-seconds", type=float, default=120.0)
+    public_p2p_v1_rc.add_argument("--kaggle-stage-timeout-seconds", type=float, default=600.0)
+    public_p2p_v1_rc.add_argument("--skip-kaggle-cleanup", action="store_true")
+    public_p2p_v1_rc.add_argument("--json", action="store_true")
+
+    real_p2p_rc = subparsers.add_parser(
+        "real-p2p-rc",
+        help="Build the Real P2P provider-core Swarm Inference RC artifact.",
+    )
+    real_p2p_rc.add_argument("real_p2p_rc_mode", choices=["local-smoke", "package", "external-existing", "evidence-import", "kaggle-auto", "kaggle-connectivity", "kaggle-runtime-smoke"])
+    real_p2p_rc.add_argument("--output-dir", default="dist/real-p2p-swarm-inference-core-rc")
+    real_p2p_rc.add_argument("--swarm-id", default="real-p2p-core-rc")
+    real_p2p_rc.add_argument("--public-host", default="24.199.118.54")
+    real_p2p_rc.add_argument("--p2p-port", type=int, default=9760)
+    real_p2p_rc.add_argument("--coordinator-port", type=int, default=9761)
+    real_p2p_rc.add_argument("--libp2p-port", type=int, default=0)
+    real_p2p_rc.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    real_p2p_rc.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    real_p2p_rc.add_argument("--hf-cache-dir", default="")
+    real_p2p_rc.add_argument("--prompt-text", default="CrowdTensor real P2P core RC")
+    real_p2p_rc.add_argument("--prompt-texts", default="")
+    real_p2p_rc.add_argument("--stream-generation", action="store_true")
+    real_p2p_rc.add_argument("--max-new-tokens", type=int, default=2)
+    real_p2p_rc.add_argument("--startup-timeout", type=float, default=45.0)
+    real_p2p_rc.add_argument("--timeout-seconds", type=float, default=120.0)
+    real_p2p_rc.add_argument("--session-queue-timeout", type=float, default=45.0)
+    real_p2p_rc.add_argument("--miner-timeout", type=float, default=180.0)
+    real_p2p_rc.add_argument("--generate-timeout", type=float, default=180.0)
+    real_p2p_rc.add_argument("--http-timeout", type=float, default=10.0)
+    real_p2p_rc.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
+    real_p2p_rc.add_argument("--peer-bootstrap", default="")
+    real_p2p_rc.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    real_p2p_rc.add_argument("--verify-generate", action="store_true")
+    real_p2p_rc.add_argument("--discovery-backend", choices=sorted(DISCOVERY_BACKENDS), default="http-provider-store")
+    real_p2p_rc.add_argument("--real-p2p-report", default="")
+    real_p2p_rc.add_argument("--kaggle-owner", default=os.environ.get("KAGGLE_USERNAME", ""))
+    real_p2p_rc.add_argument("--kernel-slug-prefix", default="")
+    real_p2p_rc.add_argument("--kaggle-push-timeout-seconds", type=float, default=240.0)
+    real_p2p_rc.add_argument("--kaggle-delete-timeout-seconds", type=float, default=120.0)
+    real_p2p_rc.add_argument("--kaggle-stage-timeout-seconds", type=float, default=600.0)
+    real_p2p_rc.add_argument("--kaggle-status-poll-seconds", type=float, default=15.0)
+    real_p2p_rc.add_argument("--failure-mode", choices=["none", "kill-stage0-after-claim", "kill-stage1-after-claim"], default="none")
+    real_p2p_rc.add_argument("--lease-seconds", type=float, default=15.0)
+    real_p2p_rc.add_argument("--compute-seconds", type=float, default=0.2)
+    real_p2p_rc.add_argument("--victim-compute-seconds", type=float, default=45.0)
+    real_p2p_rc.add_argument("--claim-observe-timeout", type=float, default=180.0)
+    real_p2p_rc.add_argument("--requeue-timeout", type=float, default=120.0)
+    real_p2p_rc.add_argument("--max-request-attempts", type=int, default=240)
+    real_p2p_rc.add_argument("--skip-kaggle-cleanup", action="store_true")
+    real_p2p_rc.add_argument("--json", action="store_true")
+
+    petals_candidate = subparsers.add_parser(
+        "petals-candidate",
+        help="Build the Petals-class real-P2P inference candidate artifact.",
+    )
+    petals_candidate.add_argument("petals_candidate_mode", choices=["local-smoke", "package", "evidence-import"])
+    petals_candidate.add_argument("--output-dir", default="dist/petals-class-p2p-candidate")
+    petals_candidate.add_argument("--local-report", default="dist/real-p2p-libp2p-local-smoke-ready/real_p2p_swarm_inference_core_rc.json")
+    petals_candidate.add_argument("--runtime-smoke-report", default="dist/real-p2p-libp2p-kaggle-runtime-smoke-20260531-r6/real_p2p_swarm_inference_core_rc.json")
+    petals_candidate.add_argument("--external-report", default="dist/real-p2p-libp2p-kaggle-auto-20260531-r4/real_p2p_swarm_inference_core_rc.json")
+    petals_candidate.add_argument("--requeue-report", default="")
+    petals_candidate.add_argument("--peer-scoring-report", default="")
+    petals_candidate.add_argument("--allow-retained-alpha-without-requeue", action="store_true")
+    petals_candidate.add_argument("--public-host", default="24.199.118.54")
+    petals_candidate.add_argument("--p2p-port", type=int, default=9860)
+    petals_candidate.add_argument("--coordinator-port", type=int, default=9861)
+    petals_candidate.add_argument("--libp2p-port", type=int, default=10860)
+    petals_candidate.add_argument("--max-new-tokens", type=int, default=8)
+    petals_candidate.add_argument("--timeout-seconds", type=float, default=300.0)
+    petals_candidate.add_argument("--startup-timeout", type=float, default=45.0)
+    petals_candidate.add_argument("--session-queue-timeout", type=float, default=45.0)
+    petals_candidate.add_argument("--miner-timeout", type=float, default=240.0)
+    petals_candidate.add_argument("--generate-timeout", type=float, default=240.0)
+    petals_candidate.add_argument("--http-timeout", type=float, default=10.0)
+    petals_candidate.add_argument("--json", action="store_true")
 
     public_swarm_gpu_beta = subparsers.add_parser(
         "public-swarm-gpu-beta",
@@ -6382,7 +8594,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_demo_kaggle_real.add_argument("--task-id", default="")
     remote_demo_kaggle_real.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if args.command in {"local-proof", "serve", "join", "generate", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "serve", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -6392,19 +8604,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.command == "serve":
         if args.port < 1:
             raise SystemExit("--port must be positive")
+        if args.ttl_seconds <= 0:
+            raise SystemExit("--ttl-seconds must be positive")
+        if args.lease_seconds <= 0:
+            raise SystemExit("--lease-seconds must be positive")
+        if args.http_timeout <= 0:
+            raise SystemExit("--http-timeout must be positive")
     if args.command == "join":
-        if not args.coordinator_url and not args.peer_bootstrap:
+        if not args.coordinator_url and not args.peer_bootstrap and not args.p2p:
             raise SystemExit("join requires --coordinator-url or --peer-bootstrap")
         if args.http_timeout <= 0:
             raise SystemExit("--http-timeout must be positive")
+        if args.ttl_seconds <= 0:
+            raise SystemExit("--ttl-seconds must be positive")
         if args.max_tasks < 0:
             raise SystemExit("--max-tasks must be non-negative")
+        if args.max_runtime_seconds < 0:
+            raise SystemExit("--max-runtime-seconds must be non-negative")
+        if args.compute_seconds < 0:
+            raise SystemExit("--compute-seconds must be non-negative")
+        if args.max_request_attempts < 1:
+            raise SystemExit("--max-request-attempts must be at least 1")
+        if args.retry_base_sleep < 0 or args.retry_max_sleep < 0:
+            raise SystemExit("--retry-base-sleep and --retry-max-sleep must be non-negative")
+        if args.idle_sleep <= 0:
+            raise SystemExit("--idle-sleep must be positive")
     if args.command == "generate":
         if args.max_new_tokens < 1 or args.max_new_tokens > 32:
             raise SystemExit("--max-new-tokens must be between 1 and 32")
-        if len(args.prompt_text) > 256:
-            raise SystemExit("--prompt-text must be at most 256 characters")
-        if not args.coordinator_url and not args.peer_bootstrap:
+        try:
+            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if not args.coordinator_url and not args.peer_bootstrap and not args.p2p:
             raise SystemExit("generate requires --coordinator-url or --peer-bootstrap")
         if args.poll_interval <= 0:
             raise SystemExit("--poll-interval must be positive")
@@ -6412,6 +8644,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--http-timeout must be positive")
         if args.admin_results_limit < 1:
             raise SystemExit("--admin-results-limit must be at least 1")
+    if args.command == "p2pd":
+        if args.port < 1:
+            raise SystemExit("--port must be positive")
+        if args.ttl_seconds <= 0:
+            raise SystemExit("--ttl-seconds must be positive")
+    if args.command == "p2p-daemon":
+        if args.port < 1:
+            raise SystemExit("--port must be positive")
+        if args.ttl_seconds <= 0:
+            raise SystemExit("--ttl-seconds must be positive")
+        if args.signature_max_age_seconds <= 0:
+            raise SystemExit("--signature-max-age-seconds must be positive")
+        if args.require_signed and not args.record_secret:
+            raise SystemExit("--require-signed requires --record-secret")
+        if args.discovery_backend not in DISCOVERY_BACKENDS:
+            raise SystemExit("--discovery-backend must be one of: " + ", ".join(sorted(DISCOVERY_BACKENDS)))
+        if args.libp2p_port < 0:
+            raise SystemExit("--libp2p-port must be non-negative")
     if args.command == "peer":
         if args.peer_action == "daemon":
             if args.port < 1:
@@ -6558,6 +8808,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if hasattr(args, "cpu_timeout_seconds") and args.cpu_timeout_seconds <= 0:
             raise SystemExit("--cpu-timeout-seconds must be positive")
     if args.command == "public-swarm-beta-rc":
+        try:
+            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         if args.request_count < 1 or args.request_count > 4:
             raise SystemExit("--request-count must be between 1 and 4")
         if args.cpu_request_count < 1 or args.cpu_request_count > 4:
@@ -6587,6 +8841,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             if missing:
                 raise SystemExit(f"external-existing requires: {', '.join('--' + item.replace('_', '-') for item in missing)}")
     if args.command == "public-swarm-product-beta":
+        try:
+            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         if args.request_count < 1 or args.request_count > 4:
             raise SystemExit("--request-count must be between 1 and 4")
         if args.cpu_request_count < 1 or args.cpu_request_count > 4:
@@ -6615,6 +8873,65 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             ]
             if missing:
                 raise SystemExit(f"external-existing requires: {', '.join('--' + item.replace('_', '-') for item in missing)}")
+    if args.command == "public-real-llm-swarm-beta":
+        try:
+            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.request_count < 1 or args.request_count > 4:
+            raise SystemExit("--request-count must be between 1 and 4")
+        if args.cpu_request_count < 1 or args.cpu_request_count > 4:
+            raise SystemExit("--cpu-request-count must be between 1 and 4")
+        if args.external_llm_request_count < 1 or args.external_llm_request_count > 4:
+            raise SystemExit("--external-llm-request-count must be between 1 and 4")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        if (
+            args.base_port < 1
+            or args.port < 1
+            or args.p2p_port < 1
+            or args.public_swarm_v2_p2p_port < 1
+            or args.public_swarm_v2_coordinator_port < 1
+            or args.public_swarm_v2_real_p2p_port < 1
+            or args.public_swarm_v2_real_p2p_coordinator_port < 1
+            or args.public_swarm_v2_real_p2p_libp2p_port < 0
+        ):
+            raise SystemExit("public real LLM beta ports must be positive, except --public-swarm-v2-real-p2p-libp2p-port may be 0")
+        for name in [
+            "timeout_seconds",
+            "remote_timeout_seconds",
+            "cpu_timeout_seconds",
+            "startup_timeout",
+            "process_exit_timeout",
+            "poll_interval",
+            "http_timeout",
+        ]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+    if args.command == "usable-swarm":
+        try:
+            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.p2p_port < 1 or args.coordinator_port < 1:
+            raise SystemExit("--p2p-port and --coordinator-port must be positive")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        for name in ["startup_timeout", "timeout_seconds", "http_timeout"]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+    if args.command == "public-swarm-v2":
+        try:
+            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.p2p_port < 1 or args.coordinator_port < 1:
+            raise SystemExit("--p2p-port and --coordinator-port must be positive")
+        if args.max_new_tokens < 8 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 8 and 32")
+        for name in ["startup_timeout", "timeout_seconds", "http_timeout"]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
     if args.command == "preview":
         if args.request_count < 1 or args.request_count > 4:
             raise SystemExit("--request-count must be between 1 and 4")
@@ -6760,6 +9077,110 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--max-request-attempts must be at least 1")
         if args.swarm_trial_mode == "live-kaggle" and not args.kaggle_owner and not os.environ.get("KAGGLE_USERNAME"):
             raise SystemExit("--kaggle-owner or KAGGLE_USERNAME is required for live-kaggle")
+    if args.command == "preview-v04":
+        if args.request_count < 1 or args.request_count > 4:
+            raise SystemExit("--request-count must be between 1 and 4")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        if args.base_port < 1 or args.port < 1:
+            raise SystemExit("--base-port and --port must be positive")
+        for name in [
+            "timeout_seconds",
+            "remote_timeout_seconds",
+            "cpu_timeout_seconds",
+            "startup_timeout",
+            "session_queue_timeout",
+            "miner_timeout",
+            "generate_timeout",
+        ]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+        if args.require_optional_model_ready and not args.run_optional_model and not args.optional_model_report:
+            raise SystemExit("--require-optional-model-ready requires --run-optional-model or --optional-model-report")
+    if args.command == "p2p-swarm-v06":
+        if args.p2p_port < 1 or args.coordinator_port < 1:
+            raise SystemExit("--p2p-port and --coordinator-port must be positive")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        try:
+            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.p2p_swarm_v06_mode == "external-existing" and not args.peer_bootstrap:
+            raise SystemExit("external-existing requires --peer-bootstrap")
+        if args.require_signed and not args.peer_secret:
+            raise SystemExit("--require-signed requires --peer-secret")
+        if args.p2p_swarm_v06_mode == "kaggle-auto":
+            for name in ["kaggle_push_timeout_seconds", "kaggle_delete_timeout_seconds", "kaggle_stage_timeout_seconds"]:
+                if getattr(args, name) <= 0:
+                    raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+        for name in ["startup_timeout", "timeout_seconds", "http_timeout"]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+    if args.command == "public-p2p-v1-rc":
+        if args.p2p_port < 1 or args.coordinator_port < 1:
+            raise SystemExit("--p2p-port and --coordinator-port must be positive")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        if args.public_p2p_v1_rc_mode == "kaggle-auto" and not args.kaggle_owner:
+            raise SystemExit("--kaggle-owner or KAGGLE_USERNAME is required for kaggle-auto")
+        for name in ["startup_timeout", "timeout_seconds", "http_timeout", "kaggle_push_timeout_seconds", "kaggle_delete_timeout_seconds", "kaggle_stage_timeout_seconds"]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+    if args.command == "real-p2p-rc":
+        if args.p2p_port < 1 or args.coordinator_port < 1:
+            raise SystemExit("--p2p-port and --coordinator-port must be positive")
+        if args.libp2p_port < 0:
+            raise SystemExit("--libp2p-port must be non-negative")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        if args.real_p2p_rc_mode == "external-existing" and not args.peer_bootstrap:
+            raise SystemExit("external-existing requires --peer-bootstrap")
+        if args.real_p2p_rc_mode == "evidence-import" and not args.real_p2p_report:
+            raise SystemExit("evidence-import requires --real-p2p-report")
+        if (args.prompt_texts or args.stream_generation) and args.real_p2p_rc_mode != "external-existing":
+            raise SystemExit("--prompt-texts and --stream-generation are currently supported for real-p2p-rc external-existing only")
+        if (args.prompt_texts or args.stream_generation) and not args.verify_generate:
+            raise SystemExit("--prompt-texts and --stream-generation require --verify-generate")
+        if args.real_p2p_rc_mode in {"kaggle-auto", "kaggle-connectivity", "kaggle-runtime-smoke"} and not args.kaggle_owner and not os.environ.get("KAGGLE_USERNAME"):
+            raise SystemExit(f"--kaggle-owner or KAGGLE_USERNAME is required for {args.real_p2p_rc_mode}")
+        parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        for name in [
+            "startup_timeout",
+            "timeout_seconds",
+            "session_queue_timeout",
+            "miner_timeout",
+            "generate_timeout",
+            "http_timeout",
+        ]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+        if args.real_p2p_rc_mode in {"kaggle-auto", "kaggle-connectivity", "kaggle-runtime-smoke"}:
+            for name in ["kaggle_push_timeout_seconds", "kaggle_delete_timeout_seconds", "kaggle_stage_timeout_seconds", "kaggle_status_poll_seconds"]:
+                if getattr(args, name) <= 0:
+                    raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+            for name in ["lease_seconds", "victim_compute_seconds", "claim_observe_timeout", "requeue_timeout"]:
+                if getattr(args, name) <= 0:
+                    raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+            if args.compute_seconds < 0:
+                raise SystemExit("--compute-seconds must be non-negative")
+            if args.max_request_attempts < 1:
+                raise SystemExit("--max-request-attempts must be at least 1")
+    if args.command == "petals-candidate":
+        if args.p2p_port < 1 or args.coordinator_port < 1 or args.libp2p_port < 1:
+            raise SystemExit("--p2p-port, --coordinator-port, and --libp2p-port must be positive")
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        for name in [
+            "startup_timeout",
+            "timeout_seconds",
+            "session_queue_timeout",
+            "miner_timeout",
+            "generate_timeout",
+            "http_timeout",
+        ]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
     if args.command == "public-swarm-gpu-beta":
         if args.request_count > 4:
             raise SystemExit("--request-count must be between 1 and 4")
@@ -7068,7 +9489,27 @@ def main(argv: list[str] | None = None) -> None:
         if args.json:
             print(json.dumps(report, sort_keys=True))
         else:
-            print(f"CrowdTensor generate ok={report.get('ok')} diagnosis={','.join(report.get('diagnosis_codes') or [])}")
+            print_product_generate(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "p2pd":
+        report = build_p2pd_cli(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            if report.get("command"):
+                print("\n".join(report.get("command") or []))
+            else:
+                print(f"CrowdTensor p2pd ok={report.get('ok')} diagnosis={','.join(report.get('diagnosis_codes') or [])}")
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "p2p-daemon":
+        report = build_p2p_daemon_cli(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            if report.get("command"):
+                print("\n".join(report.get("command") or []))
+            else:
+                print(f"CrowdTensor p2p-daemon ok={report.get('ok')} diagnosis={','.join(report.get('diagnosis_codes') or [])}")
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "peer":
         report = build_peer_cli(args)
@@ -7227,6 +9668,27 @@ def main(argv: list[str] | None = None) -> None:
         else:
             print_public_swarm_product_beta(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "public-real-llm-swarm-beta":
+        summary = build_public_real_llm_swarm_beta(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_public_real_llm_swarm_beta(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "usable-swarm":
+        summary = build_usable_swarm_inference(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_usable_swarm_inference(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "public-swarm-v2":
+        summary = build_public_swarm_inference_v2(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_public_swarm_inference_v2(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "preview":
         summary = build_public_swarm_developer_preview(args)
         if args.json:
@@ -7254,6 +9716,41 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(summary, sort_keys=True))
         else:
             print_public_swarm_trial(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "preview-v04":
+        summary = build_public_swarm_preview_v04(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_public_swarm_preview_v04(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "p2p-swarm-v06":
+        summary = build_p2p_swarm_inference_v06(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print(f"CrowdTensor P2P Swarm Inference v0.6 ok={summary.get('ok')} diagnosis={','.join(summary.get('diagnosis_codes') or [])}")
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "public-p2p-v1-rc":
+        summary = build_public_p2p_swarm_inference_v1_rc(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print(f"CrowdTensor Public P2P Swarm Inference v1.0 RC ok={summary.get('ok')} diagnosis={','.join(summary.get('diagnosis_codes') or [])}")
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "real-p2p-rc":
+        summary = build_real_p2p_swarm_inference_core_rc(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print(f"CrowdTensor Real P2P Swarm Inference Core RC ok={summary.get('ok')} diagnosis={','.join(summary.get('diagnosis_codes') or [])}")
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "petals-candidate":
+        summary = build_petals_class_p2p_candidate(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print(f"CrowdTensor Petals-Class P2P Candidate ok={summary.get('ok')} diagnosis={','.join(summary.get('diagnosis_codes') or [])}")
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "public-swarm-gpu-beta":
         summary = build_public_swarm_gpu_inference_beta(args)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -242,6 +244,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "CrowdTensor prompt",
             "--backend",
             "cuda",
+            "--hf-model-id",
+            "distilgpt2",
             "--dry-run",
             "--json",
         ])
@@ -251,8 +255,2681 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["session_request"]["schema"], "session_protocol_v1")
+        self.assertEqual(report["session_request"]["hf_model_id"], "distilgpt2")
         self.assertNotIn("CrowdTensor prompt", encoded)
         self.assertIn("prompt_hash", encoded)
+
+    def test_p2pd_top_level_prints_daemon_command(self) -> None:
+        args = cli.parse_args([
+            "p2pd",
+            "--port",
+            "8789",
+            "--peer-secret",
+            "p2p-secret-value",
+            "--require-signed",
+            "--json",
+        ])
+
+        report = cli.build_p2pd_cli(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "p2pd_cli_v1")
+        self.assertIn("p2p_lite_daemon.py", " ".join(report["command"]))
+        self.assertNotIn("p2p-secret-value", json.dumps(report))
+        self.assertIn("--<redacted>", report["command"])
+        self.assertIn("p2p_signed_announce_required", report["diagnosis_codes"])
+        self.assertIn("p2pd_command_ready", report["diagnosis_codes"])
+
+    def test_p2p_daemon_top_level_prints_real_daemon_command(self) -> None:
+        args = cli.parse_args([
+            "p2p-daemon",
+            "--port",
+            "8889",
+            "--record-secret",
+            "p2p-secret-value",
+            "--require-signed",
+            "--json",
+        ])
+
+        report = cli.build_p2p_daemon_cli(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "p2p_daemon_cli_v1")
+        self.assertIn("real_p2p_daemon.py", " ".join(report["command"]))
+        self.assertNotIn("p2p-secret-value", json.dumps(report))
+        self.assertIn("--<redacted>", report["command"])
+        self.assertIn("real_p2p_provider_store_ready", report["diagnosis_codes"])
+        self.assertIn("replaceable_discovery_backend_ready", report["diagnosis_codes"])
+
+    def test_product_serve_p2p_announces_coordinator(self) -> None:
+        args = cli.parse_args([
+            "serve",
+            "--p2p",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8788",
+            "--public-host",
+            "coord.example",
+            "--peer-secret",
+            "p2p-secret-value",
+            "--json",
+        ])
+
+        with patch.object(cli, "post_announce", return_value={"ok": True, "schema": "p2p_lite_announce_v1"}) as announced:
+            report = cli.build_product_serve(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("p2p_coordinator_announce_ready", report["diagnosis_codes"])
+        peer = announced.call_args.args[1]
+        self.assertEqual(peer["role"], "coordinator")
+        self.assertEqual(peer["urls"]["coordinator"], "http://coord.example:8787")
+        self.assertEqual(peer["peer_signature"]["algorithm"], "hmac-sha256")
+        self.assertNotIn("p2p-secret-value", json.dumps(report))
+
+    def test_product_serve_real_p2p_announces_provider_record(self) -> None:
+        args = cli.parse_args([
+            "serve",
+            "--p2p",
+            "--p2p-backend",
+            "real",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8888",
+            "--public-host",
+            "coord.example",
+            "--peer-secret",
+            "p2p-secret-value",
+            "--json",
+        ])
+
+        with patch.object(cli, "post_provider_record", return_value={"ok": True, "schema": "real_p2p_announce_v1"}) as announced:
+            report = cli.build_product_serve(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("real_p2p_coordinator_announce_ready", report["diagnosis_codes"])
+        record = announced.call_args.args[1]
+        self.assertEqual(record["schema"], "real_p2p_provider_record_v1")
+        self.assertEqual(record["provider"]["role"], "coordinator")
+        self.assertEqual(record["provider"]["urls"]["coordinator"], "http://coord.example:8787")
+        self.assertEqual(record["provider"]["peer_signature"]["algorithm"], "hmac-sha256")
+        self.assertEqual(report["p2p"]["backend"], "real")
+        self.assertNotIn("p2p-secret-value", json.dumps(report))
+
+    def test_product_join_p2p_discovers_and_announces_stage_capability(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--p2p",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--peer-secret",
+            "p2p-secret-value",
+            "--json",
+        ])
+
+        catalog = {
+            "peers": [
+                {
+                    "role": "coordinator",
+                    "peer_id": "coord",
+                    "urls": {"coordinator": "http://127.0.0.1:8787"},
+                    "capabilities": {"backend": "cpu"},
+                }
+            ]
+        }
+        with patch.object(cli, "fetch_peer_catalog", return_value=catalog), patch.object(
+            cli,
+            "post_announce",
+            return_value={"ok": True, "schema": "p2p_lite_announce_v1"},
+        ) as announced:
+            report = cli.build_product_join(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["coordinator_url"], "http://127.0.0.1:8787")
+        self.assertIn("p2p_stage_miner_announce_ready", report["diagnosis_codes"])
+        peer = announced.call_args.args[1]
+        self.assertEqual(peer["role"], "miner")
+        self.assertIn("real_llm_sharded_stage0", peer["capabilities"]["real_llm_sharded_stage_capabilities"])
+        self.assertEqual(peer["peer_signature"]["algorithm"], "hmac-sha256")
+        self.assertNotIn("p2p-secret-value", json.dumps(report))
+
+    def test_product_join_real_p2p_discovers_and_announces_stage_provider(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--p2p",
+            "--p2p-backend",
+            "real",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8888",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--peer-secret",
+            "p2p-secret-value",
+            "--json",
+        ])
+
+        catalog = {
+            "schema": "real_p2p_provider_catalog_v1",
+            "peers": [
+                {
+                    "role": "coordinator",
+                    "peer_id": "coord",
+                    "urls": {"coordinator": "http://127.0.0.1:8787"},
+                    "capabilities": {"backend": "cpu"},
+                }
+            ],
+        }
+        with patch.object(cli, "fetch_provider_catalog", return_value=catalog), patch.object(
+            cli,
+            "post_provider_record",
+            return_value={"ok": True, "schema": "real_p2p_announce_v1"},
+        ) as announced:
+            report = cli.build_product_join(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["coordinator_url"], "http://127.0.0.1:8787")
+        self.assertIn("real_p2p_stage_miner_announce_ready", report["diagnosis_codes"])
+        record = announced.call_args.args[1]
+        self.assertEqual(record["schema"], "real_p2p_provider_record_v1")
+        self.assertEqual(record["provider"]["role"], "miner")
+        self.assertIn("real_llm_sharded_stage0", record["stage_capabilities"])
+        self.assertEqual(record["provider"]["peer_signature"]["algorithm"], "hmac-sha256")
+        self.assertNotIn("p2p-secret-value", json.dumps(report))
+
+    def test_product_join_forwards_compute_seconds_to_miner(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--miner-id",
+            "slow-stage0",
+            "--stage",
+            "stage0",
+            "--compute-seconds",
+            "12.5",
+            "--max-runtime-seconds",
+            "30",
+            "--max-request-attempts",
+            "9",
+            "--json",
+        ])
+
+        report = cli.build_product_join(args)
+
+        self.assertTrue(report["ok"], report)
+        command = report["command"]
+        self.assertIn("--compute-seconds", command)
+        self.assertEqual(command[command.index("--compute-seconds") + 1], "12.5")
+        self.assertIn("--max-runtime-seconds", command)
+        self.assertEqual(command[command.index("--max-runtime-seconds") + 1], "30.0")
+        self.assertIn("--max-request-attempts", command)
+        self.assertEqual(command[command.index("--max-request-attempts") + 1], "9")
+
+    def test_discovery_refresh_rebuilds_signed_record_timestamps(self) -> None:
+        peer = cli.build_p2p_peer(
+            swarm_id="swarm",
+            peer_id="stage0-miner",
+            role="miner",
+            backend="cpu",
+            stage_role="stage0",
+            ttl_seconds=60,
+        )
+        records: list[dict] = []
+
+        def fake_announce(_: str, record: dict, **__: object) -> dict:
+            records.append(record)
+            return {"ok": True, "record": record}
+
+        with patch.object(cli, "post_provider_record", side_effect=fake_announce), patch("crowdtensor.p2p_lite.time.time", side_effect=[1000.0, 1025.0]), patch("crowdtensor.real_p2p.time.time", side_effect=[1000.0, 1025.0]):
+            first = cli.announce_discovery_peer("http://127.0.0.1:8888", peer, timeout=1, backend="real", peer_secret="secret")
+            refresh = cli.DiscoveryRefreshThread(
+                bootstrap="http://127.0.0.1:8888",
+                peer=peer,
+                timeout=1,
+                backend="real",
+                peer_secret="secret",
+                interval_seconds=1,
+            )
+            refresh._run_once()
+
+        self.assertTrue(first["ok"])
+        self.assertEqual(len(records), 2)
+        self.assertNotEqual(records[0]["provider"]["last_seen"], records[1]["provider"]["last_seen"])
+        self.assertNotEqual(
+            records[0]["provider"]["peer_signature"]["signed_at"],
+            records[1]["provider"]["peer_signature"]["signed_at"],
+        )
+
+    def test_product_generate_p2p_dry_run_requires_stage_peers(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--p2p",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--max-new-tokens",
+            "2",
+            "--dry-run",
+            "--json",
+        ])
+        catalog = {
+            "peers": [
+                {"role": "coordinator", "peer_id": "coord", "urls": {"coordinator": "http://127.0.0.1:8787"}},
+                {
+                    "role": "miner",
+                    "peer_id": "stage0",
+                    "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"]},
+                },
+                {
+                    "role": "miner",
+                    "peer_id": "stage1",
+                    "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage1"]},
+                },
+            ]
+        }
+
+        with patch.object(cli, "fetch_peer_catalog", return_value=catalog):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["route"]["route_source"], "p2p-discovery")
+        self.assertIn("p2p_generate_route_ready", report["diagnosis_codes"])
+
+    def test_product_generate_p2p_dry_run_filters_coordinator_by_model_id(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--p2p",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--hf-model-id",
+            "distilgpt2",
+            "--max-new-tokens",
+            "2",
+            "--dry-run",
+            "--json",
+        ])
+        catalog = {
+            "peers": [
+                {
+                    "role": "coordinator",
+                    "peer_id": "coord-tiny",
+                    "urls": {"coordinator": "http://tiny.example:8787"},
+                    "capabilities": {"backend": "cpu", "hf_model_id": "sshleifer/tiny-gpt2"},
+                },
+                {
+                    "role": "coordinator",
+                    "peer_id": "coord-distil",
+                    "urls": {"coordinator": "http://distil.example:8787"},
+                    "capabilities": {"backend": "cpu", "hf_model_id": "distilgpt2"},
+                },
+                {
+                    "role": "miner",
+                    "peer_id": "stage0-distil",
+                    "capabilities": {
+                        "backend": "cpu",
+                        "hf_model_id": "distilgpt2",
+                        "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"],
+                    },
+                },
+                {
+                    "role": "miner",
+                    "peer_id": "stage1-distil",
+                    "capabilities": {
+                        "backend": "cpu",
+                        "hf_model_id": "distilgpt2",
+                        "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage1"],
+                    },
+                },
+            ]
+        }
+
+        with patch.object(cli, "fetch_peer_catalog", return_value=catalog):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["route"]["coordinator_url"], "http://distil.example:8787")
+        self.assertEqual(report["route"]["coordinator_filter"]["mismatched_peers"], ["coord-tiny"])
+        self.assertIn("session_route_coordinator_filter_ready", report["route"]["diagnosis_codes"])
+
+    def test_product_generate_real_p2p_dry_run_uses_route_lookup(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--p2p",
+            "--p2p-backend",
+            "real",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8888",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--max-new-tokens",
+            "2",
+            "--dry-run",
+            "--json",
+        ])
+        peers = [
+            {"role": "coordinator", "peer_id": "coord", "urls": {"coordinator": "http://127.0.0.1:8787"}},
+            {
+                "role": "miner",
+                "peer_id": "stage0",
+                "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"]},
+            },
+            {
+                "role": "miner",
+                "peer_id": "stage1",
+                "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage1"]},
+            },
+        ]
+        catalog = {"schema": "real_p2p_provider_catalog_v1", "peers": peers}
+        route_payload = {
+            "schema": "real_p2p_route_lookup_v1",
+            "ok": True,
+            "route": {
+                "route_source": "real-p2p-discovery",
+                "coordinator_url": "http://127.0.0.1:8787",
+                "coordinator_url_present": True,
+                "required_capabilities": ["real_llm_sharded_stage0", "real_llm_sharded_stage1"],
+                "missing_capabilities": [],
+                "matched_peers": ["stage0", "stage1"],
+                "usable_now": True,
+                "diagnosis_codes": ["real_p2p_route_lookup_ready"],
+            },
+        }
+
+        with patch.object(cli, "fetch_provider_catalog", return_value=catalog), patch.object(
+            cli,
+            "post_route_lookup",
+            return_value=route_payload,
+        ):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["route"]["route_source"], "real-p2p-discovery")
+        self.assertEqual(report["p2p"]["backend"], "real")
+        self.assertIn("real_p2p_generate_route_ready", report["diagnosis_codes"])
+
+    def test_product_generate_real_p2p_route_lookup_uses_compatible_coordinator(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--p2p",
+            "--p2p-backend",
+            "real",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8888",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--hf-model-id",
+            "distilgpt2",
+            "--max-new-tokens",
+            "2",
+            "--dry-run",
+            "--json",
+        ])
+        peers = [
+            {
+                "role": "coordinator",
+                "peer_id": "coord-tiny",
+                "urls": {"coordinator": "http://tiny.example:8787"},
+                "capabilities": {"backend": "cpu", "hf_model_id": "sshleifer/tiny-gpt2"},
+            },
+            {
+                "role": "coordinator",
+                "peer_id": "coord-distil",
+                "urls": {"coordinator": "http://distil.example:8787"},
+                "capabilities": {"backend": "cpu", "hf_model_id": "distilgpt2"},
+            },
+            {
+                "role": "miner",
+                "peer_id": "stage0-distil",
+                "capabilities": {
+                    "backend": "cpu",
+                    "hf_model_id": "distilgpt2",
+                    "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"],
+                },
+            },
+            {
+                "role": "miner",
+                "peer_id": "stage1-distil",
+                "capabilities": {
+                    "backend": "cpu",
+                    "hf_model_id": "distilgpt2",
+                    "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage1"],
+                },
+            },
+        ]
+        catalog = {"schema": "real_p2p_provider_catalog_v1", "peers": peers}
+        captured: dict[str, str] = {}
+
+        def fake_route_lookup(
+            bootstrap: str,
+            session_request: dict,
+            *,
+            coordinator_url: str = "",
+            timeout: float = 5.0,
+        ) -> dict:
+            del bootstrap, session_request, timeout
+            captured["coordinator_url"] = coordinator_url
+            return {
+                "schema": "real_p2p_route_lookup_v1",
+                "ok": True,
+                "route": {
+                    "route_source": "real-p2p-discovery",
+                    "coordinator_url": coordinator_url,
+                    "coordinator_url_present": True,
+                    "required_capabilities": ["real_llm_sharded_stage0", "real_llm_sharded_stage1"],
+                    "missing_capabilities": [],
+                    "matched_capabilities": {
+                        "real_llm_sharded_stage0": "stage0-distil",
+                        "real_llm_sharded_stage1": "stage1-distil",
+                    },
+                    "usable_now": True,
+                    "diagnosis_codes": ["real_p2p_route_lookup_ready"],
+                },
+            }
+
+        with patch.object(cli, "fetch_provider_catalog", return_value=catalog), patch.object(
+            cli,
+            "post_route_lookup",
+            side_effect=fake_route_lookup,
+        ):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(captured["coordinator_url"], "http://distil.example:8787")
+        self.assertEqual(report["route"]["coordinator_url"], "http://distil.example:8787")
+
+    def test_product_generate_real_p2p_uses_route_lookup_coordinator_for_session_create(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--p2p",
+            "--p2p-backend",
+            "real",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8888",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+        peers = [
+            {
+                "role": "coordinator",
+                "peer_id": "coord-catalog",
+                "urls": {"coordinator": "http://catalog.example:8787"},
+                "capabilities": {"backend": "cpu", "hf_model_id": "sshleifer/tiny-gpt2"},
+            },
+            {
+                "role": "miner",
+                "peer_id": "stage0",
+                "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"]},
+            },
+            {
+                "role": "miner",
+                "peer_id": "stage1",
+                "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage1"]},
+            },
+        ]
+        catalog = {"schema": "real_p2p_provider_catalog_v1", "peers": peers}
+        route_payload = {
+            "schema": "real_p2p_route_lookup_v1",
+            "ok": True,
+            "route": {
+                "route_source": "real-p2p-discovery",
+                "coordinator_url": "http://route.example:8787",
+                "coordinator_url_present": True,
+                "required_capabilities": ["real_llm_sharded_stage0", "real_llm_sharded_stage1"],
+                "missing_capabilities": [],
+                "matched_capabilities": {
+                    "real_llm_sharded_stage0": "stage0",
+                    "real_llm_sharded_stage1": "stage1",
+                },
+                "usable_now": True,
+                "diagnosis_codes": ["real_p2p_route_lookup_ready"],
+            },
+        }
+        base_urls: list[str] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del payload, admin_token, timeout
+            base_urls.append(base_url)
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "session-route-url",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                }
+            self.assertIn("session_id=session-route-url", path)
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:route",
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "fetch_provider_catalog", return_value=catalog), patch.object(
+            cli,
+            "post_route_lookup",
+            return_value=route_payload,
+        ), patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(base_urls)
+        self.assertTrue(all(url == "http://route.example:8787" for url in base_urls), base_urls)
+        self.assertEqual(report["route"]["coordinator_url"], "http://route.example:8787")
+
+    def test_product_generate_p2p_non_dry_run_blocks_when_route_unusable(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--p2p",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8788",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+        catalog = {
+            "peers": [
+                {"role": "coordinator", "peer_id": "coord", "urls": {"coordinator": "http://127.0.0.1:8787"}},
+                {
+                    "role": "miner",
+                    "peer_id": "stage0",
+                    "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"]},
+                },
+            ]
+        }
+
+        with patch.object(cli, "fetch_peer_catalog", return_value=catalog), patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("session creation should be blocked when p2p route is unusable"),
+        ):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["diagnosis_codes"], ["generate_route_unavailable"])
+        self.assertIn("real_llm_sharded_stage1", report["route"]["missing_capabilities"])
+
+    def test_product_generate_preserves_safe_generation_counts(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--hf-model-id",
+            "distilgpt2",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+        calls: list[tuple[str, str]] = []
+        posted_payloads: list[dict] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, admin_token, timeout
+            calls.append((method, path))
+            if method == "POST":
+                posted_payloads.append(payload or {})
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-test",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "model_id": "distilgpt2",
+                }
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:generated",
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(posted_payloads[0]["hf_model_id"], "distilgpt2")
+        self.assertEqual(report["session"]["hf_model_id"], "distilgpt2")
+        self.assertEqual(report["generation"]["generated_token_count"], 2)
+        self.assertEqual(report["generation"]["max_new_tokens"], 2)
+        self.assertNotIn("admin-secret", encoded)
+        self.assertIn(("GET", "/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit=50&session_id=real-llm-session-test"), calls)
+
+    def test_product_generate_uses_longer_timeout_for_session_create(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--timeout-seconds",
+            "120",
+            "--http-timeout",
+            "5",
+            "--json",
+        ])
+        timeouts: list[tuple[str, float]] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token
+            timeouts.append((path, timeout))
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-timeout",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                }
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:generated",
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(timeouts[0], ("/admin/inference-sessions", 30.0))
+        self.assertTrue(timeouts[1][0].startswith("/admin/results"))
+        self.assertEqual(timeouts[1][1], 5.0)
+
+    def test_product_generate_batch_uses_private_prompt_texts_and_safe_public_summary(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+        posted_payloads: list[dict] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, admin_token, timeout
+            if method == "POST":
+                posted_payloads.append(payload or {})
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            self.assertIn("session_id=real-llm-session-batch", path)
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:batch",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "generated_text": " raw one",
+                                    "generated_token_ids": [1, 2],
+                                    "decoded_tokens_match": True,
+                                },
+                                {
+                                    "request_id": "req-2",
+                                    "prompt_hash": "sha256:p2",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g2",
+                                    "generated_text": " raw two",
+                                    "generated_token_ids": [3, 4],
+                                    "decoded_tokens_match": True,
+                                },
+                            ],
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertTrue(report["ok"], report)
+        self.assertIn("public_swarm_generate_batch_ready", report["diagnosis_codes"])
+        self.assertTrue(report["batch"]["enabled"])
+        self.assertEqual(report["batch"]["request_count"], 2)
+        self.assertTrue(report["batch"]["batch_generation_ready"])
+        self.assertEqual(posted_payloads[0]["request_count"], 2)
+        self.assertEqual(posted_payloads[0]["prompt"], "first private prompt")
+        self.assertEqual(posted_payloads[0]["prompt_texts"], ["first private prompt", "second private prompt"])
+        self.assertEqual([row["generated_text_hash"] for row in report["generation"]["results"]], ["sha256:g1", "sha256:g2"])
+        self.assertNotIn("first private prompt", encoded)
+        self.assertNotIn("second private prompt", encoded)
+        self.assertNotIn("raw one", encoded)
+        self.assertNotIn("raw two", encoded)
+        self.assertNotIn('"generated_token_ids":', encoded)
+        self.assertNotIn("admin-secret", encoded)
+
+    def test_product_generate_batch_waits_for_each_prompt_token_target(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--poll-interval",
+            "0.01",
+            "--json",
+        ])
+        ledger_payloads = [
+            {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:partial",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "decoded_tokens_match": True,
+                                },
+                                {
+                                    "request_id": "req-2",
+                                    "prompt_hash": "sha256:p2",
+                                    "generated_token_count": 1,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g2-partial",
+                                    "decoded_tokens_match": True,
+                                },
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:batch",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "decoded_tokens_match": True,
+                                },
+                                {
+                                    "request_id": "req-2",
+                                    "prompt_hash": "sha256:p2",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g2",
+                                    "decoded_tokens_match": True,
+                                },
+                            ],
+                        }
+                    }
+                ]
+            },
+        ]
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            self.assertIn("session_id=real-llm-session-batch", path)
+            return ledger_payloads.pop(0)
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request), patch.object(cli.time, "sleep", return_value=None):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(ledger_payloads, [])
+        self.assertTrue(report["batch"]["batch_generation_ready"])
+        self.assertEqual(
+            [row["generated_token_count"] for row in report["generation"]["results"]],
+            [2, 2],
+        )
+        self.assertIn("public_swarm_generate_batch_ready", report["diagnosis_codes"])
+
+    def test_product_generate_batch_waits_for_missing_prompt_result(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--poll-interval",
+            "0.01",
+            "--json",
+        ])
+        ledger_payloads = [
+            {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:partial",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "decoded_tokens_match": True,
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:batch",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "decoded_tokens_match": True,
+                                },
+                                {
+                                    "request_id": "req-2",
+                                    "prompt_hash": "sha256:p2",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g2",
+                                    "decoded_tokens_match": True,
+                                },
+                            ],
+                        }
+                    }
+                ]
+            },
+        ]
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            self.assertIn("session_id=real-llm-session-batch", path)
+            return ledger_payloads.pop(0)
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request), patch.object(cli.time, "sleep", return_value=None):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(ledger_payloads, [])
+        self.assertTrue(report["batch"]["batch_generation_ready"])
+        self.assertEqual(report["generation"]["request_count"], 2)
+        self.assertEqual(report["generation"]["observed_request_count"], 2)
+        self.assertIn("public_swarm_generate_batch_ready", report["diagnosis_codes"])
+
+    def test_product_generate_batch_waits_for_per_request_results_not_aggregate_only(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--poll-interval",
+            "0.01",
+            "--json",
+        ])
+        ledger_payloads = [
+            {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:aggregate-only",
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            },
+            {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:batch",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "decoded_tokens_match": True,
+                                },
+                                {
+                                    "request_id": "req-2",
+                                    "prompt_hash": "sha256:p2",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g2",
+                                    "decoded_tokens_match": True,
+                                },
+                            ],
+                        }
+                    }
+                ]
+            },
+        ]
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            self.assertIn("session_id=real-llm-session-batch", path)
+            return ledger_payloads.pop(0)
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request), patch.object(cli.time, "sleep", return_value=None):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(ledger_payloads, [])
+        self.assertTrue(report["batch"]["batch_generation_ready"])
+        self.assertEqual(report["generation"]["observed_request_count"], 2)
+        self.assertEqual([row["generated_text_hash"] for row in report["generation"]["results"]], ["sha256:g1", "sha256:g2"])
+
+    def test_product_generate_batch_waits_for_unique_request_identity(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--poll-interval",
+            "0.01",
+            "--json",
+        ])
+        ledger_payloads = [
+            {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:duplicate",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "decoded_tokens_match": True,
+                                },
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1-duplicate",
+                                    "decoded_tokens_match": True,
+                                },
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:batch",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "decoded_tokens_match": True,
+                                },
+                                {
+                                    "request_id": "req-2",
+                                    "prompt_hash": "sha256:p2",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g2",
+                                    "decoded_tokens_match": True,
+                                },
+                            ],
+                        }
+                    }
+                ]
+            },
+        ]
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            self.assertIn("session_id=real-llm-session-batch", path)
+            return ledger_payloads.pop(0)
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request), patch.object(cli.time, "sleep", return_value=None):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(ledger_payloads, [])
+        self.assertTrue(report["generation"]["batch_identity_ready"])
+        self.assertTrue(report["batch"]["batch_generation_ready"])
+        self.assertEqual([row["request_id"] for row in report["generation"]["results"]], ["req-1", "req-2"])
+
+    def test_product_generate_batch_rejects_more_than_four_prompts(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args([
+                "generate",
+                "--coordinator-url",
+                "http://127.0.0.1:8787",
+                "--prompt-texts",
+                "a,b,c,d,e",
+                "--json",
+            ])
+
+    def test_product_generate_stream_reports_safe_progress_events(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "3",
+            "--stream",
+            "--json",
+        ])
+        def event(count: int, miner_id: str) -> dict:
+            return {
+                "schema": "session_stream_event_v1",
+                "task_id": f"stage1-step{count - 1}",
+                "session_id": "real-llm-session-test",
+                "miner_id": miner_id,
+                "stage_id": 1,
+                "generated_token_count": count,
+                "max_new_tokens": 3,
+                "generation_step": count - 1,
+                "generated_text_hash": f"sha256:step{count - 1}",
+                "decoded_tokens_match": True,
+                "observed_at": float(count),
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            }
+
+        ledgers = [
+            {
+                "results": [
+                    {
+                        "task_id": "stage1-step0",
+                        "session_id": "real-llm-session-test",
+                        "miner_id": "stage1-a",
+                        "validation": {
+                            "session_id": "real-llm-session-test",
+                            "stage_id": 1,
+                            "generation_step": 0,
+                            "generated_token_count": 1,
+                            "max_new_tokens": 3,
+                            "generated_text_hash": "sha256:step0",
+                            "generated_text": " raw step zero",
+                            "generated_token_ids": [101],
+                            "decoded_tokens_match": True,
+                        },
+                    }
+                ]
+            },
+            {
+                "results": [
+                    {
+                        "task_id": "stage1-step0",
+                        "session_id": "real-llm-session-test",
+                        "miner_id": "stage1-a",
+                        "validation": {
+                            "session_id": "real-llm-session-test",
+                            "stage_id": 1,
+                            "generation_step": 0,
+                            "generated_token_count": 1,
+                            "max_new_tokens": 3,
+                            "generated_text_hash": "sha256:step0",
+                            "generated_text": " raw step zero",
+                            "generated_token_ids": [101],
+                            "decoded_tokens_match": True,
+                        },
+                    },
+                    {
+                        "task_id": "stage1-step1",
+                        "session_id": "real-llm-session-test",
+                        "miner_id": "stage1-b",
+                        "validation": {
+                            "session_id": "real-llm-session-test",
+                            "stage_id": 1,
+                            "generation_step": 1,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 3,
+                            "generated_text_hash": "sha256:step1",
+                            "generated_text": " raw step one",
+                            "generated_token_ids": [101, 102],
+                            "decoded_tokens_match": True,
+                        },
+                    },
+                ]
+            },
+            {
+                "results": [
+                    {
+                        "task_id": "stage1-step2",
+                        "session_id": "real-llm-session-test",
+                        "miner_id": "stage1-c",
+                        "validation": {
+                            "session_id": "real-llm-session-test",
+                            "stage_id": 1,
+                            "generation_step": 2,
+                            "generated_token_count": 3,
+                            "max_new_tokens": 3,
+                            "generated_text_hash": "sha256:step2",
+                            "generated_text": " raw final text",
+                            "generated_token_ids": [101, 102, 103],
+                            "decoded_tokens_match": True,
+                        },
+                    }
+                ]
+            },
+        ]
+        stream_payloads = [
+            {"schema": "admin_session_stream_v1", "events": [event(1, "stage1-a")]},
+            {"schema": "admin_session_stream_v1", "events": [event(1, "stage1-a"), event(2, "stage1-b")]},
+            {
+                "schema": "admin_session_stream_v1",
+                "events": [event(1, "stage1-a"), event(2, "stage1-b"), event(3, "stage1-c")],
+            },
+        ]
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-test",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 3,
+                    "backend": "hf_transformers_cpu",
+                }
+            if path.startswith("/admin/session-stream"):
+                return stream_payloads.pop(0)
+            return ledgers.pop(0)
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request), patch.object(cli.time, "sleep", return_value=None):
+            report = cli.build_product_generate(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertTrue(report["ok"], report)
+        self.assertIn("public_swarm_generate_stream_ready", report["diagnosis_codes"])
+        self.assertIn("public_swarm_generate_stream_endpoint_ready", report["diagnosis_codes"])
+        self.assertEqual(report["stream"]["event_count"], 3)
+        self.assertEqual(report["stream"]["source"], "admin-session-stream")
+        self.assertTrue(report["stream"]["endpoint_ready"])
+        self.assertTrue(report["stream"]["stream_generation_ready"])
+        self.assertTrue(report["stream"]["progress"]["stream_progress_complete"])
+        self.assertTrue(report["stream"]["progress"]["all_token_events_ready"])
+        self.assertTrue(report["stream"]["progress"]["monotonic_progress"])
+        self.assertEqual(report["stream"]["progress"]["observed_token_counts"], [1, 2, 3])
+        self.assertEqual(report["stream"]["progress"]["max_observed_token_count"], 3)
+        self.assertEqual(
+            [event["generated_token_count"] for event in report["stream"]["events"]],
+            [1, 2, 3],
+        )
+        self.assertEqual(report["stream"]["events"][-1]["generated_text_hash"], "sha256:step2")
+        self.assertTrue(report["stream"]["events"][-1]["generated_token_ids_public"] is False)
+        self.assertNotIn("raw step", encoded)
+        self.assertNotIn("raw final text", encoded)
+        self.assertNotIn('"generated_token_ids":', encoded)
+        self.assertNotIn("admin-secret", encoded)
+
+    def test_product_generate_batch_stream_requires_each_prompt_progress(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--stream",
+            "--json",
+        ])
+
+        def event(request_id: str, prompt_hash: str, count: int) -> dict:
+            return {
+                "schema": "session_stream_event_v1",
+                "task_id": f"{request_id}-stage1-step{count - 1}",
+                "session_id": "real-llm-session-batch-stream",
+                "miner_id": f"stage1-{request_id}",
+                "stage_id": 1,
+                "request_id": request_id,
+                "prompt_hash": prompt_hash,
+                "generated_token_count": count,
+                "max_new_tokens": 2,
+                "generation_step": count - 1,
+                "generated_text_hash": f"sha256:{request_id}-{count}",
+                "decoded_tokens_match": True,
+                "observed_at": float(count),
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            }
+
+        final_row = {
+            "validation": {
+                "request_count": 2,
+                "generated_token_count": 2,
+                "max_new_tokens": 2,
+                "generated_text_hash": "sha256:batch",
+                "decoded_tokens_match": True,
+                "inference_results": [
+                    {
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:req-1-2",
+                        "generated_text": " raw one",
+                        "generated_token_ids": [1, 2],
+                        "decoded_tokens_match": True,
+                    },
+                    {
+                        "request_id": "req-2",
+                        "prompt_hash": "sha256:p2",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:req-2-2",
+                        "generated_text": " raw two",
+                        "generated_token_ids": [3, 4],
+                        "decoded_tokens_match": True,
+                    },
+                ],
+            }
+        }
+        stream_payload = {
+            "schema": "admin_session_stream_v1",
+            "events": [
+                event("req-1", "sha256:p1", 1),
+                event("req-1", "sha256:p1", 2),
+                event("req-2", "sha256:p2", 1),
+                event("req-2", "sha256:p2", 2),
+            ],
+        }
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch-stream",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            if path.startswith("/admin/session-stream"):
+                return stream_payload
+            return {"results": [final_row]}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertTrue(report["ok"], report)
+        self.assertIn("public_swarm_generate_batch_ready", report["diagnosis_codes"])
+        self.assertIn("public_swarm_generate_stream_ready", report["diagnosis_codes"])
+        self.assertEqual(report["stream"]["event_count"], 4)
+        self.assertTrue(report["stream"]["stream_generation_ready"])
+        self.assertTrue(report["stream"]["progress"]["per_request_progress_complete"])
+        self.assertEqual(
+            [
+                (entry["request_id"], entry["observed_token_counts"])
+                for entry in report["stream"]["progress"]["per_request_progress"]
+            ],
+            [("req-1", [1, 2]), ("req-2", [1, 2])],
+        )
+        self.assertEqual(
+            [(event["request_id"], event["generated_token_count"]) for event in report["stream"]["events"]],
+            [("req-1", 1), ("req-1", 2), ("req-2", 1), ("req-2", 2)],
+        )
+        self.assertNotIn("first private prompt", encoded)
+        self.assertNotIn("second private prompt", encoded)
+        self.assertNotIn("raw one", encoded)
+        self.assertNotIn("raw two", encoded)
+        self.assertNotIn('"generated_token_ids":', encoded)
+        self.assertNotIn("admin-secret", encoded)
+
+    def test_product_generate_batch_stream_rejects_incomplete_prompt_progress(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--stream",
+            "--json",
+        ])
+
+        def event(request_id: str, prompt_hash: str, count: int) -> dict:
+            return {
+                "schema": "session_stream_event_v1",
+                "session_id": "real-llm-session-batch-stream",
+                "request_id": request_id,
+                "prompt_hash": prompt_hash,
+                "generated_token_count": count,
+                "max_new_tokens": 2,
+                "generation_step": count - 1,
+                "generated_text_hash": f"sha256:{request_id}-{count}",
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            }
+
+        final_row = {
+            "validation": {
+                "request_count": 2,
+                "generated_token_count": 2,
+                "max_new_tokens": 2,
+                "generated_text_hash": "sha256:batch",
+                "decoded_tokens_match": True,
+                "inference_results": [
+                    {
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:req-1-2",
+                        "decoded_tokens_match": True,
+                    },
+                    {
+                        "request_id": "req-2",
+                        "prompt_hash": "sha256:p2",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:req-2-2",
+                        "decoded_tokens_match": True,
+                    },
+                ],
+            }
+        }
+        stream_payload = {
+            "schema": "admin_session_stream_v1",
+            "events": [
+                event("req-1", "sha256:p1", 1),
+                event("req-1", "sha256:p1", 2),
+                event("req-2", "sha256:p2", 1),
+            ],
+        }
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch-stream",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            if path.startswith("/admin/session-stream"):
+                return stream_payload
+            return {"results": [final_row]}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertNotIn("public_swarm_generate_stream_ready", report["diagnosis_codes"])
+        self.assertFalse(report["stream"]["stream_generation_ready"])
+        self.assertFalse(report["stream"]["progress"]["per_request_progress_complete"])
+        self.assertEqual(report["stream"]["event_count"], 3)
+
+    def test_product_generate_batch_stream_ledger_fallback_expands_batch_rows(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--stream",
+            "--json",
+        ])
+
+        def batch_row(count: int) -> dict:
+            return {
+                "task_id": f"stage1-step{count - 1}",
+                "session_id": "real-llm-session-batch-stream",
+                "miner_id": "stage1-batch",
+                "terminal_at": float(count),
+                "validation": {
+                    "session_id": "real-llm-session-batch-stream",
+                    "stage_id": 1,
+                    "generation_step": count - 1,
+                    "generated_token_count": count,
+                    "max_new_tokens": 2,
+                    "generated_text_hash": f"sha256:batch-{count}",
+                    "decoded_tokens_match": True,
+                    "inference_results": [
+                        {
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:p1",
+                            "generation_step": count - 1,
+                            "generated_token_count": count,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": f"sha256:req-1-{count}",
+                            "generated_text": f" raw one {count}",
+                            "generated_token_ids": list(range(count)),
+                            "decoded_tokens_match": True,
+                        },
+                        {
+                            "request_id": "req-2",
+                            "prompt_hash": "sha256:p2",
+                            "generation_step": count - 1,
+                            "generated_token_count": count,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": f"sha256:req-2-{count}",
+                            "generated_text": f" raw two {count}",
+                            "generated_token_ids": list(range(count)),
+                            "decoded_tokens_match": True,
+                        },
+                    ],
+                },
+            }
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch-stream",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            if path.startswith("/admin/session-stream"):
+                raise cli.HTTPError(path, 404, "not found", {}, None)
+            return {"results": [batch_row(2), batch_row(1)]}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["stream"]["source"], "admin-results-ledger-fallback")
+        self.assertFalse(report["stream"]["endpoint_ready"])
+        self.assertTrue(report["stream"]["stream_generation_ready"])
+        self.assertEqual(
+            [(event["request_id"], event["generated_token_count"]) for event in report["stream"]["events"]],
+            [("req-1", 1), ("req-2", 1), ("req-1", 2), ("req-2", 2)],
+        )
+        self.assertTrue(report["stream"]["progress"]["per_request_progress_complete"])
+        self.assertNotIn("raw one", encoded)
+        self.assertNotIn("raw two", encoded)
+        self.assertNotIn('"generated_token_ids":', encoded)
+
+    def test_product_generate_stream_orders_descending_ledger_progress(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "3",
+            "--stream",
+            "--json",
+        ])
+
+        def row(count: int) -> dict:
+            return {
+                "event_index": count,
+                "task_id": f"stage1-step{count - 1}",
+                "session_id": "real-llm-session-test",
+                "miner_id": f"stage1-{count}",
+                "validation": {
+                    "session_id": "real-llm-session-test",
+                    "stage_id": 1,
+                    "generation_step": count - 1,
+                    "generated_token_count": count,
+                    "max_new_tokens": 3,
+                    "generated_text_hash": f"sha256:step{count - 1}",
+                    "generated_text": f" raw step {count}",
+                    "generated_token_ids": list(range(count)),
+                    "decoded_tokens_match": True,
+                },
+            }
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-test",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 3,
+                    "backend": "hf_transformers_cpu",
+                }
+            if path.startswith("/admin/session-stream"):
+                raise cli.HTTPError(path, 404, "not found", {}, None)
+            return {"results": [row(3), row(2), row(1)]}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["stream"]["source"], "admin-results-ledger-fallback")
+        self.assertFalse(report["stream"]["endpoint_ready"])
+        self.assertEqual(
+            [event["generated_token_count"] for event in report["stream"]["events"]],
+            [1, 2, 3],
+        )
+        self.assertEqual(report["stream"]["event_count"], 3)
+        self.assertTrue(report["stream"]["progress"]["monotonic_progress"])
+
+    def test_product_generate_stream_requires_monotonic_progress_for_stream_ready(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "3",
+            "--stream",
+            "--json",
+        ])
+
+        final_row = {
+            "task_id": "stage1-step2",
+            "session_id": "real-llm-session-test",
+            "miner_id": "stage1-c",
+            "validation": {
+                "session_id": "real-llm-session-test",
+                "stage_id": 1,
+                "generation_step": 2,
+                "generated_token_count": 3,
+                "max_new_tokens": 3,
+                "generated_text_hash": "sha256:step2",
+                "generated_text": " raw final text",
+                "generated_token_ids": [101, 102, 103],
+                "decoded_tokens_match": True,
+            },
+        }
+
+        def event(count: int) -> dict:
+            return {
+                "schema": "session_stream_event_v1",
+                "session_id": "real-llm-session-test",
+                "generated_token_count": count,
+                "max_new_tokens": 3,
+                "generation_step": count - 1,
+                "generated_text_hash": f"sha256:step{count - 1}",
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            }
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-test",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 3,
+                    "backend": "hf_transformers_cpu",
+                }
+            if path.startswith("/admin/session-stream"):
+                return {"schema": "admin_session_stream_v1", "events": [event(2), event(1), event(3)]}
+            return {"results": [final_row]}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertNotIn("public_swarm_generate_stream_ready", report["diagnosis_codes"])
+        self.assertTrue(report["stream"]["progress"]["stream_progress_complete"])
+        self.assertFalse(report["stream"]["progress"]["monotonic_progress"])
+        self.assertEqual(report["stream"]["progress"]["observed_token_counts"], [2, 1, 3])
+
+    def test_product_generate_stream_requires_complete_progress_for_stream_ready(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "3",
+            "--stream",
+            "--json",
+        ])
+
+        final_row = {
+            "task_id": "stage1-step2",
+            "session_id": "real-llm-session-test",
+            "miner_id": "stage1-c",
+            "validation": {
+                "session_id": "real-llm-session-test",
+                "stage_id": 1,
+                "generation_step": 2,
+                "generated_token_count": 3,
+                "max_new_tokens": 3,
+                "generated_text_hash": "sha256:step2",
+                "generated_text": " raw final text",
+                "generated_token_ids": [101, 102, 103],
+                "decoded_tokens_match": True,
+            },
+        }
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-test",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 3,
+                    "backend": "hf_transformers_cpu",
+                }
+            if path.startswith("/admin/session-stream"):
+                return {
+                    "schema": "admin_session_stream_v1",
+                    "events": [
+                        {
+                            "schema": "session_stream_event_v1",
+                            "session_id": "real-llm-session-test",
+                            "generated_token_count": 1,
+                            "max_new_tokens": 3,
+                            "generation_step": 0,
+                            "generated_text_hash": "sha256:step0",
+                            "raw_generated_text_public": False,
+                            "generated_token_ids_public": False,
+                        }
+                    ],
+                }
+            return {"results": [final_row]}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertNotIn("public_swarm_generate_stream_ready", report["diagnosis_codes"])
+        self.assertEqual(report["stream"]["event_count"], 1)
+        self.assertFalse(report["stream"]["progress"]["stream_progress_complete"])
+
+    def test_product_generate_include_output_only_in_human_mode(self) -> None:
+        base_argv = [
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--include-output",
+        ]
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, path, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-test",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                }
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:generated",
+                            "generated_text": " readable beta text",
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            human_report = cli.build_product_generate(cli.parse_args(base_argv))
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            json_report = cli.build_product_generate(cli.parse_args([*base_argv, "--json"]))
+
+        self.assertTrue(human_report["ok"], human_report)
+        self.assertEqual(human_report["local_output"]["generated_text"], " readable beta text")
+        self.assertTrue(json_report["ok"], json_report)
+        self.assertNotIn("local_output", json_report)
+        self.assertNotIn("readable beta text", json.dumps(json_report, sort_keys=True))
+
+    def test_product_generate_human_mode_shows_output_by_default(self) -> None:
+        base_argv = [
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+        ]
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, path, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-test",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                }
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:generated",
+                            "generated_text": " default human output",
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            human_report = cli.build_product_generate(cli.parse_args(base_argv))
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            json_report = cli.build_product_generate(cli.parse_args([*base_argv, "--json"]))
+
+        self.assertTrue(human_report["ok"], human_report)
+        self.assertEqual(human_report["local_output"]["generated_text"], " default human output")
+        self.assertTrue(json_report["ok"], json_report)
+        self.assertNotIn("local_output", json_report)
+        self.assertNotIn("default human output", json.dumps(json_report, sort_keys=True))
+
+    def test_public_real_llm_swarm_beta_cli_wraps_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "package",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            self.assertIn("--usable-report", command)
+            self.assertIn("16tok-kv-cache", command[command.index("--usable-report") + 1])
+            self.assertIn("--public-swarm-v2-report", command)
+            self.assertIn("public-swarm-inference-v2", command[command.index("--public-swarm-v2-report") + 1])
+            self.assertIn("--external-report", command)
+            self.assertIn("16tok-gpu-summary", command[command.index("--external-report") + 1])
+            self.assertIn("--p2p-report", command)
+            self.assertIn("16tok-batch-stream", command[command.index("--p2p-report") + 1])
+            self.assertIn("--p2p-runtime-smoke-report", command)
+            self.assertIn("kaggle-runtime-smoke", command[command.index("--p2p-runtime-smoke-report") + 1])
+            self.assertIn("--p2p-external-report", command)
+            self.assertIn("fresh-real-p2p-kaggle-16tok", command[command.index("--p2p-external-report") + 1])
+            self.assertIn("--p2p-requeue-report", command)
+            self.assertIn("petals-p2p-candidate-live-stage0", command[command.index("--p2p-requeue-report") + 1])
+            self.assertIn("--p2p-batch-stream-report", command)
+            self.assertIn("public-swarm-v2-batch-stream-16tok", command[command.index("--p2p-batch-stream-report") + 1])
+            self.assertIn("--p2p-libp2p-port", command)
+            self.assertIn("--public-swarm-v2-real-p2p-port", command)
+            self.assertEqual(command[command.index("--public-swarm-v2-real-p2p-port") + 1], "9890")
+            self.assertIn("--public-swarm-v2-real-p2p-coordinator-port", command)
+            self.assertEqual(command[command.index("--public-swarm-v2-real-p2p-coordinator-port") + 1], "9891")
+            self.assertIn("--public-swarm-v2-real-p2p-libp2p-port", command)
+            self.assertEqual(command[command.index("--public-swarm-v2-real-p2p-libp2p-port") + 1], "0")
+            self.assertIn("--public-swarm-v2-real-p2p-discovery-backend", command)
+            self.assertEqual(command[command.index("--public-swarm-v2-real-p2p-discovery-backend") + 1], "http-provider-store")
+            return completed({
+                "schema": "public_real_llm_swarm_beta_v1",
+                "ok": True,
+                "mode": "package",
+                "diagnosis_codes": ["public_real_llm_swarm_beta_package_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+        self.assertTrue(any("package" in command for command in calls))
+
+    def test_public_real_llm_swarm_beta_cli_forwards_usable_report(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir),
+            "--usable-report",
+            "/tmp/usable-kv.json",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            self.assertIn("--usable-report", command)
+            self.assertEqual(command[command.index("--usable-report") + 1], "/tmp/usable-kv.json")
+            return completed({
+                "schema": "public_real_llm_swarm_beta_v1",
+                "ok": True,
+                "mode": "evidence-import",
+                "diagnosis_codes": ["public_real_llm_swarm_beta_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+
+    def test_public_real_llm_swarm_beta_cli_forwards_p2p_candidate_sources(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "release",
+            "--output-dir",
+            str(output_dir),
+            "--p2p-runtime-smoke-report",
+            "/tmp/runtime.json",
+            "--p2p-external-report",
+            "/tmp/external-p2p.json",
+            "--p2p-requeue-report",
+            "/tmp/requeue.json",
+            "--p2p-batch-stream-report",
+            "/tmp/batch-stream.json",
+            "--p2p-libp2p-port",
+            "10999",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            self.assertEqual(command[command.index("--p2p-runtime-smoke-report") + 1], "/tmp/runtime.json")
+            self.assertEqual(command[command.index("--p2p-external-report") + 1], "/tmp/external-p2p.json")
+            self.assertEqual(command[command.index("--p2p-requeue-report") + 1], "/tmp/requeue.json")
+            self.assertEqual(command[command.index("--p2p-batch-stream-report") + 1], "/tmp/batch-stream.json")
+            self.assertEqual(command[command.index("--p2p-libp2p-port") + 1], "10999")
+            return completed({
+                "schema": "public_real_llm_swarm_beta_v1",
+                "ok": True,
+                "mode": "release",
+                "diagnosis_codes": ["public_real_llm_swarm_beta_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+
+    def test_public_real_llm_swarm_beta_cli_forwards_public_swarm_v2_report(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir),
+            "--public-swarm-v2-report",
+            "/tmp/public-swarm-v2.json",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            self.assertIn("--public-swarm-v2-report", command)
+            self.assertEqual(command[command.index("--public-swarm-v2-report") + 1], "/tmp/public-swarm-v2.json")
+            return completed({
+                "schema": "public_real_llm_swarm_beta_v1",
+                "ok": True,
+                "mode": "evidence-import",
+                "diagnosis_codes": ["public_real_llm_swarm_beta_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+
+    def test_public_real_llm_swarm_beta_cli_forwards_bounded_prompt_batch(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "local-smoke",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            self.assertIn("--prompt-texts", command)
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            return completed({
+                "schema": "public_real_llm_swarm_beta_v1",
+                "ok": True,
+                "mode": "local-smoke",
+                "diagnosis_codes": ["public_real_llm_swarm_beta_local_smoke_ready", "public_swarm_generate_batch_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+
+    def test_public_real_llm_swarm_beta_cli_forwards_stream_generation(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "local-smoke",
+            "--output-dir",
+            str(output_dir),
+            "--stream-generation",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "public_real_llm_swarm_beta_v1",
+                "ok": True,
+                "mode": "local-smoke",
+                "diagnosis_codes": ["public_real_llm_swarm_beta_local_smoke_ready", "public_swarm_generate_stream_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+
+    def test_public_real_llm_swarm_beta_cli_forwards_local_model_variant(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "local-model-variant",
+            "--output-dir",
+            str(output_dir),
+            "--hf-model-id",
+            "distilgpt2",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            self.assertEqual(command[2], "local-model-variant")
+            self.assertEqual(command[command.index("--hf-model-id") + 1], "distilgpt2")
+            return completed({
+                "schema": "public_real_llm_swarm_beta_v1",
+                "ok": True,
+                "mode": "local-model-variant",
+                "diagnosis_codes": ["public_real_llm_swarm_beta_local_model_variant_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+
+    def test_public_real_llm_swarm_beta_cli_rejects_unbounded_prompt_batch(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args([
+                "public-real-llm-swarm-beta",
+                "local-smoke",
+                "--prompt-texts",
+                "one,two,three,four,five",
+            ])
+
+    def test_usable_swarm_cli_wraps_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "usable-swarm",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "8",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("usable_swarm_inference_pack.py", command[1])
+            self.assertEqual(command[2], "local")
+            self.assertEqual(command[command.index("--max-new-tokens") + 1], "8")
+            return completed({
+                "schema": "usable_swarm_inference_v1",
+                "ok": True,
+                "mode": "local",
+                "diagnosis_codes": ["usable_swarm_inference_ready"],
+            })
+
+        report = cli.build_usable_swarm_inference(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "usable_swarm_inference_cli_v1")
+        self.assertTrue(calls)
+
+    def test_usable_swarm_cli_forwards_bounded_prompt_batch(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "usable-swarm",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("usable_swarm_inference_pack.py", command[1])
+            self.assertIn("--prompt-texts", command)
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            return completed({
+                "schema": "usable_swarm_inference_v1",
+                "ok": True,
+                "mode": "local",
+                "diagnosis_codes": ["usable_swarm_inference_ready", "public_swarm_generate_batch_ready"],
+            })
+
+        report = cli.build_usable_swarm_inference(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "usable_swarm_inference_cli_v1")
+        self.assertTrue(calls)
+
+    def test_usable_swarm_cli_forwards_stream_generation(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "usable-swarm",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--stream-generation",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("usable_swarm_inference_pack.py", command[1])
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "usable_swarm_inference_v1",
+                "ok": True,
+                "mode": "local",
+                "diagnosis_codes": ["usable_swarm_inference_ready", "public_swarm_generate_stream_ready"],
+            })
+
+        report = cli.build_usable_swarm_inference(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "usable_swarm_inference_cli_v1")
+        self.assertTrue(calls)
+
+    def test_usable_swarm_cli_rejects_unbounded_prompt_batch(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args([
+                "usable-swarm",
+                "local",
+                "--prompt-texts",
+                "one,two,three,four,five",
+            ])
+
+    def test_public_swarm_v2_cli_wraps_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-v2",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "16",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertEqual(command[2], "local")
+            self.assertEqual(command[command.index("--max-new-tokens") + 1], "16")
+            self.assertIn("--usable-report", command)
+            self.assertIn("--real-p2p-report", command)
+            self.assertIn("--gpu-report", command)
+            self.assertIn("--fresh-external-attempt-report", command)
+            self.assertEqual(command[command.index("--fresh-external-attempt-report") + 1], "")
+            self.assertIn("--real-p2p-port", command)
+            self.assertIn("--real-p2p-coordinator-port", command)
+            self.assertIn("--real-p2p-libp2p-port", command)
+            self.assertIn("--real-p2p-discovery-backend", command)
+            self.assertEqual(command[command.index("--real-p2p-discovery-backend") + 1], "http-provider-store")
+            self.assertNotIn("--fresh-external-report", command)
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "diagnosis_codes": ["public_swarm_inference_v2_ready"],
+            })
+
+        report = cli.build_public_swarm_inference_v2(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_swarm_inference_v2_cli_v1")
+        self.assertTrue(calls)
+
+    def test_public_swarm_v2_cli_forwards_real_p2p_local_options(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-v2",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--real-p2p-port",
+            "29990",
+            "--real-p2p-coordinator-port",
+            "29991",
+            "--real-p2p-libp2p-port",
+            "29992",
+            "--real-p2p-discovery-backend",
+            "libp2p-kad",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(command[command.index("--real-p2p-port") + 1], "29990")
+            self.assertEqual(command[command.index("--real-p2p-coordinator-port") + 1], "29991")
+            self.assertEqual(command[command.index("--real-p2p-libp2p-port") + 1], "29992")
+            self.assertEqual(command[command.index("--real-p2p-discovery-backend") + 1], "libp2p-kad")
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "diagnosis_codes": ["public_swarm_inference_v2_ready"],
+            })
+
+        report = cli.build_public_swarm_inference_v2(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+
+    def test_public_swarm_v2_cli_forwards_local_model_variant(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-v2",
+            "local-model-variant",
+            "--output-dir",
+            str(output_dir),
+            "--hf-model-id",
+            "distilgpt2",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertEqual(command[2], "local-model-variant")
+            self.assertEqual(command[command.index("--hf-model-id") + 1], "distilgpt2")
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local-model-variant",
+                "diagnosis_codes": ["public_swarm_inference_v2_local_model_variant_ready"],
+            })
+
+        report = cli.build_public_swarm_inference_v2(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_swarm_inference_v2_cli_v1")
+
+    def test_public_swarm_v2_cli_forwards_bounded_prompt_batch(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-v2",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertIn("--prompt-texts", command)
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "diagnosis_codes": ["public_swarm_inference_v2_ready", "public_swarm_generate_batch_ready"],
+            })
+
+        report = cli.build_public_swarm_inference_v2(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_swarm_inference_v2_cli_v1")
+        self.assertTrue(calls)
+
+    def test_public_swarm_v2_cli_forwards_stream_generation(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-v2",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--stream-generation",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "diagnosis_codes": ["public_swarm_inference_v2_ready", "public_swarm_generate_stream_ready"],
+            })
+
+        report = cli.build_public_swarm_inference_v2(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_swarm_inference_v2_cli_v1")
+        self.assertTrue(calls)
+
+    def test_public_swarm_v2_cli_rejects_unbounded_prompt_batch(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args([
+                "public-swarm-v2",
+                "local",
+                "--prompt-texts",
+                "one,two,three,four,five",
+            ])
+
+    def test_public_swarm_v2_cli_forwards_fresh_external_flag(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-v2",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir),
+            "--fresh-external-attempt-report",
+            "fresh-attempt.json",
+            "--fresh-external-report",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("--fresh-external-report", command)
+            self.assertEqual(command[command.index("--fresh-external-attempt-report") + 1], "fresh-attempt.json")
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "evidence-import",
+                "diagnosis_codes": ["public_swarm_inference_v2_ready"],
+            })
+
+        report = cli.build_public_swarm_inference_v2(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+
+    def test_public_swarm_v2_human_summary_shows_stage_rows_and_stream_state(self) -> None:
+        report = {
+            "schema": "public_swarm_inference_v2",
+            "ok": True,
+            "mode": "evidence-import",
+            "output_dir": "dist/public-swarm-inference-v2",
+            "public_swarm_v2": {"ready": True},
+            "readiness": {
+                "local_p2p_generate": {
+                    "generated_token_count": 16,
+                    "max_new_tokens": 16,
+                    "accepted_rows": 32,
+                    "accepted_rows_ready": True,
+                    "kv_cache_ready": True,
+                    "batch_ready": True,
+                    "stream_ready": True,
+                    "model": {"compatible": True},
+                },
+                "external_validation": {
+                    "ready": True,
+                    "generated_token_count": 16,
+                    "max_new_tokens": 16,
+                    "accepted_rows": 32,
+                    "accepted_rows_ready": True,
+                    "model": {"compatible": True},
+                },
+                "p2p_route_hardening": {
+                    "preferred_route": "real-p2p",
+                    "ready": True,
+                    "model": {"compatible": True},
+                },
+                "cuda_optional": {"fail_closed_ready": True},
+                "performance": {
+                    "stage_latency_ready": True,
+                    "throughput_summary_ready": True,
+                    "memory_or_vram_summary_ready": True,
+                },
+            },
+            "diagnosis_codes": ["public_swarm_inference_v2_ready"],
+            "artifacts": {},
+        }
+        buf = io.StringIO()
+
+        with contextlib.redirect_stdout(buf):
+            cli.print_public_swarm_inference_v2(report)
+        output = buf.getvalue()
+
+        self.assertIn("local accepted rows: 32 ready=True", output)
+        self.assertIn("kv cache ready: True", output)
+        self.assertIn("batch ready: True", output)
+        self.assertIn("stream ready: True", output)
+        self.assertIn("external ready: True tokens=16/16 accepted_rows=32 rows_ready=True", output)
+        self.assertIn("model match: local=True external=True p2p=True", output)
 
     def test_peer_check_wraps_discovery_check(self) -> None:
         args = cli.parse_args(["peer", "check", "--json"])
@@ -1314,7 +3991,61 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(summary["mode"], "external-existing")
         self.assertNotIn("observer-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
+
+    def test_public_swarm_beta_rc_cli_forwards_bounded_prompt_batch(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+        args = cli.parse_args([
+            "public-swarm-beta-rc",
+            "local-loopback",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts",
+            "first prompt,second prompt",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_beta_rc_pack.py", command[1])
+            self.assertIn("--prompt-texts", command)
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            return completed({
+                "schema": "public_swarm_inference_beta_rc_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "diagnosis_codes": ["public_swarm_inference_beta_rc_ready", "public_swarm_generate_batch_ready"],
+            })
+
+        summary = cli.build_public_swarm_inference_beta_rc(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["cli_schema"], "public_swarm_inference_beta_rc_cli_v1")
         self.assertTrue(calls)
+
+    def test_public_swarm_beta_rc_cli_forwards_stream_generation(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-beta-rc",
+            "local-loopback",
+            "--output-dir",
+            str(output_dir),
+            "--stream-generation",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_swarm_inference_beta_rc_pack.py", command[1])
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "public_swarm_inference_beta_rc_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "diagnosis_codes": ["public_swarm_inference_beta_rc_ready", "public_swarm_generate_stream_ready"],
+            })
+
+        summary = cli.build_public_swarm_inference_beta_rc(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["cli_schema"], "public_swarm_inference_beta_rc_cli_v1")
 
     def test_main_public_swarm_beta_rc_json_outputs_summary(self) -> None:
         summary = {"schema": "public_swarm_inference_beta_rc_v1", "ok": True}
@@ -1370,6 +4101,58 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("observer-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
         self.assertTrue(calls)
+
+    def test_public_swarm_product_beta_cli_forwards_bounded_prompt_batch(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-product-beta",
+            "local-loopback",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts",
+            "first prompt,second prompt",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_swarm_product_beta_pack.py", command[1])
+            self.assertIn("--prompt-texts", command)
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            return completed({
+                "schema": "public_swarm_product_beta_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "diagnosis_codes": ["public_swarm_product_beta_ready", "public_swarm_generate_batch_ready"],
+            })
+
+        summary = cli.build_public_swarm_product_beta(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["cli_schema"], "public_swarm_product_beta_cli_v1")
+
+    def test_public_swarm_product_beta_cli_forwards_stream_generation(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-swarm-product-beta",
+            "local-loopback",
+            "--output-dir",
+            str(output_dir),
+            "--stream-generation",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_swarm_product_beta_pack.py", command[1])
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "public_swarm_product_beta_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "diagnosis_codes": ["public_swarm_product_beta_ready", "public_swarm_generate_stream_ready"],
+            })
+
+        summary = cli.build_public_swarm_product_beta(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["cli_schema"], "public_swarm_product_beta_cli_v1")
 
     def test_main_public_swarm_product_beta_json_outputs_summary(self) -> None:
         summary = {"schema": "public_swarm_product_beta_v1", "ok": True}
@@ -1589,6 +4372,443 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "public_swarm_trial_v1")
+
+    def test_preview_v04_wraps_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_preview_v04_pack.py", command[1])
+            self.assertEqual(command[2], "package")
+            self.assertIn("--live-stage0-report", command)
+            self.assertIn("--live-stage1-report", command)
+            self.assertIn("--product-mvp-report", command)
+            self.assertIn("--optional-model-id", command)
+            return completed({
+                "schema": "public_swarm_preview_v04_v1",
+                "ok": True,
+                "mode": "package",
+                "diagnosis_codes": [
+                    "public_swarm_preview_v04_ready",
+                    "observer-secret",
+                ],
+            })
+
+        args = cli.parse_args([
+            "preview-v04",
+            "package",
+            "--output-dir",
+            str(output_dir),
+            "--optional-model-id",
+            "distilgpt2",
+        ])
+        summary = cli.build_public_swarm_preview_v04(args, runner=fake_runner)
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "public_swarm_preview_v04_v1")
+        self.assertEqual(summary["cli_schema"], "public_swarm_preview_v04_cli_v1")
+        self.assertEqual(summary["mode"], "package")
+        self.assertNotIn("observer-secret", serialized)
+        self.assertTrue(calls)
+
+    def test_main_preview_v04_json_outputs_summary(self) -> None:
+        summary = {"schema": "public_swarm_preview_v04_v1", "ok": True}
+        with patch.object(cli, "build_public_swarm_preview_v04", return_value=summary), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["preview-v04", "evidence-import", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "public_swarm_preview_v04_v1")
+
+    def test_p2p_swarm_v06_wraps_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("p2p_swarm_inference_v06_pack.py", command[1])
+            self.assertEqual(command[2], "local-smoke")
+            self.assertIn("--preview-v04-report", command)
+            self.assertIn("--p2p-port", command)
+            return completed({
+                "schema": "p2p_swarm_inference_v06_v1",
+                "ok": True,
+                "diagnosis_codes": ["p2p_swarm_inference_v06_ready"],
+            })
+
+        args = cli.parse_args([
+            "p2p-swarm-v06",
+            "local-smoke",
+            "--output-dir",
+            str(output_dir),
+            "--hf-cache-dir",
+            "/tmp/hf-cache",
+        ])
+        summary = cli.build_p2p_swarm_inference_v06(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "p2p_swarm_inference_v06_v1")
+        self.assertEqual(summary["cli_schema"], "p2p_swarm_inference_v06_cli_v1")
+        self.assertTrue(calls)
+        self.assertEqual(calls[0][calls[0].index("--hf-cache-dir") + 1], "/tmp/hf-cache")
+
+    def test_p2p_swarm_v06_forwards_bounded_prompt_batch(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("--prompt-texts", command)
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            return completed({
+                "schema": "p2p_swarm_inference_v06_v1",
+                "ok": True,
+                "diagnosis_codes": ["p2p_swarm_inference_v06_ready", "p2p_real_generate_batch_ready"],
+            })
+
+        args = cli.parse_args([
+            "p2p-swarm-v06",
+            "local-smoke",
+            "--prompt-texts",
+            "first prompt,second prompt",
+        ])
+        summary = cli.build_p2p_swarm_inference_v06(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertTrue(calls)
+
+    def test_p2p_swarm_v06_forwards_stream_generation(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "p2p_swarm_inference_v06_v1",
+                "ok": True,
+                "diagnosis_codes": ["p2p_swarm_inference_v06_ready", "p2p_real_generate_stream_ready"],
+            })
+
+        args = cli.parse_args([
+            "p2p-swarm-v06",
+            "local-smoke",
+            "--stream-generation",
+        ])
+        summary = cli.build_p2p_swarm_inference_v06(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertTrue(calls)
+
+    def test_p2p_swarm_v06_rejects_unbounded_prompt_batch(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args([
+                "p2p-swarm-v06",
+                "local-smoke",
+                "--prompt-texts",
+                "one,two,three,four,five",
+            ])
+
+    def test_p2p_swarm_v06_wraps_external_existing_options(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertEqual(command[2], "external-existing")
+            self.assertEqual(command[command.index("--peer-bootstrap") + 1], "http://p2p.example")
+            self.assertIn("--verify-generate", command)
+            self.assertEqual(command[command.index("--admin-token") + 1], "admin-secret")
+            self.assertEqual(command[command.index("--hf-model-id") + 1], "distilgpt2")
+            self.assertIn("--prompt-texts", command)
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "p2p_swarm_inference_v06_v1",
+                "ok": True,
+                "diagnosis_codes": ["p2p_swarm_inference_v06_ready"],
+            })
+
+        args = cli.parse_args([
+            "p2p-swarm-v06",
+            "external-existing",
+            "--peer-bootstrap",
+            "http://p2p.example",
+            "--admin-token",
+            "admin-secret",
+            "--verify-generate",
+            "--hf-model-id",
+            "distilgpt2",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--stream-generation",
+        ])
+        summary = cli.build_p2p_swarm_inference_v06(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertTrue(calls)
+
+    def test_p2p_swarm_v06_wraps_kaggle_auto_options(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertEqual(command[2], "kaggle-auto")
+            self.assertEqual(command[command.index("--kaggle-owner") + 1], "owner")
+            self.assertEqual(command[command.index("--kernel-slug-prefix") + 1], "ct-p2p-v06-test")
+            self.assertIn("--kaggle-push-timeout-seconds", command)
+            self.assertIn("--kaggle-delete-timeout-seconds", command)
+            self.assertIn("--kaggle-stage-timeout-seconds", command)
+            self.assertEqual(command[command.index("--kaggle-stage-timeout-seconds") + 1], "321.0")
+            return completed({
+                "schema": "p2p_swarm_inference_v06_v1",
+                "ok": True,
+                "diagnosis_codes": ["p2p_swarm_inference_v06_ready", "p2p_swarm_inference_v06_kaggle_auto_ready"],
+            })
+
+        args = cli.parse_args([
+            "p2p-swarm-v06",
+            "kaggle-auto",
+            "--kaggle-owner",
+            "owner",
+            "--kernel-slug-prefix",
+            "ct-p2p-v06-test",
+            "--kaggle-stage-timeout-seconds",
+            "321",
+        ])
+        summary = cli.build_p2p_swarm_inference_v06(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertTrue(calls)
+
+    def test_main_p2p_swarm_v06_json_outputs_summary(self) -> None:
+        summary = {"schema": "p2p_swarm_inference_v06_v1", "ok": True}
+        with patch.object(cli, "build_p2p_swarm_inference_v06", return_value=summary), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["p2p-swarm-v06", "evidence-import", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "p2p_swarm_inference_v06_v1")
+
+    def test_real_p2p_rc_wraps_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("real_p2p_swarm_inference_core_rc_pack.py", command[1])
+            self.assertEqual(command[2], "local-smoke")
+            self.assertEqual(command[command.index("--output-dir") + 1], str(output_dir.resolve()))
+            self.assertIn("--discovery-backend", command)
+            self.assertIn("--peer-secret", command)
+            self.assertIn("--json", command)
+            return completed({
+                "schema": "real_p2p_swarm_inference_core_rc_v1",
+                "ok": True,
+                "diagnosis_codes": ["real_p2p_swarm_inference_core_rc_ready"],
+            })
+
+        args = cli.parse_args([
+            "real-p2p-rc",
+            "local-smoke",
+            "--output-dir",
+            str(output_dir),
+            "--peer-secret",
+            "test-secret",
+            "--hf-cache-dir",
+            "/tmp/hf-cache",
+        ])
+        summary = cli.build_real_p2p_swarm_inference_core_rc(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "real_p2p_swarm_inference_core_rc_v1")
+        self.assertEqual(summary["cli_schema"], "real_p2p_swarm_inference_core_rc_cli_v1")
+        self.assertTrue(calls)
+        self.assertEqual(calls[0][calls[0].index("--hf-cache-dir") + 1], "/tmp/hf-cache")
+
+    def test_real_p2p_rc_external_existing_forwards_options(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertEqual(command[2], "external-existing")
+            self.assertEqual(command[command.index("--peer-bootstrap") + 1], "http://p2p.example")
+            self.assertEqual(command[command.index("--admin-token") + 1], "admin-secret")
+            self.assertEqual(command[command.index("--hf-model-id") + 1], "distilgpt2")
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertIn("--verify-generate", command)
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "real_p2p_swarm_inference_core_rc_v1",
+                "ok": True,
+                "diagnosis_codes": ["external_real_p2p_stage_discovery_ready", "external_real_p2p_generate_ready"],
+            })
+
+        args = cli.parse_args([
+            "real-p2p-rc",
+            "external-existing",
+            "--peer-bootstrap",
+            "http://p2p.example",
+            "--admin-token",
+            "admin-secret",
+            "--verify-generate",
+            "--hf-model-id",
+            "distilgpt2",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--stream-generation",
+        ])
+        summary = cli.build_real_p2p_swarm_inference_core_rc(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertTrue(calls)
+
+    def test_real_p2p_rc_batch_stream_requires_external_verify_generate(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["real-p2p-rc", "local-smoke", "--prompt-texts", "a,b"])
+        with self.assertRaises(SystemExit):
+            cli.parse_args([
+                "real-p2p-rc",
+                "external-existing",
+                "--peer-bootstrap",
+                "http://p2p.example",
+                "--stream-generation",
+            ])
+
+    def test_real_p2p_rc_kaggle_auto_forwards_options(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertEqual(command[2], "kaggle-auto")
+            self.assertEqual(command[command.index("--kaggle-owner") + 1], "owner")
+            self.assertEqual(command[command.index("--kernel-slug-prefix") + 1], "ct-real-p2p-test")
+            self.assertEqual(command[command.index("--libp2p-port") + 1], "10860")
+            self.assertIn("--kaggle-push-timeout-seconds", command)
+            self.assertIn("--kaggle-delete-timeout-seconds", command)
+            self.assertIn("--kaggle-stage-timeout-seconds", command)
+            self.assertEqual(command[command.index("--failure-mode") + 1], "kill-stage0-after-claim")
+            self.assertEqual(command[command.index("--max-request-attempts") + 1], "123")
+            return completed({
+                "schema": "real_p2p_swarm_inference_core_rc_v1",
+                "ok": True,
+                "diagnosis_codes": ["real_p2p_swarm_inference_core_rc_ready", "external_real_p2p_generate_ready"],
+            })
+
+        args = cli.parse_args([
+            "real-p2p-rc",
+            "kaggle-auto",
+            "--kaggle-owner",
+            "owner",
+            "--kernel-slug-prefix",
+            "ct-real-p2p-test",
+            "--kaggle-stage-timeout-seconds",
+            "321",
+            "--libp2p-port",
+            "10860",
+            "--failure-mode",
+            "kill-stage0-after-claim",
+            "--max-request-attempts",
+            "123",
+        ])
+        summary = cli.build_real_p2p_swarm_inference_core_rc(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertTrue(calls)
+
+    def test_real_p2p_rc_kaggle_runtime_smoke_forwards_options(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertEqual(command[2], "kaggle-runtime-smoke")
+            self.assertEqual(command[command.index("--discovery-backend") + 1], "libp2p-kad")
+            self.assertEqual(command[command.index("--kaggle-status-poll-seconds") + 1], "7.0")
+            self.assertEqual(command[command.index("--kaggle-owner") + 1], "owner")
+            return completed({
+                "schema": "real_p2p_swarm_inference_core_rc_v1",
+                "ok": True,
+                "diagnosis_codes": ["real_p2p_kaggle_runtime_smoke_ready"],
+            })
+
+        args = cli.parse_args([
+            "real-p2p-rc",
+            "kaggle-runtime-smoke",
+            "--discovery-backend",
+            "libp2p-kad",
+            "--kaggle-owner",
+            "owner",
+            "--kaggle-status-poll-seconds",
+            "7",
+        ])
+        summary = cli.build_real_p2p_swarm_inference_core_rc(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertTrue(calls)
+
+    def test_real_p2p_rc_evidence_import_requires_report(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["real-p2p-rc", "evidence-import"])
+
+    def test_main_real_p2p_rc_json_outputs_summary(self) -> None:
+        summary = {"schema": "real_p2p_swarm_inference_core_rc_v1", "ok": True}
+        with patch.object(cli, "build_real_p2p_swarm_inference_core_rc", return_value=summary), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["real-p2p-rc", "package", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "real_p2p_swarm_inference_core_rc_v1")
+
+    def test_petals_candidate_wraps_pack(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("petals_class_p2p_candidate_pack.py", command[1])
+            self.assertEqual(command[2], "evidence-import")
+            self.assertEqual(command[command.index("--output-dir") + 1], str(output_dir.resolve()))
+            self.assertEqual(command[command.index("--requeue-report") + 1], "requeue.json")
+            self.assertIn("--json", command)
+            return completed({
+                "schema": "petals_class_p2p_candidate_v1",
+                "ok": True,
+                "diagnosis_codes": ["petals_class_p2p_candidate_ready"],
+            })
+
+        args = cli.parse_args([
+            "petals-candidate",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir),
+            "--local-report",
+            "local.json",
+            "--runtime-smoke-report",
+            "runtime.json",
+            "--external-report",
+            "external.json",
+            "--requeue-report",
+            "requeue.json",
+            "--max-new-tokens",
+            "8",
+        ])
+        summary = cli.build_petals_class_p2p_candidate(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["schema"], "petals_class_p2p_candidate_v1")
+        self.assertEqual(summary["cli_schema"], "petals_class_p2p_candidate_cli_v1")
+        self.assertTrue(calls)
+
+    def test_main_petals_candidate_json_outputs_summary(self) -> None:
+        summary = {"schema": "petals_class_p2p_candidate_v1", "ok": True}
+        with patch.object(cli, "build_petals_class_p2p_candidate", return_value=summary), patch("builtins.print") as mocked_print:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["petals-candidate", "package", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(payload["schema"], "petals_class_p2p_candidate_v1")
 
     def test_public_swarm_gpu_beta_wraps_gpu_pack(self) -> None:
         output_dir = Path(self._tmp_dir())

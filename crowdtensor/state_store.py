@@ -121,6 +121,7 @@ from .real_llm import (
     real_llm_sharded_inference_spec_for,
     validate_real_llm_sharded_inference,
 )
+from .session_protocol import safe_stream_events
 from .validation import validate_local_delta
 
 
@@ -176,6 +177,7 @@ class StateStore:
         self.real_llm_partition_mode = normalize_real_llm_partition_mode(real_llm_partition_mode)
         self.hf_cache_dir = str(hf_cache_dir or "")
         self._real_llm_artifact_cache: dict[str, dict] = {}
+        self._real_llm_stage_affinity: dict[str, dict[int, str]] = {}
         if self.replay_audit and self.delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
             raise ValueError("sign_compressed_ef cannot be used with replay_audit")
         self.task_lanes = self._normalize_task_lanes(task_lanes)
@@ -217,6 +219,7 @@ class StateStore:
                 task for task in queued
                 if self._capabilities_match(task, miner_capabilities)
             ]
+            compatible = self._prefer_real_llm_stage_affinity(compatible, miner_name)
             if not compatible:
                 now = now_epoch()
                 event = self._append_event({
@@ -258,8 +261,13 @@ class StateStore:
                 raise NoTaskAvailable(reason)
 
             task = sorted(eligible, key=lambda item: item["created_at"])[0]
+            claimed_contract_preview = self._real_llm_stage_affinity_claim(task, miner_name)
             model_version = self._model_version_for_task(task)
             claimed_contract = self._claim_contract(task, miner_name, model_version)
+            if claimed_contract_preview:
+                workload_spec = dict(claimed_contract.get("claim_workload_spec") or {})
+                workload_spec.setdefault("stage_affinity", claimed_contract_preview)
+                claimed_contract["claim_workload_spec"] = workload_spec
             optimizer_spec = dict(claimed_contract.get("claim_optimizer_spec") or {})
             now = now_epoch()
             event = self._append_event({
@@ -435,6 +443,59 @@ class StateStore:
                 if len(filtered) >= capped:
                     break
             return filtered
+
+    def session_stream_events(
+        self,
+        *,
+        session_id: str,
+        max_new_tokens: int | None = None,
+        limit: int = 50,
+        workload_type: str = WORKLOAD_REAL_LLM_SHARDED_INFER,
+    ) -> list[dict]:
+        capped = min(MAX_EVENT_TAIL_LIMIT, max(0, int(limit)))
+        if capped == 0:
+            return []
+        wanted_session = str(session_id or "").strip()
+        if not wanted_session:
+            return []
+        wanted_workload = str(workload_type or WORKLOAD_REAL_LLM_SHARDED_INFER).strip()
+        with self._lock:
+            rows = [
+                self._result_ledger_entry(task, {})
+                for task in self._tasks.values()
+                if task.get("status") == STATUS_COMPLETED
+                and self._workload_type(task) == wanted_workload
+                and (task.get("workload_metadata") or {}).get("session_id") == wanted_session
+            ]
+        events_by_key: dict[tuple[str, int], dict] = {}
+        for row in rows:
+            validation = row.get("validation") if isinstance(row.get("validation"), dict) else {}
+            if int(validation.get("stage_id") or -1) != 1:
+                continue
+            generated_count = int(validation.get("generated_token_count") or 0)
+            if generated_count <= 0:
+                continue
+            observed_at = row.get("terminal_at") if row.get("terminal_at") else None
+            for event in safe_stream_events(row, max_new_tokens=max_new_tokens, observed_at=observed_at):
+                event_count = int(event.get("generated_token_count") or 0)
+                if event_count <= 0:
+                    continue
+                request_key = str(event.get("request_id") or event.get("prompt_hash") or "")
+                key = (request_key, event_count)
+                previous = events_by_key.get(key)
+                if previous is None or int(event.get("generation_step") or 0) >= int(previous.get("generation_step") or 0):
+                    events_by_key[key] = event
+        return [
+            event
+            for _key, event in sorted(
+                events_by_key.items(),
+                key=lambda item: (
+                    str(item[0][0]),
+                    int(item[0][1]),
+                    int(item[1].get("generation_step") or 0),
+                ),
+            )
+        ][:capped]
 
     def create_readonly_inference_task(
         self,
@@ -631,6 +692,7 @@ class StateStore:
         prompt_texts: list[str] | None = None,
         required_runtime: str = "python-cli",
         required_backend: str = "cpu",
+        model_id: str | None = None,
         llm_backend: str | None = None,
         partition_mode: str | None = None,
         required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
@@ -647,7 +709,7 @@ class StateStore:
         if backend != expected_backend:
             raise ValueError(f"real LLM sharded inference sessions require backend {expected_backend}")
         with self._lock:
-            artifact = self._real_llm_artifact_summary(resolved_llm_backend)
+            artifact = self._real_llm_artifact_summary(resolved_llm_backend, model_id=model_id)
             artifact["partition_mode"] = resolved_partition_mode
             prompts = [str(item) for item in (prompt_texts or DEFAULT_REAL_LLM_PROMPTS) if str(item)]
             prompts = prompts[:count] or list(DEFAULT_REAL_LLM_PROMPTS[:count])
@@ -701,6 +763,84 @@ class StateStore:
                 "prompt_request_count": len(prompts),
                 "task_requirements": self._task_requirements(task),
             }
+
+    def _real_llm_stage_affinity_key(self, task: dict) -> tuple[str, int] | None:
+        if self._workload_type(task) != WORKLOAD_REAL_LLM_SHARDED_INFER:
+            return None
+        metadata = task.get("workload_metadata") if isinstance(task.get("workload_metadata"), dict) else {}
+        session_id = str(metadata.get("session_id") or "").strip()
+        if not session_id:
+            return None
+        try:
+            stage_id = int(metadata.get("stage_id", -1))
+        except (TypeError, ValueError):
+            return None
+        if stage_id not in {0, 1}:
+            return None
+        return session_id, stage_id
+
+    def _real_llm_stage_affinity_for(self, task: dict) -> str:
+        key = self._real_llm_stage_affinity_key(task)
+        if key is None:
+            return ""
+        session_id, stage_id = key
+        metadata = task.get("workload_metadata") if isinstance(task.get("workload_metadata"), dict) else {}
+        bound = str(metadata.get("stage_affinity_miner_id") or "").strip()
+        if bound:
+            return bound
+        return self._real_llm_stage_affinity_for_session(session_id, stage_id)
+
+    def _real_llm_stage_affinity_for_session(self, session_id: str, stage_id: int) -> str:
+        session_affinity = self._real_llm_stage_affinity.get(session_id, {})
+        return str(session_affinity.get(stage_id) or "").strip()
+
+    def _remember_real_llm_stage_affinity(self, task: dict, miner_id: str) -> None:
+        key = self._real_llm_stage_affinity_key(task)
+        if key is None:
+            return
+        session_id, stage_id = key
+        miner_name = str(miner_id or "").strip()
+        if not miner_name:
+            return
+        self._real_llm_stage_affinity.setdefault(session_id, {})[stage_id] = miner_name
+        metadata = task.get("workload_metadata") if isinstance(task.get("workload_metadata"), dict) else {}
+        metadata["stage_affinity_miner_id"] = miner_name
+        metadata["stage_affinity_policy"] = "session_stage_sticky_v1"
+        task["workload_metadata"] = metadata
+
+    def _prefer_real_llm_stage_affinity(self, tasks: list[dict], miner_id: str) -> list[dict]:
+        miner_name = str(miner_id or "").strip()
+        unrestricted: list[dict] = []
+        matching: list[dict] = []
+        for task in tasks:
+            if self._workload_type(task) == WORKLOAD_REAL_LLM_SHARDED_INFER and int(task.get("attempt", 0) or 0) > 0:
+                unrestricted.append(task)
+                continue
+            bound = self._real_llm_stage_affinity_for(task)
+            if not bound:
+                unrestricted.append(task)
+            elif bound == miner_name:
+                matching.append(task)
+        return matching or unrestricted
+
+    def _real_llm_stage_affinity_claim(self, task: dict, miner_id: str) -> dict:
+        if self._workload_type(task) != WORKLOAD_REAL_LLM_SHARDED_INFER:
+            return {}
+        key = self._real_llm_stage_affinity_key(task)
+        if key is None:
+            return {}
+        miner_name = str(miner_id or "").strip()
+        bound = miner_name if int(task.get("attempt", 0) or 0) > 0 else (self._real_llm_stage_affinity_for(task) or miner_name)
+        if not bound:
+            return {}
+        return {
+            "schema": "real_llm_stage_affinity_v1",
+            "policy": "session_stage_sticky_v1",
+            "session_id": key[0],
+            "stage_id": key[1],
+            "miner_id": bound,
+            "matched": bound == miner_name,
+        }
 
     def complete_task(
         self,
@@ -1727,6 +1867,8 @@ class StateStore:
                 "parent_task_id": stage0_task_id,
                 "generation_step": generation_step,
                 "max_new_tokens": int(metadata.get("max_new_tokens", 1)),
+                "stage_affinity_miner_id": self._real_llm_stage_affinity_for_session(session_id, 1),
+                "stage_affinity_policy": "session_stage_sticky_v1",
                 "requests": list((stage0_task.get("claim_workload_spec") or {}).get("requests") or []),
                 "activation_results": validation.get("activation_results") or [],
                 "activation_hashes": validation.get("activation_hashes") or [],
@@ -1765,7 +1907,7 @@ class StateStore:
             token_ids = list(result.get("generated_token_ids") or list(previous.get("generated_token_ids") or []))
             next_requests.append({
                 "request_id": str(previous.get("request_id") or f"req-{index + 1}"),
-                "prompt": (base_prompt + token_text)[:256],
+                "prompt": base_prompt[:256],
                 "prompt_hash": str(previous.get("prompt_hash") or ""),
                 "max_new_tokens": max_new_tokens,
                 "generated_token_ids": token_ids,
@@ -1794,6 +1936,8 @@ class StateStore:
                 "parent_task_id": stage1_task_id,
                 "generation_step": next_step,
                 "max_new_tokens": max_new_tokens,
+                "stage_affinity_miner_id": self._real_llm_stage_affinity_for_session(session_id, 0),
+                "stage_affinity_policy": "session_stage_sticky_v1",
                 "requests": next_requests,
                 "prompt_texts": [],
                 "activation_results": [],
@@ -2228,6 +2372,7 @@ class StateStore:
                 "claim_optimizer_spec": event.get("claim_optimizer_spec", {}),
                 "claim_workload_spec": event.get("claim_workload_spec", {}),
             })
+            self._remember_real_llm_stage_affinity(task, event.get("miner_id") or "anonymous")
         elif event_type == EVENT_TASK_HEARTBEAT:
             task["lease_expires_at"] = float(event["lease_expires_at"])
             task["runtime_status"] = event.get("runtime_status", {})
@@ -3069,18 +3214,22 @@ class StateStore:
             )
         return {"type": WORKLOAD_DILOCO_TRAIN}
 
-    def _real_llm_artifact_summary(self, backend: str | None = None) -> dict:
+    def _real_llm_artifact_summary(self, backend: str | None = None, *, model_id: str | None = None) -> dict:
         resolved_backend = normalize_real_llm_backend(backend or self.real_llm_backend)
-        cached = self._real_llm_artifact_cache.get(resolved_backend)
-        if cached is not None:
-            return dict(cached)
+        resolved_model_id = str(model_id or self.real_llm_model_id or DEFAULT_REAL_LLM_MODEL_ID).strip() or DEFAULT_REAL_LLM_MODEL_ID
+        use_default_cache = resolved_model_id == self.real_llm_model_id
+        if use_default_cache:
+            cached = self._real_llm_artifact_cache.get(resolved_backend)
+            if cached is not None:
+                return dict(cached)
         artifact = inspect_real_llm_artifact(
-            model_id=self.real_llm_model_id,
+            model_id=resolved_model_id,
             cache_dir=self.hf_cache_dir,
             backend=resolved_backend,
             require_runtime=resolved_backend != REAL_LLM_BACKEND_CUDA,
         )
-        self._real_llm_artifact_cache[resolved_backend] = dict(artifact)
+        if use_default_cache:
+            self._real_llm_artifact_cache[resolved_backend] = dict(artifact)
         return dict(artifact)
 
     def _real_llm_artifact_from_metadata(self, metadata: dict | None) -> dict:

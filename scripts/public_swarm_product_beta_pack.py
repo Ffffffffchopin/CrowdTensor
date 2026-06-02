@@ -27,6 +27,7 @@ if str(ROOT / "scripts") not in sys.path:
 import public_swarm_inference_beta_rc_pack as rc_pack  # noqa: E402
 import support_bundle  # noqa: E402
 from crowdtensor.real_llm import missing_hf_dependencies  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg  # noqa: E402
 
 
 SCHEMA = "public_swarm_product_beta_v1"
@@ -53,6 +54,7 @@ SECRET_FRAGMENTS = (
     '"generated_text":',
     '"generated_token_ids":',
     '"prompt_text":',
+    '"prompt_texts":',
 )
 PRIVATE_ARTIFACT_NAMES = {
     "operator.private.env",
@@ -109,6 +111,117 @@ def diagnosis_codes(*payloads: dict[str, Any], extra: list[str] | None = None) -
     return sorted(codes)
 
 
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+STREAM_READY_CODES = {
+    "public_swarm_generate_stream_ready",
+    "public_swarm_generate_stream_endpoint_ready",
+}
+BATCH_READY_CODES = {
+    "public_swarm_generate_batch_ready",
+}
+LOCAL_LOOPBACK_SUPERSEDED_RC_BLOCKED_CODES = {
+    "p2p_lite_discovery_blocked",
+    "p2p_lite_route_blocked",
+    "public_swarm_inference_beta_blocked",
+    "public_swarm_inference_beta_rc_blocked",
+    "public_swarm_product_beta_blocked",
+    "public_swarm_product_rc_blocked",
+}
+
+
+def stream_evidence_ready(stream: dict[str, Any], batch: dict[str, Any] | None = None) -> bool:
+    if not isinstance(stream, dict) or not stream.get("stream_generation_ready"):
+        return False
+    progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
+    expected_requests = safe_int(progress.get("expected_request_count") or (batch or {}).get("expected_request_count") or (batch or {}).get("request_count"), 1)
+    if expected_requests > 1 or bool((batch or {}).get("enabled")):
+        return bool(
+            progress.get("per_request_progress")
+            and progress.get("per_request_progress_complete") is True
+            and progress.get("per_request_monotonic_progress") is True
+        )
+    return bool(progress.get("stream_progress_complete") is True and progress.get("monotonic_progress") is True)
+
+
+def safe_batch_summary(batch: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(batch, dict) or not batch:
+        return {"enabled": False, "batch_generation_ready": False}
+    safe_results: list[dict[str, Any]] = []
+    raw_results = batch.get("results") if isinstance(batch.get("results"), list) else []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        safe_results.append({
+            "request_id": item.get("request_id"),
+            "prompt_hash": item.get("prompt_hash"),
+            "generated_token_count": safe_int(item.get("generated_token_count")),
+            "max_new_tokens": item.get("max_new_tokens"),
+            "generated_text_hash": item.get("generated_text_hash"),
+            "decoded_tokens_match": item.get("decoded_tokens_match"),
+            "multi_token_generation_ready": bool(item.get("multi_token_generation_ready")),
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        })
+    expected_request_count = safe_int(batch.get("expected_request_count") or batch.get("request_count"))
+    identity_keys = [
+        str(item.get("request_id") or item.get("prompt_hash") or "")
+        for item in safe_results[:expected_request_count]
+    ]
+    batch_identity_ready = bool(
+        expected_request_count > 0
+        and (
+            expected_request_count <= 1
+            or (
+                len(identity_keys) >= expected_request_count
+                and all(identity_keys)
+                and len(set(identity_keys)) == expected_request_count
+            )
+        )
+    )
+    return {
+        "enabled": bool(batch.get("enabled")),
+        "request_count": safe_int(batch.get("request_count")),
+        "expected_request_count": expected_request_count,
+        "observed_request_count": safe_int(batch.get("observed_request_count") or batch.get("request_count")),
+        "max_request_count": batch.get("max_request_count"),
+        "prompt_hashes": list(batch.get("prompt_hashes") or []),
+        "prompt_char_counts": list(batch.get("prompt_char_counts") or []),
+        "result_count": safe_int(batch.get("result_count") or len(safe_results)),
+        "results": safe_results,
+        "batch_identity_ready": batch_identity_ready,
+        "batch_generation_ready": bool(batch.get("batch_generation_ready") and batch_identity_ready),
+        "raw_prompts_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
+def drop_superseded_local_loopback_blockers(codes: set[str]) -> set[str]:
+    return set(codes) - LOCAL_LOOPBACK_SUPERSEDED_RC_BLOCKED_CODES
+
+
+def drop_unproven_stream_codes(codes: set[str], *, stream_ready: bool) -> set[str]:
+    if stream_ready:
+        return codes
+    return {code for code in codes if code not in STREAM_READY_CODES}
+
+
+def drop_unproven_generation_ready_codes(
+    codes: set[str],
+    *,
+    stream_ready: bool,
+) -> set[str]:
+    filtered = drop_unproven_stream_codes(codes, stream_ready=stream_ready)
+    filtered -= BATCH_READY_CODES
+    return filtered
+
+
 def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "", ok: bool | None = None) -> dict[str, Any]:
     try:
         relative = path.resolve().relative_to(output_dir.resolve()).as_posix()
@@ -151,6 +264,8 @@ def rc_args(args: argparse.Namespace, output_dir: Path) -> argparse.Namespace:
         args.gpu_report,
         "--prompt-text",
         args.prompt_text,
+        "--prompt-texts",
+        args.prompt_texts,
         "--scenario-id",
         args.scenario_id,
         "--request-count",
@@ -183,6 +298,8 @@ def rc_args(args: argparse.Namespace, output_dir: Path) -> argparse.Namespace:
         argv.extend(["--observer-token", args.observer_token])
     if args.admin_token:
         argv.extend(["--admin-token", args.admin_token])
+    if args.stream_generation:
+        argv.append("--stream-generation")
     return rc_pack.parse_args(argv)
 
 
@@ -263,6 +380,7 @@ def find_private_artifacts(path: Path) -> list[str]:
 
 def summarize_rc(payload: dict[str, Any]) -> dict[str, Any]:
     rc = payload.get("rc") if isinstance(payload.get("rc"), dict) else {}
+    batch = safe_batch_summary(rc.get("batch") if isinstance(rc.get("batch"), dict) else {})
     return {
         "schema": payload.get("schema"),
         "ok": payload.get("ok"),
@@ -275,6 +393,7 @@ def summarize_rc(payload: dict[str, Any]) -> dict[str, Any]:
         "mode_ready": rc.get("mode_ready"),
         "workload_type": rc.get("workload_type"),
         "max_new_tokens": rc.get("max_new_tokens"),
+        "batch": batch,
     }
 
 
@@ -352,7 +471,7 @@ def required_mode_ready(args: argparse.Namespace, rc_codes: set[str], split_code
                 "distinct_stage_miners",
                 "stage_assignment_valid",
             })
-        return bool(rc_ready and local_ready), codes
+        return bool(local_ready), codes
     if args.mode == "package":
         package_required = {
             "public_swarm_beta_rc_package_ready",
@@ -402,6 +521,11 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
     rc_output = output_dir / "rc"
     rc_step, rc_payload = run_rc_core(args, output_dir=rc_output, runner=runner)
     rc_codes = set(diagnosis_codes(rc_payload))
+    rc = rc_payload.get("rc") if isinstance(rc_payload.get("rc"), dict) else {}
+    rc_batch = safe_batch_summary(rc.get("batch") if isinstance(rc.get("batch"), dict) else {})
+    rc_stream = rc.get("stream") if isinstance(rc.get("stream"), dict) else {}
+    rc_batch_ready = bool(rc_batch.get("enabled") and rc_batch.get("batch_generation_ready") is True)
+    rc_stream_ready = stream_evidence_ready(rc_stream, rc_batch)
     split_step: dict[str, Any] | None = None
     split_payload: dict[str, Any] = {}
     if args.mode == "local-loopback":
@@ -416,13 +540,14 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
     # may report its own product aggregate as ready while the user-facing
     # serve/join/generate path is still blocked by missing runtime deps.
     inherited_codes.discard("public_swarm_product_beta_ready")
-    codes = inherited_codes | mode_codes
+    codes = drop_unproven_generation_ready_codes(
+        inherited_codes | mode_codes,
+        stream_ready=rc_stream_ready,
+    )
     common_ready = {
         "public_swarm_product_beta_ready",
         "public_swarm_product_beta_user_path_ready",
         "support_bundle_ready",
-        "p2p_lite_route_ready",
-        "p2p_lite_discovery_ready",
         "cpu_fallback_ready",
         "local_cpu_inference_ready",
         "read_only_workload",
@@ -430,6 +555,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         "not_p2p",
         "not_large_model_serving",
     }
+    legacy_p2p_ready_codes = {"p2p_lite_route_ready", "p2p_lite_discovery_ready"}
     if args.mode == "package":
         privacy_ready = "private_artifacts_local_only" in codes
     else:
@@ -438,7 +564,17 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
             codes.add("private_artifacts_cleaned")
     ready = bool(mode_ready and support_ready and privacy_ready)
     if ready:
+        if args.mode == "local-loopback":
+            codes = drop_superseded_local_loopback_blockers(codes)
         codes.update(common_ready)
+        if legacy_p2p_ready_codes <= inherited_codes:
+            codes.update(legacy_p2p_ready_codes)
+        if rc_batch_ready:
+            codes.add("public_swarm_generate_batch_ready")
+        if rc_stream_ready:
+            codes.add("public_swarm_generate_stream_ready")
+            if rc_stream.get("endpoint_ready"):
+                codes.add("public_swarm_generate_stream_endpoint_ready")
     else:
         codes.add("public_swarm_product_beta_blocked")
     artifacts = {
@@ -473,6 +609,8 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
             "workload_type": WORKLOAD_TYPE,
             "hf_model_id": args.hf_model_id,
             "max_new_tokens": args.max_new_tokens,
+            "batch": rc_batch if rc_batch else {"enabled": False, "batch_generation_ready": False},
+            "stream": rc_stream if rc_stream else {"enabled": False, "stream_generation_ready": False},
             "user_surface": ["serve", "join", "generate"],
         },
         "steps": [rc_step] + ([split_step] if split_step else []),
@@ -591,6 +729,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--gpu-report", default=rc_pack.DEFAULT_GPU_REPORT)
     parser.add_argument("--prompt-text", default=DEFAULT_PROMPT)
+    parser.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
+    parser.add_argument("--stream-generation", action="store_true")
     parser.add_argument("--scenario-id", default="route-baseline")
     parser.add_argument("--request-count", type=int, default=1)
     parser.add_argument("--max-new-tokens", type=int, default=2)
@@ -617,6 +757,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--external-llm-request-count must be between 1 and 4")
     if args.max_new_tokens < 2 or args.max_new_tokens > 32:
         raise SystemExit("--max-new-tokens must be between 2 and 32")
+    try:
+        parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     for name in [
         "timeout_seconds",
         "remote_timeout_seconds",

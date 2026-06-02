@@ -1,0 +1,26 @@
+{
+  "name": "crowdtensor",
+  "version": "0.1.0-alpha",
+  "private": true,
+  "type": "module",
+  "description": "CrowdTensor optional libp2p discovery sidecar for real-P2P alpha proofs.",
+  "scripts": {
+    "libp2p:daemon": "node scripts/libp2p_kad_daemon.mjs",
+    "libp2p:check": "python3 scripts/libp2p_discovery_alpha_check.py --json"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "^17.0.0",
+    "@chainsafe/libp2p-yamux": "^8.0.1",
+    "@libp2p/bootstrap": "^12.0.21",
+    "@libp2p/crypto": "^5.1.13",
+    "@libp2p/identify": "^4.0.21",
+    "@libp2p/kad-dht": "^16.3.1",
+    "@libp2p/peer-id": "^6.0.6",
+    "@libp2p/ping": "^3.0.21",
+    "@libp2p/tcp": "^11.0.21",
+    "@multiformats/multiaddr": "^13.0.1",
+    "it-all": "^3.0.9",
+    "libp2p": "^3.3.3",
+    "uint8arrays": "^5.1.0"
+  }
+}

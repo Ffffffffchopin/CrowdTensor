@@ -1,0 +1,931 @@
+#!/usr/bin/env python3
+"""Acceptance checks for Public Real-LLM Swarm Inference Beta v1."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+
+import public_real_llm_swarm_beta_pack as pack  # noqa: E402
+from petals_class_p2p_candidate_check import add_safe_batch_stream  # noqa: E402
+
+
+SCHEMA = "public_real_llm_swarm_beta_check_v1"
+REQUIRED_RELEASE_CODES = {
+    "public_real_llm_swarm_beta_ready",
+    "release_evidence_ready",
+    "user_facing_serve_join_generate_ready",
+    "public_real_llm_product_path_ready",
+    "public_real_llm_swarm_beta_product_model_match_ready",
+    "cpu_real_llm_default_ready",
+    "external_kaggle_two_stage_ready",
+    "external_real_llm_generate_ready",
+    "external_stage_requeue_ready",
+    "p2p_ready_product_beta",
+    "real_p2p_discovery_candidate_ready",
+    "peer_scoring_ready",
+    "p2p_live_requeue_rescue_ready",
+    "p2p_victim_result_not_accepted",
+    "public_real_llm_swarm_beta_public_swarm_v2_ready",
+    "public_real_llm_swarm_beta_p2p_user_path_ready",
+    "public_swarm_inference_v2_ready",
+    "public_swarm_v2_local_p2p_generate_ready",
+    "public_swarm_v2_16_token_generation_ready",
+    "public_swarm_v2_external_stage_rows_ready",
+    "public_swarm_v2_dual_stage_kv_cache_ready",
+    "public_swarm_v2_model_match_ready",
+    "public_swarm_v2_signed_or_real_p2p_ready",
+    "public_swarm_v2_real_p2p_local_ready",
+    "public_swarm_v2_stage_requeue_rescue_ready",
+    "public_real_llm_swarm_beta_v2_real_p2p_local_ready",
+    "public_real_llm_swarm_beta_v2_batch_ready",
+    "public_real_llm_swarm_beta_v2_stream_ready",
+    "public_swarm_v2_batch_generation_ready",
+    "public_swarm_v2_stream_generation_ready",
+    "public_real_llm_swarm_beta_kv_cache_ready",
+    "public_real_llm_swarm_beta_kv_cache_model_match_ready",
+    "usable_real_llm_kv_cache_ready",
+    "p2p_real_generate_kv_cache_ready",
+    "real_llm_stage0_kv_cache_v1_ready",
+    "real_llm_stage1_kv_cache_v1_ready",
+    "stage0_kv_cache_hits_ready",
+    "stage1_kv_cache_hits_ready",
+    "optional_cuda_fail_closed_ready",
+    "serve_join_generate_runbook_ready",
+    "read_only_workload",
+    "not_production",
+    "not_coordinator_free",
+    "not_hivemind_petals_production",
+    "not_large_model_serving",
+}
+LOCAL_MODEL_VARIANT_REQUIRED_CODES = {
+    "public_real_llm_swarm_beta_local_model_variant_ready",
+    "public_real_llm_swarm_beta_local_model_variant_only",
+    "external_validation_not_claimed",
+    "public_real_llm_swarm_beta_local_model_variant_v2_ready",
+    "public_swarm_inference_v2_local_model_variant_ready",
+    "public_swarm_v2_local_model_variant_ready",
+    "public_swarm_v2_external_validation_not_claimed",
+    "public_swarm_v2_local_p2p_generate_ready",
+    "public_swarm_v2_16_token_generation_ready",
+    "public_swarm_v2_dual_stage_kv_cache_ready",
+    "public_swarm_v2_model_match_ready",
+    "public_swarm_v2_signed_or_real_p2p_ready",
+    "public_swarm_v2_real_p2p_local_ready",
+    "public_swarm_v2_real_p2p_local_requeue_ready",
+    "public_swarm_v2_stage_requeue_rescue_ready",
+    "public_real_llm_swarm_beta_v2_real_p2p_local_ready",
+    "public_real_llm_swarm_beta_v2_real_p2p_local_requeue_ready",
+    "public_real_llm_swarm_beta_v2_batch_ready",
+    "public_real_llm_swarm_beta_v2_stream_ready",
+    "public_real_llm_swarm_beta_kv_cache_ready",
+    "public_real_llm_swarm_beta_kv_cache_model_match_ready",
+    "usable_real_llm_kv_cache_ready",
+    "optional_cuda_fail_closed_ready",
+    "serve_join_generate_runbook_ready",
+    "read_only_workload",
+    "not_production",
+    "not_coordinator_free",
+    "not_hivemind_petals_production",
+    "not_large_model_serving",
+}
+LOCAL_MODEL_VARIANT_BLOCKED_CODES = {
+    "public_real_llm_swarm_beta_ready",
+    "release_evidence_ready",
+    "external_runtime_verified",
+    "external_stage_requeue_ready",
+    "p2p_ready_product_beta",
+    "public_swarm_v2_external_stage_rows_ready",
+    "cuda_runtime_available",
+    "public_swarm_gpu_beta_ready",
+    "gpu_runtime_ready",
+}
+SECRET_FRAGMENTS = [
+    "CROWDTENSOR_MINER_TOKEN=",
+    "CROWDTENSOR_OBSERVER_TOKEN=",
+    "CROWDTENSOR_ADMIN_TOKEN=",
+    "CROWDTENSOR_P2P_PEER_SECRET=",
+    "lease_token",
+    "idempotency_key",
+    "Bearer ",
+    "hidden_state",
+    "input_ids",
+    "logits",
+    "activation_results",
+    '"generated_text":',
+    '"generated_token_ids":',
+    '"prompt_text":',
+    "operator.private.env",
+    "miner.private.env",
+    "miner_registry.json",
+]
+
+
+def write(path: Path, payload: str = "{}\n") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload, encoding="utf-8")
+
+
+def completed(payload: dict[str, Any], returncode: int = 0) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=["cmd"], returncode=returncode, stdout=json.dumps(payload) + "\n", stderr="")
+
+
+def model_block(model_id: str) -> dict[str, Any]:
+    return {
+        "expected_hf_model_id": model_id,
+        "observed_hf_model_id": model_id,
+        "model_id_present": True,
+        "model_id_match": True,
+        "compatible": True,
+        "default_model_retained_evidence": False,
+    }
+
+
+def fake_product_payload(model_id: str = "sshleifer/tiny-gpt2", *, tokens: int = 16) -> dict[str, Any]:
+    return {
+        "schema": pack.PRODUCT_SCHEMA,
+        "ok": True,
+        "mode": "local-loopback",
+        "product_beta": {
+            "ready": True,
+            "workload_type": pack.WORKLOAD_TYPE,
+            "hf_model_id": model_id,
+            "max_new_tokens": tokens,
+            "user_surface": ["serve", "join", "generate"],
+        },
+        "diagnosis_codes": [
+            "public_swarm_product_beta_ready",
+            "public_swarm_product_beta_user_path_ready",
+            "serve_ready",
+            "stage0_join_ready",
+            "stage1_join_ready",
+            "generate_ready",
+            "serve_join_generate_loop_ready",
+            "remote_generate_session_ready",
+            "public_swarm_generate_ready",
+            "decoded_tokens_match",
+            "distinct_stage_miners",
+            "stage_assignment_valid",
+            "cpu_fallback_ready",
+            "local_cpu_inference_ready",
+            "read_only_workload",
+            "not_production",
+            "not_p2p",
+            "not_large_model_serving",
+        ],
+    }
+
+
+def fake_gpu_payload() -> dict[str, Any]:
+    return {
+        "schema": pack.GPU_SCHEMA,
+        "ok": True,
+        "mode": "local-smoke",
+        "beta": {
+            "ready": True,
+            "backend": "hf_transformers_cuda",
+            "cuda_available": False,
+        },
+        "diagnosis_codes": [
+            "public_swarm_gpu_beta_smoke_ready",
+            "gpu_runtime_smoke_ready",
+            "cuda_runtime_unavailable",
+            "read_only_workload",
+            "not_production",
+            "not_p2p",
+        ],
+    }
+
+
+def fake_external_payload(*, tokens: int = 16) -> dict[str, Any]:
+    return {
+        "schema": pack.REAL_LLM_INTERNET_BETA_SCHEMA,
+        "ok": True,
+        "mode": "kaggle-auto",
+        "workload": {
+            "workload_type": pack.WORKLOAD_TYPE,
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "max_new_tokens": tokens,
+        },
+        "diagnosis_codes": [
+            "real_llm_internet_beta_ready",
+            "external_runtime_verified",
+            "generation_complete",
+            "decoded_tokens_match",
+            "distinct_stage_miners",
+            "stage_assignment_valid",
+            "external_stage_requeue_ready",
+            "live_stage0_requeue_ready",
+            "kaggle_kernels_deleted",
+        ],
+        "generation": {
+            "generated_token_count": tokens,
+            "max_new_tokens": tokens,
+            "generated_text_hash": "sha256:fake",
+            "decoded_tokens_match": True,
+            "multi_token_generation_ready": True,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        },
+        "live_requeue_summary": {
+            "enabled": True,
+            "failure_mode": "kill-stage0-after-claim",
+            "target_stage": "stage0",
+            "victim_miner_id": "internet-real-llm-beta-stage0-victim",
+            "rescue_miner_id": "internet-real-llm-beta-stage0-rescue",
+            "claim_observed": True,
+            "victim_kernel_deleted": True,
+            "lease_expired": True,
+            "rescued_result": True,
+            "victim_result_accepted": False,
+        },
+    }
+
+
+def fake_p2p_payload(*, tokens: int = 16) -> dict[str, Any]:
+    payload = {
+        "schema": pack.P2P_SCHEMA,
+        "ok": True,
+        "mode": "evidence-import",
+        "candidate": {
+            "peer_scoring_ready": True,
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "external_generated_token_count": tokens,
+            "accepted_rows": tokens * 2,
+            "external_stage_requeue_ready": True,
+            "p2p_live_requeue_ready": True,
+            "victim_result_not_accepted": True,
+            "live_requeue_summary": {
+                "enabled": True,
+                "failure_mode": "kill-stage0-after-claim",
+                "target_stage": "stage0",
+                "victim_miner_id": "real-p2p-rc-kaggle-stage0-victim",
+                "rescue_miner_id": "real-p2p-rc-kaggle-stage0-rescue",
+                "claim_observed": True,
+                "victim_kernel_deleted": True,
+                "lease_expired": True,
+                "rescue_miner_used": True,
+                "rescued_result": True,
+                "accepted_result_after_requeue": True,
+                "victim_result_accepted": False,
+            },
+        },
+        "generation": {
+            "generated_token_count": tokens,
+            "max_new_tokens": tokens,
+            "generated_text_hash": "sha256:p2p-fake",
+            "decoded_tokens_match": True,
+            "multi_token_generation_ready": True,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        },
+        "diagnosis_codes": [
+            "petals_class_p2p_candidate_ready",
+            "peer_scoring_ready",
+            "external_multi_node_generation_ready",
+            "external_stage_requeue_ready",
+            "rescue_miner_used",
+            "accepted_result_after_requeue",
+            "p2p_live_requeue_rescue_ready",
+            "p2p_victim_result_not_accepted",
+            "libp2p_discovery_backend_ready",
+        ],
+    }
+    candidate_batch_stream = add_safe_batch_stream({}).copy()
+    payload["candidate"]["batch_ready"] = True
+    payload["candidate"]["batch"] = candidate_batch_stream["batch"]
+    payload["candidate"]["stream_ready"] = True
+    payload["candidate"]["stream"] = candidate_batch_stream["stream"]
+    payload["diagnosis_codes"].extend([
+        "p2p_candidate_batch_generation_ready",
+        "p2p_candidate_stream_generation_ready",
+        "public_swarm_generate_batch_ready",
+        "public_swarm_generate_stream_ready",
+        "public_swarm_generate_stream_endpoint_ready",
+    ])
+    return payload
+
+
+def fake_usable_payload(model_id: str = "sshleifer/tiny-gpt2", *, tokens: int = 16) -> dict[str, Any]:
+    stage0_rows = [
+        {
+            "generation_step": step,
+            "stage_id": 0,
+            "miner_id": "p2p-v06-real-stage0",
+            "cache_schema": "real_llm_stage0_kv_cache_v1",
+            "cache_stage": "stage0_prefix",
+            "cache_ready": True,
+            "cache_hit": step > 0,
+        }
+        for step in range(tokens)
+    ]
+    stage1_rows = [
+        {
+            "generation_step": step,
+            "stage_id": 1,
+            "miner_id": "p2p-v06-real-stage1",
+            "cache_schema": "real_llm_stage1_kv_cache_v1",
+            "cache_stage": "stage1_suffix",
+            "cache_ready": True,
+            "cache_hit": step > 0,
+        }
+        for step in range(tokens)
+    ]
+    return {
+        "schema": "usable_swarm_inference_v1",
+        "ok": True,
+        "mode": "evidence-import",
+        "readiness": {
+            "p2p_product_path": {
+                "ready": True,
+                "generated_token_count": tokens,
+                "model": model_block(model_id),
+                "generation": {
+                    "generated_token_count": tokens,
+                    "max_new_tokens": tokens,
+                    "generated_text_hash": "sha256:usable",
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                },
+                "kv_cache_ready": True,
+                "kv_cache": {
+                    "schema": "p2p_real_generate_dual_stage_kv_cache_v1",
+                    "ready": True,
+                    "expected_hit_count_per_stage": max(0, tokens - 1),
+                    "process_scope": "single_miner_process_per_stage",
+                    "raw_activations_public": False,
+                    "raw_generated_values_public": False,
+                    "raw_token_inputs_public": False,
+                    "stage0": {
+                        "schema": "real_llm_stage0_kv_cache_v1",
+                        "stage": "stage0_prefix",
+                        "ready": True,
+                        "row_count": tokens,
+                        "ready_count": tokens,
+                        "hit_count": max(0, tokens - 1),
+                        "expected_hit_count": max(0, tokens - 1),
+                        "rows": stage0_rows,
+                    },
+                    "stage1": {
+                        "schema": "real_llm_stage1_kv_cache_v1",
+                        "stage": "stage1_suffix",
+                        "ready": True,
+                        "row_count": tokens,
+                        "ready_count": tokens,
+                        "hit_count": max(0, tokens - 1),
+                        "expected_hit_count": max(0, tokens - 1),
+                        "rows": stage1_rows,
+                    },
+                },
+            },
+        },
+        "diagnosis_codes": [
+            "usable_swarm_inference_ready",
+            "usable_real_llm_kv_cache_ready",
+            "p2p_real_generate_kv_cache_ready",
+            "real_llm_stage0_kv_cache_v1_ready",
+            "real_llm_stage1_kv_cache_v1_ready",
+            "stage0_kv_cache_hits_ready",
+            "stage1_kv_cache_hits_ready",
+        ],
+    }
+
+
+def fake_public_swarm_v2_payload(
+    tokens: int = 16,
+    *,
+    model_id: str = "sshleifer/tiny-gpt2",
+    local_model_variant: bool = False,
+) -> dict[str, Any]:
+    model = model_block(model_id)
+    external_model = model_block("sshleifer/tiny-gpt2" if local_model_variant else model_id)
+    if local_model_variant and external_model["observed_hf_model_id"] != model_id:
+        external_model["model_id_match"] = False
+        external_model["compatible"] = False
+    codes = [
+        "public_swarm_v2_local_p2p_generate_ready",
+        "public_swarm_v2_16_token_generation_ready",
+        "public_swarm_v2_dual_stage_kv_cache_ready",
+        "public_swarm_v2_model_match_ready",
+        "public_swarm_v2_signed_or_real_p2p_ready",
+        "public_swarm_v2_real_p2p_local_ready",
+        "public_swarm_v2_real_p2p_local_requeue_ready",
+        "public_swarm_v2_stage_requeue_rescue_ready",
+        "public_swarm_v2_batch_generation_ready",
+        "public_swarm_v2_stream_generation_ready",
+    ]
+    if local_model_variant:
+        codes.extend([
+            "public_swarm_inference_v2_local_model_variant_ready",
+            "public_swarm_v2_local_model_variant_ready",
+            "public_swarm_v2_local_model_variant_model_match_ready",
+            "public_swarm_v2_external_validation_not_claimed",
+        ])
+    else:
+        codes.extend([
+            "public_swarm_inference_v2_ready",
+            "public_swarm_v2_external_stage_rows_ready",
+        ])
+    batch = {
+        "enabled": True,
+        "request_count": 2,
+        "expected_request_count": 2,
+        "observed_request_count": 2,
+        "max_request_count": 4,
+        "prompt_hashes": ["sha256:p1", "sha256:p2"],
+        "prompt_char_counts": [12, 13],
+        "result_count": 2,
+        "results": [
+            {
+                "request_id": "req-1",
+                "prompt_hash": "sha256:p1",
+                "generated_token_count": tokens,
+                "max_new_tokens": tokens,
+                "generated_text_hash": "sha256:v2-local-1",
+                "decoded_tokens_match": True,
+                "multi_token_generation_ready": True,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            },
+            {
+                "request_id": "req-2",
+                "prompt_hash": "sha256:p2",
+                "generated_token_count": tokens,
+                "max_new_tokens": tokens,
+                "generated_text_hash": "sha256:v2-local-2",
+                "decoded_tokens_match": True,
+                "multi_token_generation_ready": True,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            },
+        ],
+        "batch_identity_ready": True,
+        "batch_generation_ready": True,
+        "raw_prompts_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+    stream = {
+        "enabled": True,
+        "requested": True,
+        "event_count": tokens * 2,
+        "source": "admin-session-stream",
+        "endpoint_ready": True,
+        "stream_generation_ready": True,
+        "progress": {
+            "stream_progress_complete": True,
+            "all_token_events_ready": True,
+            "monotonic_progress": True,
+            "expected_request_count": 2,
+            "per_request_progress": [
+                {
+                    "request_key": "req-1",
+                    "request_id": "req-1",
+                    "prompt_hash": "sha256:p1",
+                    "event_count": tokens,
+                    "observed_token_counts": list(range(1, tokens + 1)),
+                    "max_observed_token_count": tokens,
+                    "target_token_count": tokens,
+                    "monotonic_progress": True,
+                    "stream_progress_complete": True,
+                },
+                {
+                    "request_key": "req-2",
+                    "request_id": "req-2",
+                    "prompt_hash": "sha256:p2",
+                    "event_count": tokens,
+                    "observed_token_counts": list(range(1, tokens + 1)),
+                    "max_observed_token_count": tokens,
+                    "target_token_count": tokens,
+                    "monotonic_progress": True,
+                    "stream_progress_complete": True,
+                },
+            ],
+            "per_request_progress_complete": True,
+            "per_request_monotonic_progress": True,
+            "observed_token_counts": list(range(1, tokens + 1)),
+            "max_observed_token_count": tokens,
+            "max_new_tokens": tokens,
+            "source": "admin-session-stream",
+        },
+        "events": [],
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+    return {
+        "schema": pack.PUBLIC_SWARM_V2_SCHEMA,
+        "ok": True,
+        "mode": pack.MODE_LOCAL_MODEL_VARIANT if local_model_variant else "local",
+        "public_swarm_v2": {
+            "ready": True,
+            "hf_model_id": model_id,
+            "max_new_tokens": tokens,
+            "user_surface": ["p2pd", "serve", "join", "generate"],
+            "local_model_variant_only": local_model_variant,
+            "external_validation_claimed": not local_model_variant,
+        },
+        "readiness": {
+            "local_p2p_generate": {
+                "schema": "usable_swarm_inference_v1",
+                "ok": True,
+                "ready": True,
+                "model": model,
+                "route_source": "p2p-discovery",
+                "generated_token_count": tokens,
+                "accepted_rows": tokens * 2,
+                "batch": batch,
+                "batch_ready": True,
+                "stream": stream,
+                "stream_ready": True,
+                "kv_cache_ready": True,
+                "stage_requeue_rescue_ready": True,
+                "kv_cache": {
+                    "schema": "p2p_real_generate_dual_stage_kv_cache_v1",
+                    "ready": True,
+                    "stage0": {"schema": "real_llm_stage0_kv_cache_v1", "ready": True, "hit_count": max(0, tokens - 1)},
+                    "stage1": {"schema": "real_llm_stage1_kv_cache_v1", "ready": True, "hit_count": max(0, tokens - 1)},
+                },
+            },
+            "external_validation": {
+                "schema": "real_p2p_swarm_inference_core_rc_v1",
+                "ok": True,
+                "ready": True,
+                "model": external_model,
+                "generated_token_count": tokens,
+                "accepted_rows": tokens * 2,
+                "accepted_rows_ready": True,
+                "retained_external_evidence_ready": True,
+                "fresh_external_runtime_verified": False,
+            },
+            "p2p_route_hardening": {
+                "schema": "real_p2p_swarm_inference_core_rc_v1",
+                "ok": True,
+                "ready": True,
+                "model": model,
+                "route_source": "real-p2p-discovery",
+            },
+            "real_p2p_local_route_hardening": {
+                "mode": "local-smoke",
+                "ready": True,
+                "required": True,
+                "discovery_backend": "http-provider-store",
+                "generated_token_count": tokens,
+                "stage_requeue_ready": True,
+                "stage_requeue_target": "stage1",
+            },
+            "performance": {
+                "stage_latency_ready": True,
+                "throughput_summary_ready": True,
+                "memory_or_vram_summary_ready": True,
+            },
+        },
+        "diagnosis_codes": codes,
+    }
+
+
+def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int = 16) -> list[str]:
+    errors: list[str] = []
+    if payload.get("schema") != pack.SCHEMA:
+        errors.append("schema_mismatch")
+    if payload.get("ok") is not True:
+        errors.append("beta_not_ready")
+    if payload.get("mode") != mode:
+        errors.append("mode_mismatch")
+    beta = payload.get("beta") if isinstance(payload.get("beta"), dict) else {}
+    if beta.get("ready") is not True:
+        errors.append("beta_summary_not_ready")
+    if beta.get("user_surface") != ["serve", "join", "generate"]:
+        errors.append("user_surface_mismatch")
+    if beta.get("cpu_default_ready") is not True:
+        errors.append("cpu_default_not_ready")
+    if beta.get("cuda_optional_fail_closed_ready") is not True:
+        errors.append("cuda_fail_closed_not_ready")
+    if int(beta.get("max_new_tokens") or 0) < expected_tokens:
+        errors.append(f"beta_token_target_below_{expected_tokens}")
+    local_model_variant = mode == pack.MODE_LOCAL_MODEL_VARIANT
+    if local_model_variant:
+        if beta.get("local_model_variant_only") is not True:
+            errors.append("local_model_variant_not_marked")
+        for field in ["release_evidence_ready", "external_two_stage_ready", "external_stage_requeue_ready", "p2p_ready_product_beta"]:
+            if beta.get(field) is not False:
+                errors.append(f"local_model_variant_claimed:{field}")
+    else:
+        if beta.get("external_two_stage_ready") is not True:
+            errors.append("external_two_stage_not_ready")
+        if beta.get("external_stage_requeue_ready") is not True:
+            errors.append("external_requeue_not_ready")
+        if beta.get("p2p_ready_product_beta") is not True:
+            errors.append("p2p_product_not_ready")
+        if beta.get("p2p_live_requeue_ready") is not True:
+            errors.append("p2p_live_requeue_not_ready")
+        if beta.get("p2p_victim_result_not_accepted") is not True:
+            errors.append("p2p_victim_result_not_rejected")
+    if beta.get("kv_cache_ready") is not True:
+        errors.append("kv_cache_not_ready")
+    readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
+    product = readiness.get("product_path") if isinstance(readiness.get("product_path"), dict) else {}
+    external = readiness.get("external_kaggle") if isinstance(readiness.get("external_kaggle"), dict) else {}
+    p2p = readiness.get("p2p_candidate") if isinstance(readiness.get("p2p_candidate"), dict) else {}
+    public_swarm_v2 = readiness.get("public_swarm_v2") if isinstance(readiness.get("public_swarm_v2"), dict) else {}
+    kv_cache = readiness.get("usable_p2p_kv_cache") if isinstance(readiness.get("usable_p2p_kv_cache"), dict) else {}
+    product_model = product.get("model") if isinstance(product.get("model"), dict) else {}
+    external_model = external.get("model") if isinstance(external.get("model"), dict) else {}
+    p2p_model = p2p.get("model") if isinstance(p2p.get("model"), dict) else {}
+    kv_cache_model = kv_cache.get("model") if isinstance(kv_cache.get("model"), dict) else {}
+    if not product_model.get("observed_hf_model_id") or product_model.get("model_id_present") is not True:
+        errors.append("product_model_id_missing")
+    if product_model.get("compatible") is not True:
+        errors.append("product_model_not_compatible")
+    if local_model_variant:
+        for name, summary in [("external_kaggle", external), ("p2p_candidate", p2p)]:
+            if summary.get("claimed") is not False or summary.get("ready") is not False:
+                errors.append(f"local_model_variant_claimed:{name}")
+    else:
+        if not external_model.get("observed_hf_model_id") or external_model.get("model_id_present") is not True:
+            errors.append("external_model_id_missing")
+        if external_model.get("compatible") is not True:
+            errors.append("external_model_not_compatible")
+        if not p2p_model.get("observed_hf_model_id") or p2p_model.get("model_id_present") is not True:
+            errors.append("p2p_model_id_missing")
+        if p2p_model.get("compatible") is not True:
+            errors.append("p2p_model_not_compatible")
+    if public_swarm_v2.get("ready") is not True:
+        errors.append("public_swarm_v2_not_ready")
+    v2_model = public_swarm_v2.get("model") if isinstance(public_swarm_v2.get("model"), dict) else {}
+    if v2_model.get("compatible") is not True:
+        errors.append("public_swarm_v2_model_not_compatible")
+    if public_swarm_v2.get("generated_token_count", 0) < 1:
+        errors.append("public_swarm_v2_generation_missing")
+    if int(public_swarm_v2.get("generated_token_count") or 0) < expected_tokens:
+        errors.append(f"public_swarm_v2_token_target_below_{expected_tokens}")
+    if int(public_swarm_v2.get("required_generated_token_count") or 0) < expected_tokens:
+        errors.append(f"public_swarm_v2_required_token_target_below_{expected_tokens}")
+    if public_swarm_v2.get("accepted_rows_ready") is not True:
+        errors.append("public_swarm_v2_stage_rows_not_ready")
+    if local_model_variant:
+        if public_swarm_v2.get("local_model_variant_only") is not True:
+            errors.append("public_swarm_v2_local_model_variant_not_marked")
+        if public_swarm_v2.get("external_validation_claimed") is not False:
+            errors.append("public_swarm_v2_external_claimed_in_local_variant")
+    elif public_swarm_v2.get("external_accepted_rows_ready") is not True:
+        errors.append("public_swarm_v2_external_stage_rows_not_ready")
+    if public_swarm_v2.get("kv_cache_ready") is not True:
+        errors.append("public_swarm_v2_kv_cache_not_ready")
+    if public_swarm_v2.get("stage_requeue_rescue_ready") is not True:
+        errors.append("public_swarm_v2_requeue_not_ready")
+    if public_swarm_v2.get("real_p2p_local_route_hardening_ready") is not True:
+        errors.append("public_swarm_v2_real_p2p_local_not_ready")
+    if public_swarm_v2.get("real_p2p_local_stage_requeue_ready") is not True:
+        errors.append("public_swarm_v2_real_p2p_local_requeue_not_ready")
+    if public_swarm_v2.get("batch_ready") is not True:
+        errors.append("public_swarm_v2_batch_not_ready")
+    if public_swarm_v2.get("stream_ready") is not True:
+        errors.append("public_swarm_v2_stream_not_ready")
+    if kv_cache.get("ready") is not True:
+        errors.append("usable_kv_cache_not_ready")
+    if int(kv_cache.get("generated_token_count") or 0) < expected_tokens:
+        errors.append(f"usable_kv_cache_token_target_below_{expected_tokens}")
+    if int(kv_cache.get("required_generated_token_count") or 0) < expected_tokens:
+        errors.append(f"usable_kv_cache_required_token_target_below_{expected_tokens}")
+    if not kv_cache_model.get("observed_hf_model_id") or kv_cache_model.get("model_id_present") is not True:
+        errors.append("usable_kv_cache_model_id_missing")
+    if kv_cache_model.get("compatible") is not True:
+        errors.append("usable_kv_cache_model_not_compatible")
+    stage0 = kv_cache.get("stage0") if isinstance(kv_cache.get("stage0"), dict) else {}
+    stage1 = kv_cache.get("stage1") if isinstance(kv_cache.get("stage1"), dict) else {}
+    if stage0.get("hit_count", 0) < 1:
+        errors.append("stage0_kv_cache_hits_missing")
+    if stage1.get("hit_count", 0) < 1:
+        errors.append("stage1_kv_cache_hits_missing")
+    expected_hits = max(1, expected_tokens - 1)
+    if int(stage0.get("hit_count") or 0) < expected_hits:
+        errors.append(f"stage0_kv_cache_hits_below_{expected_hits}")
+    if int(stage1.get("hit_count") or 0) < expected_hits:
+        errors.append(f"stage1_kv_cache_hits_below_{expected_hits}")
+    if not local_model_variant:
+        if int(external.get("generated_token_count") or 0) < expected_tokens:
+            errors.append(f"external_token_target_below_{expected_tokens}")
+        if int(external.get("required_generated_token_count") or 0) < expected_tokens:
+            errors.append(f"external_required_token_target_below_{expected_tokens}")
+        if int(p2p.get("generated_token_count") or 0) < expected_tokens:
+            errors.append(f"p2p_token_target_below_{expected_tokens}")
+        if int(p2p.get("required_generated_token_count") or 0) < expected_tokens:
+            errors.append(f"p2p_required_token_target_below_{expected_tokens}")
+    codes = set(payload.get("diagnosis_codes") or [])
+    if payload.get("ok") is True:
+        for code in sorted(code for code in codes if code.endswith("_blocked")):
+            errors.append(f"unexpected_blocked_code:{code}")
+    required_codes = LOCAL_MODEL_VARIANT_REQUIRED_CODES if local_model_variant else REQUIRED_RELEASE_CODES
+    for code in sorted(required_codes - codes):
+        errors.append(f"missing_code:{code}")
+    if local_model_variant:
+        for code in sorted(LOCAL_MODEL_VARIANT_BLOCKED_CODES & codes):
+            errors.append(f"unexpected_code:{code}")
+    safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
+    for key in [
+        "coordinator_backed_task_execution",
+        "cpu_default",
+        "cuda_optional",
+        "cuda_fail_closed_expected",
+        "real_p2p_discovery_optional",
+        "not_coordinator_free",
+        "not_hivemind_petals_production",
+        "not_large_model_serving",
+    ]:
+        if safety.get(key) is not True:
+            errors.append(f"safety_missing:{key}")
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    required_artifacts = [
+        "public_real_llm_swarm_beta_json",
+        "public_real_llm_swarm_beta_markdown",
+        "support_bundle_json",
+        "runbook",
+        "usable_swarm_kv_cache_report",
+        "public_swarm_v2_report",
+    ]
+    if not local_model_variant:
+        required_artifacts.extend(["external_real_llm_report", "p2p_candidate_report"])
+    for name in required_artifacts:
+        artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
+        if artifact.get("present") is not True:
+            errors.append(f"missing_artifact:{name}")
+    encoded = json.dumps(payload, sort_keys=True)
+    for fragment in SECRET_FRAGMENTS:
+        if fragment in encoded:
+            errors.append(f"sensitive_fragment:{fragment}")
+    return errors
+
+
+def build_fake_release(output_dir: Path, *, tokens: int) -> dict[str, Any]:
+    external_path = output_dir / "source" / "real_llm_internet_beta.json"
+    p2p_path = output_dir / "source" / "petals_class_p2p_candidate.json"
+    usable_path = output_dir / "source" / "usable_swarm_inference.json"
+    public_swarm_v2_path = output_dir / "source" / "public_swarm_inference_v2.json"
+    write(external_path, json.dumps(fake_external_payload(tokens=tokens)) + "\n")
+    write(p2p_path, json.dumps(fake_p2p_payload(tokens=tokens)) + "\n")
+    write(usable_path, json.dumps(fake_usable_payload(tokens=tokens)) + "\n")
+    write(public_swarm_v2_path, json.dumps(fake_public_swarm_v2_payload(tokens)) + "\n")
+    args = pack.parse_args([
+        "release",
+        "--output-dir",
+        str(output_dir / "beta"),
+        "--external-report",
+        str(external_path),
+        "--p2p-report",
+        str(p2p_path),
+        "--usable-report",
+        str(usable_path),
+        "--public-swarm-v2-report",
+        str(public_swarm_v2_path),
+        "--base-port",
+        "9430",
+        "--port",
+        "9430",
+        "--timeout-seconds",
+        "60",
+        "--max-new-tokens",
+        str(tokens),
+    ])
+
+    def fake_runner(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        joined = " ".join(command)
+        if "public_swarm_product_beta_pack.py" in joined:
+            write(output_dir / "beta" / "product-beta" / "public_swarm_product_beta.json", json.dumps(fake_product_payload(tokens=tokens)) + "\n")
+            return completed(fake_product_payload(tokens=tokens))
+        if "petals_class_p2p_candidate_pack.py" in joined:
+            write(
+                output_dir / "beta" / "p2p-candidate" / "petals_class_p2p_candidate.json",
+                json.dumps(fake_p2p_payload(tokens=tokens)) + "\n",
+            )
+            return completed(fake_p2p_payload(tokens=tokens))
+        if "public_swarm_inference_v2_pack.py" in joined:
+            child_dir = output_dir / "beta" / "public-swarm-v2"
+            write(child_dir / "public_swarm_inference_v2.json", json.dumps(fake_public_swarm_v2_payload(tokens)) + "\n")
+            write(child_dir / "usable-v1-local" / "usable_swarm_inference.json", json.dumps(fake_usable_payload(tokens=tokens)) + "\n")
+            return completed(fake_public_swarm_v2_payload(tokens))
+        if "public_swarm_gpu_inference_beta_pack.py" in joined:
+            write(
+                output_dir / "beta" / "gpu-smoke" / "public_swarm_gpu_inference_beta_local_smoke.json",
+                json.dumps(fake_gpu_payload()) + "\n",
+            )
+            return completed(fake_gpu_payload())
+        raise AssertionError(command)
+
+    return pack.build_report(args, runner=fake_runner)
+
+
+def build_fake_local_model_variant(output_dir: Path, *, model_id: str, tokens: int = 16) -> dict[str, Any]:
+    args = pack.parse_args([
+        pack.MODE_LOCAL_MODEL_VARIANT,
+        "--output-dir",
+        str(output_dir / "beta"),
+        "--base-port",
+        "9530",
+        "--port",
+        "9530",
+        "--public-swarm-v2-p2p-port",
+        "9531",
+        "--public-swarm-v2-coordinator-port",
+        "9532",
+        "--public-swarm-v2-real-p2p-port",
+        "9533",
+        "--public-swarm-v2-real-p2p-coordinator-port",
+        "9534",
+        "--hf-model-id",
+        model_id,
+        "--max-new-tokens",
+        str(tokens),
+        "--timeout-seconds",
+        "60",
+        "--stream-generation",
+    ])
+    product = fake_product_payload(model_id, tokens=tokens)
+    usable = fake_usable_payload(model_id, tokens=tokens)
+    public_swarm_v2 = fake_public_swarm_v2_payload(tokens, model_id=model_id, local_model_variant=True)
+    gpu = fake_gpu_payload()
+
+    def fake_runner(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        joined = " ".join(command)
+        if "public_swarm_product_beta_pack.py" in joined:
+            write(output_dir / "beta" / "product-beta" / "public_swarm_product_beta.json", json.dumps(product) + "\n")
+            return completed(product)
+        if "public_swarm_inference_v2_pack.py" in joined:
+            child_dir = output_dir / "beta" / "public-swarm-v2"
+            write(child_dir / "public_swarm_inference_v2.json", json.dumps(public_swarm_v2) + "\n")
+            write(child_dir / "usable-v1-local" / "usable_swarm_inference.json", json.dumps(usable) + "\n")
+            return completed(public_swarm_v2)
+        if "public_swarm_gpu_inference_beta_pack.py" in joined:
+            write(
+                output_dir / "beta" / "gpu-smoke" / "public_swarm_gpu_inference_beta_local_smoke.json",
+                json.dumps(gpu) + "\n",
+            )
+            return completed(gpu)
+        raise AssertionError(command)
+
+    return pack.build_report(args, runner=fake_runner)
+
+
+def run_check(args: argparse.Namespace) -> dict[str, Any]:
+    output_dir = Path(args.output_dir) if args.output_dir else Path(tempfile.mkdtemp(prefix="crowdtensor_public_real_llm_beta_check_"))
+    if args.mode == pack.MODE_LOCAL_MODEL_VARIANT:
+        payload = build_fake_local_model_variant(output_dir, model_id=args.hf_model_id, tokens=args.max_new_tokens)
+    else:
+        payload = build_fake_release(output_dir, tokens=args.max_new_tokens)
+    errors = validate_report(payload, mode=args.mode, expected_tokens=args.max_new_tokens)
+    result = {
+        "schema": SCHEMA,
+        "ok": not errors,
+        "mode": args.mode,
+        "max_new_tokens": args.max_new_tokens,
+        "output_dir": str(output_dir),
+        "errors": errors,
+        "beta_schema": payload.get("schema"),
+        "beta_ok": payload.get("ok"),
+        "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"] if not errors else ["public_real_llm_swarm_beta_check_blocked"],
+        "artifacts": {
+            "public_real_llm_swarm_beta_json": str(Path(payload.get("output_dir", "")) / "public_real_llm_swarm_beta.json"),
+        },
+    }
+    write(output_dir / "public_real_llm_swarm_beta_check.json", json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return result
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Check Public Real-LLM Swarm Inference Beta v1.")
+    parser.add_argument("--mode", choices=["release", pack.MODE_LOCAL_MODEL_VARIANT], default="release")
+    parser.add_argument("--output-dir", default="")
+    parser.add_argument("--hf-model-id", default=pack.DEFAULT_HF_MODEL_ID)
+    parser.add_argument("--max-new-tokens", type=int, default=16)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+        raise SystemExit("--max-new-tokens must be between 2 and 32")
+    return args
+
+
+def main() -> None:
+    args = parse_args()
+    result = run_check(args)
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    else:
+        print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
+        if result.get("errors"):
+            print("Errors: " + ", ".join(result["errors"]))
+    raise SystemExit(0 if result.get("ok") else 1)
+
+
+if __name__ == "__main__":
+    main()

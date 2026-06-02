@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from crowdtensor.p2p_lite import PeerCatalog, create_app, stable_peer_id  # noqa: E402
+from crowdtensor.p2p_lite import PeerCatalog, create_app, sanitize_peer, sign_peer_announcement, stable_peer_id  # noqa: E402
 
 
 def parse_capability(value: str) -> tuple[str, str]:
@@ -54,6 +54,9 @@ def build_local_peer(args: argparse.Namespace) -> dict:
         "backend": args.backend,
         "ttl_seconds": args.ttl_seconds,
     }
+    peer = sanitize_peer(peer)
+    if args.peer_secret:
+        peer = sign_peer_announcement(peer, args.peer_secret)
     return peer
 
 
@@ -72,12 +75,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--capability", action="append", default=[])
     parser.add_argument("--bootstrap", action="append", default=[])
     parser.add_argument("--ttl-seconds", type=float, default=60.0)
+    parser.add_argument("--peer-secret", default="")
+    parser.add_argument("--require-signed", action="store_true")
+    parser.add_argument("--signature-max-age-seconds", type=float, default=3600.0)
     parser.add_argument("--print-peer", action="store_true")
     args = parser.parse_args(argv)
     if args.port < 1:
         raise SystemExit("--port must be positive")
     if args.ttl_seconds <= 0:
         raise SystemExit("--ttl-seconds must be positive")
+    if args.require_signed and not args.peer_secret:
+        raise SystemExit("--require-signed requires --peer-secret")
+    if args.signature_max_age_seconds <= 0:
+        raise SystemExit("--signature-max-age-seconds must be positive")
     return args
 
 
@@ -90,7 +100,13 @@ def main() -> None:
         import uvicorn
     except ModuleNotFoundError as exc:
         raise SystemExit("uvicorn is not installed. Run: pip install -r requirements.txt") from exc
-    catalog = PeerCatalog(swarm_id=args.swarm_id, ttl_seconds=args.ttl_seconds)
+    catalog = PeerCatalog(
+        swarm_id=args.swarm_id,
+        ttl_seconds=args.ttl_seconds,
+        peer_secret=args.peer_secret,
+        require_signed=args.require_signed,
+        signature_max_age_seconds=args.signature_max_age_seconds,
+    )
     app = create_app(catalog=catalog, local_peer=local_peer, bootstrap_urls=list(args.bootstrap or []))
     uvicorn.run(app, host=args.host, port=args.port)
 

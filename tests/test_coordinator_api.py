@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -25,6 +26,7 @@ from crowdtensor.outer_optimizer import (
     compress_sign_delta,
     compress_sign_delta_with_error_feedback,
 )
+from crowdtensor.protocol import REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY, REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY
 from crowdtensor.toy_compute import compute_pseudo_gradient
 
 
@@ -1175,6 +1177,250 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertEqual(session["backend"], "hf_transformers_cuda")
             self.assertEqual(session["task_requirements"]["backend"], "cuda")
             self.assertEqual(session["task_requirements"]["stage_capability"], "real_llm_sharded_cuda_stage0")
+
+    def test_real_llm_session_uses_requested_hf_model_id(self) -> None:
+        artifact = {
+            "schema": "real_llm_artifact_v1",
+            "artifact_hash": "sha256:test-distilgpt2-artifact",
+            "model_id": "distilgpt2",
+            "backend": "hf_transformers_cpu",
+            "split_index": 1,
+            "num_hidden_layers": 2,
+            "hidden_size": 2,
+            "vocab_size": 128,
+            "read_only": True,
+            "metadata_only": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "crowdtensor.state_store.inspect_real_llm_artifact",
+            return_value=artifact,
+        ) as inspect_artifact:
+            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10, backlog=0, admin_token="secret")
+            admin_inference = endpoint_for(app, "/admin/inference-sessions", "POST")
+            request_type = request_model(admin_inference)
+
+            session = admin_inference(
+                request_type(
+                    request_count=1,
+                    workload_type="real_llm_sharded_infer",
+                    backend="cpu",
+                    runtime="python-cli",
+                    hf_model_id="distilgpt2",
+                ),
+                x_crowdtensor_admin_token="secret",
+            )
+
+            self.assertEqual(inspect_artifact.call_args.kwargs["model_id"], "distilgpt2")
+            self.assertEqual(session["model_id"], "distilgpt2")
+
+    def test_admin_session_stream_returns_safe_progress_events(self) -> None:
+        artifact = {
+            "schema": "real_llm_artifact_v1",
+            "artifact_hash": "sha256:test-real-llm-stream-artifact",
+            "model_id": "sshleifer/tiny-gpt2",
+            "backend": "hf_transformers_cuda",
+            "split_index": 1,
+            "num_hidden_layers": 2,
+            "hidden_size": 2,
+            "vocab_size": 128,
+            "read_only": True,
+            "metadata_only": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "crowdtensor.state_store.inspect_real_llm_artifact",
+            return_value=artifact,
+        ):
+            app = create_app(state_dir=tmp, lease_seconds=5, inner_steps=10, backlog=0, admin_token="secret")
+            admin_inference = endpoint_for(app, "/admin/inference-sessions", "POST")
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            session_stream = endpoint_for(app, "/admin/session-stream", "GET")
+            request_type = request_model(admin_inference)
+
+            session = admin_inference(
+                request_type(
+                    request_count=1,
+                    workload_type="real_llm_sharded_infer",
+                    backend="cuda",
+                    runtime="python-cli",
+                    max_new_tokens=1,
+                ),
+                x_crowdtensor_admin_token="secret",
+            )
+            stage0_claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="stream-stage0",
+                    capabilities={
+                        "runtime": "python-cli",
+                        "backend": "cuda",
+                        "protocol_version": "runtime_contract_v1",
+                        "supported_workloads": ["real_llm_sharded_infer"],
+                        "real_llm_runtime": {"adapter_kind": "hf_transformers_cuda"},
+                        "real_llm_sharded_stage_role": "stage0",
+                        "real_llm_sharded_stage_capabilities": [REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY],
+                    },
+                )
+            )
+            activation = {
+                "schema_version": "real_llm_activation_v1",
+                "session_id": session["session_id"],
+                "request_id": "req-1",
+                "prompt_hash": stage0_claim["workload_spec"]["requests"][0]["prompt_hash"],
+                "model_id": "sshleifer/tiny-gpt2",
+                "artifact_hash": artifact["artifact_hash"],
+                "split_index": 1,
+                "generation_step": 0,
+                "max_new_tokens": 1,
+                "generated_token_ids": [],
+                "generated_text": "",
+                "input_ids": [1, 2],
+                "position_ids": [0, 1],
+                "hidden_shape": [1, 2, 2],
+                "hidden_state": [[[0.1, 0.2], [0.3, 0.4]]],
+            }
+            activation_hash = "sha256:" + hashlib.sha256(
+                json.dumps({
+                    "artifact_hash": activation["artifact_hash"],
+                    "hidden_shape": activation["hidden_shape"],
+                    "hidden_state": activation["hidden_state"],
+                    "input_ids": activation["input_ids"],
+                    "model_id": activation["model_id"],
+                    "position_ids": activation["position_ids"],
+                    "request_id": activation["request_id"],
+                    "schema_version": activation["schema_version"],
+                    "session_id": activation["session_id"],
+                    "split_index": activation["split_index"],
+                }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            activation["activation_hash"] = activation_hash
+            result_task(
+                stage0_claim["task_id"],
+                request_model(result_task)(
+                    lease_token=stage0_claim["lease_token"],
+                    attempt=stage0_claim["attempt"],
+                    sharded_inference_result={
+                        "schema_version": "real_llm_sharded_infer_v1",
+                        "type": "real_llm_sharded_infer",
+                        "session_id": session["session_id"],
+                        "stage_id": 0,
+                        "stage_count": 2,
+                        "model_id": "sshleifer/tiny-gpt2",
+                        "backend": "hf_transformers_cuda",
+                        "partition_mode": "full",
+                        "artifact_schema": "real_llm_artifact_v1",
+                        "artifact_hash": artifact["artifact_hash"],
+                        "split_index": 1,
+                        "max_new_tokens": 1,
+                        "generation_step": 0,
+                        "request_count": 1,
+                        "activation_count": 1,
+                        "activation_bytes": 10,
+                        "activation_hashes": [activation_hash],
+                        "activation_transport_ready": True,
+                        "activation_results": [activation],
+                        "real_llm_artifact_ready": True,
+                    },
+                ),
+            )
+            stage1_claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="stream-stage1",
+                    capabilities={
+                        "runtime": "python-cli",
+                        "backend": "cuda",
+                        "protocol_version": "runtime_contract_v1",
+                        "supported_workloads": ["real_llm_sharded_infer"],
+                        "real_llm_runtime": {"adapter_kind": "hf_transformers_cuda"},
+                        "real_llm_sharded_stage_role": "stage1",
+                        "real_llm_sharded_stage_capabilities": [REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY],
+                    },
+                )
+            )
+            generated_hash = "sha256:" + "a" * 64
+            output_hash = "sha256:" + hashlib.sha256(
+                json.dumps({
+                    "activation_hash": activation_hash,
+                    "artifact_hash": artifact["artifact_hash"],
+                    "baseline_match": True,
+                    "baseline_next_token_id": 42,
+                    "model_id": "sshleifer/tiny-gpt2",
+                    "next_token_id": 42,
+                    "request_id": "req-1",
+                }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            inference_result = {
+                "request_id": "req-1",
+                "prompt_hash": stage1_claim["workload_spec"]["requests"][0]["prompt_hash"],
+                "model_id": "sshleifer/tiny-gpt2",
+                "artifact_hash": artifact["artifact_hash"],
+                "activation_hash": activation_hash,
+                "generation_step": 0,
+                "max_new_tokens": 1,
+                "next_token_id": 42,
+                "baseline_next_token_id": 42,
+                "generated_token_ids": [42],
+                "generated_token_count": 1,
+                "generated_text": " raw streamed token",
+                "generated_text_hash": generated_hash,
+                "baseline_match": True,
+                "output_hash": output_hash,
+            }
+            result_task(
+                stage1_claim["task_id"],
+                request_model(result_task)(
+                    lease_token=stage1_claim["lease_token"],
+                    attempt=stage1_claim["attempt"],
+                    sharded_inference_result={
+                        "schema_version": "real_llm_sharded_infer_v1",
+                        "type": "real_llm_sharded_infer",
+                        "session_id": session["session_id"],
+                        "stage_id": 1,
+                        "stage_count": 2,
+                        "model_id": "sshleifer/tiny-gpt2",
+                        "backend": "hf_transformers_cuda",
+                        "partition_mode": "full",
+                        "artifact_schema": "real_llm_artifact_v1",
+                        "artifact_hash": artifact["artifact_hash"],
+                        "split_index": 1,
+                        "max_new_tokens": 1,
+                        "generation_step": 0,
+                        "request_count": 1,
+                        "activation_count": 1,
+                        "activation_hashes": [activation_hash],
+                        "activation_transport_ready": True,
+                        "inference_result": inference_result,
+                        "inference_results": [inference_result],
+                        "baseline_match": True,
+                        "decoded_tokens_match": True,
+                        "generated_token_ids": [42],
+                        "generated_token_count": 1,
+                        "generated_text": " raw streamed token",
+                        "generated_text_hash": generated_hash,
+                        "real_llm_artifact_ready": True,
+                    },
+                ),
+            )
+
+            with self.assertRaises(HTTPException) as bad_token:
+                session_stream(session_id=session["session_id"], x_crowdtensor_admin_token="bad")
+            self.assertEqual(bad_token.exception.status_code, 403)
+
+            payload = session_stream(
+                session_id=session["session_id"],
+                max_new_tokens=1,
+                x_crowdtensor_admin_token="secret",
+            )
+            self.assertEqual(payload["schema"], "admin_session_stream_v1")
+            self.assertEqual(payload["event_count"], 1)
+            self.assertTrue(payload["stream_progress_complete"])
+            self.assertIn("session_stream_progress_complete", payload["diagnosis_codes"])
+            event = payload["events"][0]
+            self.assertEqual(event["schema"], "session_stream_event_v1")
+            self.assertEqual(event["generated_token_count"], 1)
+            self.assertEqual(event["generated_text_hash"], generated_hash)
+            public_text = json.dumps(payload, sort_keys=True)
+            self.assertNotIn("raw streamed token", public_text)
+            self.assertNotIn('"generated_token_ids":', public_text)
 
     def test_sign_compressed_result_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

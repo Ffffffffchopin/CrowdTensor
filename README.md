@@ -4,8 +4,129 @@ CrowdTensor is an open-source path toward fault-tolerant AI swarms built from or
 
 `CrowdTensorD` is the current Alpha daemon/control plane. It validates the V1 mechanics needed before real home GPU aggregation, Swarm Inference, browser compute, and future P2P routing are added: task leasing, heartbeat recovery, checkpoint replay, result validation, replay audit, Miner admission, CPU-first workload contracts, and a narrow optional CUDA tiny GPT split proof.
 
+## Public Swarm Inference v2
+
+This is the strongest current public-preview path. It runs the ordinary product flow:
+
+`crowdtensor p2pd` -> `crowdtensor serve --p2p` -> two distinct `crowdtensor join --p2p` stage Miners -> `crowdtensor generate --p2p --max-new-tokens 16`.
+
+The Coordinator still owns sessions, task leases, validation, and result ledgers. P2P is used for route discovery first, with signed/real P2P evidence imported when available and P2P-lite kept as an explicit fallback. The default runtime is `sshleifer/tiny-gpt2` through the optional Hugging Face extra.
+
+Install the runtime extra and create local tokens:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[hf]'
+read -r -s -p 'Admin token: ' CROWDTENSOR_ADMIN_TOKEN; echo
+read -r -s -p 'Miner token: ' CROWDTENSOR_MINER_TOKEN; echo
+export CROWDTENSOR_ADMIN_TOKEN CROWDTENSOR_MINER_TOKEN
+```
+
+Run the local v2 acceptance gate:
+
+```bash
+crowdtensor public-swarm-v2 local --max-new-tokens 16 --http-timeout 30 --json
+```
+
+Add `--prompt-texts "prompt one,prompt two"` to the gate when you need the bounded batch path, and add `--stream-generation` when the report must prove safe streaming progress through the same route. The retained local v2 artifact is `dist/public-swarm-inference-v2/public_swarm_inference_v2.json`. A ready report proves 16 generated tokens, P2P route discovery, distinct stage0/stage1 Miners, 32 accepted local stage rows, matching external accepted stage rows, stage rescue/requeue evidence, fresh local real-P2P stage requeue evidence, latency/throughput/memory summaries, optional CUDA evidence or fail-closed diagnostics, bounded batch readiness when requested, stream progress readiness when requested, matching model evidence, and redacted JSON/Markdown/support artifacts. Local, external, and signed/real P2P reports must all expose the same `hf_model_id`, including the default tiny-GPT path; otherwise v2 blocks with model mismatch diagnostics instead of reusing ambiguous retained evidence. Fresh local real-P2P stage1 victim/rescue evidence is retained at `dist/goal-final-infer-public-swarm-v2-local-real-p2p-requeue-batch-stream-20260602/public_swarm_inference_v2.json` with `public_swarm_v2_real_p2p_local_requeue_ready`, `real_p2p_local_stage_requeue_ready`, `stage_requeue_ready`, `accepted_result_after_requeue`, and `victim_result_accepted: false`.
+
+For a non-default local small Hugging Face model proof, use `crowdtensor public-swarm-v2 local-model-variant --hf-model-id distilgpt2 --max-new-tokens 16 --stream-generation --json`. This emits `public_swarm_inference_v2_local_model_variant_ready` and `public_swarm_v2_external_validation_not_claimed`, proves the local product/v2/real-P2P/KV-cache paths for the requested model, and deliberately does not claim retained external/Kaggle validation. Validate the CI-safe contract with `python scripts/public_swarm_inference_v2_check.py --mode local-model-variant --hf-model-id distilgpt2 --json`.
+
+For manual operation, run the five-process path:
+
+```bash
+# Terminal 1: discovery daemon
+crowdtensor p2pd --swarm-id public-swarm-v2 --run
+
+# Terminal 2: Coordinator
+crowdtensor serve --p2p --swarm-id public-swarm-v2 --run
+
+# Terminal 3: stage 0 Miner
+crowdtensor join --stage stage0 --p2p --swarm-id public-swarm-v2 --miner-id stage0 --run
+
+# Terminal 4: stage 1 Miner
+crowdtensor join --stage stage1 --p2p --swarm-id public-swarm-v2 --miner-id stage1 --run
+
+# Terminal 5: generate through the split route
+crowdtensor generate --p2p --swarm-id public-swarm-v2 --prompt "CrowdTensor routes small models across home compute" --max-new-tokens 16 --http-timeout 30
+```
+
+Use `--prompt-texts "prompt one,prompt two"` instead of `--prompt` for a bounded batch of up to four prompts, add `--stream` to print safe progress events while generation is still running, or pass `--hf-model-id <model>` when the Coordinator and stage Miners are prepared for a non-default small Hugging Face model. Public artifacts preserve model id, prompt hashes, prompt character counts, generated counts, generated text hashes, and stream milestones, not raw prompt, generated text, or token ids.
+
+For a two-machine or Kaggle rehearsal, run `p2pd` and `serve` on a trusted public/VPN-reachable Coordinator host, run `join --stage stage0` and `join --stage stage1` on distinct external hosts or private Kaggle notebooks, then run `generate --p2p` from the operator host. Keep `CROWDTENSOR_ADMIN_TOKEN` off Miner notebooks and rotate tokens after temporary public HTTP tests. The generated runbook is `dist/public-swarm-inference-v2/PUBLIC_SWARM_INFERENCE_V2.md`.
+
+Current boundary: v2 is Coordinator-backed, read-only, tiny/small-model scoped, CPU by default with optional CUDA evidence. It is not full Hivemind/Petals production parity, not Coordinator-free execution, not production NAT traversal, not an economic network, and not large-model throughput serving.
+
+## Usable Swarm Inference v1
+
+This is the previous ordinary user path. It runs P2P discovery for route lookup, keeps the Coordinator as the session/lease/result authority, and executes real small Hugging Face split inference with distinct stage Miners.
+
+Install with the Hugging Face runtime extra:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[hf]'
+read -r -s -p 'Admin token: ' CROWDTENSOR_ADMIN_TOKEN; echo
+read -r -s -p 'Miner token: ' CROWDTENSOR_MINER_TOKEN; echo
+export CROWDTENSOR_ADMIN_TOKEN CROWDTENSOR_MINER_TOKEN
+```
+
+Run the five-process local path:
+
+```bash
+# Terminal 1: discovery daemon
+crowdtensor p2pd --run
+
+# Terminal 2: Coordinator
+crowdtensor serve --p2p --run
+
+# Terminal 3: stage 0 Miner
+crowdtensor join --stage stage0 --p2p --miner-id stage0 --run
+
+# Terminal 4: stage 1 Miner
+crowdtensor join --stage stage1 --p2p --miner-id stage1 --run
+
+# Terminal 5: generate text through P2P-discovered split inference
+crowdtensor generate --p2p --prompt "CrowdTensor routes small models across home compute" --max-new-tokens 8
+```
+
+For a two-machine rehearsal, run `p2pd` and `serve` on the Coordinator host, bind the Coordinator explicitly, then start stage Miners from other hosts against the same P2P bootstrap:
+
+```bash
+export COORDINATOR_PUBLIC_HOST='<public-host-or-vpn-hostname>'
+crowdtensor p2pd --host 0.0.0.0 --port 9788 --swarm-id usable-swarm-v1 --run
+crowdtensor serve --p2p --peer-bootstrap "http://$COORDINATOR_PUBLIC_HOST:9788" --swarm-id usable-swarm-v1 --bind-host 0.0.0.0 --public-host "$COORDINATOR_PUBLIC_HOST" --port 9789 --i-understand-public-bind --run
+```
+
+On separate Miner hosts:
+
+```bash
+crowdtensor join --stage stage0 --p2p --peer-bootstrap "http://$COORDINATOR_PUBLIC_HOST:9788" --swarm-id usable-swarm-v1 --miner-id "$(hostname)-stage0" --run
+crowdtensor join --stage stage1 --p2p --peer-bootstrap "http://$COORDINATOR_PUBLIC_HOST:9788" --swarm-id usable-swarm-v1 --miner-id "$(hostname)-stage1" --run
+```
+
+Then run `crowdtensor generate --p2p --peer-bootstrap "http://$COORDINATOR_PUBLIC_HOST:9788" --prompt "..." --max-new-tokens 8` from the operator machine. Use a trusted network, VPN, SSH tunnel, or temporary firewall allowlist, and rotate tokens after public HTTP tests.
+
+Kaggle can be used as the external CPU Miner host by running the stage0 and stage1 `crowdtensor join --p2p` commands in two private notebooks against the same public bootstrap. Keep the admin token off Kaggle; Miner notebooks only need `CROWDTENSOR_MINER_TOKEN`.
+
+For the maintainer acceptance gate that runs the same product path plus stage rescue evidence and writes redacted artifacts:
+
+```bash
+crowdtensor usable-swarm local --max-new-tokens 8 --json
+python scripts/usable_swarm_inference_check.py --mode local --json
+python scripts/usable_swarm_inference_check.py --mode local --hf-model-id distilgpt2 --json
+```
+
+Add `--prompt-texts "prompt one,prompt two"` to `crowdtensor usable-swarm local` to exercise the same bounded batch path through the ordinary user gate, or add `--stream-generation` to require safe stream progress evidence. The top-level artifact is `usable_swarm_inference_v1` under `dist/usable-swarm-inference-v1`. Non-default `--hf-model-id` evidence imports must expose the same `hf_model_id` in the P2P v0.6 report; otherwise Usable v1 emits `usable_swarm_model_mismatch` and blocks readiness. Public JSON/Markdown artifacts keep raw prompts, generated text, generated token ids, activations, leases, and credentials out of reports; human `crowdtensor generate` output may display text locally when not using `--json`.
+
+Current boundary: this is Coordinator-backed, read-only, tiny/small-model scoped, CPU by default with optional CUDA fail-closed paths. It is not full Hivemind/Petals production parity, not Coordinator-free execution, not production NAT traversal, not an economic network, and not large-model throughput serving.
+
 ## What Works Today
 
+- Run Usable Swarm Inference v1 with `crowdtensor p2pd`, `crowdtensor serve --p2p`, two `crowdtensor join --p2p` stage Miners, `crowdtensor generate --p2p --max-new-tokens 8`, optional bounded `--prompt-texts` batches, optional `--stream-generation` evidence, and `usable_swarm_model_match_ready` for imported model consistency.
+- Run Public Swarm Inference v2 with `crowdtensor public-swarm-v2 local --max-new-tokens 16 --json`, producing `public_swarm_inference_v2` with P2P discovery, distinct real small HF split stage Miners, 16-token generation, local and external accepted stage-row evidence, optional bounded batch and safe stream readiness, stage rescue evidence, imported signed/real P2P evidence, model-consistent local/external/P2P reports, optional CUDA evidence or fail-closed diagnostics, and redacted support artifacts.
 - Run a local Coordinator and Miner loop on a normal CPU-only Linux machine.
 - Connect controlled remote Python Miners with token-backed admission and retry behavior.
 - Validate timeout recovery, stale result rejection, checkpoint replay, result ledger, and Support Bundle generation.
@@ -22,7 +143,14 @@ CrowdTensor is an open-source path toward fault-tolerant AI swarms built from or
 - Run Public Swarm Inference Beta with `crowdtensor public-swarm-beta`, which emits `public_swarm_inference_beta_v1` through `scripts/public_swarm_inference_beta_pack.py` and validates with `scripts/public_swarm_inference_beta_check.py`. `public-swarm-beta product-beta` is the product-shaped aggregate: it requires `public_swarm_product_beta_ready`, `public_swarm_product_rc_ready`, `coordinator_product_surface_ready`, `session_protocol_ready`, `p2p_lite_discovery_ready`, `gpu_generation_evidence_import_ready`, and `cpu_fallback_ready` by combining `crowdtensor serve` / `join` / `generate` / `peer`, `session_protocol_v1`, P2P-lite discovery, retained GPU sharded generation evidence, and the CPU inference fallback. `public-swarm-beta local-loopback` and `public-swarm-beta evidence-import` remain available for the legacy CPU-only split proof and retained Alpha RC import. This is Coordinator-backed, read-only Beta evidence, not production Swarm Inference, not libp2p/DHT/NAT traversal, not Hivemind-level serving, and not large-model serving.
 - Run Public Swarm GPU Inference Beta with `crowdtensor public-swarm-gpu-beta`, which emits `public_swarm_gpu_inference_beta_v1` through `scripts/public_swarm_gpu_inference_beta_pack.py` and validates with `scripts/public_swarm_gpu_inference_beta_check.py`. `public-swarm-gpu-beta local-smoke` is CI-safe on CPU-only hosts and reports `public_swarm_gpu_beta_smoke_ready` without claiming usable GPU inference. `public-swarm-gpu-beta local-loopback` requires explicit `hf_transformers_cuda`, CUDA-capable stage Miners advertising `real_llm_sharded_cuda_stage0`, `real_llm_sharded_cuda_stage1`, or `real_llm_sharded_cuda_both`, and should report `public_swarm_gpu_beta_ready`, `gpu_runtime_ready`, `cuda_runtime_available`, `hf_transformers_cuda_ready`, `gpu_stage0_ready`, `gpu_stage1_ready`, plus stage-local partition readiness codes. `public-swarm-gpu-beta kaggle-package` writes private Kaggle GPU stage templates and should report `kaggle_gpu_package_ready`; `public-swarm-gpu-beta evidence-import` promotes a completed GPU report with `external_gpu_runtime_verified`. This is read-only optional CUDA tiny GPT split evidence, not production Swarm Inference, not P2P, not a GPU pooling marketplace, and not large-model serving.
 - Run the GPU sharded generation Beta with `crowdtensor gpu-generate`, which emits `gpu_sharded_generation_beta_v1` through `scripts/gpu_sharded_generation_beta_pack.py` and validates with `scripts/gpu_sharded_generation_beta_check.py`. It wraps the CUDA Public Swarm GPU path with `--max-new-tokens` generation chaining, defaults to `sshleifer/tiny-gpt2`, `hf_transformers_cuda`, and stage-local two-stage partitioning, and provides `local-loopback`, `kaggle-auto`, and `evidence-import` modes. A ready report must include `gpu_sharded_generation_ready`, `multi_token_generation_ready`, `generated_token_count >= max_new_tokens`, `distinct_stage_miners`, stage-local partition readiness, and redacted generation summaries with `generated_text_hash` but no raw generated text or generated token ids. This is a tiny GPT CUDA multi-token Beta proof, not production Swarm Inference, not Hivemind-level serving, not P2P, not a GPU marketplace, and not large-model serving.
-- Build the Public Swarm Product RC with `crowdtensor public-swarm-product-rc`, which emits `public_swarm_product_rc_v1` through `scripts/public_swarm_product_rc_pack.py` and validates with `scripts/public_swarm_product_rc_check.py`. It adds the user-facing `crowdtensor serve`, `crowdtensor join`, `crowdtensor generate`, and `crowdtensor peer` surfaces, extracts `session_protocol_v1`, and adds `p2p_lite_peer_v1` HTTP-gossip route discovery. This remains Coordinator-backed task execution: P2P-lite only discovers Coordinator/Miner routes and is not libp2p, DHT, NAT traversal, decentralized security, Hivemind-level serving, or large-model serving.
+- Build the Public Swarm Product RC with `crowdtensor public-swarm-product-rc`, which emits `public_swarm_product_rc_v1` through `scripts/public_swarm_product_rc_pack.py` and validates with `scripts/public_swarm_product_rc_check.py`. It adds the user-facing `crowdtensor serve`, `crowdtensor join`, `crowdtensor generate`, and `crowdtensor peer` surfaces, extracts `session_protocol_v1`, and adds `p2p_lite_peer_v1` HTTP-gossip route discovery. The Product Beta and Beta RC layers now preserve optional bounded `--prompt-texts` batch readiness and optional `--stream-generation` safe stream progress readiness through the ordinary `serve` / `join` / `generate` path. This remains Coordinator-backed task execution: P2P-lite only discovers Coordinator/Miner routes and is not libp2p, DHT, NAT traversal, decentralized security, Hivemind-level serving, or large-model serving.
+- Build the P2P Swarm Inference v0.6 transition prototype with `crowdtensor p2p-swarm-v06`, which emits `p2p_swarm_inference_v06_v1` through `scripts/p2p_swarm_inference_v06_pack.py` and validates with `scripts/p2p_swarm_inference_v06_check.py`. It introduces the top-level `crowdtensor p2pd` daemon plus `serve --p2p`, `join --p2p`, and `generate --p2p`, moves Coordinator/stage discovery into P2P-lite, preserves Coordinator lease/result fallback, and proves local three-process discovery plus stage rescue rediscovery. Retained evidence is `dist/p2p-swarm-inference-v06-local-smoke/p2p_swarm_inference_v06.json` and `dist/p2p-swarm-inference-v06-final/p2p_swarm_inference_v06.json`. Current reports preserve `p2p_v06_model_metadata_ready`; non-default `--hf-model-id` imports must carry matching P2P model metadata or block with `p2p_v06_model_metadata_mismatch`. On hosts without optional `[hf]` dependencies, the real P2P generate probe reports `p2p_real_generate_hf_runtime_missing` instead of claiming real tiny-GPT generation. This is P2P discovery/routing prototype evidence, not production NAT traversal, decentralized security, economic system, Hivemind/Petals parity, or large-model throughput.
+- Build the Public P2P Swarm Inference v1.0 RC with `crowdtensor public-p2p-v1-rc`, which emits `public_p2p_swarm_inference_v1_rc_v1` through `scripts/public_p2p_swarm_inference_v1_rc_pack.py` and validates with `scripts/public_p2p_swarm_inference_v1_rc_check.py`. It upgrades the v0.6 path with shared-secret HMAC peer identity, signed peer announcements, signed registry health, signed `p2pd` bootstrap, signed `serve --p2p` and `join --p2p` announcements, a public runbook, Support Bundle output, token/peer-secret redaction, model-consistent v0.6 imports, and cleanup-backed private Kaggle payload handling. A fresh retained signed Kaggle CPU proof is `dist/public-p2p-v1-rc-kaggle-auto-signed-r2/public_p2p_swarm_inference_v1_rc.json`; it proves external signed stage0/stage1 discovery, `generate --p2p` with 2 tiny-GPT tokens, private Kaggle kernel deletion, local private payload cleanup, and `token_rotation_required`. Reports preserve `public_p2p_v1_rc_model_metadata_ready`; non-default `--hf-model-id` imports must expose matching v0.6 `hf_model_id` metadata or block with local/external/Kaggle model mismatch diagnostics. Stage rescue is proven by the signed local P2P RC and retained external requeue evidence, not by a fresh signed Kaggle victim/rescue run. This is a Petals-style public preview shape, not production Hivemind/Petals parity, libp2p/DHT/NAT traversal, decentralized security, an economic system, or large-model throughput.
+- Build the Real P2P Swarm Inference Core RC with `crowdtensor real-p2p-rc`, backed by `crowdtensor.real_p2p`, `scripts/real_p2p_daemon.py`, `scripts/libp2p_kad_daemon.mjs`, and `scripts/real_p2p_swarm_inference_core_rc_pack.py`. It adds `real_p2p_provider_record_v1`, signed provider records, TTL eviction, bootstrap sync hooks, `/real-p2p/providers`, `/real-p2p/route`, `/real-p2p/diagnostics`, `http-provider-store` fallback, and `libp2p-kad` discovery with stable peer identity plus provider-record stream sync. `local-smoke --discovery-backend libp2p-kad` proves local tiny-GPT split generation; `kaggle-connectivity` proves Kaggle can reach public HTTP and libp2p TCP; `kaggle-runtime-smoke` checks Kaggle source/runtime startup; `kaggle-auto --discovery-backend libp2p-kad` has a retained external proof at `dist/real-p2p-libp2p-kaggle-auto-20260531-r4` with two private Kaggle CPU stage Miners, `external_libp2p_generate_ready`, and 2-token tiny-GPT split generation. Live `external-existing --verify-generate` forwards `--hf-model-id`, bounded `--prompt-texts`, and `--stream-generation` into nested `crowdtensor generate`, then records safe model/batch/stream summaries for later imports. Local and Kaggle generate commands also pass the requested `--hf-model-id` into the actual generation process. Evidence-import reports preserve `real_p2p_core_rc_model_metadata_ready`; non-default `--hf-model-id` imports must expose matching `hf_model_id` metadata or block with `real_p2p_core_rc_model_metadata_mismatch`. Treat this as Hivemind/Petals-class Alpha only: it is still Coordinator-backed, read-only, tiny-model scoped, not production parity, not full Kademlia provider-value storage, not NAT traversal, not decentralized security, not economics, and not large-model throughput.
+- Real P2P Core RC local-smoke now also supports live stage failure requeue with `--failure-mode kill-stage0-after-claim` or `kill-stage1-after-claim`. The retained stage1 proof at `dist/goal-final-infer-real-p2p-local-stage1-requeue-ready-20260602/real_p2p_swarm_inference_core_rc.json` shows the victim claim was observed, the victim process was terminated, lease timeout requeued the task, a rescue Miner produced the accepted result, and the victim result was not accepted. Preserve `real_p2p_local_stage_requeue_ready`, `local_stage_requeue_ready`, `stage_requeue_ready`, `live_stage1_requeue_ready`, `accepted_result_after_requeue`, `rescue_miner_used`, and `local_requeue_victim_process_terminated`.
+- Build the Public Real-LLM Swarm Inference Beta v1 release aggregate with `crowdtensor public-real-llm-swarm-beta release`, which emits `public_real_llm_swarm_beta_v1` through `scripts/public_real_llm_swarm_beta_pack.py` and validates with `scripts/public_real_llm_swarm_beta_check.py`. It is the current top-level product Beta gate: it runs the ordinary `serve` / `join` / `generate` Product Beta path, imports retained external two-stage Kaggle requeue evidence, fresh-runs the Petals-class real-P2P candidate local-smoke over retained external generation/requeue/runtime-smoke/batch-stream source reports, fresh-runs the Public Swarm Inference v2 ordinary `p2pd` / `serve --p2p` / `join --p2p` / `generate --p2p` local evidence plus a fresh v2 real-P2P local route-hardening and stage-requeue child, and uses its fresh `usable-v1-local/usable_swarm_inference.json` child report for dual-stage KV-cache evidence, runs optional CUDA fail-closed smoke, and writes redacted JSON/Markdown/support artifacts. A ready report preserves `public_real_llm_swarm_beta_ready`, `cpu_default_ready`, `external_two_stage_ready`, `external_stage_requeue_ready`, `p2p_ready_product_beta`, `p2p_live_requeue_rescue_ready`, `p2p_victim_result_not_accepted`, `public_real_llm_swarm_beta_public_swarm_v2_ready`, `public_real_llm_swarm_beta_p2p_user_path_ready`, `public_real_llm_swarm_beta_v2_real_p2p_local_ready`, `public_swarm_v2_real_p2p_local_ready`, `public_real_llm_swarm_beta_v2_real_p2p_local_requeue_ready`, `public_swarm_v2_real_p2p_local_requeue_ready`, `public_real_llm_swarm_beta_v2_batch_ready`, `public_real_llm_swarm_beta_v2_stream_ready`, `public_real_llm_swarm_beta_product_model_match_ready`, `public_real_llm_swarm_beta_kv_cache_ready`, `public_real_llm_swarm_beta_kv_cache_model_match_ready`, `public_real_llm_swarm_beta_private_artifacts_cleaned`, `cuda_optional_fail_closed_ready`, and `release_evidence_ready`. When requested, Product Beta bounded batch and stream evidence is preserved as safe top-level summaries with `public_real_llm_swarm_beta_batch_ready`, `public_real_llm_swarm_beta_stream_ready`, and shared `public_swarm_generate_*` readiness; retained local-smoke evidence at `dist/goal-final-infer-public-real-llm-swarm-beta-local-batch-stream-16tok-fixed-20260602/public_real_llm_swarm_beta.json` proves two-prompt 16-token batch generation plus 16 ordered safe stream events. Fresh local release evidence at `dist/goal-final-infer-public-real-llm-swarm-beta-release-fresh-v2-local-requeue-20260602/public_real_llm_swarm_beta.json` has `ok: true`, no `not_completed`, fresh Product Beta, fresh release-local Petals-class P2P candidate local-smoke, fresh local Public Swarm v2, fresh v2 `real-p2p-local/real_p2p_swarm_inference_core_rc.json` with stage1 victim/rescue requeue, and fresh release-local Usable/KV-cache steps, release-local `source_reports.p2p_report`, v2 16-token generation, 32 accepted stage rows, v2 batch/stream readiness, 15 KV-cache hits per stage, `public_swarm_v2_real_p2p_local_requeue_ready`, retained external/GPU imports plus retained P2P source inputs, private artifact cleanup, and no generated runtime-private files in the final release tree. Retained evidence-import proof with the same local v2 requeue gate is `dist/goal-final-infer-public-real-llm-swarm-beta-import-v2-local-requeue-batch-stream-20260602/public_real_llm_swarm_beta.json`; the earlier retained 16-token evidence-import proof is `dist/goal-final-infer-public-real-llm-swarm-beta-import-16tok-p2p-batch-stream-kv-cache-model-gated-v2-20260602/public_real_llm_swarm_beta.json`. These imports aggregate retained reports and are not fresh external runs. The P2P candidate local-smoke/import path preserves safe batch/stream summaries when present and surfaces `public_real_llm_swarm_beta_p2p_batch_ready`, `public_real_llm_swarm_beta_p2p_stream_ready`, and shared `public_swarm_generate_*` readiness without exposing raw prompts, generated text, or token ids. Release requires retained external/P2P source reports plus the fresh v2 child KV-cache and fresh v2 real-P2P local route-hardening/requeue reports to meet the requested `--max-new-tokens`; evidence-import requires external/P2P/v2/KV-cache imports to meet the same target. Lower-token retained evidence is blocked with token-target, v2, or KV-cache diagnostics. The P2P candidate source reports must preserve live victim/rescue details showing claim observation, victim kernel deletion, lease expiry, rescue acceptance, and `victim_result_accepted: false`; legacy code-only requeue evidence is blocked from the release aggregate. If `--hf-model-id` is changed from the default, product, external, P2P, v2, and KV-cache evidence must expose the same model id or the release is blocked with model mismatch diagnostics such as `product_model_mismatch`, `external_model_mismatch`, `p2p_model_mismatch`, `public_swarm_v2_model_mismatch`, or `kv_cache_model_mismatch`. This is the strongest current open-source user-facing inference Beta, but it is still Coordinator-backed, tiny/small-model scoped, read-only by default, not full Hivemind/Petals production parity, not Coordinator-free, not NAT traversal production, and not large-model serving.
+- `crowdtensor public-real-llm-swarm-beta local-model-variant --hf-model-id distilgpt2 --max-new-tokens 16 --stream-generation --json` is the non-default local model proof path. It fresh-runs the local Product Beta path, Public Swarm v2 `local-model-variant`, v2 local real-P2P stage requeue, v2 child KV-cache, bounded batch/stream summaries when requested, and CUDA fail-closed smoke, then emits `public_real_llm_swarm_beta_local_model_variant_ready` without emitting `public_real_llm_swarm_beta_ready` or `release_evidence_ready`. Fresh `distilgpt2` evidence is `dist/goal-final-infer-local-model-variant-distilgpt2-clean-codes-v2-20260602/public_real_llm_swarm_beta.json`; it has `ok: true`, `not_completed: []`, `external_validation_not_claimed`, `public_swarm_inference_v2_local_model_variant_ready`, `public_swarm_v2_external_validation_not_claimed`, 16 generated tokens, v2 batch/stream readiness, v2 local real-P2P stage1 requeue, 15 KV-cache hits per stage, and no external/Kaggle validation claim.
+- Build Public Swarm Inference Preview v0.4 with `crowdtensor preview-v04`, which emits `public_swarm_preview_v04_v1` through `scripts/public_swarm_preview_v04_pack.py` and validates with `scripts/public_swarm_preview_v04_check.py`. It aggregates the product `serve` / `join` / `generate` loop, retained real external stage0/stage1 Live Preview RC requeue evidence, retained GPU multi-token generation evidence, stage latency/throughput/memory-or-VRAM summaries, and an optional strict `distilgpt2` or `gpt2` path while keeping `sshleifer/tiny-gpt2` as the CI fallback. A ready report preserves `public_swarm_preview_v04_ready`, `external_two_stage_generation_ready`, `multi_token_generation_ready`, `distinct_stage_miners`, `stage_assignment_valid`, `stage_latency_ready`, `throughput_summary_ready`, `memory_or_vram_summary_ready`, and `external_stage_requeue_ready`. The retained v0.4 artifact is `dist/public-swarm-preview-v04-final/public_swarm_preview_v04.json`; the strict local CPU `distilgpt2` proof is `dist/public-swarm-preview-v04-distilgpt2-strict/public_swarm_preview_v04.json`. This is Coordinator-backed, read-only, tiny/small-model scoped, not production Swarm Inference, not libp2p/DHT/NAT traversal, not Hivemind/Petals-level serving, and not large-model serving.
 - Try browser-native experiments for WebRTC tensor transport, browser Worker compute probes, and a browser Miner bridge.
 
 ## What Is Not Ready
@@ -268,7 +396,7 @@ crowdtensor real-llm-internet-beta \
 python scripts/real_llm_internet_beta_check.py --port 9190 --base-port 9191 --request-count 2
 ```
 
-It emits `real_llm_internet_beta_v1` through `scripts/real_llm_internet_beta_pack.py`. `kaggle-auto` generates the Alpha package, starts the temporary public Coordinator, creates two private Kaggle CPU script kernels by default or private Kaggle GPU kernels when `--real-llm-backend hf_transformers_cuda` is selected, waits for `external-existing` verification, deletes the temporary kernels, stops the Coordinator, and writes cleanup-backed evidence. A ready report must include `real_llm_internet_beta_ready`, `real_llm_internet_alpha_ready`, `external_runtime_verified`, both Kaggle stages seen, `decoded_tokens_match`, `distinct_stage_miners`, `stage_assignment_valid`, `kaggle_kernels_deleted`, and `token_rotation_required`. With CUDA selected, the CPU Coordinator uses metadata-only artifact inspection and the Kaggle Miners must provide torch CUDA. `scripts/real_llm_internet_beta_check.py` is CI-safe and validates the contract with a fake runner; it does not create Kaggle resources. The default path remains CPU-only; the CUDA path is optional read-only tiny GPT evidence, not production Swarm Inference, not P2P, not GPU pooling, and not large-model serving.
+It emits `real_llm_internet_beta_v1` through `scripts/real_llm_internet_beta_pack.py`. `kaggle-auto` generates the Alpha package, starts the temporary public Coordinator, creates two private Kaggle CPU script kernels by default or private Kaggle GPU kernels when `--real-llm-backend hf_transformers_cuda` is selected, waits for `external-existing` verification, deletes the temporary kernels, stops the Coordinator, and writes cleanup-backed evidence. A ready report must include `real_llm_internet_beta_ready`, `real_llm_internet_alpha_ready`, `external_runtime_verified`, both Kaggle stages seen, `decoded_tokens_match`, `distinct_stage_miners`, `stage_assignment_valid`, `kaggle_kernels_deleted`, and `token_rotation_required`. `--mode evidence-import` audits retained generation and requeue reports without creating Kaggle resources; it only passes when the generation source exposes a safe generated-token count that meets `--max-new-tokens`, matching model metadata, cleanup evidence, imported backend/schema metadata, and public-safe requeue details. Retained 16-token import evidence lives at `dist/goal-final-infer-real-llm-internet-beta-import-16tok-gpu-summary-20260602/real_llm_internet_beta.json`. With CUDA selected, the CPU Coordinator uses metadata-only artifact inspection and the Kaggle Miners must provide torch CUDA. `scripts/real_llm_internet_beta_check.py` is CI-safe and validates the contract with a fake runner; it does not create Kaggle resources. The default path remains CPU-only; the CUDA path is optional read-only tiny GPT evidence, not production Swarm Inference, not P2P, not GPU pooling, and not large-model serving.
 
 The user-facing Swarm Inference Beta packages the same real tiny GPT split path as a two-stage operator workflow:
 
@@ -335,6 +463,90 @@ python scripts/public_swarm_product_beta_check.py --mode external-existing --jso
 ```
 
 It emits `public_swarm_product_beta_v1` through `scripts/public_swarm_product_beta_pack.py` and is checked by `scripts/public_swarm_product_beta_check.py`. `local-loopback` proves the user-facing `serve` / `join stage0` / `join stage1` / `generate` path and should preserve `public_swarm_product_beta_ready`, `public_swarm_product_beta_user_path_ready`, `serve_ready`, `stage0_join_ready`, `stage1_join_ready`, `generate_ready`, `serve_join_generate_loop_ready`, `remote_generate_session_ready`, `public_swarm_generate_ready`, `decoded_tokens_match`, `distinct_stage_miners`, `stage_assignment_valid`, `support_bundle_ready`, and `private_artifacts_cleaned`. `package` creates the two-machine/Kaggle join material while keeping `private_artifacts_local_only` and `miner_join_pack_ready`; `external-existing` verifies an already running Coordinator plus external stage Miners. Missing optional HF dependencies surface `hf_dependencies_missing`. This Product Beta is CPU-only by default, read-only, Coordinator-backed, not production Swarm Inference, not libp2p, not DHT, not NAT traversal, and not large-model serving.
+
+Public Real-LLM Swarm Inference Beta v1 is the current largest release aggregate for ordinary users:
+
+```bash
+python -m pip install -e '.[hf]'
+crowdtensor public-real-llm-swarm-beta release --json
+crowdtensor public-real-llm-swarm-beta local-model-variant --hf-model-id distilgpt2 --max-new-tokens 16 --stream-generation --json
+crowdtensor public-real-llm-swarm-beta package --json
+crowdtensor public-real-llm-swarm-beta evidence-import \
+  --product-report dist/public-real-llm-swarm-beta-release-dev/product-beta/public_swarm_product_beta.json \
+  --json
+python scripts/public_real_llm_swarm_beta_check.py --json
+python scripts/public_real_llm_swarm_beta_check.py --mode local-model-variant --hf-model-id distilgpt2 --json
+```
+
+It emits `public_real_llm_swarm_beta_v1` through `scripts/public_real_llm_swarm_beta_pack.py` and is checked by `scripts/public_real_llm_swarm_beta_check.py`. `release` runs the Product Beta `serve` / `join` / `generate` loop, imports retained external real-LLM two-stage requeue evidence, fresh-runs the real-P2P candidate local-smoke over retained P2P source reports, fresh-runs the Public Swarm v2 ordinary P2P user-path report plus a v2 real-P2P local route-hardening and stage-requeue child, and uses its fresh `usable-v1-local/usable_swarm_inference.json` child report for top-level KV-cache readiness, runs optional CUDA fail-closed smoke, and writes redacted JSON/Markdown/support artifacts. A ready report requires `public_real_llm_swarm_beta_ready`, `public_real_llm_swarm_beta_public_swarm_v2_ready`, `public_real_llm_swarm_beta_p2p_user_path_ready`, `public_real_llm_swarm_beta_v2_real_p2p_local_ready`, `public_swarm_v2_real_p2p_local_ready`, `public_real_llm_swarm_beta_v2_real_p2p_local_requeue_ready`, `public_swarm_v2_real_p2p_local_requeue_ready`, `public_real_llm_swarm_beta_v2_batch_ready`, `public_real_llm_swarm_beta_v2_stream_ready`, `cpu_default_ready`, `external_two_stage_ready`, `external_stage_requeue_ready`, `p2p_ready_product_beta`, `p2p_live_requeue_rescue_ready`, `p2p_victim_result_not_accepted`, `public_real_llm_swarm_beta_product_model_match_ready`, `public_real_llm_swarm_beta_kv_cache_ready`, `public_real_llm_swarm_beta_kv_cache_model_match_ready`, `cuda_optional_fail_closed_ready`, `public_real_llm_swarm_beta_private_artifacts_cleaned`, and `release_evidence_ready`. `local-model-variant` is intentionally narrower: it proves a requested local small model such as `distilgpt2` through Product Beta, Public Swarm v2, local real-P2P requeue, KV-cache, batch/stream when requested, and CUDA fail-closed smoke, but emits `external_validation_not_claimed` and does not claim `release_evidence_ready`. Fresh local variant evidence is `dist/goal-final-infer-local-model-variant-distilgpt2-clean-codes-v2-20260602/public_real_llm_swarm_beta.json`. `--stream-generation` forwards through Product Beta into the ordinary `generate --stream` path and preserves safe product-path stream readiness with `public_real_llm_swarm_beta_stream_ready`, `public_swarm_generate_stream_ready`, and `public_swarm_generate_stream_endpoint_ready` when the stream proof completes; `--prompt-texts` preserves safe bounded batch readiness. Fresh local release evidence is `dist/goal-final-infer-public-real-llm-swarm-beta-release-fresh-v2-local-requeue-20260602/public_real_llm_swarm_beta.json`; it has `ok: true`, no `not_completed`, fresh local Product Beta, release-local Petals-class P2P candidate local-smoke, Public Swarm v2, fresh v2 `real-p2p-local/real_p2p_swarm_inference_core_rc.json` route-hardening with 16 generated tokens and stage1 victim/rescue requeue, and release-local Usable/KV-cache subreports, v2 16-token P2P generation, v2 batch/stream readiness, 32 accepted rows, 15 KV-cache hits per stage, `public_swarm_v2_real_p2p_local_requeue_ready`, release-local `source_reports.p2p_report`, retained external/GPU imports plus retained P2P source inputs, and private artifact cleanup. The retained complete evidence-import proof with fresh local v2 real-P2P stage1 victim/rescue requeue is `dist/goal-final-infer-public-real-llm-swarm-beta-import-v2-local-requeue-batch-stream-20260602/public_real_llm_swarm_beta.json`; it has `ok: true`, no `not_completed`, `public_swarm_v2_real_p2p_local_requeue_ready`, `real_p2p_local_stage_requeue_ready`, and `stage_requeue_ready`. The earlier retained 16-token evidence-import proof is `dist/goal-final-infer-public-real-llm-swarm-beta-import-16tok-p2p-batch-stream-kv-cache-model-gated-v2-20260602/public_real_llm_swarm_beta.json`. Imported evidence does not represent a fresh external run. External, P2P, v2, and KV-cache imports must meet the requested token target before release readiness is claimed, and v2 imports must include the local real-P2P stage requeue gate. The real-P2P candidate source reports must include public-safe `live_requeue_summary` fields proving the victim claim was observed, the victim kernel was deleted, the lease expired, the rescue Miner produced the accepted result, and the victim result was not accepted. Non-default `--hf-model-id` runs require product, external, P2P, v2, and KV-cache reports to expose matching `hf_model_id` metadata. Public reports keep generated text, prompts, tokens, activation payloads, leases, and private runtime paths out of shareable artifacts. This is the current top-level product Beta, not a claim of full Hivemind/Petals production parity, Coordinator-free routing, NAT traversal production, arbitrary prompt serving, or large-model throughput.
+
+Product Swarm v0.3 MVP is the direct runnable `serve` / `join` / `generate` loop for people who want to try the current tiny-GPT split path without navigating the larger evidence stack:
+
+```bash
+python -m pip install -e '.[hf]'
+python scripts/product_swarm_mvp_check.py --max-new-tokens 2 --json
+```
+
+The check starts `crowdtensor serve --run`, starts `crowdtensor generate` so the Coordinator creates the session, then executes `crowdtensor join --stage stage0 --run` and `crowdtensor join --stage stage1 --run` as independent one-task Miners for each generation step. A ready report writes `product_swarm_mvp_check_v1` under `dist/product-swarm-mvp` and requires `product_swarm_mvp_ready`, `serve_join_generate_mvp_ready`, `local_two_stage_real_llm_ready`, `generated_token_count_ready`, `distinct_stage_miners`, and `stage_assignment_valid`. On machines without optional `[hf]` dependencies, it reports `hf_dependencies_missing` and `product_swarm_mvp_degraded_ready` by default; pass `--require-hf-runtime` when a maintainer or release machine must prove real tiny-GPT execution. CPU is the default backend; `--backend cuda` selects the explicit optional CUDA tiny-GPT route. This is the v0.3 Coordinator-backed MVP, still read-only and tiny-model scoped, not production Swarm Inference, not Hivemind/Petals-level serving, not libp2p/DHT/NAT traversal, and not large-model serving.
+
+After this local MVP passes, use the existing Product Beta path for two-machine or Kaggle packaging rather than editing the smoke script:
+
+P2P Swarm Inference v0.6 is the first Coordinator-to-P2P transition prototype:
+
+```bash
+crowdtensor p2pd --host 0.0.0.0 --port 9560 --run
+crowdtensor serve --p2p --peer-bootstrap http://YOUR_HOST:9560 --public-host YOUR_HOST --port 9561 --run
+crowdtensor join --p2p --peer-bootstrap http://YOUR_HOST:9560 --stage stage0 --miner-id p2p-stage0 --run
+crowdtensor join --p2p --peer-bootstrap http://YOUR_HOST:9560 --stage stage1 --miner-id p2p-stage1 --run
+crowdtensor generate --p2p --peer-bootstrap http://YOUR_HOST:9560 --prompt "CrowdTensor P2P v0.6" --max-new-tokens 2 --json
+crowdtensor p2p-swarm-v06 local-smoke --json
+crowdtensor p2p-swarm-v06 external-existing --peer-bootstrap http://YOUR_HOST:9560 --json
+crowdtensor p2p-swarm-v06 kaggle-auto --public-host YOUR_HOST --json
+python scripts/p2p_swarm_inference_v06_check.py --mode evidence-import --hf-model-id distilgpt2 --json
+```
+
+`crowdtensor p2p-swarm-v06 local-smoke` proves a local `p2pd` daemon, Coordinator announce, stage0/stage1 Miner capability announce, P2P route resolution, real tiny-GPT generation, and local stage rescue rediscovery when optional `[hf]` dependencies are installed. `external-existing` verifies an already-running external P2P bootstrap catalog and can add `--verify-generate --admin-token "$CROWDTENSOR_ADMIN_TOKEN"` when a live Coordinator plus stage Miners are running. `kaggle-auto` is side-effectful: it starts temporary public p2pd/Coordinator processes, pushes private Kaggle stage0/stage1 CPU kernels, waits for P2P stage discovery, runs `generate --p2p`, deletes the kernels, and emits `p2p_swarm_inference_v06_kaggle_auto_ready` on success. The retained live proof is `dist/p2p-swarm-inference-v06-kaggle-auto-final/kaggle-auto/p2p_v06_kaggle_auto.json`, with two external Kaggle stage Miners, 2 generated tokens, 4 accepted ledger rows, distinct stage Miners, deleted kernels, and `token_rotation_required`. Current reports expose `p2p.hf_model_id`, `p2p.observed_hf_model_id`, `p2p.model_id_match`, and `p2p_v06_model_metadata_ready`; non-default model evidence-import blocks when imported P2P evidence does not expose the requested `hf_model_id`. Install `python -m pip install -e '.[hf]'` to let the real P2P generate paths execute tiny-GPT generation; otherwise reports surface `p2p_real_generate_hf_runtime_missing` or `host_hf_runtime_missing`.
+
+`p2p-swarm-v06 external-existing --verify-generate` forwards `--hf-model-id`, bounded `--prompt-texts`, and `--stream-generation` into the live `crowdtensor generate` command, then records safe batch/stream summaries plus the observed model id for later aggregate gates.
+
+Public P2P Swarm Inference v1.0 RC is the signed public-preview path over the same tiny-GPT split route:
+
+```bash
+read -r CROWDTENSOR_P2P_PEER_SECRET < <(python -c 'import secrets; print(secrets.token_urlsafe(32))')
+export CROWDTENSOR_P2P_PEER_SECRET
+crowdtensor p2pd --host 0.0.0.0 --port 9660 --peer-secret "$CROWDTENSOR_P2P_PEER_SECRET" --require-signed --run
+crowdtensor serve --p2p --peer-bootstrap http://YOUR_HOST:9660 --peer-secret "$CROWDTENSOR_P2P_PEER_SECRET" --public-host YOUR_HOST --port 9661 --run
+crowdtensor join --p2p --peer-bootstrap http://YOUR_HOST:9660 --peer-secret "$CROWDTENSOR_P2P_PEER_SECRET" --stage stage0 --miner-id p2p-stage0 --run
+crowdtensor join --p2p --peer-bootstrap http://YOUR_HOST:9660 --peer-secret "$CROWDTENSOR_P2P_PEER_SECRET" --stage stage1 --miner-id p2p-stage1 --run
+crowdtensor generate --p2p --peer-bootstrap http://YOUR_HOST:9660 --prompt "CrowdTensor Public P2P v1 RC" --max-new-tokens 2 --json
+crowdtensor public-p2p-v1-rc local-smoke --json
+crowdtensor public-p2p-v1-rc kaggle-auto --public-host YOUR_HOST --kaggle-owner YOUR_KAGGLE_USER --json
+```
+
+`crowdtensor public-p2p-v1-rc` emits signed peer identity and registry evidence, model-compatible v0.6 evidence summaries, a public runbook, and a redacted Support Bundle. The retained fresh signed external proof is `dist/public-p2p-v1-rc-kaggle-auto-signed-r2/public_p2p_swarm_inference_v1_rc.json`; it reports `public_p2p_swarm_inference_v1_rc_ready`, `signed_peer_announcement_ready`, `peer_registry_health_ready`, `public_p2p_v1_rc_model_metadata_ready`, `external_p2p_generate_verified`, `kaggle_kernels_deleted`, and `token_rotation_required`. Non-default model runs must import signed local/external/Kaggle v0.6 reports with the same `hf_model_id`; mismatches emit `public_p2p_v1_rc_local_model_mismatch`, `public_p2p_v1_rc_external_model_mismatch`, or `public_p2p_v1_rc_kaggle_model_mismatch` and block readiness. Rotate `CROWDTENSOR_P2P_PEER_SECRET` and runtime tokens after every public or Kaggle proof. This RC is still HTTP P2P-lite discovery with Coordinator lease/result fallback, not libp2p, DHT, NAT traversal, decentralized security, production Hivemind/Petals parity, arbitrary prompt serving, or large-model throughput.
+
+```bash
+crowdtensor public-swarm-product-beta package --target kaggle --public-host YOUR_COORDINATOR_HOST --json
+crowdtensor public-swarm-product-beta external-existing --coordinator-url https://YOUR_COORDINATOR_HOST --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" --admin-token "$CROWDTENSOR_ADMIN_TOKEN" --json
+```
+
+`package` creates the stage Miner join material for remote hosts; `external-existing` verifies a Coordinator that is already reachable by external stage Miners. This keeps live public-network proofs explicit and token-backed.
+
+Public Swarm Inference Preview v0.4 is the current largest preview aggregate over the product path:
+
+```bash
+python -m pip install -e '.[hf]'
+crowdtensor preview-v04 local-smoke --max-new-tokens 2 --json
+crowdtensor preview-v04 package --target kaggle --public-host 24.199.118.54 --json
+crowdtensor preview-v04 evidence-import \
+  --product-mvp-report dist/public-swarm-preview-v04-distilgpt2-strict/product-mvp/product_swarm_mvp_check.json \
+  --optional-model-report dist/public-swarm-preview-v04-distilgpt2-strict/optional-model-mvp/product_swarm_mvp_check.json \
+  --require-optional-model-ready \
+  --json
+python scripts/public_swarm_preview_v04_check.py --mode evidence-import --require-optional-model-ready --json
+```
+
+It emits `public_swarm_preview_v04_v1` through `scripts/public_swarm_preview_v04_pack.py`. `local-smoke` runs the local product MVP and can optionally run `--run-optional-model --optional-model-id distilgpt2` or `gpt2`; `package` writes `PUBLIC_SWARM_PREVIEW_V04.md` plus two-machine/Kaggle guidance; `evidence-import` promotes retained external Live Preview RC stage0/stage1 requeue evidence and retained GPU multi-token generation evidence into one redacted report. The report should preserve `public_swarm_preview_v04_ready`, `external_two_stage_generation_ready`, `multi_token_generation_ready`, `distinct_stage_miners`, `stage_assignment_valid`, `stage_latency_ready`, `throughput_summary_ready`, `memory_or_vram_summary_ready`, `external_stage_requeue_ready`, `tiny_gpt2_ci_fallback_ready`, and optional `optional_distilgpt2_or_gpt2_strict_ready`. Public artifacts keep hashes, counts, timings, memory summaries, and diagnosis codes only. The current retained v0.4 evidence is under `dist/public-swarm-preview-v04-final`; the strict local `distilgpt2` run is under `dist/public-swarm-preview-v04-distilgpt2-strict`.
 
 Public Swarm Developer Preview is the larger ordinary-user preview path over Product Beta:
 
