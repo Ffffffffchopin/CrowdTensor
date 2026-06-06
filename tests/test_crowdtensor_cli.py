@@ -164,6 +164,30 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.guarded_submit_label("submit inference", {"readiness_label": "verified"}),
             "submit inference",
         )
+        self.assertEqual(
+            cli._ready_to_submit_status(
+                submit_ok=True,
+                route_ready=True,
+                coordinator_ok=True,
+                coordinator_preflight_required=True,
+                stage_preflight_ok=None,
+                stage_preflight_required=False,
+                source="unit",
+            )["next_step"],
+            "run_stage_preflight",
+        )
+        self.assertEqual(
+            cli._ready_to_submit_status(
+                submit_ok=True,
+                route_ready=True,
+                coordinator_ok=True,
+                coordinator_preflight_required=True,
+                stage_preflight_ok=None,
+                stage_preflight_required=True,
+                source="unit",
+            )["next_step"],
+            "submit_with_caution",
+        )
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()

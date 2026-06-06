@@ -90,7 +90,7 @@ debugging; `infer` and `generate` turn that progress into a concrete
 copyable follow-up commands. Human `infer` and `generate` output use your
 current local prompt in those next commands; JSON reports and saved artifacts
 keep raw prompts and token values represented as placeholders.
-If `ready_to_submit` is printed, use its `label` before submitting:
+If `ready_to_submit` is printed, use its `label` and `next_step` before submitting:
 `verified` means route, Coordinator, and distinct stage Miners were checked;
 `partial` means the request shape can submit but stage Miners still need
 observer-token verification; `blocked` means follow `operator_action`; and
@@ -204,7 +204,9 @@ Those skipped checks emit `generate_request_shape_ready`, not
 Submit command labels also reflect this state: `after live preflight`,
 `after stage preflight`, or `after checks pass` means run the printed check
 command before submitting. The same decision is available as
-`ready_to_submit.next_step` for scripts and support tools.
+`ready_to_submit.next_step` for scripts and support tools, with stable values
+such as `submit`, `run_stage_preflight`, `run_live_preflight`,
+`submit_with_caution`, and `fix_blockers`.
 
 ## 6. Package A Controlled Remote Trial
 

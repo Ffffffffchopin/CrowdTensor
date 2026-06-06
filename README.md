@@ -101,7 +101,8 @@ replaced with placeholders. When `ready_to_submit` is present, read
 Submit commands mirror this state: labels such as `after stage preflight`,
 `after live preflight`, or `after checks pass` mean run the preceding check
 command first. Machine-readable `next_step` uses stable values such as
-`submit`, `run_stage_preflight`, `run_live_preflight`, and `fix_blockers`.
+`submit`, `run_stage_preflight`, `run_live_preflight`, `submit_with_caution`,
+and `fix_blockers`.
 
 If `coordinator_ready` is not true, its line now includes `error=...` for a
 failed live probe or `reason=...` for an intentionally skipped check, so the
