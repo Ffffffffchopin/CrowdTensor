@@ -3439,6 +3439,81 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertIn("pip install -e '.[hf]'", persisted["operator_action"])
 
+    def test_infer_timeout_action_uses_wait_progress(self) -> None:
+        cases = [
+            (
+                {
+                    "session_created": True,
+                    "ledger_endpoint_ready": True,
+                    "accepted_rows_seen": 0,
+                    "max_observed_token_count": 0,
+                    "target_token_count": 4,
+                    "expected_request_count": 1,
+                    "observed_request_count": 0,
+                },
+                "No accepted result rows appeared",
+            ),
+            (
+                {
+                    "session_created": True,
+                    "ledger_endpoint_ready": True,
+                    "accepted_rows_seen": 1,
+                    "max_observed_token_count": 2,
+                    "target_token_count": 4,
+                    "expected_request_count": 1,
+                    "observed_request_count": 1,
+                },
+                "Generation reached 2/4 tokens",
+            ),
+            (
+                {
+                    "session_created": True,
+                    "ledger_endpoint_ready": False,
+                    "accepted_rows_seen": 0,
+                    "max_observed_token_count": 0,
+                    "target_token_count": 4,
+                    "expected_request_count": 1,
+                    "observed_request_count": 0,
+                },
+                "/admin/results was not reachable",
+            ),
+        ]
+        for wait_progress, expected in cases:
+            with self.subTest(expected=expected):
+                output_dir = Path(self._tmp_dir())
+                args = cli.parse_args([
+                    "infer",
+                    "CrowdTensor user prompt",
+                    "--mode",
+                    "existing",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--admin-token",
+                    "admin-secret",
+                    "--output-dir",
+                    str(output_dir),
+                    "--max-new-tokens",
+                    "4",
+                    "--json",
+                ])
+                payload = {
+                    "schema": "public_swarm_product_cli_v1",
+                    "ok": False,
+                    "mode": "generate",
+                    "diagnosis_codes": ["generation_timeout"],
+                    "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
+                    "generation": {"generated_token_count": 0, "max_new_tokens": 4},
+                    "wait_progress": wait_progress,
+                }
+
+                report = cli._infer_summary_from_payload(args, payload, mode="existing", output_dir=output_dir)
+
+                self.assertFalse(report["ok"], report)
+                self.assertIn(expected, report["operator_action"])
+                self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+                persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+                self.assertIn(expected, persisted["operator_action"])
+
     def test_infer_existing_requires_route_and_admin_token(self) -> None:
         with self.assertRaises(SystemExit):
             cli.parse_args(["infer", "prompt", "--mode", "existing", "--admin-token", "admin-secret"])

@@ -81,7 +81,8 @@ shareable files. Use `--full-evidence` when you want the broader Public Swarm
 v2 gate instead of the faster user path. Existing-swarm runs also include a
 safe `wait_progress` summary with poll count, accepted rows, endpoint readiness,
 and observed token progress so timeouts are actionable without exposing raw
-text.
+text; `operator_action` uses that summary to suggest whether to check tokens,
+Miner health, admin API access, or timeout limits.
 
 To check an already running Coordinator or P2P-discovered swarm before
 submitting a request, use `crowdtensor infer --mode existing --dry-run` with

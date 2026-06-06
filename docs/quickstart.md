@@ -85,7 +85,7 @@ Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
 redacted. Existing-swarm reports include `wait_progress` with poll count,
 accepted rows, endpoint readiness, and observed token progress for safe timeout
-debugging.
+debugging; `operator_action` turns that progress into a concrete next step.
 Add `--stream` when you want safe token-progress evidence in the CLI summary.
 
 ## 4. Run The Real-LLM Swarm Beta Gate

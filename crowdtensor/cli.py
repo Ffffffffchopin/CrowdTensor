@@ -3367,6 +3367,33 @@ def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
+    progress = payload.get("wait_progress") if isinstance(payload.get("wait_progress"), dict) else {}
+    if not progress:
+        return "Increase --timeout-seconds and confirm both stage Miners are running."
+    if not progress.get("session_created"):
+        return "The session was not created; check --admin-token and Coordinator /admin/inference-sessions."
+    last_error = str(progress.get("last_error_type") or "")
+    if last_error:
+        return f"Coordinator polling reported {last_error}; check token permissions and Coordinator reachability, then rerun with --dry-run."
+    if not progress.get("ledger_endpoint_ready"):
+        return "The session was created but /admin/results was not reachable; check --admin-token and Coordinator admin API access."
+    observed = _safe_int(progress.get("max_observed_token_count"))
+    target = _safe_int(progress.get("target_token_count"))
+    accepted = _safe_int(progress.get("accepted_rows_seen"))
+    expected_requests = _safe_int(progress.get("expected_request_count"), 1)
+    observed_requests = _safe_int(progress.get("observed_request_count"))
+    if accepted <= 0:
+        return "No accepted result rows appeared; confirm both stage Miners are joined, healthy, and advertising the requested backend."
+    if expected_requests > 1 and observed_requests < expected_requests:
+        return f"Only {observed_requests}/{expected_requests} batch results appeared; keep both stage Miners running and increase --timeout-seconds."
+    if observed > 0 and target > 0 and observed < target:
+        return f"Generation reached {observed}/{target} tokens before timeout; increase --timeout-seconds or check slow stage Miner logs."
+    if progress.get("stream_endpoint_ready") and _safe_int(progress.get("stream_event_count")) > 0:
+        return "Stream progress was visible but the final result did not complete; increase --timeout-seconds and inspect stage Miner logs."
+    return "Accepted rows were visible but completion was not; increase --timeout-seconds and inspect Coordinator admin results."
+
+
 def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *, ok: bool) -> str:
     if ok:
         if bool(payload.get("dry_run")):
@@ -3390,7 +3417,7 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
     if "admin_token_required" in codes:
         return "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN."
     if "generation_timeout" in codes:
-        return "Increase --timeout-seconds and confirm both stage Miners are running."
+        return _infer_wait_progress_action(payload)
     if "crowdtensor_infer_source_report_missing" in codes:
         return "Inspect the child report under the output directory, then rerun with --json for machine-readable diagnostics."
     return "Inspect infer_summary.json and the child report under output_dir for the failing check."
