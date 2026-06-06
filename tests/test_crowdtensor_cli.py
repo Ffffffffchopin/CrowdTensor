@@ -509,6 +509,9 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["ready_to_submit"]["ok"])
+        self.assertTrue(report["ready_to_submit"]["fully_verified"])
+        self.assertEqual(report["ready_to_submit"]["stage_verification"], "ready")
+        self.assertEqual(report["ready_to_submit"]["warning_codes"], [])
         self.assertTrue(report["coordinator_ready"]["ok"])
         self.assertTrue(report["stage_preflight"]["ok"])
         self.assertEqual(report["stage_preflight"]["matched_miner_count"], 2)
@@ -522,7 +525,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  coordinator_ready: True service=crowdtensord protocol=runtime_contract_v1", rendered)
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
-        self.assertIn("  ready_to_submit: True route=True coordinator=True stage=True", rendered)
+        self.assertIn("  ready_to_submit: True fully_verified=True route=True coordinator=True stage=True stage_verification=ready", rendered)
         self.assertIn("  next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run", rendered)
         self.assertIn("  next[2] submit generation: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'  # requires CROWDTENSOR_ADMIN_TOKEN", rendered)
 
@@ -547,6 +550,9 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertIsNone(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["ready_to_submit"]["fully_verified"])
+        self.assertEqual(report["ready_to_submit"]["stage_verification"], "skipped")
+        self.assertEqual(report["ready_to_submit"]["warning_codes"], ["stage_preflight_skipped"])
         self.assertFalse(report["ready_to_submit"]["coordinator_preflight_required"])
         self.assertEqual(report["coordinator_ready"]["reason"], "live_preflight_skipped")
         self.assertEqual(report["stage_preflight"]["reason"], "live_preflight_skipped")
@@ -4543,11 +4549,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["stage_preflight"]["reason"], "observer_token_missing")
         self.assertEqual(report["ready_to_submit"], {
             "ok": True,
+            "fully_verified": False,
             "route_ready": True,
             "coordinator_ready": True,
             "coordinator_preflight_required": True,
             "stage_preflight_ok": None,
             "stage_preflight_required": False,
+            "stage_verification": "skipped",
+            "warning_codes": ["stage_preflight_skipped"],
             "source": "infer-existing-preflight",
             "public_artifact_safe": True,
         })
@@ -4561,6 +4570,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["coordinator_ready"]["ok"])
         self.assertFalse(persisted["stage_preflight"]["checked"])
         self.assertTrue(persisted["ready_to_submit"]["ok"])
+        self.assertFalse(persisted["ready_to_submit"]["fully_verified"])
+        self.assertEqual(persisted["ready_to_submit"]["stage_verification"], "skipped")
         self.assertFalse(persisted["local_output"]["available"])
 
     def test_infer_existing_p2p_preserves_swarm_id_in_next_commands(self) -> None:
@@ -4593,9 +4604,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertEqual(report["p2p"]["swarm_id"], "public-swarm-v2")
         self.assertFalse(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["ready_to_submit"]["fully_verified"])
         self.assertFalse(report["ready_to_submit"]["route_ready"])
         self.assertIsNone(report["ready_to_submit"]["coordinator_ready"])
         self.assertFalse(report["ready_to_submit"]["stage_preflight_required"])
+        self.assertEqual(report["ready_to_submit"]["stage_verification"], "not_checked")
+        self.assertIn("route_not_ready", report["ready_to_submit"]["warning_codes"])
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("stage_preflight_failed", report["diagnosis_codes"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -4683,15 +4697,19 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["stage_preflight"]["matched_capabilities"]["real_llm_sharded_stage0"], "stage0-miner")
         self.assertEqual(report["stage_preflight"]["matched_capabilities"]["real_llm_sharded_stage1"], "stage1-miner")
         self.assertTrue(report["ready_to_submit"]["ok"])
+        self.assertTrue(report["ready_to_submit"]["fully_verified"])
         self.assertTrue(report["ready_to_submit"]["route_ready"])
         self.assertTrue(report["ready_to_submit"]["coordinator_ready"])
         self.assertTrue(report["ready_to_submit"]["stage_preflight_ok"])
         self.assertTrue(report["ready_to_submit"]["stage_preflight_required"])
+        self.assertEqual(report["ready_to_submit"]["stage_verification"], "ready")
+        self.assertEqual(report["ready_to_submit"]["warning_codes"], [])
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
         self.assertNotIn("observer-secret", json.dumps(report, sort_keys=True))
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["stage_preflight"]["ok"])
         self.assertTrue(persisted["ready_to_submit"]["ok"])
+        self.assertTrue(persisted["ready_to_submit"]["fully_verified"])
         self.assertNotIn("observer-secret", json.dumps(persisted, sort_keys=True))
 
     def test_infer_existing_batch_next_commands_use_only_batch_placeholder(self) -> None:
@@ -4783,6 +4801,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["stage_preflight"]["checked"])
         self.assertFalse(report["stage_preflight"]["ok"])
         self.assertEqual(report["stage_preflight"]["missing_capabilities"], ["real_llm_sharded_stage1"])
+        self.assertFalse(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["ready_to_submit"]["fully_verified"])
+        self.assertEqual(report["ready_to_submit"]["stage_verification"], "failed")
+        self.assertIn("stage_preflight_failed", report["ready_to_submit"]["warning_codes"])
         self.assertIn("stage_preflight_failed", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
         self.assertIn("stage0 and stage1", report["operator_action"])

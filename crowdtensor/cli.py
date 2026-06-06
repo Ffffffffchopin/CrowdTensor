@@ -3481,6 +3481,44 @@ def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
     return "Accepted rows were visible but completion was not; increase --timeout-seconds and inspect Coordinator admin results."
 
 
+def _ready_to_submit_status(
+    *,
+    submit_ok: bool | None,
+    route_ready: bool,
+    coordinator_ok: bool | None,
+    coordinator_preflight_required: bool | None,
+    stage_preflight_ok: bool | None,
+    stage_preflight_required: bool,
+    source: str,
+) -> dict[str, Any]:
+    if stage_preflight_required:
+        stage_verification = "ready" if stage_preflight_ok else "failed"
+    else:
+        stage_verification = "skipped" if route_ready and coordinator_ok is not False else "not_checked"
+    warning_codes = []
+    if not route_ready:
+        warning_codes.append("route_not_ready")
+    if coordinator_ok is False:
+        warning_codes.append("coordinator_not_ready")
+    if stage_verification == "failed":
+        warning_codes.append("stage_preflight_failed")
+    elif stage_verification == "skipped":
+        warning_codes.append("stage_preflight_skipped")
+    return {
+        "ok": submit_ok,
+        "fully_verified": bool(submit_ok and route_ready and coordinator_ok is not False and stage_verification == "ready"),
+        "route_ready": route_ready,
+        "coordinator_ready": coordinator_ok,
+        "coordinator_preflight_required": coordinator_preflight_required,
+        "stage_preflight_ok": stage_preflight_ok,
+        "stage_preflight_required": stage_preflight_required,
+        "stage_verification": stage_verification,
+        "warning_codes": warning_codes,
+        "source": source,
+        "public_artifact_safe": True,
+    }
+
+
 def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *, ok: bool) -> str:
     if ok:
         if bool(payload.get("dry_run")):
@@ -3734,28 +3772,32 @@ def _infer_ready_to_submit(
     stage_preflight = payload.get("stage_preflight") if isinstance(payload.get("stage_preflight"), dict) else {}
     stage_checked = bool(stage_preflight.get("checked"))
     stage_ok = bool(stage_preflight.get("ok")) if stage_checked else None
-    return {
-        "ok": bool(source.get("ok")) if source.get("ok") is not None else (bool(ok) if dry_run else None),
-        "route_ready": bool(source.get("route_ready")) if "route_ready" in source else bool(route.get("route_ready")),
-        "coordinator_ready": (
-            bool(source.get("coordinator_ready"))
-            if source.get("coordinator_ready") is not None
-            else (
-                bool(coordinator_ready.get("ok"))
-                if "ok" in coordinator_ready
-                else None
-            )
-        ),
-        "coordinator_preflight_required": source.get("coordinator_preflight_required"),
-        "stage_preflight_ok": source.get("stage_preflight_ok") if source.get("stage_preflight_ok") is not None else stage_ok,
-        "stage_preflight_required": (
-            bool(source.get("stage_preflight_required"))
-            if "stage_preflight_required" in source
-            else stage_checked
-        ),
-        "source": source.get("source") or ("infer-dry-run-preflight" if dry_run else "infer-submit-result"),
-        "public_artifact_safe": True,
-    }
+    route_ready = bool(source.get("route_ready")) if "route_ready" in source else bool(route.get("route_ready"))
+    coordinator_ok = (
+        bool(source.get("coordinator_ready"))
+        if source.get("coordinator_ready") is not None
+        else (
+            bool(coordinator_ready.get("ok"))
+            if "ok" in coordinator_ready
+            else None
+        )
+    )
+    stage_preflight_ok = source.get("stage_preflight_ok") if source.get("stage_preflight_ok") is not None else stage_ok
+    stage_preflight_required = (
+        bool(source.get("stage_preflight_required"))
+        if "stage_preflight_required" in source
+        else stage_checked
+    )
+    submit_ok = bool(source.get("ok")) if source.get("ok") is not None else (bool(ok) if dry_run else None)
+    return _ready_to_submit_status(
+        submit_ok=submit_ok,
+        route_ready=route_ready,
+        coordinator_ok=coordinator_ok,
+        coordinator_preflight_required=source.get("coordinator_preflight_required"),
+        stage_preflight_ok=stage_preflight_ok,
+        stage_preflight_required=stage_preflight_required,
+        source=source.get("source") or ("infer-dry-run-preflight" if dry_run else "infer-submit-result"),
+    )
 
 
 def _infer_summary_from_payload(
@@ -6675,20 +6717,20 @@ def _product_generate_dry_run_preflight(
         codes.add("stage_preflight_failed")
     else:
         codes.add("stage_preflight_skipped")
+    ready_to_submit = _ready_to_submit_status(
+        submit_ok=live_ready,
+        route_ready=route_ready,
+        coordinator_ok=coordinator_ok,
+        coordinator_preflight_required=should_live_check,
+        stage_preflight_ok=stage_ok,
+        stage_preflight_required=stage_required,
+        source="dry-run-preflight",
+    )
     report.update({
         "ok": bool(report.get("ok") and (live_ready is not False)),
         "coordinator_ready": coordinator_ready,
         "stage_preflight": stage_preflight,
-        "ready_to_submit": {
-            "ok": live_ready,
-            "route_ready": route_ready,
-            "coordinator_ready": coordinator_ok,
-            "coordinator_preflight_required": should_live_check,
-            "stage_preflight_ok": stage_ok,
-            "stage_preflight_required": stage_required,
-            "source": "dry-run-preflight",
-            "public_artifact_safe": True,
-        },
+        "ready_to_submit": ready_to_submit,
         "diagnosis_codes": sorted(codes),
     })
     return report
@@ -6879,20 +6921,20 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
         codes.append("stage_preflight_skipped")
     stage_required = bool(stage_preflight.get("checked"))
     stage_ok = bool(stage_preflight.get("ok")) if stage_required else True
+    ready_to_submit = _ready_to_submit_status(
+        submit_ok=bool(route_ready and coordinator_ready.get("ok") and stage_ok),
+        route_ready=route_ready,
+        coordinator_ok=bool(coordinator_ready.get("ok")) if route_ready else None,
+        coordinator_preflight_required=route_ready,
+        stage_preflight_ok=bool(stage_preflight.get("ok")) if stage_required else None,
+        stage_preflight_required=stage_required,
+        source="infer-existing-preflight",
+    )
     merged = {
         **payload,
         "coordinator_ready": coordinator_ready,
         "stage_preflight": stage_preflight,
-        "ready_to_submit": {
-            "ok": bool(route_ready and coordinator_ready.get("ok") and stage_ok),
-            "route_ready": route_ready,
-            "coordinator_ready": bool(coordinator_ready.get("ok")) if route_ready else None,
-            "coordinator_preflight_required": route_ready,
-            "stage_preflight_ok": bool(stage_preflight.get("ok")) if stage_required else None,
-            "stage_preflight_required": stage_required,
-            "source": "infer-existing-preflight",
-            "public_artifact_safe": True,
-        },
+        "ready_to_submit": ready_to_submit,
         "diagnosis_codes": sorted(set(str(code) for code in codes)),
     }
     merged["ok"] = bool(payload.get("ok") and route_ready and coordinator_ready.get("ok") and stage_ok)
@@ -7413,9 +7455,11 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(
             "  ready_to_submit: "
             f"{ready_to_submit.get('ok')} "
+            f"fully_verified={ready_to_submit.get('fully_verified')} "
             f"route={ready_to_submit.get('route_ready')} "
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
-            f"stage={ready_to_submit.get('stage_preflight_ok')}"
+            f"stage={ready_to_submit.get('stage_preflight_ok')} "
+            f"stage_verification={ready_to_submit.get('stage_verification')}"
         )
     if report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
@@ -7530,9 +7574,11 @@ def print_infer(report: dict[str, Any]) -> None:
         print(
             "  ready_to_submit: "
             f"{ready_to_submit.get('ok')} "
+            f"fully_verified={ready_to_submit.get('fully_verified')} "
             f"route={ready_to_submit.get('route_ready')} "
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
-            f"stage={ready_to_submit.get('stage_preflight_ok')}"
+            f"stage={ready_to_submit.get('stage_preflight_ok')} "
+            f"stage_verification={ready_to_submit.get('stage_verification')}"
         )
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     if stream.get("enabled"):
