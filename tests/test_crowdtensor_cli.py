@@ -1549,6 +1549,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "admin-secret",
             "--max-new-tokens",
             "2",
+            "--stream",
+            "--include-output",
             "--json",
         ])
 
@@ -1556,6 +1558,9 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertTrue(report["stream"]["enabled"])
+        self.assertTrue(report["stream"]["requested"])
+        self.assertTrue(report["output_request"]["include_output"])
         self.assertIn("Start a Coordinator", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
@@ -1571,14 +1576,49 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --include-output",
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'",
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --include-output",
             next_lines,
         )
         self.assertNotIn("CrowdTensor prompt", json.dumps(report["next_commands"], sort_keys=True))
+
+    def test_product_generate_session_create_failure_preserves_requested_options(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--stream",
+            "--include-output",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("session_create_failed", report["diagnosis_codes"])
+        self.assertTrue(report["stream"]["enabled"])
+        self.assertTrue(report["stream"]["requested"])
+        self.assertTrue(report["output_request"]["include_output"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --include-output",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --include-output",
+            next_lines,
+        )
+        self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
 
     def test_product_generate_requires_admin_token_with_action(self) -> None:
         args = cli.parse_args([

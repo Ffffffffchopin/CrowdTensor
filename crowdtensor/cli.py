@@ -6539,6 +6539,23 @@ def _safe_stream_payload_event(event: dict[str, Any], *, max_new_tokens: int) ->
     }
 
 
+def _generate_stream_request_summary(args: argparse.Namespace) -> dict[str, Any]:
+    requested = bool(getattr(args, "stream", False))
+    return {
+        "enabled": requested,
+        "requested": requested,
+        "public_artifact_safe": True,
+    }
+
+
+def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "include_output": bool(getattr(args, "include_output", False)),
+        "raw_generated_text_public": False,
+        "public_artifact_safe": True,
+    }
+
+
 def _product_generate_operator_action(report: dict[str, Any]) -> str:
     if report.get("ok"):
         if bool(report.get("dry_run")):
@@ -7066,7 +7083,9 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     prompt_text = prompt_texts[0]
     batch_enabled = len(prompt_texts) > 1
     p2p_backend = _p2p_backend(args)
-    stream_enabled = bool(getattr(args, "stream", False))
+    stream_request = _generate_stream_request_summary(args)
+    output_request = _generate_output_request_summary(args)
+    stream_enabled = bool(stream_request.get("enabled"))
     session_request = build_session_request(
         prompt_text=prompt_text,
         prompt_texts=prompt_texts,
@@ -7123,16 +7142,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
-            "stream": {
-                "enabled": stream_enabled,
-                "requested": stream_enabled,
-                "public_artifact_safe": True,
-            },
-            "output_request": {
-                "include_output": bool(args.include_output),
-                "raw_generated_text_public": False,
-                "public_artifact_safe": True,
-            },
+            "stream": stream_request,
+            "output_request": output_request,
             "p2p": {
                 "enabled": bool(args.p2p),
                 "backend": p2p_backend if args.p2p else "",
@@ -7172,6 +7183,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
+            "stream": stream_request,
+            "output_request": output_request,
             "p2p": {
                 "enabled": True,
                 "backend": p2p_backend,
@@ -7196,6 +7209,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
+            "stream": stream_request,
+            "output_request": output_request,
             "diagnosis_codes": ["coordinator_route_missing"],
         })
     if not args.admin_token:
@@ -7206,6 +7221,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
+            "stream": stream_request,
+            "output_request": output_request,
             "diagnosis_codes": ["admin_token_required"],
         })
     private_payload = coordinator_payload_for_request(session_request, prompt_text=prompt_text, prompt_texts=prompt_texts)
@@ -7242,6 +7259,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
+            "stream": stream_request,
+            "output_request": output_request,
             "diagnosis_codes": diagnosis,
             "error": type(exc).__name__,
             "detail": detail,
@@ -7468,11 +7487,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
         },
-        "output_request": {
-            "include_output": bool(args.include_output),
-            "raw_generated_text_public": False,
-            "public_artifact_safe": True,
-        },
+        "output_request": output_request,
         "diagnosis_codes": (
             ["public_swarm_generate_ready"]
             + (["public_swarm_generate_batch_ready"] if batch_ready and batch_enabled else [])
