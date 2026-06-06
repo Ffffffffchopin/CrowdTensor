@@ -323,6 +323,16 @@ def command_entry(
     return entry
 
 
+def human_next_command_line(item: dict[str, Any], command_line_text: str) -> str:
+    requirements = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
+    prefixes = [
+        f"{name}=..."
+        for name in requirements
+        if str(name).startswith("CROWDTENSOR_") and str(name) not in command_line_text
+    ]
+    return f"{' '.join(prefixes)} {command_line_text}" if prefixes else command_line_text
+
+
 def local_coordinator_port_from_url(coordinator_url: str, default: int = 8787) -> int:
     try:
         parsed = urlparse(str(coordinator_url or ""))
@@ -7640,7 +7650,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
-            print(f"  next[{index}] {item.get('label')}: {local_generate_command_line(item, report)}{suffix}")
+            rendered_command = human_next_command_line(item, local_generate_command_line(item, report))
+            print(f"  next[{index}] {item.get('label')}: {rendered_command}{suffix}")
 
 
 def print_product_serve(report: dict[str, Any]) -> None:
@@ -7667,7 +7678,8 @@ def print_product_serve(report: dict[str, Any]) -> None:
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
-            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+            rendered_command = human_next_command_line(item, str(item.get("command_line") or ""))
+            print(f"  next[{index}] {item.get('label')}: {rendered_command}{suffix}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
@@ -7696,7 +7708,8 @@ def print_product_join(report: dict[str, Any]) -> None:
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
-            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+            rendered_command = human_next_command_line(item, str(item.get("command_line") or ""))
+            print(f"  next[{index}] {item.get('label')}: {rendered_command}{suffix}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
@@ -7802,7 +7815,8 @@ def print_infer(report: dict[str, Any]) -> None:
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
-            print(f"  next[{index}] {item.get('label')}: {local_infer_command_line(item, report)}{suffix}")
+            rendered_command = human_next_command_line(item, local_infer_command_line(item, report))
+            print(f"  next[{index}] {item.get('label')}: {rendered_command}{suffix}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
