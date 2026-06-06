@@ -2654,6 +2654,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             [(event["request_id"], event["generated_token_count"]) for event in report["stream"]["events"]],
             [("req-1", 1), ("req-1", 2), ("req-2", 1), ("req-2", 2)],
         )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        self.assertIn(
+            "  stream_events: 4 source=admin-session-stream complete=True requests=2/2",
+            stdout.getvalue(),
+        )
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
         self.assertNotIn("raw one", encoded)
