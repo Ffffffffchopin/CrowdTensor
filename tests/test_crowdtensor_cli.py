@@ -3870,6 +3870,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                         [
                             "crowdtensor",
                             "infer",
+                            cli.INFER_PROMPT_PLACEHOLDER,
                             "--mode",
                             "existing",
                             "--output-dir",

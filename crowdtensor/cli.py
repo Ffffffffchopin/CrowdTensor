@@ -3508,13 +3508,13 @@ def _infer_command_args(
 ) -> list[str]:
     command = ["crowdtensor", "infer"]
     resolved_mode = mode or getattr(args, "infer_mode", "local")
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    if include_prompt and not prompt_texts:
+        command.append(INFER_PROMPT_PLACEHOLDER)
     command.extend(["--mode", resolved_mode])
     output_dir = str(getattr(args, "output_dir", "") or "")
     if output_dir:
         command.extend(["--output-dir", output_dir])
-    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
-    if include_prompt and not prompt_texts:
-        command.append(INFER_PROMPT_PLACEHOLDER)
     if prompt_texts:
         command.extend(["--prompt-texts", INFER_BATCH_PROMPTS_PLACEHOLDER])
     try:
