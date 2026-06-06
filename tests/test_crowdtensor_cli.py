@@ -114,6 +114,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             }),
             "real_llm_sharded_stage1",
         )
+        self.assertEqual(
+            cli.annotate_stage_preflight({"checked": False})["missing_summary"],
+            "not_checked",
+        )
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()
@@ -614,6 +618,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ready_to_submit"]["coordinator_preflight_required"])
         self.assertEqual(report["coordinator_ready"]["reason"], "live_preflight_skipped")
         self.assertEqual(report["stage_preflight"]["reason"], "live_preflight_skipped")
+        self.assertEqual(report["stage_preflight"]["missing_summary"], "not_checked")
         self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertEqual(
@@ -4705,6 +4710,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["coordinator_ready"]["protocol"], "runtime_contract_v1")
         self.assertFalse(report["stage_preflight"]["checked"])
         self.assertEqual(report["stage_preflight"]["reason"], "observer_token_missing")
+        self.assertEqual(report["stage_preflight"]["missing_summary"], "not_checked")
         self.assertEqual(report["ready_to_submit"], {
             "ok": True,
             "fully_verified": False,
@@ -4755,6 +4761,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["stream"]["enabled"])
         self.assertTrue(persisted["coordinator_ready"]["ok"])
         self.assertFalse(persisted["stage_preflight"]["checked"])
+        self.assertEqual(persisted["stage_preflight"]["missing_summary"], "not_checked")
         self.assertTrue(persisted["ready_to_submit"]["ok"])
         self.assertFalse(persisted["ready_to_submit"]["fully_verified"])
         self.assertEqual(persisted["ready_to_submit"]["readiness_label"], "partial")

@@ -386,6 +386,15 @@ def stage_preflight_missing_text(stage_preflight: dict[str, Any]) -> str:
     return "none"
 
 
+def annotate_stage_preflight(stage_preflight: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(stage_preflight, dict):
+        return {}
+    return {
+        **stage_preflight,
+        "missing_summary": stage_preflight_missing_text(stage_preflight),
+    }
+
+
 def format_p2p_status(p2p: dict[str, Any]) -> str:
     discovery = p2p.get("discovery") if isinstance(p2p.get("discovery"), dict) else {}
     parts = [
@@ -3967,7 +3976,7 @@ def _infer_summary_from_payload(
         "route": route,
         "p2p": payload.get("p2p") if isinstance(payload.get("p2p"), dict) else {},
         "coordinator_ready": payload.get("coordinator_ready") if isinstance(payload.get("coordinator_ready"), dict) else {},
-        "stage_preflight": payload.get("stage_preflight") if isinstance(payload.get("stage_preflight"), dict) else {},
+        "stage_preflight": annotate_stage_preflight(payload.get("stage_preflight")) if isinstance(payload.get("stage_preflight"), dict) else {},
         "ready_to_submit": ready_to_submit,
         "batch": {
             "enabled": bool(batch.get("enabled")),
@@ -6860,6 +6869,7 @@ def _product_generate_dry_run_preflight(
     stage_ok = bool(stage_preflight.get("ok")) if stage_required else None
     coordinator_ok = bool(coordinator_ready.get("ok")) if should_live_check else None
     live_ready = None if skip_live_preflight else bool(route_ready and (coordinator_ok is not False) and (stage_ok is not False))
+    stage_preflight = annotate_stage_preflight(stage_preflight)
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     if should_live_check:
         codes.add("coordinator_ready_preflight_ready" if coordinator_ready.get("ok") else "coordinator_ready_failed")
@@ -7090,6 +7100,7 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
         codes.append("stage_preflight_skipped")
     stage_required = bool(stage_preflight.get("checked"))
     stage_ok = bool(stage_preflight.get("ok")) if stage_required else True
+    stage_preflight = annotate_stage_preflight(stage_preflight)
     ready_to_submit = _ready_to_submit_status(
         submit_ok=bool(route_ready and coordinator_ready.get("ok") and stage_ok),
         route_ready=route_ready,
