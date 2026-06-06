@@ -3603,6 +3603,12 @@ def ready_to_submit_stage_text(ready_to_submit: dict[str, Any]) -> str:
     return "not_checked"
 
 
+def guarded_submit_label(label: str, ready_to_submit: dict[str, Any]) -> str:
+    if isinstance(ready_to_submit, dict) and ready_to_submit.get("readiness_label") == "blocked":
+        return f"{label} after checks pass"
+    return label
+
+
 def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
     if ready_to_submit and ready_to_submit.get("ok") is True and not ready_to_submit.get("fully_verified"):
         warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or []))
@@ -3797,8 +3803,9 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         dry_run_command,
         requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
     )
+    ready_to_submit = payload.get("ready_to_submit") if isinstance(payload.get("ready_to_submit"), dict) else {}
     submit_command_entry = command_entry(
-        "submit inference",
+        guarded_submit_label("submit inference", ready_to_submit),
         submit_command,
         requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
     )
@@ -6729,9 +6736,10 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         if p2p_enabled or suggested_coordinator_url or coordinator_url
         else None
     )
+    ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
     submit_command = (
         command_entry(
-            "submit generation",
+            guarded_submit_label("submit generation", ready_to_submit),
             _product_cli_generate_command(
                 p2p=p2p_enabled,
                 coordinator_url=suggested_coordinator_url or coordinator_url,

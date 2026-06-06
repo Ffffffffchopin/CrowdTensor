@@ -137,6 +137,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.infer_route_distinct_stage_text({"distinct_stage_miners": False}, {"checked": True, "distinct_stage_miners": True}),
             "True",
         )
+        self.assertEqual(
+            cli.guarded_submit_label("submit inference", {"readiness_label": "blocked"}),
+            "submit inference after checks pass",
+        )
+        self.assertEqual(
+            cli.guarded_submit_label("submit inference", {"readiness_label": "verified"}),
+            "submit inference",
+        )
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()
@@ -677,6 +685,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor join --coordinator-url http://127.0.0.1:8791 --miner-id stage1-miner --stage stage1 --run",
             next_lines,
         )
+        labels = [item["label"] for item in report["next_commands"]]
+        self.assertIn("submit generation after checks pass", labels)
 
     def test_p2pd_top_level_prints_daemon_command(self) -> None:
         args = cli.parse_args([
@@ -5155,6 +5165,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  stage_preflight: checked=False ok=None matched_miners=None missing=not_checked reason=coordinator_not_ready source=not-checked",
             stdout.getvalue(),
         )
+        self.assertIn("next[5] submit inference after checks pass", stdout.getvalue())
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8792 --run",
