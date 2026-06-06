@@ -3920,6 +3920,15 @@ def _infer_summary_from_payload(
     else:
         codes.add("crowdtensor_infer_blocked")
     ready_to_submit = _infer_ready_to_submit(payload, route, ok=ok, dry_run=dry_run)
+    if ok and dry_run and ready_to_submit:
+        codes.discard("crowdtensor_infer_preflight_ready")
+        codes.discard("user_friendly_infer_preflight_ready")
+        if ready_to_submit.get("fully_verified"):
+            codes.add("crowdtensor_infer_preflight_ready")
+            codes.add("user_friendly_infer_preflight_ready")
+        else:
+            codes.add("crowdtensor_infer_preflight_partial")
+            codes.add("user_friendly_infer_preflight_partial")
     operator_action = _infer_operator_action(args, payload, ok=ok)
     next_commands = _infer_next_commands(args, payload, ok=ok, mode=mode)
     summary = {

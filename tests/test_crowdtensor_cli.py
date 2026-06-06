@@ -4713,7 +4713,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
-        self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
+        self.assertIn("crowdtensor_infer_preflight_partial", report["diagnosis_codes"])
+        self.assertIn("user_friendly_infer_preflight_partial", report["diagnosis_codes"])
+        self.assertNotIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         self.assertEqual(
             report["operator_action"],
@@ -4739,6 +4741,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["ready_to_submit"]["fully_verified"])
         self.assertEqual(persisted["ready_to_submit"]["readiness_label"], "partial")
         self.assertEqual(persisted["ready_to_submit"]["stage_verification"], "skipped")
+        self.assertIn("crowdtensor_infer_preflight_partial", persisted["diagnosis_codes"])
+        self.assertNotIn("crowdtensor_infer_preflight_ready", persisted["diagnosis_codes"])
         self.assertFalse(persisted["local_output"]["available"])
 
     def test_infer_existing_p2p_preserves_swarm_id_in_next_commands(self) -> None:
@@ -5062,6 +5066,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("p2p_generate_route_ready", report["diagnosis_codes"])
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
+        self.assertIn("user_friendly_infer_preflight_ready", report["diagnosis_codes"])
+        self.assertNotIn("crowdtensor_infer_preflight_partial", report["diagnosis_codes"])
 
     def test_infer_existing_dry_run_blocks_when_coordinator_ready_fails(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -5089,6 +5095,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
+        self.assertNotIn("crowdtensor_infer_preflight_partial", report["diagnosis_codes"])
         self.assertNotIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
         self.assertIn("Coordinator route exists", report["operator_action"])
