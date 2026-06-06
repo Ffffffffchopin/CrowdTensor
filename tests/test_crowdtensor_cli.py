@@ -569,7 +569,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
         self.assertIn("  next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}", rendered)
         self.assertIn("# requires CROWDTENSOR_OBSERVER_TOKEN", rendered)
-        self.assertIn("  next[2] submit generation: CROWDTENSOR_ADMIN_TOKEN=... crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'  # requires CROWDTENSOR_ADMIN_TOKEN", rendered)
+        self.assertIn("  next[2] submit generation: CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'  # requires CROWDTENSOR_ADMIN_TOKEN", rendered)
 
     def test_product_generate_dry_run_can_skip_live_preflight_for_ci(self) -> None:
         args = cli.parse_args([
@@ -4006,7 +4006,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False", stdout.getvalue())
         self.assertIn("next[1] check existing swarm", stdout.getvalue())
         self.assertIn("next[2] submit inference", stdout.getvalue())
-        self.assertIn("CROWDTENSOR_ADMIN_TOKEN=... crowdtensor infer", stdout.getvalue())
+        self.assertIn("CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer", stdout.getvalue())
         self.assertIn("# requires CROWDTENSOR_ADMIN_TOKEN", stdout.getvalue())
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(

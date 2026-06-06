@@ -323,10 +323,14 @@ def command_entry(
     return entry
 
 
+def env_required_assignment(name: str) -> str:
+    return name + "=${" + name + ":?set " + name + "}"
+
+
 def human_next_command_line(item: dict[str, Any], command_line_text: str) -> str:
     requirements = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
     prefixes = [
-        f"{name}=..."
+        env_required_assignment(str(name))
         for name in requirements
         if str(name).startswith("CROWDTENSOR_") and str(name) not in command_line_text
     ]
@@ -9305,7 +9309,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  crowdtensor infer \"CrowdTensor routes small models across home compute\"\n"
             "  crowdtensor infer \"your prompt\" --max-new-tokens 8 --stream\n"
             "  crowdtensor infer \"your prompt\" --mode existing --coordinator-url http://127.0.0.1:8787 --dry-run\n"
-            "  CROWDTENSOR_ADMIN_TOKEN=... crowdtensor infer \"your prompt\" --mode existing --coordinator-url http://127.0.0.1:8787\n"
+            "  CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer \"your prompt\" --mode existing --coordinator-url http://127.0.0.1:8787\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -9455,7 +9459,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "examples:\n"
             "  crowdtensor generate \"your prompt\"\n"
             "  crowdtensor generate \"your prompt\" --coordinator-url http://127.0.0.1:8787 --dry-run\n"
-            "  CROWDTENSOR_ADMIN_TOKEN=... crowdtensor generate \"your prompt\" --coordinator-url http://127.0.0.1:8787\n"
+            "  CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate \"your prompt\" --coordinator-url http://127.0.0.1:8787\n"
             "  crowdtensor generate --prompt-texts \"first prompt,second prompt\" --coordinator-url http://127.0.0.1:8787 --dry-run\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
