@@ -356,6 +356,23 @@ def local_generate_command_line(item: dict[str, Any], report: dict[str, Any]) ->
     return command_line(rendered)
 
 
+def format_p2p_status(p2p: dict[str, Any]) -> str:
+    discovery = p2p.get("discovery") if isinstance(p2p.get("discovery"), dict) else {}
+    parts = [
+        f"enabled={p2p.get('enabled')}",
+        f"backend={p2p.get('backend') or 'none'}",
+    ]
+    if p2p.get("bootstrap"):
+        parts.append(f"bootstrap={p2p.get('bootstrap')}")
+    if p2p.get("peer_count") is not None:
+        parts.append(f"peers={p2p.get('peer_count')}")
+    if discovery:
+        parts.append(f"discovery_ok={discovery.get('ok')}")
+        if discovery.get("error"):
+            parts.append(f"discovery_error={discovery.get('error')}")
+    return " ".join(str(part) for part in parts)
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -7298,6 +7315,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"coordinator={route.get('coordinator_url_present')} "
             f"missing={','.join(missing) if missing else 'none'}"
         )
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    if p2p:
+        print(f"  p2p: {format_p2p_status(p2p)}")
     coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
     if coordinator_ready:
         print(
@@ -7412,6 +7432,9 @@ def print_infer(report: dict[str, Any]) -> None:
         f"ready={route.get('route_ready')} "
         f"distinct_stage_miners={route.get('distinct_stage_miners')}"
     )
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    if p2p:
+        print(f"  p2p: {format_p2p_status(p2p)}")
     coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
     if coordinator_ready:
         print(

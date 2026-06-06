@@ -1033,6 +1033,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run",
             next_lines,
         )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  p2p: enabled=True backend=lite bootstrap=http://127.0.0.1:8799 peers=0 discovery_ok=False discovery_error=OSError", rendered)
         self.assertNotIn("CrowdTensor prompt", json.dumps(report, sort_keys=True))
 
     def test_product_generate_p2p_dry_run_filters_coordinator_by_model_id(self) -> None:
@@ -1443,6 +1448,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
         self.assertEqual(report["p2p"]["discovery"]["error"], "OSError")
         self.assertIn("P2P discovery daemon", report["operator_action"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  p2p: enabled=True backend=lite bootstrap=http://127.0.0.1:8799 peers=0 discovery_ok=False discovery_error=OSError", rendered)
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor p2pd --port 8799 --run", next_lines)
         self.assertIn(
