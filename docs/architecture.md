@@ -1,78 +1,161 @@
 # Architecture
 
-CrowdTensorD is currently a hub-and-spoke Alpha runtime. It validates the control-plane mechanics needed before introducing a full P2P network or real accelerator workloads.
+CrowdTensor is a Coordinator-backed swarm inference beta. It currently favors
+clear correctness, recovery, and evidence over permissionless networking or
+large-model scale.
 
-## Components
+The current public path runs a small real Hugging Face GPT model through a
+two-stage inference route:
 
-**Coordinator**
+```text
+generate client
+    |
+    v
+Coordinator/API  <->  discovery daemon
+    |
+    +--> stage 0 Miner
+    |
+    +--> stage 1 Miner
+```
 
-The Coordinator is a FastAPI process that owns task queues, leases, model/checkpoint state, validation, audit, metrics, and operator controls.
+The same control-plane mechanics also support deterministic CPU demos, remote
+Miner rehearsals, browser probes, and release evidence packs.
 
-**Python Miner**
+## Main Components
 
-`crowdtensor-miner` is a headless worker process. It claims compatible tasks, runs the requested dependency-free workload, sends heartbeats, submits results, and can run once or as a bounded long-lived session.
+### Coordinator
 
-**Browser Miner and WebRTC Experiments**
+The Coordinator is the authority for the current beta. It owns:
 
-The `web/` directory contains browser-native experiments for a WebRTC tensor tunnel, Worker compute probe, and browser Miner bridge. These are CPU/JavaScript baselines, not WebGPU benchmarks.
+- Session creation and read-only inference requests.
+- Task leasing and heartbeat tracking.
+- Timeout requeue and stale-result rejection.
+- Stage-aware scheduling.
+- Result validation and replay audit.
+- Trust quarantine and operator diagnostics.
+- Redacted evidence and support bundle output.
 
-**State Store**
+The Coordinator is intentionally centralized for now. That makes correctness
+and recovery easier to inspect before the project moves more responsibility into
+P2P networking.
 
-The state store persists checkpoint and task event data under `--state-dir`. Restart recovery is driven by the persisted model state and append-only task log.
+### Discovery
 
-## Task Lifecycle
+`crowdtensor p2pd` provides the current swarm discovery surface used by
+`serve`, `join`, and `generate` flows. It helps clients find the Coordinator and
+route through a named `--swarm-id`.
 
-1. Coordinator keeps a backlog of queued tasks.
-2. Miner calls `POST /tasks/claim` with capabilities and metadata.
-3. Coordinator leases the oldest compatible task and returns a lease token.
-4. Miner sends `POST /tasks/{task_id}/heartbeat` while working.
-5. Miner submits `POST /tasks/{task_id}/result`.
-6. Coordinator validates the result, applies the workload-specific update, and checkpoints state.
-7. Expired leases are requeued; stale results are rejected.
+Discovery is not yet a full permissionless libp2p/DHT/NAT traversal system. It
+is a controlled beta mechanism for local, LAN, and temporary public proofs.
 
-The concrete HTTP contract for public, observer, admin, and Miner endpoints is documented in [API Reference](api.md). The `scripts/api_contract_check.py` smoke keeps that contract tied to the running Coordinator behavior.
+### Miners
 
-## Workload Lanes
+Miners opt in to capabilities. For the real split inference route, the key
+roles are:
 
-Coordinator can maintain separate task lanes with `--task-lane runtime:backend:count[:workload_type]`.
+- `stage0`
+- `stage1`
+- `both`
 
-Current workload types:
+The Coordinator only schedules work to Miners that advertise matching
+capabilities. Stage-aware demos require distinct stage Miners so the route
+actually exercises split execution.
 
-- `diloco_train`: tiny deterministic DiLoCo-style dense update
-- `cpu_lora_mock`: dependency-free adapter update mock
-- `micro_transformer_lm`: tiny character language-model workload with analytic CPU backprop
-- `model_bundle_lm`: CPU-only model bundle contract with artifact identity, versioning, and replayable deltas
-- `model_bundle_infer`: read-only model bundle inference-shaped probe with Coordinator recomputation
-- `browser_probe`: deterministic browser Worker compute probe that does not update model state
+Optional Hugging Face and CUDA paths are also explicit opt-ins. CPU remains the
+default.
 
-These workloads validate protocol contracts and recovery behavior. They do not represent real model throughput.
+### Workloads
 
-## Outer Optimizer Contract
+CrowdTensor supports several workload families:
 
-`diloco_train` now exposes an explicit `outer_optimizer_contract_v1`. The default implementation is `diloco_momentum` over `dense_float` local deltas, preserving the existing CPU-only math while making the outer optimizer state visible in claims, result responses, checkpoints, and the admin result ledger. `--outer-optimizer diloco_nesterov` enables an OpenDiLoCo-inspired Nesterov outer update for new dense model state without changing the Miner result payload.
+- Deterministic CPU proofs for protocol and release checks.
+- Read-only model bundle inference.
+- Optional external LLM adapter smoke tests.
+- Micro-LLM and tiny real-LLM sharded inference.
+- Browser compute and transport experiments.
 
-This keeps the network layer physically separate from tensor math: Miners advertise `supported_delta_formats`, receive an `optimizer_spec`, produce the requested delta format, and the Coordinator applies the contract. Legacy Miners without a delta capability can still claim default `dense_float` work, but they are incompatible with Coordinator-advertised compressed transports. The first compressed transport is `sign_compressed` with `ternary_signs_v1`; Coordinator decodes it to a dense delta before validation and outer update. `sign_compressed_ef` adds a DisTrO-style error-feedback residual loop on the Miner side: the Miner compresses `local_delta + residual`, uploads the sign payload and norm metadata, and only advances its residual buffer after Coordinator acceptance. Future OpenDiLoCo or DisTrO-style optimizers should extend this contract instead of changing task leasing or heartbeat semantics.
+The most important public-facing workload today is the real tiny GPT split path
+behind `public-real-llm-swarm-beta`.
 
-## Model Bundle Contract
+### Client Commands
 
-`model_bundle_lm` is the first dependency-free boundary shaped like a real model artifact. The claim includes `bundle_id`, `bundle_version`, `artifact_hash`, weights, config, and token IDs inside `workload_spec`; the Miner returns `bundle_delta` with the same identity fields plus numeric delta values. Coordinator validates bundle identity, shape, finite values, delta norm, and loss spike before applying a nested bundle update. Dense `global_step` remains unchanged, while `model_bundle.version`, `model_bundle.optimizer_step`, and `model_bundle.artifact_hash` advance.
+User-facing commands wrap the runtime into safer flows:
 
-`model_bundle_infer` reuses the same built-in bundle identity but is intentionally read-only. The claim includes a small `requests` array of prompts, target tokens, and top-k settings plus bundle config and weights; the Miner returns `inference_results`; Coordinator recomputes logits from current bundle state and accepts only matching predictions. It records request count, correct count, accuracy, elapsed time, requests per second, and a capped Coordinator-derived `request_trace` in safe session summaries without changing dense `global_step` or `model_bundle.version`, making it the first measurable Swarm Inference shaped CPU session contract rather than a serving benchmark.
+- `crowdtensor local-proof`
+- `crowdtensor cpu-infer`
+- `crowdtensor serve`
+- `crowdtensor join`
+- `crowdtensor generate`
+- `crowdtensor public-swarm-beta`
+- `crowdtensor public-real-llm-swarm-beta`
 
-`external_llm_infer` is the optional runtime-adapter boundary for future real local LLM engines. The control plane does not import PyTorch, Transformers, llama.cpp, or GPU libraries. Instead, a Miner can explicitly advertise the workload with `--enable-mock-llm-runtime` for deterministic CI, `--llm-runtime-cmd` / `CROWDTENSOR_LLM_RUNTIME_CMD` for an operator-owned command, or `--llm-runtime-url` / `CROWDTENSOR_LLM_RUNTIME_URL` for an OpenAI-compatible chat completions endpoint. The claim carries prompt requests and prompt hashes under `external_llm_infer_v1`; the Miner returns `external_llm_results` with `output_text`, `adapter_kind`, and `model_id`. Coordinator validates the contract, stores raw output only in internal events, exposes read-only ledger summaries such as `completion_count` and `output_chars`, keeps API keys and runtime URLs out of capability advertisements, and keeps `/state` redacted.
+Maintainer and release commands produce stricter evidence, validate contracts,
+and keep shareable artifacts redacted.
 
-## Validation and Audit
+## Request Lifecycle
 
-Every training result passes shape, finite-value, norm, and loss-spike checks before it can update state.
+1. A client calls `generate` or a higher-level beta command.
+2. The Coordinator creates a read-only inference session.
+3. Stage-specific work is leased to capable Miners.
+4. Miners heartbeat while working.
+5. If a Miner disappears, the lease times out and the work is requeued.
+6. Results are accepted only if they match the current lease/session state.
+7. Validation checks compare the split route against a local baseline when the
+   workload supports it.
+8. Redacted evidence records readiness, diagnostics, stage assignment, and
+   recovery details.
 
-With `--replay-audit`, Coordinator also recomputes expected deterministic results for supported workloads from claim-time state. For `sign_compressed`, replay audit recomputes the dense DiLoCo result, applies the same deterministic compression/decode contract, and compares the decoded delta. For `sign_compressed_ef`, replay audit rejects the result with `error_feedback_replay_unsupported` because the residual buffer is intentionally Miner-local state. Mismatches are rejected and feed the normal trust/quarantine ledger.
+## Failure Handling
 
-## Trust and Scheduling
+The runtime is built around observable failure modes:
 
-Miner trust is workload-scoped. Accepted results improve a score, rejected results reduce it, and repeated or severe failures quarantine a Miner for that workload. Admin trust overrides can block, allow, or reset automatic behavior.
+- Claimed work can be requeued after lease timeout.
+- Late results from stale leases can be rejected.
+- Stage assignment can require distinct Miners.
+- Trust quarantine can block unhealthy workers.
+- Release gates can require specific readiness booleans before passing.
 
-Capability-aware scheduling lets Miners advertise runtime/backend/protocol support. If no queued task is compatible, claim returns a controlled `503`.
+This is why many scripts emit structured fields such as
+`decoded_tokens_match`, `stage_assignment_valid`, `distinct_stage_miners`, and
+`stage_requeue_ready`.
 
-## Current Boundaries
+## Data And Artifact Safety
 
-CrowdTensorD does not yet include libp2p, NAT traversal, decentralized identity, reward accounting, hardware attestation, GPU kernels, WebGPU kernels, or real LLM fine-tuning.
+Public artifacts are designed to be safe to share:
+
+- Raw API keys and private tokens are redacted.
+- Raw prompts and output text are avoided in public evidence where required.
+- Private runtime env files stay local.
+- Cleanup commands remove generated private live artifacts by default in live
+  proof wrappers.
+
+The project still assumes controlled operators and trusted network boundaries.
+It is not safe to expose as an untrusted public mining network.
+
+## What Is Deliberately Not Decentralized Yet
+
+Several pieces remain intentionally simple:
+
+- The Coordinator is still authoritative.
+- Discovery is controlled.
+- Miner admission is token-backed.
+- Validation is workload-specific.
+- Model sizes remain small.
+- Public prompt serving is not enabled.
+
+Those constraints keep the beta testable. Future work can decentralize pieces
+only after correctness and safety remain clear.
+
+## Current Mental Model
+
+CrowdTensor is best understood as:
+
+```text
+controlled swarm inference beta
++ real tiny-model split execution
++ observable recovery and validation
++ redacted release evidence
+- production P2P
+- large-model serving
+- permissionless public mining
+```
