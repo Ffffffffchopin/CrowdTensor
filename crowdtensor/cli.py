@@ -5776,6 +5776,7 @@ def _product_cli_generate_command(
     prompt_text: str = "",
     prompt_texts: str = "",
     swarm_id: str = "default",
+    include_observer: bool = False,
 ) -> list[str]:
     command = [
         "crowdtensor",
@@ -5802,6 +5803,8 @@ def _product_cli_generate_command(
         command.extend(["--prompt-text", prompt_text])
     if dry_run:
         command.append("--dry-run")
+    if include_observer:
+        command.extend(["--observer-token", "<redacted>"])
     return command
 
 
@@ -5873,8 +5876,9 @@ def _product_serve_next_commands(args: argparse.Namespace, *, coordinator_url: s
                 hf_model_id=args.hf_model_id,
                 dry_run=True,
                 swarm_id=str(getattr(args, "swarm_id", "default") or "default"),
+                include_observer=True,
             ),
-            requires_env=_product_env_requirements(args, ["observer"]) if not args.p2p else None,
+            requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
         ),
         command_entry(
             "submit generation",
@@ -5967,7 +5971,9 @@ def _product_join_next_commands(args: argparse.Namespace, *, coordinator_url: st
             hf_model_id=args.hf_model_id,
             dry_run=True,
             swarm_id=str(getattr(args, "swarm_id", "default") or "default"),
+            include_observer=True,
         ),
+        requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
     ))
     commands.append(command_entry(
         "submit generation",
@@ -6580,9 +6586,10 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         prompt_text=prompt_placeholder,
         prompt_texts=prompt_texts_placeholder,
         swarm_id=swarm_id,
+        include_observer=True,
     )
     check_command = (
-        command_entry("check generation route", route_command)
+        command_entry("check generation route", route_command, requires_env=["CROWDTENSOR_OBSERVER_TOKEN"])
         if p2p_enabled or suggested_coordinator_url or coordinator_url
         else None
     )

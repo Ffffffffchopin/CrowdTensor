@@ -299,7 +299,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("generate --p2p", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run",
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         self.assertNotIn(cli.DEFAULT_PRODUCT_GENERATE_PROMPT, encoded)
@@ -311,7 +311,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  command: ", rendered)
         self.assertIn("--admin-token '<redacted>'", rendered)
         self.assertIn("  action: Rerun with --run", rendered)
-        self.assertIn("  next[4] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run", rendered)
+        self.assertIn("  next[4] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run --observer-token '<redacted>'", rendered)
+        self.assertIn("# requires CROWDTENSOR_OBSERVER_TOKEN", rendered)
         self.assertIn("# requires CROWDTENSOR_MINER_TOKEN", rendered)
         self.assertNotIn("admin-secret", rendered)
         self.assertNotIn("miner-secret", rendered)
@@ -361,7 +362,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --dry-run",
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         self.assertIn(
@@ -439,7 +440,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run",
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'",
             next_lines,
         )
 
@@ -530,7 +531,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  coordinator_ready: True service=crowdtensord protocol=runtime_contract_v1", rendered)
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
         self.assertIn("  ready_to_submit: True fully_verified=True route=True coordinator=True stage=True stage_verification=ready", rendered)
-        self.assertIn("  next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run", rendered)
+        self.assertIn("  next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'", rendered)
+        self.assertIn("# requires CROWDTENSOR_OBSERVER_TOKEN", rendered)
         self.assertIn("  next[2] submit generation: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'  # requires CROWDTENSOR_ADMIN_TOKEN", rendered)
 
     def test_product_generate_dry_run_can_skip_live_preflight_for_ci(self) -> None:
@@ -661,7 +663,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("generate --p2p --dry-run", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --p2p --peer-bootstrap http://127.0.0.1:8788 --dry-run",
+            "crowdtensor generate --max-new-tokens 16 --p2p --peer-bootstrap http://127.0.0.1:8788 --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         self.assertTrue(any("CROWDTENSOR_P2P_PEER_SECRET" in item.get("requires_env", []) for item in report["next_commands"]))
@@ -737,7 +739,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("generate --p2p --dry-run", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --p2p --peer-bootstrap http://127.0.0.1:8788 --dry-run",
+            "crowdtensor generate --max-new-tokens 16 --p2p --peer-bootstrap http://127.0.0.1:8788 --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         peer = announced.call_args.args[1]
@@ -824,7 +826,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("command_line", report)
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run",
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run --observer-token '<redacted>'",
             next_lines,
         )
 
@@ -906,7 +908,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run",
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         self.assertIn(
@@ -937,7 +939,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  command: ", rendered)
         self.assertIn("--miner-token '<redacted>'", rendered)
         self.assertIn("  action: Rerun with --run", rendered)
-        self.assertIn("  next[3] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run", rendered)
+        self.assertIn("  next[3] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run --observer-token '<redacted>'", rendered)
+        self.assertIn("# requires CROWDTENSOR_OBSERVER_TOKEN", rendered)
         self.assertIn("# requires CROWDTENSOR_MINER_TOKEN", rendered)
         self.assertNotIn("miner-secret", rendered)
 
@@ -1043,7 +1046,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run",
+            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         stdout = io.StringIO()
@@ -1076,7 +1079,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor p2pd --port 8799 --swarm-id public-swarm-v2 --run", next_lines)
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --p2p --swarm-id public-swarm-v2 --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run",
+            "crowdtensor generate --max-new-tokens 2 --p2p --swarm-id public-swarm-v2 --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'",
             next_lines,
         )
 
@@ -1453,7 +1456,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage0/stage1", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8788 --prompt-text '<prompt>' --dry-run",
+            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8788 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         self.assertIn(
@@ -1496,7 +1499,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor p2pd --port 8799 --run", next_lines)
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run",
+            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         self.assertNotIn("CrowdTensor prompt", json.dumps(report, sort_keys=True))
@@ -1532,7 +1535,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run",
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         self.assertIn(
@@ -1560,7 +1563,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["operator_action"], "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.")
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run",
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token '<redacted>'",
             next_lines,
         )
         self.assertTrue(any("CROWDTENSOR_ADMIN_TOKEN" in item.get("requires_env", []) for item in report["next_commands"]))
