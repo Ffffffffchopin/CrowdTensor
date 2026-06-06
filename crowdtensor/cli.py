@@ -150,12 +150,15 @@ def request_json_url(
     payload: dict[str, Any] | None = None,
     *,
     admin_token: str = "",
+    observer_token: str = "",
     timeout: float = 10.0,
 ) -> dict[str, Any]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"content-type": "application/json"}
     if admin_token:
         headers["x-crowdtensor-admin-token"] = admin_token
+    if observer_token:
+        headers["x-crowdtensor-observer-token"] = observer_token
     request = Request(f"{base_url.rstrip('/')}{path}", data=body, headers=headers, method=method)
     with urlopen(request, timeout=timeout) as response:
         raw = response.read().decode("utf-8")
@@ -3382,6 +3385,8 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
         return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
     if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
         return "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm."
+    if "stage_preflight_failed" in codes:
+        return "Start or rejoin distinct stage0 and stage1 Miners, then rerun --dry-run with --observer-token to verify /state."
     if "admin_token_required" in codes:
         return "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN."
     if "generation_timeout" in codes:
@@ -3473,6 +3478,7 @@ def _infer_summary_from_payload(
         },
         "route": route,
         "coordinator_ready": payload.get("coordinator_ready") if isinstance(payload.get("coordinator_ready"), dict) else {},
+        "stage_preflight": payload.get("stage_preflight") if isinstance(payload.get("stage_preflight"), dict) else {},
         "batch": {
             "enabled": bool(batch.get("enabled")),
             "ready": bool(batch.get("batch_generation_ready")),
@@ -3573,6 +3579,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             p2p=bool(args.p2p or args.peer_bootstrap),
             p2p_backend=args.p2p_backend,
             admin_token=args.admin_token,
+            observer_token=getattr(args, "observer_token", ""),
             timeout_seconds=args.timeout_seconds,
             poll_interval=args.poll_interval,
             http_timeout=args.http_timeout,
@@ -5557,7 +5564,127 @@ def _coordinator_ready_preflight(base_url: str, *, timeout: float) -> dict[str, 
         "schema": payload.get("schema") if isinstance(payload, dict) else "",
         "service": payload.get("service") if isinstance(payload, dict) else "",
         "protocol": payload.get("protocol") if isinstance(payload, dict) else "",
+        "auth": payload.get("auth") if isinstance(payload, dict) and isinstance(payload.get("auth"), dict) else {},
         "task_lanes": payload.get("task_lanes") if isinstance(payload, dict) and isinstance(payload.get("task_lanes"), list) else [],
+    }
+
+
+def _stage_preflight_capabilities(capabilities: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    for key in [
+        "real_llm_sharded_stage_capabilities",
+        "capabilities",
+        "supported_capabilities",
+        "supported_workloads",
+    ]:
+        raw = capabilities.get(key)
+        if isinstance(raw, list):
+            values.update(str(item) for item in raw if str(item))
+    return values
+
+
+def _stage_preflight_from_state(state: dict[str, Any], *, backend: str) -> dict[str, Any]:
+    required = required_stage_capabilities(backend=backend, stage_mode="split")
+    profiles = state.get("miner_profiles") if isinstance(state.get("miner_profiles"), dict) else {}
+    matched: dict[str, str] = {}
+    miner_capabilities: list[dict[str, Any]] = []
+    for miner_id, profile in sorted(profiles.items()):
+        if not isinstance(profile, dict):
+            continue
+        capabilities = profile.get("last_capabilities") if isinstance(profile.get("last_capabilities"), dict) else {}
+        advertised = _stage_preflight_capabilities(capabilities)
+        matched_for_miner = sorted(capability for capability in required if capability in advertised)
+        if not matched_for_miner:
+            continue
+        miner_capabilities.append({
+            "miner_id": str(miner_id),
+            "matched_capabilities": matched_for_miner,
+            "backend": capabilities.get("backend") or profile.get("backend") or "",
+            "runtime": capabilities.get("runtime") or profile.get("runtime") or "",
+        })
+        for capability in matched_for_miner:
+            matched.setdefault(capability, str(miner_id))
+    missing = [capability for capability in required if capability not in matched]
+    distinct_stage_miners = len({miner_id for miner_id in matched.values() if miner_id}) >= len(required)
+    ok = bool(not missing and distinct_stage_miners)
+    return {
+        "checked": True,
+        "ok": ok,
+        "source": "coordinator-state",
+        "required_capabilities": required,
+        "matched_capabilities": matched,
+        "missing_capabilities": missing,
+        "miner_count": len(profiles),
+        "matched_miner_count": len(miner_capabilities),
+        "matched_miners": miner_capabilities,
+        "distinct_stage_miners": distinct_stage_miners,
+        "public_artifact_safe": True,
+    }
+
+
+def _coordinator_stage_preflight(
+    base_url: str,
+    *,
+    observer_token: str,
+    backend: str,
+    timeout: float,
+) -> dict[str, Any]:
+    if not base_url:
+        return {"checked": False, "ok": False, "reason": "coordinator_url_missing", "source": "not-checked"}
+    if not observer_token:
+        return {
+            "checked": False,
+            "ok": None,
+            "reason": "observer_token_missing",
+            "source": "not-checked",
+            "required_capabilities": required_stage_capabilities(backend=backend, stage_mode="split"),
+            "public_artifact_safe": True,
+        }
+    try:
+        payload = request_json_url("GET", base_url, "/state", observer_token=observer_token, timeout=timeout)
+    except Exception as exc:
+        return {
+            "checked": True,
+            "ok": False,
+            "source": "coordinator-state",
+            "error": type(exc).__name__,
+            "detail": str(exc)[:200],
+            "required_capabilities": required_stage_capabilities(backend=backend, stage_mode="split"),
+            "public_artifact_safe": True,
+        }
+    return _stage_preflight_from_state(payload if isinstance(payload, dict) else {}, backend=backend)
+
+
+def _route_stage_preflight(route: dict[str, Any], *, backend: str) -> dict[str, Any]:
+    required = [str(item) for item in (route.get("required_capabilities") or []) if str(item)]
+    if not required:
+        required = required_stage_capabilities(backend=backend, stage_mode="split")
+    matched = route.get("matched_capabilities") if isinstance(route.get("matched_capabilities"), dict) else {}
+    safe_matched = {
+        str(capability): str(miner_id)
+        for capability, miner_id in matched.items()
+        if str(capability) in set(required) and str(miner_id)
+    }
+    missing = [capability for capability in required if capability not in safe_matched]
+    distinct_stage_miners = len({miner_id for miner_id in safe_matched.values() if miner_id}) >= len(required)
+    ok = bool(not missing and distinct_stage_miners)
+    return {
+        "checked": True,
+        "ok": ok,
+        "source": "p2p-route",
+        "required_capabilities": required,
+        "matched_capabilities": safe_matched,
+        "missing_capabilities": missing,
+        "miner_count": None,
+        "matched_miner_count": len({miner_id for miner_id in safe_matched.values() if miner_id}),
+        "matched_miners": [
+            {"miner_id": miner_id, "matched_capabilities": sorted([
+                capability for capability, matched_miner in safe_matched.items() if matched_miner == miner_id
+            ])}
+            for miner_id in sorted({miner_id for miner_id in safe_matched.values() if miner_id})
+        ],
+        "distinct_stage_miners": distinct_stage_miners,
+        "public_artifact_safe": True,
     }
 
 
@@ -5565,14 +5692,47 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
     route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
     route_ready = bool(route.get("usable_now") or route.get("coordinator_url_present"))
     coordinator_url = str(route.get("coordinator_url") or getattr(args, "coordinator_url", "") or "")
-    coordinator_ready = _coordinator_ready_preflight(coordinator_url, timeout=float(getattr(args, "http_timeout", 30.0))) if route_ready else {}
+    timeout = float(getattr(args, "http_timeout", 30.0))
+    coordinator_ready = _coordinator_ready_preflight(coordinator_url, timeout=timeout) if route_ready else {}
+    p2p_route = bool(getattr(args, "p2p", False) or getattr(args, "peer_bootstrap", ""))
+    backend = str(getattr(args, "backend", "cpu") or "cpu")
+    if p2p_route:
+        stage_preflight = _route_stage_preflight(route, backend=backend)
+    elif route_ready and coordinator_ready.get("ok"):
+        stage_preflight = _coordinator_stage_preflight(
+            coordinator_url,
+            observer_token=str(getattr(args, "observer_token", "") or ""),
+            backend=backend,
+            timeout=timeout,
+        )
+    else:
+        stage_preflight = {
+            "checked": False,
+            "ok": None,
+            "reason": "coordinator_not_ready" if route_ready else "route_not_ready",
+            "source": "not-checked",
+            "public_artifact_safe": True,
+        }
     codes = list(payload.get("diagnosis_codes") or [])
     if route_ready and coordinator_ready.get("ok"):
         codes.append("coordinator_ready_preflight_ready")
     elif route_ready:
         codes.append("coordinator_ready_failed")
-    merged = {**payload, "coordinator_ready": coordinator_ready, "diagnosis_codes": sorted(set(str(code) for code in codes))}
-    merged["ok"] = bool(payload.get("ok") and route_ready and coordinator_ready.get("ok"))
+    if stage_preflight.get("checked") and stage_preflight.get("ok"):
+        codes.append("stage_preflight_ready")
+    elif stage_preflight.get("checked"):
+        codes.append("stage_preflight_failed")
+    else:
+        codes.append("stage_preflight_skipped")
+    stage_required = bool(stage_preflight.get("checked"))
+    stage_ok = bool(stage_preflight.get("ok")) if stage_required else True
+    merged = {
+        **payload,
+        "coordinator_ready": coordinator_ready,
+        "stage_preflight": stage_preflight,
+        "diagnosis_codes": sorted(set(str(code) for code in codes)),
+    }
+    merged["ok"] = bool(payload.get("ok") and route_ready and coordinator_ready.get("ok") and stage_ok)
     return merged
 
 
@@ -6015,6 +6175,16 @@ def print_infer(report: dict[str, Any]) -> None:
             f"{coordinator_ready.get('ok')} "
             f"service={coordinator_ready.get('service')} "
             f"protocol={coordinator_ready.get('protocol')}"
+        )
+    stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
+    if stage_preflight:
+        missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
+        print(
+            "  stage_preflight: "
+            f"checked={stage_preflight.get('checked')} "
+            f"ok={stage_preflight.get('ok')} "
+            f"matched_miners={stage_preflight.get('matched_miner_count')} "
+            f"missing={','.join(str(item) for item in missing) if missing else 'none'}"
         )
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     if stream.get("enabled"):
@@ -7528,6 +7698,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--p2p", action="store_true")
     infer.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
     infer.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    infer.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
     infer.add_argument("--scenario-id", default="crowdtensor-infer")
     infer.add_argument("--public-host", default="127.0.0.1")
     infer.add_argument("--p2p-port", type=int, default=9788)

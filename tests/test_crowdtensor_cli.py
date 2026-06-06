@@ -3368,14 +3368,152 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["route"]["route_source"], "coordinator-url")
         self.assertTrue(report["coordinator_ready"]["ok"])
         self.assertEqual(report["coordinator_ready"]["protocol"], "runtime_contract_v1")
+        self.assertFalse(report["stage_preflight"]["checked"])
+        self.assertEqual(report["stage_preflight"]["reason"], "observer_token_missing")
         self.assertIn("coordinator_ready_preflight_ready", report["diagnosis_codes"])
+        self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the inference request.")
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["dry_run"])
         self.assertTrue(persisted["coordinator_ready"]["ok"])
+        self.assertFalse(persisted["stage_preflight"]["checked"])
         self.assertFalse(persisted["local_output"]["available"])
+
+    def test_infer_existing_dry_run_with_observer_token_checks_stage_state(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--observer-token",
+            "observer-secret",
+            "--dry-run",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+        calls: list[tuple[str, str, str, str, str]] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            observer_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del payload, timeout
+            calls.append((method, base_url, path, admin_token, observer_token))
+            if path == "/ready":
+                return {
+                    "schema": "ready_v1",
+                    "service": "crowdtensord-coordinator",
+                    "protocol": "runtime_contract_v1",
+                    "auth": {"observer_required": True},
+                }
+            if path == "/state":
+                self.assertEqual(observer_token, "observer-secret")
+                return {
+                    "miner_profiles": {
+                        "stage0-miner": {
+                            "runtime": "python-cli",
+                            "backend": "cpu",
+                            "last_capabilities": {
+                                "runtime": "python-cli",
+                                "backend": "cpu",
+                                "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"],
+                            },
+                        },
+                        "stage1-miner": {
+                            "runtime": "python-cli",
+                            "backend": "cpu",
+                            "last_capabilities": {
+                                "runtime": "python-cli",
+                                "backend": "cpu",
+                                "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage1"],
+                            },
+                        },
+                    }
+                }
+            self.fail(f"unexpected request path {path}")
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual([call[2] for call in calls], ["/ready", "/state"])
+        self.assertEqual(calls[0][3], "")
+        self.assertEqual(calls[0][4], "")
+        self.assertEqual(calls[1][4], "observer-secret")
+        self.assertTrue(report["stage_preflight"]["checked"])
+        self.assertTrue(report["stage_preflight"]["ok"])
+        self.assertEqual(report["stage_preflight"]["matched_capabilities"]["real_llm_sharded_stage0"], "stage0-miner")
+        self.assertEqual(report["stage_preflight"]["matched_capabilities"]["real_llm_sharded_stage1"], "stage1-miner")
+        self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
+        self.assertNotIn("observer-secret", json.dumps(report, sort_keys=True))
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(persisted["stage_preflight"]["ok"])
+        self.assertNotIn("observer-secret", json.dumps(persisted, sort_keys=True))
+
+    def test_infer_existing_dry_run_with_observer_token_blocks_missing_stage_state(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--observer-token",
+            "observer-secret",
+            "--dry-run",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            observer_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del method, base_url, payload, admin_token, observer_token, timeout
+            if path == "/ready":
+                return {"schema": "ready_v1", "service": "crowdtensord-coordinator", "protocol": "runtime_contract_v1"}
+            if path == "/state":
+                return {
+                    "miner_profiles": {
+                        "stage0-miner": {
+                            "last_capabilities": {
+                                "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"],
+                            },
+                        },
+                    }
+                }
+            self.fail(f"unexpected request path {path}")
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(report["stage_preflight"]["checked"])
+        self.assertFalse(report["stage_preflight"]["ok"])
+        self.assertEqual(report["stage_preflight"]["missing_capabilities"], ["real_llm_sharded_stage1"])
+        self.assertIn("stage_preflight_failed", report["diagnosis_codes"])
+        self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+        self.assertIn("stage0 and stage1", report["operator_action"])
 
     def test_infer_existing_dry_run_uses_p2p_route_preflight(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -3407,20 +3545,42 @@ class CrowdTensorCliTests(unittest.TestCase):
                 },
             ]
         }
+        request_paths: list[str] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            observer_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del method, base_url, payload, admin_token, observer_token, timeout
+            request_paths.append(path)
+            self.assertEqual(path, "/ready")
+            return {"schema": "ready_v1", "service": "crowdtensord-coordinator", "protocol": "runtime_contract_v1"}
 
         with patch.object(cli, "fetch_peer_catalog", return_value=catalog), patch.object(
             cli,
             "request_json_url",
-            return_value={"schema": "ready_v1", "service": "crowdtensord-coordinator", "protocol": "runtime_contract_v1"},
+            side_effect=fake_request,
         ):
             report = cli.build_infer(args)
 
         self.assertTrue(report["ok"], report)
+        self.assertEqual(request_paths, ["/ready"])
         self.assertTrue(report["dry_run"])
         self.assertEqual(report["route"]["route_source"], "p2p-discovery")
         self.assertTrue(report["route"]["route_ready"])
         self.assertTrue(report["coordinator_ready"]["ok"])
+        self.assertEqual(report["stage_preflight"]["source"], "p2p-route")
+        self.assertTrue(report["stage_preflight"]["ok"])
+        self.assertEqual(report["stage_preflight"]["matched_capabilities"]["real_llm_sharded_stage0"], "stage0")
+        self.assertEqual(report["stage_preflight"]["matched_capabilities"]["real_llm_sharded_stage1"], "stage1")
         self.assertIn("p2p_generate_route_ready", report["diagnosis_codes"])
+        self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
 
     def test_infer_existing_dry_run_blocks_when_coordinator_ready_fails(self) -> None:

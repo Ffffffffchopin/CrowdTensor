@@ -78,7 +78,9 @@ crowdtensor infer \
 `crowdtensor infer --mode existing` can target an already running Coordinator or
 P2P-discovered swarm with `--coordinator-url` or `--peer-bootstrap`.
 Add `--dry-run` to check the route and session metadata before submitting a
-real inference request; it also checks the Coordinator `/ready` endpoint.
+real inference request; it also checks the Coordinator `/ready` endpoint. Pass
+`--observer-token "$CROWDTENSOR_OBSERVER_TOKEN"` when you want the dry run to
+read `/state` and verify visible stage0/stage1 Miner capabilities.
 Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
 redacted.
