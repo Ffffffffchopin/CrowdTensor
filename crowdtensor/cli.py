@@ -6043,6 +6043,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
     p2p_backend = _p2p_backend(args)
     peers: list[dict[str, Any]] = []
     catalog_payload: dict[str, Any] = {}
+    discovery_error: dict[str, Any] = {}
     route_probe_request = build_session_request(
         prompt_text="join",
         backend=args.backend,
@@ -6052,14 +6053,23 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         route_source=_p2p_route_source(args),
     )
     if not coordinator_url and p2p_bootstrap:
-        coordinator_url, peers, catalog_payload = resolve_coordinator_from_discovery(
-            p2p_bootstrap,
-            timeout=args.http_timeout,
-            backend=p2p_backend if args.p2p else "lite",
-            session_request=route_probe_request,
-        )
+        try:
+            coordinator_url, peers, catalog_payload = resolve_coordinator_from_discovery(
+                p2p_bootstrap,
+                timeout=args.http_timeout,
+                backend=p2p_backend if args.p2p else "lite",
+                session_request=route_probe_request,
+            )
+        except Exception as exc:
+            discovery_error = {
+                "ok": False,
+                "error": type(exc).__name__,
+                "detail": str(exc)[:200],
+                "bootstrap": p2p_bootstrap,
+            }
     if not coordinator_url:
         local_coordinator_url = "http://127.0.0.1:8787"
+        p2p_port = local_coordinator_port_from_url(p2p_bootstrap, default=8788)
         serve_args = argparse.Namespace(
             profile="gpu-generation" if args.backend == "cuda" else "cpu-real-llm",
             bind_host="127.0.0.1",
@@ -6089,21 +6099,35 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         p2p_join_args.p2p = True
         p2p_join_args.peer_bootstrap = p2p_bootstrap or DEFAULT_P2P_BOOTSTRAP
         p2p_join_args.coordinator_url = ""
-        return sanitize({
+        report = {
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "join",
             "next_commands": [
+                command_entry("start P2P discovery daemon", ["crowdtensor", "p2pd", "--port", str(p2p_port), "--run"]),
                 command_entry("start local Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
                 *_product_join_next_commands(args, coordinator_url=local_coordinator_url),
-                command_entry(
-                    "discover through P2P",
-                    _product_cli_join_command(p2p_join_args, coordinator_url="", include_run=True),
+                *(
+                    []
+                    if args.p2p
+                    else [
+                        command_entry(
+                            "discover through P2P",
+                            _product_cli_join_command(p2p_join_args, coordinator_url="", include_run=True),
+                        )
+                    ]
                 ),
             ],
-            "diagnosis_codes": ["coordinator_route_missing"],
-            "operator_action": "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery.",
-        })
+            "p2p": {
+                "enabled": bool(args.p2p or p2p_bootstrap),
+                "backend": p2p_backend if args.p2p else "lite",
+                "bootstrap": p2p_bootstrap,
+                "discovery": discovery_error,
+            },
+            "diagnosis_codes": (["p2p_discovery_unreachable"] if discovery_error else []) + ["coordinator_route_missing"],
+        }
+        report["operator_action"] = _product_join_operator_action(report)
+        return sanitize(report)
     peer_announce: dict[str, Any] = {}
     if args.p2p:
         peer = build_p2p_peer(
@@ -6185,6 +6209,8 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
 
 def _product_join_operator_action(report: dict[str, Any]) -> str:
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    if "p2p_discovery_unreachable" in codes:
+        return "Start the P2P discovery daemon with crowdtensor p2pd --run, or use a direct --coordinator-url."
     if "coordinator_route_missing" in codes:
         return "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery."
     if "p2p_stage_miner_announce_failed" in codes or "real_p2p_stage_miner_announce_failed" in codes:

@@ -834,6 +834,36 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
         self.assertIn("Start the Coordinator", report["operator_action"])
 
+    def test_product_join_p2p_discovery_unreachable_returns_actionable_report(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--p2p",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8799",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_peer_catalog", side_effect=OSError("offline")):
+            report = cli.build_product_join(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertEqual(report["p2p"]["discovery"]["error"], "OSError")
+        self.assertIn("P2P discovery daemon", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2pd --port 8799 --run", next_lines)
+        self.assertEqual(
+            next_lines.count(
+                "crowdtensor join --p2p --peer-bootstrap http://127.0.0.1:8799 --miner-id stage0-miner --stage stage0 --run"
+            ),
+            1,
+        )
+
     def test_product_join_missing_route_without_discovery_returns_actionable_report(self) -> None:
         args = cli.parse_args([
             "join",
