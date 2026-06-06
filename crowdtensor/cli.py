@@ -3638,7 +3638,7 @@ def _infer_command_args(
             command.extend(["--p2p-backend", p2p_backend])
     if include_admin and str(getattr(args, "admin_token", "") or ""):
         command.extend(["--admin-token", "<redacted>"])
-    if include_observer and str(getattr(args, "observer_token", "") or ""):
+    if include_observer:
         command.extend(["--observer-token", "<redacted>"])
     timeout_seconds = float(getattr(args, "timeout_seconds", 420.0) or 420.0)
     if timeout_seconds != 420.0:
@@ -3711,7 +3711,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
     check_command = command_entry(
         "check existing swarm",
         dry_run_command,
-        requires_env=_product_env_requirements(args, ["observer"]),
+        requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
     )
     submit_command_entry = command_entry(
         "submit inference",

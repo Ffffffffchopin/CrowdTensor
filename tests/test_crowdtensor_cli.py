@@ -3885,7 +3885,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# requires CROWDTENSOR_ADMIN_TOKEN", stdout.getvalue())
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --include-output --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787",
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --include-output --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token '<redacted>'",
             next_lines,
         )
         self.assertIn(
@@ -4575,6 +4575,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             report["operator_action"],
             "Inference can be submitted, but stage0/stage1 were not fully verified; rerun --dry-run with --observer-token to check /state before submitting.",
         )
+        next_commands = report["next_commands"]
+        self.assertTrue(any("CROWDTENSOR_OBSERVER_TOKEN" in item.get("requires_env", []) for item in next_commands))
+        next_lines = [item["command_line"] for item in next_commands]
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token '<redacted>'",
+            next_lines,
+        )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["dry_run"])
         self.assertTrue(persisted["coordinator_ready"]["ok"])
@@ -4750,7 +4757,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            f"crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '<prompt-1>,<prompt-2>' --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787",
+            f"crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '<prompt-1>,<prompt-2>' --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token '<redacted>'",
             next_lines,
         )
         self.assertIn(
