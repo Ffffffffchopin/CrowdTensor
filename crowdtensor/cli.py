@@ -364,6 +364,8 @@ def format_p2p_status(p2p: dict[str, Any]) -> str:
     ]
     if p2p.get("bootstrap"):
         parts.append(f"bootstrap={p2p.get('bootstrap')}")
+    if p2p.get("swarm_id") and p2p.get("swarm_id") != "default":
+        parts.append(f"swarm_id={p2p.get('swarm_id')}")
     if p2p.get("peer_count") is not None:
         parts.append(f"peers={p2p.get('peer_count')}")
     if discovery:
@@ -3572,6 +3574,9 @@ def _infer_command_args(
         command.extend(["--peer-bootstrap", peer_bootstrap])
     if p2p:
         command.append("--p2p")
+        swarm_id = str(getattr(args, "swarm_id", "") or "default")
+        if swarm_id != "default":
+            command.extend(["--swarm-id", swarm_id])
         p2p_backend = str(getattr(args, "p2p_backend", "lite") or "lite")
         if p2p_backend != "lite":
             command.extend(["--p2p-backend", p2p_backend])
@@ -3620,11 +3625,13 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
     coordinator_url = str(route.get("coordinator_url") or getattr(args, "coordinator_url", "") or "")
     peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "")
     use_p2p = bool(getattr(args, "p2p", False) or peer_bootstrap)
+    swarm_id = str(getattr(args, "swarm_id", "") or "default")
     if "p2p_discovery_unreachable" in codes:
-        commands.append(command_entry(
-            "start P2P discovery daemon",
-            ["crowdtensor", "p2pd", "--port", str(local_coordinator_port_from_url(peer_bootstrap, default=8788)), "--run"],
-        ))
+        p2pd_command = ["crowdtensor", "p2pd", "--port", str(local_coordinator_port_from_url(peer_bootstrap, default=8788))]
+        if swarm_id != "default":
+            p2pd_command.extend(["--swarm-id", swarm_id])
+        p2pd_command.append("--run")
+        commands.append(command_entry("start P2P discovery daemon", p2pd_command))
     route_missing = "coordinator_route_missing" in codes
     suggested_coordinator_url = coordinator_url or (
         "http://127.0.0.1:8787" if route_missing and not use_p2p else ""
@@ -3676,7 +3683,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
             p2p=use_p2p,
             p2p_backend=getattr(args, "p2p_backend", "lite"),
             peer_bootstrap=peer_bootstrap or DEFAULT_P2P_BOOTSTRAP,
-            swarm_id="default",
+            swarm_id=swarm_id,
             peer_id="",
             peer_url="",
             i_understand_public_bind=False,
@@ -3900,6 +3907,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             peer_bootstrap=args.peer_bootstrap,
             p2p=bool(args.p2p or args.peer_bootstrap),
             p2p_backend=args.p2p_backend,
+            swarm_id=getattr(args, "swarm_id", "default"),
             admin_token=args.admin_token,
             observer_token=getattr(args, "observer_token", ""),
             timeout_seconds=args.timeout_seconds,
@@ -5667,6 +5675,7 @@ def _product_cli_generate_command(
     max_new_tokens: int = 16,
     prompt_text: str = "",
     prompt_texts: str = "",
+    swarm_id: str = "default",
 ) -> list[str]:
     command = [
         "crowdtensor",
@@ -5676,6 +5685,8 @@ def _product_cli_generate_command(
     ]
     if p2p:
         command.append("--p2p")
+        if swarm_id != "default":
+            command.extend(["--swarm-id", swarm_id])
         if p2p_backend != "lite":
             command.extend(["--p2p-backend", p2p_backend])
         command.extend(["--peer-bootstrap", peer_bootstrap or DEFAULT_P2P_BOOTSTRAP])
@@ -5761,6 +5772,7 @@ def _product_serve_next_commands(args: argparse.Namespace, *, coordinator_url: s
                 backend=backend,
                 hf_model_id=args.hf_model_id,
                 dry_run=True,
+                swarm_id=str(getattr(args, "swarm_id", "default") or "default"),
             ),
             requires_env=_product_env_requirements(args, ["observer"]) if not args.p2p else None,
         ),
@@ -5774,6 +5786,7 @@ def _product_serve_next_commands(args: argparse.Namespace, *, coordinator_url: s
                 backend=backend,
                 hf_model_id=args.hf_model_id,
                 dry_run=False,
+                swarm_id=str(getattr(args, "swarm_id", "default") or "default"),
             ),
             requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
         ),
@@ -5853,6 +5866,7 @@ def _product_join_next_commands(args: argparse.Namespace, *, coordinator_url: st
             backend=args.backend,
             hf_model_id=args.hf_model_id,
             dry_run=True,
+            swarm_id=str(getattr(args, "swarm_id", "default") or "default"),
         ),
     ))
     commands.append(command_entry(
@@ -5865,6 +5879,7 @@ def _product_join_next_commands(args: argparse.Namespace, *, coordinator_url: st
             backend=args.backend,
             hf_model_id=args.hf_model_id,
             dry_run=False,
+            swarm_id=str(getattr(args, "swarm_id", "default") or "default"),
         ),
         requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
     ))
@@ -6416,6 +6431,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
     session_request = report.get("session_request") if isinstance(report.get("session_request"), dict) else {}
     p2p_enabled = bool(p2p.get("enabled"))
     p2p_backend = str(p2p.get("backend") or "lite")
+    swarm_id = str(p2p.get("swarm_id") or "default")
     peer_bootstrap = str(p2p.get("bootstrap") or (DEFAULT_P2P_BOOTSTRAP if p2p_enabled else ""))
     coordinator_url = str(route.get("coordinator_url") or "")
     backend = str(session_request.get("backend") or route.get("backend") or "cpu")
@@ -6440,10 +6456,11 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             ["python", "-m", "pip", "install", "-e", ".[hf]"],
         ))
     if "p2p_discovery_unreachable" in codes:
-        commands.append(command_entry(
-            "start P2P discovery daemon",
-            ["crowdtensor", "p2pd", "--port", str(local_coordinator_port_from_url(peer_bootstrap, default=8788)), "--run"],
-        ))
+        p2pd_command = ["crowdtensor", "p2pd", "--port", str(local_coordinator_port_from_url(peer_bootstrap, default=8788))]
+        if swarm_id != "default":
+            p2pd_command.extend(["--swarm-id", swarm_id])
+        p2pd_command.append("--run")
+        commands.append(command_entry("start P2P discovery daemon", p2pd_command))
     route_missing = "coordinator_route_missing" in codes
     suggested_coordinator_url = coordinator_url or (
         "http://127.0.0.1:8787" if route_missing and not p2p_enabled else ""
@@ -6459,6 +6476,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         max_new_tokens=max_new_tokens,
         prompt_text=prompt_placeholder,
         prompt_texts=prompt_texts_placeholder,
+        swarm_id=swarm_id,
     )
     check_command = (
         command_entry("check generation route", route_command)
@@ -6479,6 +6497,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 max_new_tokens=max_new_tokens,
                 prompt_text=prompt_placeholder,
                 prompt_texts=prompt_texts_placeholder,
+                swarm_id=swarm_id,
             ),
             requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
         )
@@ -6504,7 +6523,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             p2p=p2p_enabled,
             p2p_backend=p2p_backend,
             peer_bootstrap=peer_bootstrap or DEFAULT_P2P_BOOTSTRAP,
-            swarm_id="default",
+            swarm_id=swarm_id,
             peer_id="",
             peer_url="",
             i_understand_public_bind=False,
@@ -6896,6 +6915,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                 "enabled": bool(args.p2p),
                 "backend": p2p_backend if args.p2p else "",
                 "bootstrap": p2p_bootstrap if args.p2p else "",
+                "swarm_id": str(getattr(args, "swarm_id", "default") or "default") if args.p2p else "",
                 "peer_count": len(peers),
                 "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
                 "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
@@ -6934,6 +6954,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                 "enabled": True,
                 "backend": p2p_backend,
                 "bootstrap": p2p_bootstrap,
+                "swarm_id": str(getattr(args, "swarm_id", "default") or "default"),
                 "peer_count": len(peers),
                 "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
                 "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
@@ -7199,6 +7220,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "enabled": bool(args.p2p),
             "backend": p2p_backend if args.p2p else "",
             "bootstrap": p2p_bootstrap if args.p2p else "",
+            "swarm_id": str(getattr(args, "swarm_id", "default") or "default") if args.p2p else "",
             "peer_count": len(peers),
             "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
             "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
@@ -9004,6 +9026,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--peer-bootstrap", default="")
     infer.add_argument("--p2p", action="store_true")
     infer.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
+    infer.add_argument("--swarm-id", default="default")
     infer.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
     infer.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
     infer.add_argument("--scenario-id", default="crowdtensor-infer")
@@ -9147,6 +9170,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     generate.add_argument("--peer-bootstrap", default="")
     generate.add_argument("--p2p", action="store_true", help="resolve Coordinator and stage peers through p2pd")
     generate.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
+    generate.add_argument("--swarm-id", default="default", help="label for P2P-discovered swarms; accepted for parity with p2pd/serve/join")
     generate.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
     generate.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
     generate.add_argument("--timeout-seconds", type=float, default=120.0)

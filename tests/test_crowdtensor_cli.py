@@ -1040,6 +1040,33 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  p2p: enabled=True backend=lite bootstrap=http://127.0.0.1:8799 peers=0 discovery_ok=False discovery_error=OSError", rendered)
         self.assertNotIn("CrowdTensor prompt", json.dumps(report, sort_keys=True))
 
+    def test_product_generate_p2p_preserves_swarm_id_in_next_commands(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "CrowdTensor prompt",
+            "--p2p",
+            "--swarm-id",
+            "public-swarm-v2",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8799",
+            "--max-new-tokens",
+            "2",
+            "--dry-run",
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_peer_catalog", side_effect=OSError("offline")):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["p2p"]["swarm_id"], "public-swarm-v2")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2pd --port 8799 --swarm-id public-swarm-v2 --run", next_lines)
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --p2p --swarm-id public-swarm-v2 --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run",
+            next_lines,
+        )
+
     def test_product_generate_p2p_dry_run_filters_coordinator_by_model_id(self) -> None:
         args = cli.parse_args([
             "generate",
@@ -4524,6 +4551,43 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["coordinator_ready"]["ok"])
         self.assertFalse(persisted["stage_preflight"]["checked"])
         self.assertFalse(persisted["local_output"]["available"])
+
+    def test_infer_existing_p2p_preserves_swarm_id_in_next_commands(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--p2p",
+            "--swarm-id",
+            "public-swarm-v2",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8799",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_peer_catalog", side_effect=OSError("offline")), patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("session creation should be blocked when discovery is offline"),
+        ):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["p2p"]["swarm_id"], "public-swarm-v2")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2pd --port 8799 --swarm-id public-swarm-v2 --run", next_lines)
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --peer-bootstrap http://127.0.0.1:8799 --p2p --swarm-id public-swarm-v2",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
+        self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
 
     def test_infer_existing_dry_run_with_observer_token_checks_stage_state(self) -> None:
         output_dir = Path(self._tmp_dir())
