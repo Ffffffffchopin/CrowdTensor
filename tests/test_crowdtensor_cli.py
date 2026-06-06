@@ -834,6 +834,39 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
         self.assertIn("Start the Coordinator", report["operator_action"])
 
+    def test_product_join_missing_route_without_discovery_returns_actionable_report(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--json",
+        ])
+
+        report = cli.build_product_join(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertIn("Start the Coordinator", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run",
+            next_lines,
+        )
+
     def test_product_join_human_output_includes_action_and_redacts_token(self) -> None:
         args = cli.parse_args([
             "join",

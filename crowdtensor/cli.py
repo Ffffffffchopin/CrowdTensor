@@ -6059,13 +6059,43 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             session_request=route_probe_request,
         )
     if not coordinator_url:
+        local_coordinator_url = "http://127.0.0.1:8787"
+        serve_args = argparse.Namespace(
+            profile="gpu-generation" if args.backend == "cuda" else "cpu-real-llm",
+            bind_host="127.0.0.1",
+            public_host="127.0.0.1",
+            port=8787,
+            state_dir="state",
+            admin_token="",
+            miner_token="",
+            observer_token="",
+            hf_model_id=args.hf_model_id,
+            hf_cache_dir=args.hf_cache_dir,
+            lease_seconds=15.0,
+            p2p=bool(args.p2p),
+            p2p_backend=p2p_backend,
+            peer_bootstrap=p2p_bootstrap or DEFAULT_P2P_BOOTSTRAP,
+            swarm_id=args.swarm_id,
+            peer_id="",
+            peer_url="",
+            ttl_seconds=args.ttl_seconds,
+            peer_secret="",
+            http_timeout=args.http_timeout,
+            i_understand_public_bind=False,
+            run=True,
+            json=False,
+        )
         return sanitize({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "join",
             "next_commands": [
-                command_entry("start local Coordinator", ["crowdtensor", "serve", "--run"]),
-                command_entry("discover through P2P", ["crowdtensor", "join", "--p2p", "--peer-bootstrap", p2p_bootstrap or DEFAULT_P2P_BOOTSTRAP, "--run"]),
+                command_entry("start local Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
+                *_product_join_next_commands(args, coordinator_url=local_coordinator_url),
+                command_entry(
+                    "discover through P2P",
+                    ["crowdtensor", "join", "--p2p", "--peer-bootstrap", p2p_bootstrap or DEFAULT_P2P_BOOTSTRAP, "--run"],
+                ),
             ],
             "diagnosis_codes": ["coordinator_route_missing"],
             "operator_action": "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery.",
@@ -10869,8 +10899,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if args.http_timeout <= 0:
             raise SystemExit("--http-timeout must be positive")
     if args.command == "join":
-        if not args.coordinator_url and not args.peer_bootstrap and not args.p2p:
-            raise SystemExit("join requires --coordinator-url or --peer-bootstrap")
         if args.http_timeout <= 0:
             raise SystemExit("--http-timeout must be positive")
         if args.ttl_seconds <= 0:
