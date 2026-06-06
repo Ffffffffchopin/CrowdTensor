@@ -3577,6 +3577,8 @@ def _ready_to_submit_status(
         warning_codes.append("route_not_ready")
     if coordinator_ok is False:
         warning_codes.append("coordinator_not_ready")
+    elif coordinator_ok is None and route_ready:
+        warning_codes.append("coordinator_preflight_skipped")
     if stage_verification == "failed":
         warning_codes.append("stage_preflight_failed")
     elif stage_verification == "unknown":
@@ -3664,6 +3666,9 @@ def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
     if next_step == "run_live_preflight":
         return f"{kind} request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting."
     if next_step == "submit_with_caution":
+        warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or [])) if isinstance(ready_to_submit, dict) else set()
+        if "coordinator_preflight_skipped" in warnings:
+            return f"{kind} can be submitted, but Coordinator readiness was not fully verified; inspect ready_to_submit before submitting."
         return f"{kind} can be submitted, but readiness was not fully verified; inspect ready_to_submit before submitting."
     if next_step == "fix_blockers":
         return ""

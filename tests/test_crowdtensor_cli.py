@@ -229,6 +229,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertFalse(caution_status["fully_verified"])
         self.assertEqual(caution_status["readiness_label"], "partial")
+        self.assertEqual(caution_status["warning_codes"], ["coordinator_preflight_skipped"])
         self.assertEqual(caution_status["next_step"], "submit_with_caution")
         self.assertIn(
             "stage0/stage1 were not fully verified",
@@ -241,6 +242,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(
             "inspect ready_to_submit",
             cli._ready_to_submit_action("Inference", {"next_step": "submit_with_caution"}),
+        )
+        self.assertIn(
+            "Coordinator readiness was not fully verified",
+            cli._ready_to_submit_action(
+                "Inference",
+                {
+                    "next_step": "submit_with_caution",
+                    "warning_codes": ["coordinator_preflight_skipped"],
+                },
+            ),
         )
         self.assertIn(
             "stage0/stage1 were not fully verified",
@@ -754,7 +765,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertEqual(report["ready_to_submit"]["next_step"], "run_live_preflight")
         self.assertEqual(report["ready_to_submit"]["stage_verification"], "skipped")
-        self.assertEqual(report["ready_to_submit"]["warning_codes"], ["stage_preflight_skipped"])
+        self.assertEqual(
+            report["ready_to_submit"]["warning_codes"],
+            ["coordinator_preflight_skipped", "stage_preflight_skipped"],
+        )
         self.assertFalse(report["ready_to_submit"]["coordinator_preflight_required"])
         self.assertEqual(report["coordinator_ready"]["reason"], "live_preflight_skipped")
         self.assertEqual(report["stage_preflight"]["reason"], "live_preflight_skipped")
