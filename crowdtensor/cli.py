@@ -377,6 +377,15 @@ def local_generate_command_line(item: dict[str, Any], report: dict[str, Any]) ->
     return command_line(rendered)
 
 
+def stage_preflight_missing_text(stage_preflight: dict[str, Any]) -> str:
+    missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
+    if missing:
+        return ",".join(str(item) for item in missing)
+    if stage_preflight.get("checked") is False:
+        return "not_checked"
+    return "none"
+
+
 def format_p2p_status(p2p: dict[str, Any]) -> str:
     discovery = p2p.get("discovery") if isinstance(p2p.get("discovery"), dict) else {}
     parts = [
@@ -7636,7 +7645,6 @@ def print_product_generate(report: dict[str, Any]) -> None:
         )
     stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
     if stage_preflight:
-        missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
         reason = str(stage_preflight.get("reason") or "")
         source = str(stage_preflight.get("source") or "")
         reason_text = f" reason={reason}" if reason else ""
@@ -7646,7 +7654,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"checked={stage_preflight.get('checked')} "
             f"ok={stage_preflight.get('ok')} "
             f"matched_miners={stage_preflight.get('matched_miner_count')} "
-            f"missing={','.join(str(item) for item in missing) if missing else 'none'}"
+            f"missing={stage_preflight_missing_text(stage_preflight)}"
             f"{reason_text}"
             f"{source_text}"
         )
@@ -7767,7 +7775,6 @@ def print_infer(report: dict[str, Any]) -> None:
         )
     stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
     if stage_preflight:
-        missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
         reason = str(stage_preflight.get("reason") or "")
         source = str(stage_preflight.get("source") or "")
         reason_text = f" reason={reason}" if reason else ""
@@ -7777,7 +7784,7 @@ def print_infer(report: dict[str, Any]) -> None:
             f"checked={stage_preflight.get('checked')} "
             f"ok={stage_preflight.get('ok')} "
             f"matched_miners={stage_preflight.get('matched_miner_count')} "
-            f"missing={','.join(str(item) for item in missing) if missing else 'none'}"
+            f"missing={stage_preflight_missing_text(stage_preflight)}"
             f"{reason_text}"
             f"{source_text}"
         )

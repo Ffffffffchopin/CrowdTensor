@@ -104,6 +104,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("show raw generated text only in local human output", rendered)
         self.assertIn("not production", rendered)
 
+    def test_stage_preflight_missing_text_distinguishes_not_checked(self) -> None:
+        self.assertEqual(cli.stage_preflight_missing_text({"checked": False}), "not_checked")
+        self.assertEqual(cli.stage_preflight_missing_text({"checked": True}), "none")
+        self.assertEqual(
+            cli.stage_preflight_missing_text({
+                "checked": True,
+                "missing_capabilities": ["real_llm_sharded_stage1"],
+            }),
+            "real_llm_sharded_stage1",
+        )
+
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()
 
@@ -4725,7 +4736,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         self.assertIn(
-            "  stage_preflight: checked=False ok=None matched_miners=None missing=none reason=observer_token_missing source=not-checked",
+            "  stage_preflight: checked=False ok=None matched_miners=None missing=not_checked reason=observer_token_missing source=not-checked",
             stdout.getvalue(),
         )
         next_commands = report["next_commands"]
@@ -5110,7 +5121,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         self.assertIn(
-            "  stage_preflight: checked=False ok=None matched_miners=None missing=none reason=coordinator_not_ready source=not-checked",
+            "  stage_preflight: checked=False ok=None matched_miners=None missing=not_checked reason=coordinator_not_ready source=not-checked",
             stdout.getvalue(),
         )
         next_lines = [item["command_line"] for item in report["next_commands"]]
