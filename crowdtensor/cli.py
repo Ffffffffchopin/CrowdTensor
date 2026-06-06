@@ -3652,6 +3652,18 @@ def guarded_submit_label(label: str, ready_to_submit: dict[str, Any]) -> str:
 
 
 def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
+    next_step = str(ready_to_submit.get("next_step") or "") if isinstance(ready_to_submit, dict) else ""
+    if next_step == "run_stage_preflight":
+        return (
+            f"{kind} can be submitted, but stage0/stage1 were not fully verified; "
+            "rerun --dry-run with --observer-token to check /state before submitting."
+        )
+    if next_step == "run_live_preflight":
+        return f"{kind} request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting."
+    if next_step == "submit_with_caution":
+        return f"{kind} can be submitted, but readiness was not fully verified; inspect ready_to_submit before submitting."
+    if next_step == "fix_blockers":
+        return ""
     if ready_to_submit and ready_to_submit.get("ok") is True and not ready_to_submit.get("fully_verified"):
         warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or []))
         if "stage_preflight_skipped" in warnings:

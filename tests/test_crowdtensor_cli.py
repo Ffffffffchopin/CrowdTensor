@@ -219,6 +219,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(caution_status["fully_verified"])
         self.assertEqual(caution_status["readiness_label"], "partial")
         self.assertEqual(caution_status["next_step"], "submit_with_caution")
+        self.assertIn(
+            "stage0/stage1 were not fully verified",
+            cli._ready_to_submit_action("Inference", {"next_step": "run_stage_preflight"}),
+        )
+        self.assertIn(
+            "live readiness was skipped",
+            cli._ready_to_submit_action("Generation", {"next_step": "run_live_preflight"}),
+        )
+        self.assertIn(
+            "inspect ready_to_submit",
+            cli._ready_to_submit_action("Inference", {"next_step": "submit_with_caution"}),
+        )
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()
