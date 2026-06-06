@@ -331,8 +331,12 @@ def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> st
     if command:
         rendered = [str(part) for part in command]
         if prompt_texts:
-            rendered = [prompt_texts if part == INFER_BATCH_PROMPTS_PLACEHOLDER else part for part in rendered]
-        if prompt:
+            rendered = [
+                prompt_texts if part == INFER_BATCH_PROMPTS_PLACEHOLDER else part
+                for part in rendered
+                if part != INFER_PROMPT_PLACEHOLDER
+            ]
+        elif prompt:
             rendered = [prompt if part == INFER_PROMPT_PLACEHOLDER else part for part in rendered]
         return command_line(rendered)
     return str(item.get("command_line") or command_line([str(part) for part in command]))
@@ -3504,13 +3508,13 @@ def _infer_command_args(
 ) -> list[str]:
     command = ["crowdtensor", "infer"]
     resolved_mode = mode or getattr(args, "infer_mode", "local")
-    if include_prompt:
-        command.append(INFER_PROMPT_PLACEHOLDER)
     command.extend(["--mode", resolved_mode])
     output_dir = str(getattr(args, "output_dir", "") or "")
     if output_dir:
         command.extend(["--output-dir", output_dir])
     prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    if include_prompt and not prompt_texts:
+        command.append(INFER_PROMPT_PLACEHOLDER)
     if prompt_texts:
         command.extend(["--prompt-texts", INFER_BATCH_PROMPTS_PLACEHOLDER])
     try:

@@ -3870,7 +3870,6 @@ class CrowdTensorCliTests(unittest.TestCase):
                         [
                             "crowdtensor",
                             "infer",
-                            cli.INFER_PROMPT_PLACEHOLDER,
                             "--mode",
                             "existing",
                             "--output-dir",
@@ -3961,9 +3960,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
         self.assertIn(
-            f"next[1] check existing swarm: crowdtensor infer '{prompt}' --mode existing --output-dir {output_dir} --prompt-texts '{prompt_texts}' --dry-run",
+            f"next[1] check existing swarm: crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '{prompt_texts}' --dry-run",
             rendered,
         )
+        self.assertNotIn(f"crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertNotIn(cli.INFER_BATCH_PROMPTS_PLACEHOLDER, rendered)
 
     def test_infer_existing_batch_outputs_are_display_only(self) -> None:
@@ -4594,6 +4594,46 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["stage_preflight"]["ok"])
         self.assertNotIn("observer-secret", json.dumps(persisted, sort_keys=True))
+
+    def test_infer_existing_batch_next_commands_use_only_batch_placeholder(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "first private prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--dry-run",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", return_value={
+            "schema": "ready_v1",
+            "service": "crowdtensord-coordinator",
+            "protocol": "runtime_contract_v1",
+        }):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            f"crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '<prompt-1>,<prompt-2>' --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '<prompt-1>,<prompt-2>' --max-new-tokens 8 --coordinator-url http://127.0.0.1:8787",
+            next_lines,
+        )
+        for line in next_lines:
+            self.assertNotIn("infer '<prompt>' --mode existing", line)
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn("first private prompt", encoded)
+        self.assertNotIn("second private prompt", encoded)
 
     def test_infer_existing_dry_run_with_observer_token_blocks_missing_stage_state(self) -> None:
         output_dir = Path(self._tmp_dir())
