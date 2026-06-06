@@ -3126,12 +3126,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             json_report = cli.build_product_generate(cli.parse_args([*base_argv, "--json"]))
 
         self.assertTrue(human_report["ok"], human_report)
+        self.assertTrue(human_report["output_request"]["include_output"])
         self.assertEqual(human_report["local_output"]["generated_text"], " readable beta text")
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
             [item["command_line"] for item in human_report["next_commands"]],
         )
         self.assertTrue(json_report["ok"], json_report)
+        self.assertTrue(json_report["output_request"]["include_output"])
         self.assertNotIn("local_output", json_report)
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
@@ -3190,8 +3192,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             json_report = cli.build_product_generate(cli.parse_args([*base_argv, "--json"]))
 
         self.assertTrue(human_report["ok"], human_report)
+        self.assertFalse(human_report["output_request"]["include_output"])
         self.assertEqual(human_report["local_output"]["generated_text"], " default human output")
+        self.assertNotIn("--include-output", json.dumps(human_report["next_commands"], sort_keys=True))
         self.assertTrue(json_report["ok"], json_report)
+        self.assertFalse(json_report["output_request"]["include_output"])
         self.assertNotIn("local_output", json_report)
         self.assertNotIn("default human output", json.dumps(json_report, sort_keys=True))
 
