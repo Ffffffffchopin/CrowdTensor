@@ -6831,8 +6831,11 @@ def _product_generate_dry_run_preflight(
         stage_preflight_required=stage_required,
         source="dry-run-preflight",
     )
+    final_ok = bool(report.get("ok") and (live_ready is not False))
+    if not final_ok:
+        codes.discard("generate_dry_run_ready")
     report.update({
-        "ok": bool(report.get("ok") and (live_ready is not False)),
+        "ok": final_ok,
         "coordinator_ready": coordinator_ready,
         "stage_preflight": stage_preflight,
         "ready_to_submit": ready_to_submit,

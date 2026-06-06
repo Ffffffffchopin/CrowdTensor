@@ -620,6 +620,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
+        self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
         self.assertIn("Coordinator route exists", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
