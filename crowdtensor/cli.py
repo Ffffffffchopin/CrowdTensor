@@ -395,6 +395,17 @@ def annotate_stage_preflight(stage_preflight: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def stage_preflight_diagnosis_code(stage_preflight: dict[str, Any]) -> str:
+    if stage_preflight.get("checked") and stage_preflight.get("ok"):
+        return "stage_preflight_ready"
+    if stage_preflight.get("checked"):
+        return "stage_preflight_failed"
+    reason = str(stage_preflight.get("reason") or "")
+    if reason in {"coordinator_not_ready", "coordinator_url_missing", "route_not_ready"}:
+        return "stage_preflight_not_checked"
+    return "stage_preflight_skipped"
+
+
 def route_catalog_missing_text(route: dict[str, Any]) -> str:
     if str(route.get("route_source") or "") == "coordinator-url":
         return "not_used"
@@ -6982,12 +6993,7 @@ def _product_generate_dry_run_preflight(
         codes.add("coordinator_ready_preflight_ready" if coordinator_ready.get("ok") else "coordinator_ready_failed")
     else:
         codes.add("coordinator_ready_preflight_skipped")
-    if stage_preflight.get("checked") and stage_preflight.get("ok"):
-        codes.add("stage_preflight_ready")
-    elif stage_preflight.get("checked"):
-        codes.add("stage_preflight_failed")
-    else:
-        codes.add("stage_preflight_skipped")
+    codes.add(stage_preflight_diagnosis_code(stage_preflight))
     ready_to_submit = _ready_to_submit_status(
         submit_ok=live_ready,
         route_ready=route_ready,
@@ -7192,6 +7198,7 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
         "stage_preflight_ready",
         "stage_preflight_failed",
         "stage_preflight_skipped",
+        "stage_preflight_not_checked",
     }
     generate_only_codes = {"generate_dry_run_ready", "generate_request_shape_ready"}
     codes = [
@@ -7203,12 +7210,7 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
         codes.append("coordinator_ready_preflight_ready")
     elif route_ready:
         codes.append("coordinator_ready_failed")
-    if stage_preflight.get("checked") and stage_preflight.get("ok"):
-        codes.append("stage_preflight_ready")
-    elif stage_preflight.get("checked"):
-        codes.append("stage_preflight_failed")
-    else:
-        codes.append("stage_preflight_skipped")
+    codes.append(stage_preflight_diagnosis_code(stage_preflight))
     stage_required = bool(stage_preflight.get("checked"))
     stage_ok = bool(stage_preflight.get("ok")) if stage_required else True
     stage_preflight = annotate_stage_preflight(stage_preflight)
