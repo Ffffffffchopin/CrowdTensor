@@ -116,6 +116,7 @@ DEFAULT_P2P_BOOTSTRAP = "http://127.0.0.1:8788"
 DEFAULT_PRODUCT_GENERATE_PROMPT = "CrowdTensor routes a tiny model across two stage miners."
 INFER_PROMPT_PLACEHOLDER = "<prompt>"
 INFER_BATCH_PROMPTS_PLACEHOLDER = "<prompt-1>,<prompt-2>"
+OBSERVER_TOKEN_ENV_PLACEHOLDER = "$CROWDTENSOR_OBSERVER_TOKEN"
 SECRET_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
     "CROWDTENSOR_OBSERVER_TOKEN",
@@ -295,7 +296,13 @@ def redacted_command(command: list[str], sensitive_flags: set[str]) -> list[str]
 
 
 def command_line(command: list[str]) -> str:
-    return " ".join(shlex.quote(str(part)) for part in command)
+    def quote_part(part: Any) -> str:
+        text = str(part)
+        if text == OBSERVER_TOKEN_ENV_PLACEHOLDER:
+            return text
+        return shlex.quote(text)
+
+    return " ".join(quote_part(part) for part in command)
 
 
 def command_entry(
@@ -3639,7 +3646,7 @@ def _infer_command_args(
     if include_admin and str(getattr(args, "admin_token", "") or ""):
         command.extend(["--admin-token", "<redacted>"])
     if include_observer:
-        command.extend(["--observer-token", "<redacted>"])
+        command.extend(["--observer-token", OBSERVER_TOKEN_ENV_PLACEHOLDER])
     timeout_seconds = float(getattr(args, "timeout_seconds", 420.0) or 420.0)
     if timeout_seconds != 420.0:
         command.extend(["--timeout-seconds", str(timeout_seconds)])
@@ -5804,7 +5811,7 @@ def _product_cli_generate_command(
     if dry_run:
         command.append("--dry-run")
     if include_observer:
-        command.extend(["--observer-token", "<redacted>"])
+        command.extend(["--observer-token", OBSERVER_TOKEN_ENV_PLACEHOLDER])
     return command
 
 
