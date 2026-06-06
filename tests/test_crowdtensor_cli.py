@@ -3345,16 +3345,36 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--json",
         ])
 
-        report = cli.build_infer(args)
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del payload, admin_token, timeout
+            self.assertEqual(method, "GET")
+            self.assertEqual(base_url, "http://127.0.0.1:8787")
+            self.assertEqual(path, "/ready")
+            return {"schema": "ready_v1", "service": "crowdtensord-coordinator", "protocol": "runtime_contract_v1"}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_infer(args)
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["dry_run"])
         self.assertEqual(report["route"]["route_source"], "coordinator-url")
+        self.assertTrue(report["coordinator_ready"]["ok"])
+        self.assertEqual(report["coordinator_ready"]["protocol"], "runtime_contract_v1")
+        self.assertIn("coordinator_ready_preflight_ready", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the inference request.")
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["dry_run"])
+        self.assertTrue(persisted["coordinator_ready"]["ok"])
         self.assertFalse(persisted["local_output"]["available"])
 
     def test_infer_existing_dry_run_uses_p2p_route_preflight(self) -> None:
@@ -3388,15 +3408,47 @@ class CrowdTensorCliTests(unittest.TestCase):
             ]
         }
 
-        with patch.object(cli, "fetch_peer_catalog", return_value=catalog):
+        with patch.object(cli, "fetch_peer_catalog", return_value=catalog), patch.object(
+            cli,
+            "request_json_url",
+            return_value={"schema": "ready_v1", "service": "crowdtensord-coordinator", "protocol": "runtime_contract_v1"},
+        ):
             report = cli.build_infer(args)
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["dry_run"])
         self.assertEqual(report["route"]["route_source"], "p2p-discovery")
         self.assertTrue(report["route"]["route_ready"])
+        self.assertTrue(report["coordinator_ready"]["ok"])
         self.assertIn("p2p_generate_route_ready", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
+
+    def test_infer_existing_dry_run_blocks_when_coordinator_ready_fails(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(report["dry_run"])
+        self.assertTrue(report["route"]["route_ready"])
+        self.assertFalse(report["coordinator_ready"]["ok"])
+        self.assertEqual(report["coordinator_ready"]["error"], "OSError")
+        self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
+        self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+        self.assertNotIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
 
     def test_infer_dry_run_is_existing_mode_only(self) -> None:
         with self.assertRaises(SystemExit):

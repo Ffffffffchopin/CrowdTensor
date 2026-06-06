@@ -3472,6 +3472,7 @@ def _infer_summary_from_payload(
             "generated_token_ids_public": False,
         },
         "route": route,
+        "coordinator_ready": payload.get("coordinator_ready") if isinstance(payload.get("coordinator_ready"), dict) else {},
         "batch": {
             "enabled": bool(batch.get("enabled")),
             "ready": bool(batch.get("batch_generation_ready")),
@@ -3582,6 +3583,8 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             json=args.json,
         )
         payload = build_product_generate(generate_args)
+        if args.dry_run:
+            payload = _attach_infer_existing_preflight(payload, args)
         return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir)
     if not args.full_evidence:
         command = [
@@ -5538,6 +5541,41 @@ def _product_generate_local_output_from_validation(validation: dict[str, Any], *
     }
 
 
+def _coordinator_ready_preflight(base_url: str, *, timeout: float) -> dict[str, Any]:
+    if not base_url:
+        return {"ok": False, "error": "coordinator_url_missing"}
+    try:
+        payload = request_json_url("GET", base_url, "/ready", admin_token="", timeout=timeout)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": type(exc).__name__,
+            "detail": str(exc)[:200],
+        }
+    return {
+        "ok": bool(payload),
+        "schema": payload.get("schema") if isinstance(payload, dict) else "",
+        "service": payload.get("service") if isinstance(payload, dict) else "",
+        "protocol": payload.get("protocol") if isinstance(payload, dict) else "",
+        "task_lanes": payload.get("task_lanes") if isinstance(payload, dict) and isinstance(payload.get("task_lanes"), list) else [],
+    }
+
+
+def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
+    route_ready = bool(route.get("usable_now") or route.get("coordinator_url_present"))
+    coordinator_url = str(route.get("coordinator_url") or getattr(args, "coordinator_url", "") or "")
+    coordinator_ready = _coordinator_ready_preflight(coordinator_url, timeout=float(getattr(args, "http_timeout", 30.0))) if route_ready else {}
+    codes = list(payload.get("diagnosis_codes") or [])
+    if route_ready and coordinator_ready.get("ok"):
+        codes.append("coordinator_ready_preflight_ready")
+    elif route_ready:
+        codes.append("coordinator_ready_failed")
+    merged = {**payload, "coordinator_ready": coordinator_ready, "diagnosis_codes": sorted(set(str(code) for code in codes))}
+    merged["ok"] = bool(payload.get("ok") and route_ready and coordinator_ready.get("ok"))
+    return merged
+
+
 def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     prompt_texts = parse_prompt_texts_arg(args.prompt_text, getattr(args, "prompt_texts", ""))
     prompt_text = prompt_texts[0]
@@ -5970,6 +6008,14 @@ def print_infer(report: dict[str, Any]) -> None:
         f"ready={route.get('route_ready')} "
         f"distinct_stage_miners={route.get('distinct_stage_miners')}"
     )
+    coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
+    if coordinator_ready:
+        print(
+            "  coordinator_ready: "
+            f"{coordinator_ready.get('ok')} "
+            f"service={coordinator_ready.get('service')} "
+            f"protocol={coordinator_ready.get('protocol')}"
+        )
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     if stream.get("enabled"):
         print(f"  stream: ready={stream.get('ready')} events={stream.get('event_count')} source={stream.get('source')}")

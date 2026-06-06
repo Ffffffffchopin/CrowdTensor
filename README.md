@@ -82,7 +82,8 @@ v2 gate instead of the faster user path.
 
 To check an already running Coordinator or P2P-discovered swarm before
 submitting a request, use `crowdtensor infer --mode existing --dry-run` with
-`--coordinator-url` or `--peer-bootstrap`.
+`--coordinator-url` or `--peer-bootstrap`; it validates route metadata and the
+Coordinator `/ready` endpoint without creating an inference session.
 
 For maintainer-grade release evidence, run the full public swarm beta gate:
 
