@@ -355,7 +355,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["session_request"]["schema"], "session_protocol_v1")
         self.assertEqual(report["session_request"]["hf_model_id"], "distilgpt2")
-        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
+        self.assertEqual(
+            report["operator_action"],
+            "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
+        )
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --dry-run",
@@ -519,6 +522,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
         self.assertIn(("GET", "http://127.0.0.1:8787", "/ready"), calls)
         self.assertIn(("GET", "http://127.0.0.1:8787", "/state"), calls)
+        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
@@ -558,7 +562,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["stage_preflight"]["reason"], "live_preflight_skipped")
         self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
-        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
+        self.assertEqual(
+            report["operator_action"],
+            "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
+        )
 
     def test_product_generate_dry_run_ready_failure_includes_startup_next_commands(self) -> None:
         args = cli.parse_args([
@@ -4564,7 +4571,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_ready", report["diagnosis_codes"])
-        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the inference request.")
+        self.assertEqual(
+            report["operator_action"],
+            "Inference can be submitted, but stage0/stage1 were not fully verified; rerun --dry-run with --observer-token to check /state before submitting.",
+        )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["dry_run"])
         self.assertTrue(persisted["coordinator_ready"]["ok"])
@@ -4705,6 +4715,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["ready_to_submit"]["stage_verification"], "ready")
         self.assertEqual(report["ready_to_submit"]["warning_codes"], [])
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
+        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the inference request.")
         self.assertNotIn("observer-secret", json.dumps(report, sort_keys=True))
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["stage_preflight"]["ok"])

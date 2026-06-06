@@ -3519,9 +3519,27 @@ def _ready_to_submit_status(
     }
 
 
+def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
+    if ready_to_submit and ready_to_submit.get("ok") is True and not ready_to_submit.get("fully_verified"):
+        warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or []))
+        if "stage_preflight_skipped" in warnings:
+            return (
+                f"{kind} can be submitted, but stage0/stage1 were not fully verified; "
+                "rerun --dry-run with --observer-token to check /state before submitting."
+            )
+        return f"{kind} can be submitted, but readiness was not fully verified; rerun --dry-run with live preflight before submitting."
+    if ready_to_submit and ready_to_submit.get("ok") is None:
+        return f"{kind} request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting."
+    return ""
+
+
 def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *, ok: bool) -> str:
     if ok:
         if bool(payload.get("dry_run")):
+            ready_to_submit = payload.get("ready_to_submit") if isinstance(payload.get("ready_to_submit"), dict) else {}
+            action = _ready_to_submit_action("Inference", ready_to_submit)
+            if action:
+                return action
             return "Rerun without --dry-run to submit the inference request."
         if getattr(args, "infer_mode", "local") == "local" and not getattr(args, "full_evidence", False):
             return "Run with --full-evidence for the broader Public Swarm v2 proof."
@@ -6477,6 +6495,9 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
     if report.get("ok"):
         if bool(report.get("dry_run")):
             ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
+            action = _ready_to_submit_action("Generation", ready_to_submit)
+            if action:
+                return action
             if ready_to_submit and ready_to_submit.get("ok") is False:
                 stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
                 if stage_preflight.get("checked") and not stage_preflight.get("ok"):
