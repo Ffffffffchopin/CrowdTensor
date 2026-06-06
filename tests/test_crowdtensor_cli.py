@@ -125,6 +125,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(cli.ready_to_submit_stage_text({"stage_verification": "ready"}), "ready")
         self.assertEqual(cli.ready_to_submit_stage_text({"stage_preflight_ok": False}), "failed")
         self.assertEqual(cli.ready_to_submit_stage_text({}), "not_checked")
+        self.assertEqual(cli.ready_to_submit_warning_text({"warning_codes": []}), "none")
+        self.assertEqual(
+            cli.ready_to_submit_warning_text({"warning_codes": ["coordinator_preflight_skipped", "stage_preflight_skipped"]}),
+            "coordinator_preflight_skipped,stage_preflight_skipped",
+        )
         self.assertEqual(cli.route_catalog_missing_text({"route_source": "coordinator-url"}), "not_used")
         self.assertEqual(
             cli.route_catalog_missing_text({
@@ -730,7 +735,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  route: source=coordinator-url coordinator=True catalog_missing=not_used", rendered)
         self.assertIn("  coordinator_ready: True service=crowdtensord protocol=runtime_contract_v1", rendered)
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
-        self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready next_step=submit", rendered)
+        self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready next_step=submit warnings=none", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
         self.assertIn("  next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}", rendered)
         self.assertIn("# requires CROWDTENSOR_OBSERVER_TOKEN", rendered)
@@ -780,6 +785,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(
             report["operator_action"],
             "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        self.assertIn(
+            "warnings=coordinator_preflight_skipped,stage_preflight_skipped",
+            stdout.getvalue(),
         )
 
     def test_product_generate_dry_run_ready_failure_includes_startup_next_commands(self) -> None:
@@ -5084,7 +5096,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
-        self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready next_step=submit", rendered)
+        self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready next_step=submit warnings=none", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["stage_preflight"]["ok"])
@@ -5313,6 +5325,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn("next_step=fix_blockers", stdout.getvalue())
+        self.assertIn("warnings=coordinator_not_ready", stdout.getvalue())
         self.assertIn("next[5] submit inference after checks pass", stdout.getvalue())
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(

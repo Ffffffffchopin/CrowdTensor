@@ -3636,6 +3636,11 @@ def ready_to_submit_stage_text(ready_to_submit: dict[str, Any]) -> str:
     return "not_checked"
 
 
+def ready_to_submit_warning_text(ready_to_submit: dict[str, Any]) -> str:
+    warnings = ready_to_submit.get("warning_codes") if isinstance(ready_to_submit.get("warning_codes"), list) else []
+    return ",".join(str(code) for code in warnings) if warnings else "none"
+
+
 def guarded_submit_label(label: str, ready_to_submit: dict[str, Any]) -> str:
     if not isinstance(ready_to_submit, dict):
         return label
@@ -7778,7 +7783,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
             f"stage={ready_to_submit_stage_text(ready_to_submit)} "
             f"stage_verification={ready_to_submit.get('stage_verification')} "
-            f"next_step={ready_to_submit.get('next_step')}"
+            f"next_step={ready_to_submit.get('next_step')} "
+            f"warnings={ready_to_submit_warning_text(ready_to_submit)}"
         )
         if ready_to_submit.get("readiness_summary"):
             print(f"  readiness: {ready_to_submit.get('readiness_summary')}")
@@ -7904,7 +7910,8 @@ def print_infer(report: dict[str, Any]) -> None:
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
             f"stage={ready_to_submit_stage_text(ready_to_submit)} "
             f"stage_verification={ready_to_submit.get('stage_verification')} "
-            f"next_step={ready_to_submit.get('next_step')}"
+            f"next_step={ready_to_submit.get('next_step')} "
+            f"warnings={ready_to_submit_warning_text(ready_to_submit)}"
         )
         if ready_to_submit.get("readiness_summary"):
             print(f"  readiness: {ready_to_submit.get('readiness_summary')}")
