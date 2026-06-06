@@ -87,7 +87,7 @@ print `next[...]` lines with safe follow-up commands. Human `infer` and
 `generate` output use your current local prompt so the next command is directly
 copyable; JSON reports and saved artifacts keep raw prompts and token values
 replaced with placeholders. When `ready_to_submit` is present, read
-`readiness_label` first:
+`readiness_label` and `next_step` first:
 
 - `verified` means the route, Coordinator, and distinct stage Miners were
   checked.
@@ -100,7 +100,8 @@ replaced with placeholders. When `ready_to_submit` is present, read
   intentionally separate from `generate_dry_run_ready`.
 Submit commands mirror this state: labels such as `after stage preflight`,
 `after live preflight`, or `after checks pass` mean run the preceding check
-command first.
+command first. Machine-readable `next_step` uses stable values such as
+`submit`, `run_stage_preflight`, `run_live_preflight`, and `fix_blockers`.
 
 If `coordinator_ready` is not true, its line now includes `error=...` for a
 failed live probe or `reason=...` for an intentionally skipped check, so the

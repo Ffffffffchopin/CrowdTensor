@@ -3580,20 +3580,25 @@ def _ready_to_submit_status(
     if submit_ok is True and fully_verified:
         readiness_label = "verified"
         readiness_summary = "Route, Coordinator, and distinct stage Miners are verified."
+        next_step = "submit"
     elif submit_ok is True:
         readiness_label = "partial"
         readiness_summary = "Request can be submitted, but stage Miner readiness is not fully verified."
+        next_step = "run_stage_preflight" if "stage_preflight_skipped" in warning_codes else "submit_with_caution"
     elif submit_ok is False:
         readiness_label = "blocked"
         readiness_summary = "Request is not ready to submit; follow operator_action and rerun preflight."
+        next_step = "fix_blockers"
     else:
         readiness_label = "skipped"
         readiness_summary = "Request shape is valid, but live readiness was skipped."
+        next_step = "run_live_preflight"
     return {
         "ok": submit_ok,
         "fully_verified": fully_verified,
         "readiness_label": readiness_label,
         "readiness_summary": readiness_summary,
+        "next_step": next_step,
         "route_ready": route_ready,
         "coordinator_ready": coordinator_ok,
         "coordinator_preflight_required": coordinator_preflight_required,
@@ -7147,10 +7152,11 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
         "stage_preflight_failed",
         "stage_preflight_skipped",
     }
+    generate_only_codes = {"generate_dry_run_ready", "generate_request_shape_ready"}
     codes = [
         str(code)
         for code in (payload.get("diagnosis_codes") or [])
-        if str(code) not in replaced_preflight_codes and str(code) != "generate_dry_run_ready"
+        if str(code) not in replaced_preflight_codes and str(code) not in generate_only_codes
     ]
     if route_ready and coordinator_ready.get("ok"):
         codes.append("coordinator_ready_preflight_ready")
@@ -7737,7 +7743,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"route={ready_to_submit.get('route_ready')} "
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
             f"stage={ready_to_submit_stage_text(ready_to_submit)} "
-            f"stage_verification={ready_to_submit.get('stage_verification')}"
+            f"stage_verification={ready_to_submit.get('stage_verification')} "
+            f"next_step={ready_to_submit.get('next_step')}"
         )
         if ready_to_submit.get("readiness_summary"):
             print(f"  readiness: {ready_to_submit.get('readiness_summary')}")
@@ -7862,7 +7869,8 @@ def print_infer(report: dict[str, Any]) -> None:
             f"route={ready_to_submit.get('route_ready')} "
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
             f"stage={ready_to_submit_stage_text(ready_to_submit)} "
-            f"stage_verification={ready_to_submit.get('stage_verification')}"
+            f"stage_verification={ready_to_submit.get('stage_verification')} "
+            f"next_step={ready_to_submit.get('next_step')}"
         )
         if ready_to_submit.get("readiness_summary"):
             print(f"  readiness: {ready_to_submit.get('readiness_summary')}")

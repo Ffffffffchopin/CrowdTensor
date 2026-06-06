@@ -203,7 +203,8 @@ Those skipped checks emit `generate_request_shape_ready`, not
 `generate_dry_run_ready`, because the route has not been proven submit-ready.
 Submit command labels also reflect this state: `after live preflight`,
 `after stage preflight`, or `after checks pass` means run the printed check
-command before submitting.
+command before submitting. The same decision is available as
+`ready_to_submit.next_step` for scripts and support tools.
 
 ## 6. Package A Controlled Remote Trial
 
