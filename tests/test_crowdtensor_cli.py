@@ -933,8 +933,108 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["session"]["hf_model_id"], "distilgpt2")
         self.assertEqual(report["generation"]["generated_token_count"], 2)
         self.assertEqual(report["generation"]["max_new_tokens"], 2)
+        self.assertTrue(report["wait_progress"]["session_created"])
+        self.assertTrue(report["wait_progress"]["ledger_endpoint_ready"])
+        self.assertEqual(report["wait_progress"]["accepted_rows_seen"], 1)
+        self.assertEqual(report["wait_progress"]["max_observed_token_count"], 2)
+        self.assertTrue(report["wait_progress"]["completion_observed"])
         self.assertNotIn("admin-secret", encoded)
         self.assertIn(("GET", "/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit=50&session_id=real-llm-session-test"), calls)
+
+    def test_product_generate_timeout_reports_safe_wait_progress(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "4",
+            "--timeout-seconds",
+            "1",
+            "--poll-interval",
+            "0.01",
+            "--stream",
+            "--json",
+        ])
+        monotonic_values = iter([0.0, 0.2, 1.2])
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-timeout",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 4,
+                    "backend": "hf_transformers_cpu",
+                }
+            if path.startswith("/admin/session-stream"):
+                return {
+                    "schema": "admin_session_stream_v1",
+                    "events": [
+                        {
+                            "schema": "session_stream_event_v1",
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:prompt",
+                            "generated_token_count": 1,
+                            "max_new_tokens": 4,
+                            "generated_text_hash": "sha256:step1",
+                            "generated_text": "must not leak",
+                            "generated_token_ids": [1],
+                        }
+                    ],
+                }
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "generated_token_count": 1,
+                            "max_new_tokens": 4,
+                            "generated_text_hash": "sha256:partial",
+                            "generated_text": "must not leak",
+                            "generated_token_ids": [1],
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request), patch.object(
+            cli.time,
+            "monotonic",
+            side_effect=lambda: next(monotonic_values),
+        ), patch.object(cli.time, "sleep", return_value=None):
+            report = cli.build_product_generate(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertFalse(report["ok"], report)
+        self.assertIn("generation_timeout", report["diagnosis_codes"])
+        self.assertTrue(report["wait_progress"]["session_created"])
+        self.assertTrue(report["wait_progress"]["ledger_endpoint_ready"])
+        self.assertTrue(report["wait_progress"]["stream_endpoint_ready"])
+        self.assertEqual(report["wait_progress"]["poll_count"], 1)
+        self.assertEqual(report["wait_progress"]["accepted_rows_seen"], 1)
+        self.assertEqual(report["wait_progress"]["stream_event_count"], 1)
+        self.assertEqual(report["wait_progress"]["max_observed_token_count"], 1)
+        self.assertEqual(report["wait_progress"]["target_token_count"], 4)
+        self.assertFalse(report["wait_progress"]["completion_observed"])
+        self.assertNotIn("must not leak", encoded)
+        self.assertNotIn('"generated_token_ids": [1]', encoded)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=True", stdout.getvalue())
 
     def test_product_generate_uses_longer_timeout_for_session_create(self) -> None:
         args = cli.parse_args([
@@ -3048,6 +3148,15 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "generated_text_hash": "sha256:generated",
                 "decoded_tokens_match": True,
             },
+            "wait_progress": {
+                "poll_count": 2,
+                "accepted_rows_seen": 1,
+                "max_observed_token_count": 16,
+                "target_token_count": 16,
+                "ledger_endpoint_ready": True,
+                "stream_endpoint_ready": False,
+                "public_artifact_safe": True,
+            },
             "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
             "local_output": {"generated_text": "local text only"},
             "diagnosis_codes": ["public_swarm_generate_ready"],
@@ -3058,8 +3167,14 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["mode"], "existing")
+        self.assertEqual(report["wait_progress"]["poll_count"], 2)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        self.assertIn("  wait: polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False", stdout.getvalue())
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["wait_progress"]["max_observed_token_count"], 16)
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["display_only"])
 

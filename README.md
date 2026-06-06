@@ -78,7 +78,10 @@ prints the local display-only generated text, and writes a compact
 `infer_summary.json` under `dist/infer`. JSON and public artifacts keep raw
 prompts, generated text, token ids, credentials, and activations out of
 shareable files. Use `--full-evidence` when you want the broader Public Swarm
-v2 gate instead of the faster user path.
+v2 gate instead of the faster user path. Existing-swarm runs also include a
+safe `wait_progress` summary with poll count, accepted rows, endpoint readiness,
+and observed token progress so timeouts are actionable without exposing raw
+text.
 
 To check an already running Coordinator or P2P-discovered swarm before
 submitting a request, use `crowdtensor infer --mode existing --dry-run` with

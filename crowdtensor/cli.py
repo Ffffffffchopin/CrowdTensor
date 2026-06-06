@@ -3408,6 +3408,7 @@ def _infer_summary_from_payload(
     route = _infer_route_from_report(payload)
     stream = _infer_stream_from_report(payload)
     batch = _infer_batch_from_report(payload)
+    wait_progress = payload.get("wait_progress") if isinstance(payload.get("wait_progress"), dict) else {}
     local_output = payload.get("local_output") if isinstance(payload.get("local_output"), dict) else {}
     allow_local_generated_text = bool(not getattr(args, "json", False))
     generated_text = (
@@ -3494,6 +3495,7 @@ def _infer_summary_from_payload(
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
         },
+        "wait_progress": wait_progress,
         "local_output": {
             "available": bool(generated_text or display_outputs),
             "generated_text": generated_text if generated_text else "",
@@ -5548,6 +5550,89 @@ def _product_generate_local_output_from_validation(validation: dict[str, Any], *
     }
 
 
+def _empty_generate_wait_progress(*, timeout_seconds: float, poll_interval: float) -> dict[str, Any]:
+    return {
+        "poll_count": 0,
+        "timeout_seconds": float(timeout_seconds),
+        "poll_interval": float(poll_interval),
+        "session_created": False,
+        "ledger_endpoint_ready": False,
+        "stream_endpoint_ready": False,
+        "accepted_rows_seen": 0,
+        "last_accepted_rows": 0,
+        "max_observed_token_count": 0,
+        "target_token_count": 0,
+        "observed_request_count": 0,
+        "expected_request_count": 0,
+        "batch_generation_ready": False,
+        "stream_event_count": 0,
+        "last_error_type": "",
+        "last_error_detail": "",
+        "completion_observed": False,
+        "public_artifact_safe": True,
+    }
+
+
+def _update_generate_wait_progress(
+    progress: dict[str, Any],
+    *,
+    generation: dict[str, Any],
+    ledger_rows: list[dict[str, Any]],
+    stream_events: list[dict[str, Any]],
+    expected_request_count: int,
+) -> None:
+    progress["accepted_rows_seen"] = max(int(progress.get("accepted_rows_seen") or 0), len(ledger_rows))
+    progress["last_accepted_rows"] = len(ledger_rows)
+    progress["stream_event_count"] = len(stream_events)
+    progress["target_token_count"] = int(generation.get("max_new_tokens") or progress.get("target_token_count") or 0)
+    progress["max_observed_token_count"] = max(
+        int(progress.get("max_observed_token_count") or 0),
+        int(generation.get("generated_token_count") or 0),
+    )
+    progress["observed_request_count"] = max(
+        int(progress.get("observed_request_count") or 0),
+        int(generation.get("observed_request_count") or generation.get("request_count") or 0),
+    )
+    progress["expected_request_count"] = max(
+        int(progress.get("expected_request_count") or 0),
+        int(generation.get("expected_request_count") or expected_request_count or 0),
+    )
+    progress["batch_generation_ready"] = bool(progress.get("batch_generation_ready") or generation.get("batch_generation_ready"))
+    progress["completion_observed"] = bool(progress.get("completion_observed") or generation.get("multi_token_generation_ready"))
+
+
+def _safe_generate_error(exc: Exception) -> tuple[str, str]:
+    detail = str(exc)[:200]
+    if isinstance(exc, HTTPError):
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        if body:
+            detail = body[:200]
+    return type(exc).__name__, detail
+
+
+def _safe_stream_payload_event(event: dict[str, Any], *, max_new_tokens: int) -> dict[str, Any]:
+    try:
+        generated_count = int(event.get("generated_token_count") or 0)
+    except (TypeError, ValueError):
+        generated_count = 0
+    return {
+        "schema": event.get("schema") or "session_stream_event_v1",
+        "request_id": event.get("request_id"),
+        "prompt_hash": event.get("prompt_hash"),
+        "generated_token_count": generated_count,
+        "max_new_tokens": event.get("max_new_tokens") or max_new_tokens,
+        "generation_step": event.get("generation_step"),
+        "generated_text_hash": event.get("generated_text_hash"),
+        "decoded_tokens_match": event.get("decoded_tokens_match"),
+        "observed_at": event.get("observed_at"),
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
 def _coordinator_ready_preflight(base_url: str, *, timeout: float) -> dict[str, Any]:
     if not base_url:
         return {"ok": False, "error": "coordinator_url_missing"}
@@ -5884,8 +5969,16 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     stream_seen_keys: set[tuple[str, int]] = set()
     stream_source = "disabled" if not stream_enabled else "admin-session-stream"
     stream_endpoint_ready = False
+    last_ledger_rows: list[dict[str, Any]] = []
+    wait_progress = _empty_generate_wait_progress(timeout_seconds=args.timeout_seconds, poll_interval=args.poll_interval)
+    wait_progress.update({
+        "session_created": bool(session.get("session_id")),
+        "target_token_count": int(args.max_new_tokens),
+        "expected_request_count": len(prompt_texts),
+    })
     deadline = time.monotonic() + args.timeout_seconds
     while time.monotonic() <= deadline:
+        wait_progress["poll_count"] = int(wait_progress.get("poll_count") or 0) + 1
         session_id = str(session.get("session_id") or "")
         stream_payload: dict[str, Any] = {}
         stream_endpoint_ready_this_poll = False
@@ -5905,33 +5998,37 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                     timeout=args.http_timeout,
                 )
             except HTTPError as exc:
+                wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc)
                 if exc.code == 404:
                     stream_source = "admin-results-ledger-fallback"
                 else:
                     stream_payload = {}
-            except Exception:
+            except Exception as exc:
+                wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc)
                 stream_payload = {}
             else:
                 stream_endpoint_ready_this_poll = bool(stream_payload.get("schema") == "admin_session_stream_v1")
                 if stream_endpoint_ready_this_poll:
                     stream_endpoint_ready = True
+                    wait_progress["stream_endpoint_ready"] = True
                     stream_source = "admin-session-stream"
                     payload_events = stream_payload.get("events") if isinstance(stream_payload, dict) else []
                     if isinstance(payload_events, list):
                         for event in payload_events:
                             if not isinstance(event, dict):
                                 continue
-                            generated_count = int(event.get("generated_token_count") or 0)
-                            request_key = str(event.get("request_id") or event.get("prompt_hash") or "")
+                            safe_event = _safe_stream_payload_event(event, max_new_tokens=args.max_new_tokens)
+                            generated_count = int(safe_event.get("generated_token_count") or 0)
+                            request_key = str(safe_event.get("request_id") or safe_event.get("prompt_hash") or "")
                             stream_key = (request_key, generated_count)
                             if generated_count > 0 and stream_key not in stream_seen_keys:
-                                stream_events.append(event)
+                                stream_events.append(safe_event)
                                 stream_seen_keys.add(stream_key)
                                 if not args.json:
                                     print(
                                         "stream "
-                                        f"{event.get('generated_token_count')}/{event.get('max_new_tokens')} "
-                                        f"hash={event.get('generated_text_hash')}",
+                                        f"{safe_event.get('generated_token_count')}/{safe_event.get('max_new_tokens')} "
+                                        f"hash={safe_event.get('generated_text_hash')}",
                                         flush=True,
                                     )
         query = f"/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit={args.admin_results_limit}"
@@ -5939,11 +6036,27 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             query += f"&session_id={session_id}"
         try:
             ledger = request_json_url("GET", effective_coordinator_url, query, admin_token=args.admin_token, timeout=args.http_timeout)
-        except Exception:
+        except Exception as exc:
+            wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc)
             ledger = {}
+        else:
+            wait_progress["ledger_endpoint_ready"] = True
         rows = ledger.get("results") if isinstance(ledger, dict) else []
         if isinstance(rows, list):
             ledger_rows = [row for row in rows if isinstance(row, dict)]
+            last_ledger_rows = ledger_rows
+            best_generation = safe_generation_summary(ledger_rows[0], max_new_tokens=args.max_new_tokens) if ledger_rows else {}
+            for row in ledger_rows[1:]:
+                candidate = safe_generation_summary(row, max_new_tokens=args.max_new_tokens)
+                if int(candidate.get("generated_token_count") or 0) > int(best_generation.get("generated_token_count") or 0):
+                    best_generation = candidate
+            _update_generate_wait_progress(
+                wait_progress,
+                generation=best_generation,
+                ledger_rows=ledger_rows,
+                stream_events=stream_events,
+                expected_request_count=len(prompt_texts),
+            )
             if stream_enabled and not stream_endpoint_ready_this_poll:
                 def _stream_sort_key(row: dict[str, Any]) -> tuple[int, int]:
                     validation = row.get("validation") if isinstance(row.get("validation"), dict) else {}
@@ -6017,6 +6130,13 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
     )
+    _update_generate_wait_progress(
+        wait_progress,
+        generation=generation,
+        ledger_rows=last_ledger_rows,
+        stream_events=stream_events,
+        expected_request_count=len(prompt_texts),
+    )
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": ok,
@@ -6052,6 +6172,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "backend": session.get("backend"),
             "hf_model_id": session.get("model_id") or args.hf_model_id,
         },
+        "wait_progress": wait_progress,
         "generation": generation,
         "stream": {
             "enabled": stream_enabled,
@@ -6127,6 +6248,16 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"{stream.get('event_count')} "
             f"source={stream.get('source')} "
             f"complete={progress.get('stream_progress_complete')}"
+        )
+    wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
+    if wait_progress:
+        print(
+            "  wait: "
+            f"polls={wait_progress.get('poll_count')} "
+            f"accepted_rows={wait_progress.get('accepted_rows_seen')} "
+            f"tokens={wait_progress.get('max_observed_token_count')}/{wait_progress.get('target_token_count')} "
+            f"ledger={wait_progress.get('ledger_endpoint_ready')} "
+            f"stream={wait_progress.get('stream_endpoint_ready')}"
         )
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
@@ -6207,6 +6338,16 @@ def print_infer(report: dict[str, Any]) -> None:
                 f"counts={progress.get('observed_token_counts') or []} "
                 f"complete={progress.get('stream_progress_complete')}"
             )
+    wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
+    if wait_progress:
+        print(
+            "  wait: "
+            f"polls={wait_progress.get('poll_count')} "
+            f"accepted_rows={wait_progress.get('accepted_rows_seen')} "
+            f"tokens={wait_progress.get('max_observed_token_count')}/{wait_progress.get('target_token_count')} "
+            f"ledger={wait_progress.get('ledger_endpoint_ready')} "
+            f"stream={wait_progress.get('stream_endpoint_ready')}"
+        )
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
     if len(outputs) <= 1 and local_output.get("generated_text"):
