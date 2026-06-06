@@ -199,6 +199,9 @@ for failed probes or `reason=...` for skipped checks. For
 `crowdtensor_infer_preflight_partial` until the stage Miner check is fully
 verified. If the command is being used only for CI-safe packaging or offline
 request-shape checks, add `--skip-live-preflight` and expect `label=skipped`.
+Submit command labels also reflect this state: `after live preflight`,
+`after stage preflight`, or `after checks pass` means run the printed check
+command before submitting.
 
 ## 6. Package A Controlled Remote Trial
 

@@ -3619,8 +3619,16 @@ def ready_to_submit_stage_text(ready_to_submit: dict[str, Any]) -> str:
 
 
 def guarded_submit_label(label: str, ready_to_submit: dict[str, Any]) -> str:
-    if isinstance(ready_to_submit, dict) and ready_to_submit.get("readiness_label") == "blocked":
+    if not isinstance(ready_to_submit, dict):
+        return label
+    readiness_label = str(ready_to_submit.get("readiness_label") or "")
+    warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or []))
+    if readiness_label == "blocked":
         return f"{label} after checks pass"
+    if readiness_label == "skipped":
+        return f"{label} after live preflight"
+    if readiness_label == "partial" and "stage_preflight_skipped" in warnings:
+        return f"{label} after stage preflight"
     return label
 
 

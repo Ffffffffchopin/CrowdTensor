@@ -150,6 +150,17 @@ class CrowdTensorCliTests(unittest.TestCase):
             "submit inference after checks pass",
         )
         self.assertEqual(
+            cli.guarded_submit_label("submit inference", {"readiness_label": "skipped"}),
+            "submit inference after live preflight",
+        )
+        self.assertEqual(
+            cli.guarded_submit_label(
+                "submit inference",
+                {"readiness_label": "partial", "warning_codes": ["stage_preflight_skipped"]},
+            ),
+            "submit inference after stage preflight",
+        )
+        self.assertEqual(
             cli.guarded_submit_label("submit inference", {"readiness_label": "verified"}),
             "submit inference",
         )
@@ -434,6 +445,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             report["operator_action"],
             "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
         )
+        labels = [item["label"] for item in report["next_commands"]]
+        self.assertIn("submit generation after live preflight", labels)
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --include-output",
@@ -4802,6 +4815,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --stream --max-new-tokens 8 --coordinator-url http://127.0.0.1:8787",
             next_lines,
         )
+        labels = [item["label"] for item in next_commands]
+        self.assertIn("submit inference after stage preflight", labels)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["dry_run"])
         self.assertTrue(persisted["stream"]["enabled"])

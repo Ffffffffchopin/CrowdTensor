@@ -96,6 +96,9 @@ replaced with placeholders. When `ready_to_submit` is present, read
 - `blocked` means follow `operator_action` before submitting.
 - `skipped` means only the request shape was checked, usually because live
   preflight was intentionally skipped.
+Submit commands mirror this state: labels such as `after stage preflight`,
+`after live preflight`, or `after checks pass` mean run the preceding check
+command first.
 
 If `coordinator_ready` is not true, its line now includes `error=...` for a
 failed live probe or `reason=...` for an intentionally skipped check, so the
