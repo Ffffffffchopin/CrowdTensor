@@ -16,8 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
-from urllib.parse import urlencode
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -314,6 +314,14 @@ def command_entry(
     if requires_env:
         entry["requires_env"] = list(requires_env)
     return entry
+
+
+def local_coordinator_port_from_url(coordinator_url: str, default: int = 8787) -> int:
+    try:
+        parsed = urlparse(str(coordinator_url or ""))
+        return int(parsed.port or default)
+    except (TypeError, ValueError):
+        return default
 
 
 def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> str:
@@ -3580,12 +3588,19 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         submit_command,
         requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
     ))
-    if not ok and ("generate_route_unavailable" in set(payload.get("diagnosis_codes") or []) or "coordinator_route_missing" in set(payload.get("diagnosis_codes") or [])):
+    startup_needed = {
+        "generate_route_unavailable",
+        "coordinator_route_missing",
+        "coordinator_ready_failed",
+        "stage_preflight_failed",
+    }
+    if not ok and codes.intersection(startup_needed):
+        local_port = local_coordinator_port_from_url(coordinator_url)
         serve_args = argparse.Namespace(
             profile="gpu-generation" if getattr(args, "backend", "cpu") == "cuda" else "cpu-real-llm",
             bind_host="127.0.0.1",
             public_host="127.0.0.1",
-            port=8787,
+            port=local_port,
             state_dir="state",
             hf_model_id=getattr(args, "hf_model_id", "sshleifer/tiny-gpt2"),
             hf_cache_dir=getattr(args, "hf_cache_dir", ""),
@@ -3608,7 +3623,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
                 "start stage0 Miner",
                 _product_cli_join_command(
                     serve_args,
-                    coordinator_url=coordinator_url or "http://127.0.0.1:8787",
+                    coordinator_url=coordinator_url or f"http://127.0.0.1:{local_port}",
                     stage="stage0",
                     miner_id="stage0-miner",
                     include_run=True,
@@ -3618,7 +3633,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
                 "start stage1 Miner",
                 _product_cli_join_command(
                     serve_args,
-                    coordinator_url=coordinator_url or "http://127.0.0.1:8787",
+                    coordinator_url=coordinator_url or f"http://127.0.0.1:{local_port}",
                     stage="stage1",
                     miner_id="stage1-miner",
                     include_run=True,
@@ -6304,12 +6319,18 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             ),
             requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
         ))
-    if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes or "stage_preflight_failed" in codes:
+    if (
+        "generate_route_unavailable" in codes
+        or "coordinator_route_missing" in codes
+        or "coordinator_ready_failed" in codes
+        or "stage_preflight_failed" in codes
+    ):
+        local_port = local_coordinator_port_from_url(coordinator_url)
         serve_args = argparse.Namespace(
             profile="gpu-generation" if backend == "cuda" else "cpu-real-llm",
             bind_host="127.0.0.1",
             public_host="127.0.0.1",
-            port=8787,
+            port=local_port,
             state_dir="state",
             hf_model_id=hf_model_id,
             hf_cache_dir="",
@@ -6330,14 +6351,14 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             command_entry("start Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
             command_entry("start stage0 Miner", _product_cli_join_command(
                 serve_args,
-                coordinator_url=coordinator_url or "http://127.0.0.1:8787",
+                coordinator_url=coordinator_url or f"http://127.0.0.1:{local_port}",
                 stage="stage0",
                 miner_id="stage0-miner",
                 include_run=True,
             )),
             command_entry("start stage1 Miner", _product_cli_join_command(
                 serve_args,
-                coordinator_url=coordinator_url or "http://127.0.0.1:8787",
+                coordinator_url=coordinator_url or f"http://127.0.0.1:{local_port}",
                 stage="stage1",
                 miner_id="stage1-miner",
                 include_run=True,

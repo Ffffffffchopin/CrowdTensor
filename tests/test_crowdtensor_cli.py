@@ -441,6 +441,37 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
 
+    def test_product_generate_dry_run_ready_failure_includes_startup_next_commands(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8791",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--dry-run",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
+        self.assertIn("Coordinator route exists", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8791 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8791 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8791 --miner-id stage1-miner --stage stage1 --run",
+            next_lines,
+        )
+
     def test_p2pd_top_level_prints_daemon_command(self) -> None:
         args = cli.parse_args([
             "p2pd",
@@ -4229,7 +4260,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--mode",
             "existing",
             "--coordinator-url",
-            "http://127.0.0.1:8787",
+            "http://127.0.0.1:8792",
             "--dry-run",
             "--output-dir",
             str(output_dir),
@@ -4248,6 +4279,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
         self.assertIn("Coordinator route exists", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8792 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8792 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
 
     def test_infer_dry_run_is_existing_mode_only(self) -> None:
         with self.assertRaises(SystemExit):
