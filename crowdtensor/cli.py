@@ -9429,7 +9429,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "with copyable follow-up commands. ready_to_submit labels mean: verified is ready\n"
             "after route, Coordinator, and stage Miner checks; partial can submit but still needs\n"
             "observer-token stage verification; blocked needs the printed operator_action;\n"
-            "skipped is request-shape only.\n\n"
+            "skipped is request-shape only. ready_to_submit.next_step is the script-friendly\n"
+            "action: submit, run_stage_preflight, run_live_preflight, submit_with_caution,\n"
+            "or fix_blockers. stage_preflight_unknown means rerun the stage preflight.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -9580,7 +9582,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "copyable follow-up commands; missing routes return startup guidance instead of a\n"
             "bare parser error. ready_to_submit labels mean: verified is ready after route,\n"
             "Coordinator, and stage Miner checks; partial can submit but still needs observer-token\n"
-            "stage verification; blocked needs the printed operator_action; skipped is request-shape only.\n\n"
+            "stage verification; blocked needs the printed operator_action; skipped is request-shape only.\n"
+            "ready_to_submit.next_step is the script-friendly action: submit, run_stage_preflight,\n"
+            "run_live_preflight, submit_with_caution, or fix_blockers. stage_preflight_unknown\n"
+            "means rerun the stage preflight.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),
