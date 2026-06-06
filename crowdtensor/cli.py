@@ -10769,8 +10769,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if args.infer_mode == "existing":
             if not args.coordinator_url and not args.peer_bootstrap and not args.p2p:
                 raise SystemExit("infer --mode existing requires --coordinator-url, --peer-bootstrap, or --p2p")
-            if not args.dry_run and not args.admin_token:
-                raise SystemExit("infer --mode existing requires --admin-token or CROWDTENSOR_ADMIN_TOKEN")
         elif args.dry_run:
             raise SystemExit("infer --dry-run is supported for --mode existing route preflight only")
     if args.command == "serve":

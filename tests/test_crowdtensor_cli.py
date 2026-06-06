@@ -4102,11 +4102,38 @@ class CrowdTensorCliTests(unittest.TestCase):
                 persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
                 self.assertIn(expected, persisted["operator_action"])
 
-    def test_infer_existing_requires_route_and_admin_token(self) -> None:
+    def test_infer_existing_requires_route(self) -> None:
         with self.assertRaises(SystemExit):
             cli.parse_args(["infer", "prompt", "--mode", "existing", "--admin-token", "admin-secret"])
-        with self.assertRaises(SystemExit):
-            cli.parse_args(["infer", "prompt", "--mode", "existing", "--coordinator-url", "http://127.0.0.1:8787"])
+
+    def test_infer_existing_missing_admin_token_returns_actionable_report(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("admin_token_required", report["diagnosis_codes"])
+        self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+        self.assertEqual(report["operator_action"], "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787",
+            next_lines,
+        )
+        self.assertTrue(any("CROWDTENSOR_ADMIN_TOKEN" in item.get("requires_env", []) for item in report["next_commands"]))
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertIn("admin_token_required", persisted["diagnosis_codes"])
 
     def test_infer_existing_dry_run_preflights_without_admin_token(self) -> None:
         output_dir = Path(self._tmp_dir())
