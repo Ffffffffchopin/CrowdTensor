@@ -4587,6 +4587,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--coordinator-url",
             "http://127.0.0.1:8787",
             "--dry-run",
+            "--stream",
             "--output-dir",
             str(output_dir),
             "--json",
@@ -4612,6 +4613,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["dry_run"])
+        self.assertTrue(report["stream"]["enabled"])
         self.assertEqual(report["route"]["route_source"], "coordinator-url")
         self.assertTrue(report["coordinator_ready"]["ok"])
         self.assertEqual(report["coordinator_ready"]["protocol"], "runtime_contract_v1")
@@ -4644,11 +4646,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(any("CROWDTENSOR_OBSERVER_TOKEN" in item.get("requires_env", []) for item in next_commands))
         next_lines = [item["command_line"] for item in next_commands]
         self.assertIn(
-            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --stream --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --stream --max-new-tokens 8 --coordinator-url http://127.0.0.1:8787",
             next_lines,
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["dry_run"])
+        self.assertTrue(persisted["stream"]["enabled"])
         self.assertTrue(persisted["coordinator_ready"]["ok"])
         self.assertFalse(persisted["stage_preflight"]["checked"])
         self.assertTrue(persisted["ready_to_submit"]["ok"])
