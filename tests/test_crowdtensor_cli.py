@@ -810,6 +810,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertEqual(report["coordinator_ready"]["error"], "OSError")
+        self.assertEqual(
+            report["ready_to_submit"]["warning_codes"],
+            ["coordinator_not_ready", "stage_preflight_not_checked"],
+        )
         self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
         self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
         self.assertIn("Coordinator route exists", report["operator_action"])
@@ -4988,7 +4992,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIsNone(report["ready_to_submit"]["coordinator_ready"])
         self.assertFalse(report["ready_to_submit"]["stage_preflight_required"])
         self.assertEqual(report["ready_to_submit"]["stage_verification"], "not_checked")
-        self.assertIn("route_not_ready", report["ready_to_submit"]["warning_codes"])
+        self.assertEqual(
+            report["ready_to_submit"]["warning_codes"],
+            ["route_not_ready", "stage_preflight_not_checked"],
+        )
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("stage_preflight_failed", report["diagnosis_codes"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -5325,7 +5332,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn("next_step=fix_blockers", stdout.getvalue())
-        self.assertIn("warnings=coordinator_not_ready", stdout.getvalue())
+        self.assertIn("warnings=coordinator_not_ready,stage_preflight_not_checked", stdout.getvalue())
         self.assertIn("next[5] submit inference after checks pass", stdout.getvalue())
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(

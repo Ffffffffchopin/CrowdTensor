@@ -3585,6 +3585,8 @@ def _ready_to_submit_status(
         warning_codes.append("stage_preflight_unknown")
     elif stage_verification == "skipped":
         warning_codes.append("stage_preflight_skipped")
+    elif stage_verification == "not_checked":
+        warning_codes.append("stage_preflight_not_checked")
     fully_verified = bool(submit_ok and route_ready and coordinator_ok is True and stage_verification == "ready")
     if submit_ok is True and fully_verified:
         readiness_label = "verified"
