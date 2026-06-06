@@ -327,9 +327,13 @@ def local_coordinator_port_from_url(coordinator_url: str, default: int = 8787) -
 def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> str:
     command = item.get("command") if isinstance(item.get("command"), list) else []
     prompt = str(report.get("local_prompt_text") or "")
-    if prompt and command:
+    prompt_texts = str(report.get("local_prompt_texts") or "")
+    if command:
         rendered = [str(part) for part in command]
-        rendered = [prompt if part == INFER_PROMPT_PLACEHOLDER else part for part in rendered]
+        if prompt_texts:
+            rendered = [prompt_texts if part == INFER_BATCH_PROMPTS_PLACEHOLDER else part for part in rendered]
+        if prompt:
+            rendered = [prompt if part == INFER_PROMPT_PLACEHOLDER else part for part in rendered]
         return command_line(rendered)
     return str(item.get("command_line") or command_line([str(part) for part in command]))
 
@@ -11651,6 +11655,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             local_report = dict(report)
             local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
+            local_report["local_prompt_texts"] = str(getattr(args, "prompt_texts", "") or "")
             print_infer(local_report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "serve":
