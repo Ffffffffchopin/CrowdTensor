@@ -97,6 +97,10 @@ replaced with placeholders. When `ready_to_submit` is present, read
 - `skipped` means only the request shape was checked, usually because live
   preflight was intentionally skipped.
 
+If `coordinator_ready` is not true, its line now includes `error=...` for a
+failed live probe or `reason=...` for an intentionally skipped check, so the
+next step is visible without opening the JSON report.
+
 Machine-readable reports use the same distinction: partial existing-swarm
 preflight emits `crowdtensor_infer_preflight_partial`, while a fully verified
 dry run emits `crowdtensor_infer_preflight_ready`. Treat partial as runnable

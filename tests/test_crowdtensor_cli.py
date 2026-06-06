@@ -138,6 +138,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             "True",
         )
         self.assertEqual(
+            cli.coordinator_ready_text({"ok": False, "error": "OSError"}),
+            "False service=None protocol=None error=OSError",
+        )
+        self.assertEqual(
+            cli.coordinator_ready_text({"ok": None, "reason": "live_preflight_skipped"}),
+            "None service=None protocol=None reason=live_preflight_skipped",
+        )
+        self.assertEqual(
             cli.guarded_submit_label("submit inference", {"readiness_label": "blocked"}),
             "submit inference after checks pass",
         )
@@ -669,9 +677,17 @@ class CrowdTensorCliTests(unittest.TestCase):
             report = cli.build_product_generate(args)
 
         self.assertFalse(report["ok"], report)
+        self.assertEqual(report["coordinator_ready"]["error"], "OSError")
         self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
         self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
         self.assertIn("Coordinator route exists", report["operator_action"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        self.assertIn(
+            "  coordinator_ready: False service=None protocol=None error=OSError",
+            stdout.getvalue(),
+        )
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8791 --run",
@@ -5157,6 +5173,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
+        self.assertIn(
+            "  coordinator_ready: False service=None protocol=None error=OSError",
+            stdout.getvalue(),
+        )
         self.assertIn(
             "  route: source=coordinator-url candidate=True distinct_stage_miners=not_checked",
             stdout.getvalue(),

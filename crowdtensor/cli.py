@@ -413,6 +413,21 @@ def infer_route_distinct_stage_text(route: dict[str, Any], stage_preflight: dict
     return "unknown"
 
 
+def coordinator_ready_text(coordinator_ready: dict[str, Any]) -> str:
+    parts = [
+        str(coordinator_ready.get("ok")),
+        f"service={coordinator_ready.get('service')}",
+        f"protocol={coordinator_ready.get('protocol')}",
+    ]
+    error = str(coordinator_ready.get("error") or "")
+    reason = str(coordinator_ready.get("reason") or "")
+    if error:
+        parts.append(f"error={error}")
+    elif reason:
+        parts.append(f"reason={reason}")
+    return " ".join(parts)
+
+
 def format_p2p_status(p2p: dict[str, Any]) -> str:
     discovery = p2p.get("discovery") if isinstance(p2p.get("discovery"), dict) else {}
     parts = [
@@ -7685,12 +7700,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  p2p: {format_p2p_status(p2p)}")
     coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
     if coordinator_ready:
-        print(
-            "  coordinator_ready: "
-            f"{coordinator_ready.get('ok')} "
-            f"service={coordinator_ready.get('service')} "
-            f"protocol={coordinator_ready.get('protocol')}"
-        )
+        print(f"  coordinator_ready: {coordinator_ready_text(coordinator_ready)}")
     stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
     if stage_preflight:
         reason = str(stage_preflight.get("reason") or "")
@@ -7816,12 +7826,7 @@ def print_infer(report: dict[str, Any]) -> None:
         print(f"  p2p: {format_p2p_status(p2p)}")
     coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
     if coordinator_ready:
-        print(
-            "  coordinator_ready: "
-            f"{coordinator_ready.get('ok')} "
-            f"service={coordinator_ready.get('service')} "
-            f"protocol={coordinator_ready.get('protocol')}"
-        )
+        print(f"  coordinator_ready: {coordinator_ready_text(coordinator_ready)}")
     if stage_preflight:
         reason = str(stage_preflight.get("reason") or "")
         source = str(stage_preflight.get("source") or "")

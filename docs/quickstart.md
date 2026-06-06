@@ -193,7 +193,9 @@ Expected behavior:
 `ready_to_submit` when it can check live endpoints or P2P-discovered stage
 capabilities. Treat `label=verified` as the normal submit-ready state;
 `label=partial` needs an observer-token preflight; `label=blocked` needs the
-printed action first. For `infer --mode existing --dry-run`, JSON uses
+printed action first. A false `coordinator_ready` line includes `error=...`
+for failed probes or `reason=...` for skipped checks. For
+`infer --mode existing --dry-run`, JSON uses
 `crowdtensor_infer_preflight_partial` until the stage Miner check is fully
 verified. If the command is being used only for CI-safe packaging or offline
 request-shape checks, add `--skip-live-preflight` and expect `label=skipped`.
