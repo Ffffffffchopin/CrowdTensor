@@ -823,6 +823,60 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
 
+    def test_product_generate_stage_not_checked_includes_startup_next_commands(self) -> None:
+        report = {
+            "ok": False,
+            "diagnosis_codes": ["stage_preflight_not_checked"],
+            "route": {
+                "route_source": "coordinator-url",
+                "coordinator_url": "http://127.0.0.1:8787",
+                "coordinator_url_present": True,
+            },
+            "session_request": {
+                "backend": "cpu",
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "max_new_tokens": 4,
+                "request_count": 1,
+            },
+            "ready_to_submit": {
+                "readiness_label": "blocked",
+                "next_step": "fix_blockers",
+                "warning_codes": ["stage_preflight_not_checked"],
+            },
+            "stream": {"enabled": True},
+            "output_request": {"include_output": True},
+        }
+
+        next_commands = cli._product_generate_next_commands(report)
+
+        labels = [item["label"] for item in next_commands]
+        self.assertEqual(labels[:3], ["start Coordinator", "start stage0 Miner", "start stage1 Miner"])
+        self.assertIn("check generation route", labels)
+        self.assertIn("submit generation after checks pass", labels)
+        next_lines = [item["command_line"] for item in next_commands]
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --include-output",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --include-output",
+            next_lines,
+        )
+        submit = next(item for item in next_commands if item["label"] == "submit generation after checks pass")
+        self.assertEqual(submit["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
+
     def test_product_generate_dry_run_ready_failure_includes_startup_next_commands(self) -> None:
         args = cli.parse_args([
             "generate",
