@@ -6809,7 +6809,7 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
     coordinator_ready = _coordinator_ready_preflight(coordinator_url, timeout=timeout) if route_ready else {}
     p2p_route = bool(getattr(args, "p2p", False) or getattr(args, "peer_bootstrap", ""))
     backend = str(getattr(args, "backend", "cpu") or "cpu")
-    if p2p_route:
+    if p2p_route and route_ready:
         stage_preflight = _route_stage_preflight(route, backend=backend)
     elif route_ready and coordinator_ready.get("ok"):
         stage_preflight = _coordinator_stage_preflight(

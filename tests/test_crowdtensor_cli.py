@@ -4566,6 +4566,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "http://127.0.0.1:8799",
             "--admin-token",
             "admin-secret",
+            "--dry-run",
             "--output-dir",
             str(output_dir),
             "--json",
@@ -4580,6 +4581,8 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertEqual(report["p2p"]["swarm_id"], "public-swarm-v2")
+        self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
+        self.assertNotIn("stage_preflight_failed", report["diagnosis_codes"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor p2pd --port 8799 --swarm-id public-swarm-v2 --run", next_lines)
         self.assertIn(
