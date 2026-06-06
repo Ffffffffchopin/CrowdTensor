@@ -83,6 +83,9 @@ safe `wait_progress` summary with poll count, accepted rows, endpoint readiness,
 and observed token progress so timeouts are actionable without exposing raw
 text; both `infer` and `generate` include `operator_action` suggestions for
 checking tokens, Miner health, admin API access, or timeout limits.
+The manual `serve` and `join` commands also print `operator_action`, so the
+five-process flow tells you whether to rerun with `--run`, start the missing
+stage Miner, or preflight with `generate --dry-run`.
 
 To check an already running Coordinator or P2P-discovered swarm before
 submitting a request, use `crowdtensor infer --mode existing --dry-run` or

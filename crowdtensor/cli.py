@@ -5284,6 +5284,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             "profile": args.profile,
             "command": command,
             "diagnosis_codes": ["public_bind_requires_explicit_ack"],
+            "operator_action": "Add --i-understand-public-bind only on a trusted network boundary, or keep --bind-host on 127.0.0.1.",
             "safety": {"public_bind_requires_explicit_ack": True},
         })
     p2p_bootstrap = args.peer_bootstrap or DEFAULT_P2P_BOOTSTRAP
@@ -5344,6 +5345,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
         report["diagnosis_codes"] = [
             "real_p2p_coordinator_announce_failed" if _p2p_backend(args) == "real" else "p2p_coordinator_announce_failed"
         ]
+    report["operator_action"] = _product_serve_operator_action(report)
     if not args.run:
         return sanitize(report)
     refresh = maybe_start_discovery_refresh(args, peer, bootstrap=p2p_bootstrap) if peer_announce.get("ok") else None
@@ -5354,7 +5356,25 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             report["p2p"]["refresh"] = refresh.stop()
     report["returncode"] = completed.returncode
     report["ok"] = bool(report.get("ok") and completed.returncode == 0)
+    report["operator_action"] = _product_serve_operator_action(report)
     return sanitize(report)
+
+
+def _product_serve_operator_action(report: dict[str, Any]) -> str:
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    if "public_bind_requires_explicit_ack" in codes:
+        return "Add --i-understand-public-bind only on a trusted network boundary, or keep --bind-host on 127.0.0.1."
+    if "p2p_coordinator_announce_failed" in codes or "real_p2p_coordinator_announce_failed" in codes:
+        return "Start the matching P2P discovery daemon, check --peer-bootstrap/--peer-secret, then rerun serve --p2p."
+    if report.get("ok"):
+        if report.get("printed_only"):
+            return "Rerun with --run to start the Coordinator, start stage0 and stage1 Miners with crowdtensor join, then run crowdtensor generate --p2p --dry-run."
+        if (report.get("p2p") or {}).get("enabled"):
+            return "Start or keep stage0 and stage1 Miners joined, then run crowdtensor generate --p2p --dry-run before submitting."
+        return "Start stage0 and stage1 Miners with --coordinator-url, then run crowdtensor generate --dry-run."
+    if report.get("returncode") not in {None, 0}:
+        return "Coordinator process exited; inspect its stderr/logs, fix the runtime error, and rerun serve --run."
+    return "Inspect the serve JSON report and Coordinator command for the failing check."
 
 
 def build_join_command(args: argparse.Namespace, *, coordinator_url: str) -> list[str]:
@@ -5469,6 +5489,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             "ok": False,
             "mode": "join",
             "diagnosis_codes": ["coordinator_route_missing"],
+            "operator_action": "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery.",
         })
     peer_announce: dict[str, Any] = {}
     if args.p2p:
@@ -5529,8 +5550,10 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         report["diagnosis_codes"] = [
             "real_p2p_stage_miner_announce_failed" if p2p_backend == "real" else "p2p_stage_miner_announce_failed"
         ]
+        report["operator_action"] = _product_join_operator_action(report)
         if not args.run:
             return sanitize(redact_values(report, [args.miner_token, args.peer_secret]))
+    report["operator_action"] = _product_join_operator_action(report)
     if args.run:
         refresh = maybe_start_discovery_refresh(args, peer, bootstrap=p2p_bootstrap) if peer_announce.get("ok") else None
         try:
@@ -5540,7 +5563,25 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
                 report["p2p"]["refresh"] = refresh.stop()
         report["returncode"] = completed.returncode
         report["ok"] = bool(ready and completed.returncode == 0)
+        report["operator_action"] = _product_join_operator_action(report)
     return sanitize(redact_values(report, [args.miner_token, args.peer_secret]))
+
+
+def _product_join_operator_action(report: dict[str, Any]) -> str:
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    if "coordinator_route_missing" in codes:
+        return "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery."
+    if "p2p_stage_miner_announce_failed" in codes or "real_p2p_stage_miner_announce_failed" in codes:
+        return "Check the P2P discovery daemon and --peer-secret, then rerun join --p2p so this stage is visible to generate --dry-run."
+    if report.get("ok"):
+        stage_caps = ((report.get("p2p") or {}).get("stage_capabilities") or [])
+        stage_text = "/".join(stage_caps) if stage_caps else "the selected stage"
+        if report.get("printed_only"):
+            return f"Rerun with --run to start {stage_text}; keep one stage0 and one stage1 Miner running before generate."
+        return "Keep this Miner running; start the other stage if needed, then run crowdtensor generate --dry-run."
+    if report.get("returncode") not in {None, 0}:
+        return "Miner process exited; inspect its stderr/logs, fix the runtime error, and rerun join --run."
+    return "Inspect the join JSON report and Miner command for the failing check."
 
 
 def _product_generate_local_output_from_validation(validation: dict[str, Any], *, max_chars: int = 4096) -> dict[str, Any]:
@@ -6482,6 +6523,57 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  note: {report.get('local_output_note')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+
+
+def print_product_serve(report: dict[str, Any]) -> None:
+    print("CrowdTensor serve")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  profile: {report.get('profile')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    if p2p:
+        announce = p2p.get("announce") if isinstance(p2p.get("announce"), dict) else {}
+        print(
+            "  p2p: "
+            f"enabled={p2p.get('enabled')} "
+            f"backend={p2p.get('backend')} "
+            f"announced={announce.get('ok')}"
+        )
+    if report.get("printed_only"):
+        print("  command:")
+        for part in report.get("command") or []:
+            print(f"    {part}")
+    if report.get("returncode") is not None:
+        print(f"  returncode: {report.get('returncode')}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+
+
+def print_product_join(report: dict[str, Any]) -> None:
+    print("CrowdTensor join")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    if p2p:
+        announce = p2p.get("announce") if isinstance(p2p.get("announce"), dict) else {}
+        caps = p2p.get("stage_capabilities") if isinstance(p2p.get("stage_capabilities"), list) else []
+        print(
+            "  p2p: "
+            f"enabled={p2p.get('enabled')} "
+            f"backend={p2p.get('backend')} "
+            f"announced={announce.get('ok')} "
+            f"stage_caps={','.join(str(item) for item in caps) if caps else 'none'}"
+        )
+    if report.get("printed_only"):
+        print("  command:")
+        for part in report.get("command") or []:
+            print(f"    {part}")
+    if report.get("returncode") is not None:
+        print(f"  returncode: {report.get('returncode')}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
 def print_infer(report: dict[str, Any]) -> None:
@@ -10855,11 +10947,17 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "serve":
         report = build_product_serve(args)
-        print(json.dumps(report, sort_keys=True) if args.json else "\n".join(report.get("command") or []))
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_product_serve(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "join":
         report = build_product_join(args)
-        print(json.dumps(report, sort_keys=True) if args.json else "\n".join(report.get("command") or []))
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_product_join(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "generate":
         report = build_product_generate(args)

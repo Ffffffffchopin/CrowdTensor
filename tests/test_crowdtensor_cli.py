@@ -234,6 +234,32 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("admin-secret", encoded)
         self.assertNotIn("miner-secret", encoded)
         self.assertIn("<redacted>", report["command"])
+        self.assertIn("Rerun with --run", report["operator_action"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_serve(report)
+        rendered = stdout.getvalue()
+        self.assertIn("CrowdTensor serve", rendered)
+        self.assertIn("  command:", rendered)
+        self.assertIn("  action: Rerun with --run", rendered)
+        self.assertNotIn("admin-secret", rendered)
+        self.assertNotIn("miner-secret", rendered)
+
+    def test_product_serve_public_bind_action(self) -> None:
+        args = cli.parse_args([
+            "serve",
+            "--bind-host",
+            "0.0.0.0",
+            "--public-host",
+            "203.0.113.5",
+            "--json",
+        ])
+
+        report = cli.build_product_serve(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("public_bind_requires_explicit_ack", report["diagnosis_codes"])
+        self.assertIn("trusted network boundary", report["operator_action"])
 
     def test_product_generate_dry_run_uses_session_protocol(self) -> None:
         args = cli.parse_args([
@@ -415,6 +441,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertIn("p2p_coordinator_announce_ready", report["diagnosis_codes"])
+        self.assertIn("generate --p2p --dry-run", report["operator_action"])
         peer = announced.call_args.args[1]
         self.assertEqual(peer["role"], "coordinator")
         self.assertEqual(peer["urls"]["coordinator"], "http://coord.example:8787")
@@ -441,6 +468,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertIn("real_p2p_coordinator_announce_ready", report["diagnosis_codes"])
+        self.assertIn("generate --p2p --dry-run", report["operator_action"])
         record = announced.call_args.args[1]
         self.assertEqual(record["schema"], "real_p2p_provider_record_v1")
         self.assertEqual(record["provider"]["role"], "coordinator")
@@ -482,6 +510,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["coordinator_url"], "http://127.0.0.1:8787")
         self.assertIn("p2p_stage_miner_announce_ready", report["diagnosis_codes"])
+        self.assertIn("Rerun with --run", report["operator_action"])
         peer = announced.call_args.args[1]
         self.assertEqual(peer["role"], "miner")
         self.assertIn("real_llm_sharded_stage0", peer["capabilities"]["real_llm_sharded_stage_capabilities"])
@@ -526,6 +555,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["coordinator_url"], "http://127.0.0.1:8787")
         self.assertIn("real_p2p_stage_miner_announce_ready", report["diagnosis_codes"])
+        self.assertIn("Rerun with --run", report["operator_action"])
         record = announced.call_args.args[1]
         self.assertEqual(record["schema"], "real_p2p_provider_record_v1")
         self.assertEqual(record["provider"]["role"], "miner")
@@ -554,6 +584,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         report = cli.build_product_join(args)
 
         self.assertTrue(report["ok"], report)
+        self.assertIn("Rerun with --run", report["operator_action"])
         command = report["command"]
         self.assertIn("--compute-seconds", command)
         self.assertEqual(command[command.index("--compute-seconds") + 1], "12.5")
@@ -561,6 +592,49 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(command[command.index("--max-runtime-seconds") + 1], "30.0")
         self.assertIn("--max-request-attempts", command)
         self.assertEqual(command[command.index("--max-request-attempts") + 1], "9")
+
+    def test_product_join_missing_route_action(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8788",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_peer_catalog", return_value={"peers": []}):
+            report = cli.build_product_join(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertIn("Start the Coordinator", report["operator_action"])
+
+    def test_product_join_human_output_includes_action_and_redacts_token(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--miner-token",
+            "miner-secret",
+        ])
+
+        report = cli.build_product_join(args)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_join(report)
+        rendered = stdout.getvalue()
+
+        self.assertIn("CrowdTensor join", rendered)
+        self.assertIn("  command:", rendered)
+        self.assertIn("  action: Rerun with --run", rendered)
+        self.assertNotIn("miner-secret", rendered)
 
     def test_discovery_refresh_rebuilds_signed_record_timestamps(self) -> None:
         peer = cli.build_p2p_peer(

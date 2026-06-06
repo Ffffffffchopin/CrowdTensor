@@ -117,6 +117,9 @@ Useful readiness fields in the JSON output include:
 
 The release gate is convenient, but the manual flow shows the moving pieces.
 Open five terminals from the repository root.
+The `serve`, `join`, and `generate` commands print an `action` line in human
+mode; follow it when a step is only printing a command, missing a route, or
+waiting for the other stage Miner.
 
 ```bash
 # Terminal 1
