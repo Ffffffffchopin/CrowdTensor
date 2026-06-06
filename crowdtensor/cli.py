@@ -6600,7 +6600,8 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         max_new_tokens = 16
     stream_report = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     stream_requested = bool(stream_report.get("enabled") or stream_report.get("requested"))
-    include_output_requested = bool(report.get("local_output_note") or report.get("local_output"))
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    include_output_requested = bool(output_request.get("include_output") or report.get("local_output_note") or report.get("local_output"))
     commands: list[dict[str, Any]] = []
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
@@ -7110,6 +7111,11 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "stream": {
                 "enabled": stream_enabled,
                 "requested": stream_enabled,
+                "public_artifact_safe": True,
+            },
+            "output_request": {
+                "include_output": bool(args.include_output),
+                "raw_generated_text_public": False,
                 "public_artifact_safe": True,
             },
             "p2p": {
