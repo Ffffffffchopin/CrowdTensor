@@ -373,6 +373,31 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(f"next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
+    def test_generate_accepts_positional_prompt_like_infer(self) -> None:
+        prompt = "CrowdTensor positional prompt"
+        args = cli.parse_args([
+            "generate",
+            prompt,
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+
+        self.assertEqual(args.prompt_text, prompt)
+        report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertEqual(report["session_request"]["prompt_chars"], len(prompt))
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run",
+            next_lines,
+        )
+
     def test_product_generate_dry_run_has_safe_default_prompt(self) -> None:
         args = cli.parse_args([
             "generate",
