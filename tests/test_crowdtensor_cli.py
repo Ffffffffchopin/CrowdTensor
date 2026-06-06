@@ -3125,8 +3125,16 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(human_report["ok"], human_report)
         self.assertEqual(human_report["local_output"]["generated_text"], " readable beta text")
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
+            [item["command_line"] for item in human_report["next_commands"]],
+        )
         self.assertTrue(json_report["ok"], json_report)
         self.assertNotIn("local_output", json_report)
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
+            [item["command_line"] for item in json_report["next_commands"]],
+        )
         self.assertNotIn("readable beta text", json.dumps(json_report, sort_keys=True))
 
     def test_product_generate_human_mode_shows_output_by_default(self) -> None:
