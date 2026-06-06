@@ -5808,6 +5808,7 @@ def _product_cli_generate_command(
     prompt_texts: str = "",
     swarm_id: str = "default",
     include_observer: bool = False,
+    stream: bool = False,
 ) -> list[str]:
     command = [
         "crowdtensor",
@@ -5836,6 +5837,8 @@ def _product_cli_generate_command(
         command.append("--dry-run")
     if include_observer:
         command.extend(["--observer-token", OBSERVER_TOKEN_ENV_PLACEHOLDER])
+    if stream:
+        command.append("--stream")
     return command
 
 
@@ -6592,6 +6595,8 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         max_new_tokens = int(session_request.get("max_new_tokens") or report.get("max_new_tokens") or 16)
     except (TypeError, ValueError):
         max_new_tokens = 16
+    stream_report = report.get("stream") if isinstance(report.get("stream"), dict) else {}
+    stream_requested = bool(stream_report.get("enabled") or stream_report.get("requested"))
     commands: list[dict[str, Any]] = []
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
@@ -6623,6 +6628,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         prompt_texts=prompt_texts_placeholder,
         swarm_id=swarm_id,
         include_observer=True,
+        stream=stream_requested,
     )
     check_command = (
         command_entry("check generation route", route_command, requires_env=["CROWDTENSOR_OBSERVER_TOKEN"])
@@ -6644,6 +6650,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 prompt_text=prompt_placeholder,
                 prompt_texts=prompt_texts_placeholder,
                 swarm_id=swarm_id,
+                stream=stream_requested,
             ),
             requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
         )
@@ -6715,6 +6722,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 prompt_text=prompt_placeholder,
                 prompt_texts=prompt_texts_placeholder,
                 swarm_id=swarm_id,
+                stream=stream_requested,
             )
         )
         wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}

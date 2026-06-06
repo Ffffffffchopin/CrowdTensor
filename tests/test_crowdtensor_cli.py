@@ -1754,7 +1754,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Generation reached 1/4 tokens", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --timeout-seconds 120",
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --timeout-seconds 120",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream",
             next_lines,
         )
         retry = next(item for item in report["next_commands"] if item["label"] == "retry generation with longer timeout")
