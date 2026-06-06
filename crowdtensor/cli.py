@@ -7100,6 +7100,11 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
+            "stream": {
+                "enabled": stream_enabled,
+                "requested": stream_enabled,
+                "public_artifact_safe": True,
+            },
             "p2p": {
                 "enabled": bool(args.p2p),
                 "backend": p2p_backend if args.p2p else "",

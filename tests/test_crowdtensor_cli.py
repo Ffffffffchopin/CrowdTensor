@@ -362,6 +362,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "distilgpt2",
             "--dry-run",
             "--skip-live-preflight",
+            "--stream",
             "--json",
         ])
 
@@ -371,17 +372,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["session_request"]["schema"], "session_protocol_v1")
         self.assertEqual(report["session_request"]["hf_model_id"], "distilgpt2")
+        self.assertTrue(report["stream"]["enabled"])
         self.assertEqual(
             report["operator_action"],
             "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
         )
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream",
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>'",
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --stream",
             next_lines,
         )
         self.assertNotIn("CrowdTensor prompt", encoded)
