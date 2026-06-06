@@ -3564,7 +3564,12 @@ def _ready_to_submit_status(
     source: str,
 ) -> dict[str, Any]:
     if stage_preflight_required:
-        stage_verification = "ready" if stage_preflight_ok else "failed"
+        if stage_preflight_ok is True:
+            stage_verification = "ready"
+        elif stage_preflight_ok is False:
+            stage_verification = "failed"
+        else:
+            stage_verification = "unknown"
     else:
         stage_verification = "skipped" if route_ready and coordinator_ok is not False else "not_checked"
     warning_codes = []
@@ -3574,9 +3579,11 @@ def _ready_to_submit_status(
         warning_codes.append("coordinator_not_ready")
     if stage_verification == "failed":
         warning_codes.append("stage_preflight_failed")
+    elif stage_verification == "unknown":
+        warning_codes.append("stage_preflight_unknown")
     elif stage_verification == "skipped":
         warning_codes.append("stage_preflight_skipped")
-    fully_verified = bool(submit_ok and route_ready and coordinator_ok is not False and stage_verification == "ready")
+    fully_verified = bool(submit_ok and route_ready and coordinator_ok is True and stage_verification == "ready")
     if submit_ok is True and fully_verified:
         readiness_label = "verified"
         readiness_summary = "Route, Coordinator, and distinct stage Miners are verified."
@@ -3584,7 +3591,11 @@ def _ready_to_submit_status(
     elif submit_ok is True:
         readiness_label = "partial"
         readiness_summary = "Request can be submitted, but stage Miner readiness is not fully verified."
-        next_step = "run_stage_preflight" if "stage_preflight_skipped" in warning_codes else "submit_with_caution"
+        next_step = (
+            "run_stage_preflight"
+            if "stage_preflight_skipped" in warning_codes or stage_verification == "unknown"
+            else "submit_with_caution"
+        )
     elif submit_ok is False:
         readiness_label = "blocked"
         readiness_summary = "Request is not ready to submit; follow operator_action and rerun preflight."
@@ -3626,14 +3637,17 @@ def ready_to_submit_stage_text(ready_to_submit: dict[str, Any]) -> str:
 def guarded_submit_label(label: str, ready_to_submit: dict[str, Any]) -> str:
     if not isinstance(ready_to_submit, dict):
         return label
+    next_step = str(ready_to_submit.get("next_step") or "")
     readiness_label = str(ready_to_submit.get("readiness_label") or "")
     warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or []))
-    if readiness_label == "blocked":
+    if next_step == "fix_blockers" or readiness_label == "blocked":
         return f"{label} after checks pass"
-    if readiness_label == "skipped":
+    if next_step == "run_live_preflight" or readiness_label == "skipped":
         return f"{label} after live preflight"
-    if readiness_label == "partial" and "stage_preflight_skipped" in warnings:
+    if next_step == "run_stage_preflight" or (readiness_label == "partial" and "stage_preflight_skipped" in warnings):
         return f"{label} after stage preflight"
+    if next_step == "submit_with_caution":
+        return f"{label} with caution"
     return label
 
 

@@ -165,6 +165,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             "submit inference",
         )
         self.assertEqual(
+            cli.guarded_submit_label("submit inference", {"next_step": "run_stage_preflight"}),
+            "submit inference after stage preflight",
+        )
+        self.assertEqual(
+            cli.guarded_submit_label("submit inference", {"next_step": "submit_with_caution"}),
+            "submit inference with caution",
+        )
+        self.assertEqual(
             cli._ready_to_submit_status(
                 submit_ok=True,
                 route_ready=True,
@@ -186,8 +194,31 @@ class CrowdTensorCliTests(unittest.TestCase):
                 stage_preflight_required=True,
                 source="unit",
             )["next_step"],
-            "submit_with_caution",
+            "run_stage_preflight",
         )
+        unknown_stage = cli._ready_to_submit_status(
+            submit_ok=True,
+            route_ready=True,
+            coordinator_ok=True,
+            coordinator_preflight_required=True,
+            stage_preflight_ok=None,
+            stage_preflight_required=True,
+            source="unit",
+        )
+        self.assertEqual(unknown_stage["stage_verification"], "unknown")
+        self.assertEqual(unknown_stage["warning_codes"], ["stage_preflight_unknown"])
+        caution_status = cli._ready_to_submit_status(
+            submit_ok=True,
+            route_ready=True,
+            coordinator_ok=None,
+            coordinator_preflight_required=False,
+            stage_preflight_ok=True,
+            stage_preflight_required=True,
+            source="unit",
+        )
+        self.assertFalse(caution_status["fully_verified"])
+        self.assertEqual(caution_status["readiness_label"], "partial")
+        self.assertEqual(caution_status["next_step"], "submit_with_caution")
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()

@@ -100,9 +100,11 @@ replaced with placeholders. When `ready_to_submit` is present, read
   intentionally separate from `generate_dry_run_ready`.
 Submit commands mirror this state: labels such as `after stage preflight`,
 `after live preflight`, or `after checks pass` mean run the preceding check
-command first. Machine-readable `next_step` uses stable values such as
+command first; `with caution` means the request can run but not every live
+check was proven. Machine-readable `next_step` uses stable values such as
 `submit`, `run_stage_preflight`, `run_live_preflight`, `submit_with_caution`,
-and `fix_blockers`.
+and `fix_blockers`. `stage_preflight_unknown` means the stage check was
+required but did not return a true/false result.
 
 If `coordinator_ready` is not true, its line now includes `error=...` for a
 failed live probe or `reason=...` for an intentionally skipped check, so the

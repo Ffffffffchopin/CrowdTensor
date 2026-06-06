@@ -203,10 +203,12 @@ Those skipped checks emit `generate_request_shape_ready`, not
 `generate_dry_run_ready`, because the route has not been proven submit-ready.
 Submit command labels also reflect this state: `after live preflight`,
 `after stage preflight`, or `after checks pass` means run the printed check
-command before submitting. The same decision is available as
+command before submitting; `with caution` means the request can run but not
+every live check was proven. The same decision is available as
 `ready_to_submit.next_step` for scripts and support tools, with stable values
 such as `submit`, `run_stage_preflight`, `run_live_preflight`,
-`submit_with_caution`, and `fix_blockers`.
+`submit_with_caution`, and `fix_blockers`. `stage_preflight_unknown` means a
+required stage check did not return a true/false result.
 
 ## 6. Package A Controlled Remote Trial
 
