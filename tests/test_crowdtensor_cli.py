@@ -2719,6 +2719,176 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_schema"], "public_swarm_inference_v2_cli_v1")
         self.assertTrue(calls)
 
+    def test_infer_local_wraps_public_swarm_v2_local_model_variant(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "16",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertEqual(command[2], "local-model-variant")
+            self.assertEqual(command[command.index("--prompt-text") + 1], "CrowdTensor user prompt")
+            self.assertEqual(command[command.index("--max-new-tokens") + 1], "16")
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local-model-variant",
+                "public_swarm_v2": {"hf_model_id": "sshleifer/tiny-gpt2"},
+                "readiness": {
+                    "local_p2p_generate": {
+                        "route_source": "p2p-discovery",
+                        "route_ready": True,
+                        "distinct_stage_miners": True,
+                        "accepted_rows": 32,
+                        "generation": {
+                            "generated_token_count": 16,
+                            "max_new_tokens": 16,
+                            "generated_text_hash": "sha256:generated",
+                            "decoded_tokens_match": True,
+                        },
+                    }
+                },
+                "diagnosis_codes": ["public_swarm_v2_local_p2p_generate_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "crowdtensor_infer_cli_v1")
+        self.assertEqual(report["mode"], "local")
+        self.assertEqual(report["generation"]["generated_token_count"], 16)
+        self.assertEqual(report["route"]["route_source"], "p2p-discovery")
+        self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
+        self.assertTrue((output_dir / "infer_summary.json").is_file())
+        self.assertTrue(calls)
+
+    def test_infer_full_evidence_uses_public_swarm_v2_local_gate(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--full-evidence",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(command[2], "local")
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "readiness": {
+                    "local_p2p_generate": {
+                        "route_ready": True,
+                        "distinct_stage_miners": True,
+                        "generation": {
+                            "generated_token_count": 16,
+                            "max_new_tokens": 16,
+                            "generated_text_hash": "sha256:generated",
+                        },
+                    }
+                },
+                "diagnosis_codes": ["public_swarm_inference_v2_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+
+    def test_infer_existing_uses_generate_and_does_not_persist_raw_text(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--admin-token",
+            "admin-secret",
+            "--include-output",
+            "--output-dir",
+            str(output_dir),
+        ])
+        generate_payload = {
+            "schema": "public_swarm_product_cli_v1",
+            "ok": True,
+            "mode": "generate",
+            "session": {"hf_model_id": "sshleifer/tiny-gpt2"},
+            "generation": {
+                "generated_token_count": 16,
+                "max_new_tokens": 16,
+                "generated_text_hash": "sha256:generated",
+                "decoded_tokens_match": True,
+            },
+            "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
+            "local_output": {"generated_text": "local text only"},
+            "diagnosis_codes": ["public_swarm_generate_ready"],
+        }
+
+        with patch.object(cli, "build_product_generate", return_value=generate_payload):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["mode"], "existing")
+        self.assertEqual(report["local_output"]["generated_text"], "local text only")
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["local_output"]["generated_text"], "")
+        self.assertFalse(persisted["local_output"]["display_only"])
+
+    def test_infer_json_suppresses_raw_text_in_returned_payload(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--admin-token",
+            "admin-secret",
+            "--include-output",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+        generate_payload = {
+            "schema": "public_swarm_product_cli_v1",
+            "ok": True,
+            "mode": "generate",
+            "generation": {
+                "generated_token_count": 16,
+                "max_new_tokens": 16,
+                "generated_text_hash": "sha256:generated",
+            },
+            "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
+            "local_output": {"generated_text": "must not be returned in json"},
+            "diagnosis_codes": ["public_swarm_generate_ready"],
+        }
+
+        with patch.object(cli, "build_product_generate", return_value=generate_payload):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["local_output"]["generated_text"], "")
+
+    def test_infer_existing_requires_route_and_admin_token(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["infer", "prompt", "--mode", "existing", "--admin-token", "admin-secret"])
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["infer", "prompt", "--mode", "existing", "--coordinator-url", "http://127.0.0.1:8787"])
+
     def test_public_swarm_v2_cli_forwards_real_p2p_local_options(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([

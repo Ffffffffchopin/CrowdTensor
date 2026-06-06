@@ -32,6 +32,8 @@ validation, observability, artifact safety, and operator experience.
 ## What You Can Do Today
 
 - Run a local end-to-end split inference proof with a real tiny GPT model.
+- Use `crowdtensor infer "your prompt"` as the shortest user-facing inference
+  path.
 - Start a local discovery daemon, Coordinator, two stage Miners, and a user
   `generate` request.
 - Validate stage assignment, distinct stage Miners, decoded-token correctness,
@@ -65,7 +67,18 @@ Run the fast local proof first:
 crowdtensor local-proof --json
 ```
 
-Run the current public swarm beta gate:
+Run the user-friendly local swarm inference entry point:
+
+```bash
+crowdtensor infer "CrowdTensor routes small models across home compute"
+```
+
+It starts the controlled local swarm path, runs split tiny GPT inference, and
+writes a compact `infer_summary.json` under `dist/infer`. JSON and public
+artifacts keep raw prompts, generated text, token ids, credentials, and
+activations out of shareable files.
+
+For maintainer-grade release evidence, run the full public swarm beta gate:
 
 ```bash
 crowdtensor public-real-llm-swarm-beta release \
@@ -74,8 +87,8 @@ crowdtensor public-real-llm-swarm-beta release \
   --json
 ```
 
-This starts local stand-ins for the public swarm path, runs real tiny-model
-split generation, validates the evidence, and writes artifacts under `dist/`.
+This runs the stricter release aggregate and checks retained external evidence,
+route hardening, failure requeue, KV-cache readiness, and artifact safety.
 
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 
@@ -124,8 +137,8 @@ CrowdTensor is intentionally simple at the control-plane layer:
   controlled remote demos.
 - **Stage Miners** opt in to specific capabilities such as `stage0`, `stage1`,
   CPU tiny-model inference, or optional CUDA tiny-model inference.
-- **Generate client** creates a read-only inference session and streams or
-  collects the decoded result.
+- **Infer/generate clients** create read-only inference sessions and stream or
+  collect decoded results.
 - **Evidence packs** record redacted readiness, diagnostics, stage assignment,
   failure recovery, and support bundle details.
 
@@ -152,6 +165,9 @@ models and protocol development**.
 ```bash
 # Local proof bundle
 crowdtensor local-proof --json
+
+# User-friendly local swarm inference
+crowdtensor infer "CrowdTensor routes small models across home compute"
 
 # CPU-only inference aggregate
 crowdtensor cpu-infer --mode local --json
@@ -182,6 +198,69 @@ crowdtensor clean-artifacts
 - `docs/architecture.md` - control-plane and swarm architecture.
 - `docs/use-cases.md` - who the project is useful for today.
 - `ROADMAP.md` - what is current, next, and intentionally later.
+
+## Maintainer Anchors
+
+The short README keeps the public surface readable. Maintainer gates still
+track deeper artifacts and docs such as `docs/api.md`,
+`scripts/api_contract_check.py`, `api_contract`, `site/index.html`, and the
+5-minute local swarm demo. See `ROADMAP.md`, `docs/protocol.md`,
+`docs/use-cases.md`, and `docs/architecture.md` for the protocol boundary,
+`runtime_contract_v1`, Support Bundle, and "Protocol boundary changed" context.
+
+Compatibility anchors preserved for release checks: CrowdTensorD, What Works
+Today, What Is Not Ready, Public Swarm Inference Beta,
+`public_swarm_inference_beta_v1`, `public_swarm_inference_beta_ready`,
+`public_swarm_product_beta_ready`, `public_swarm_product_rc_ready`,
+`coordinator_product_surface_ready`, `session_protocol_ready`,
+`p2p_lite_discovery_ready`, `gpu_generation_evidence_import_ready`,
+`cpu_fallback_ready`, `public_swarm_beta_evidence_import_ready`,
+`two_stage_split_inference_ready`, `local_loopback_ready`,
+`external_live_evidence_imported`, `stage0_live_requeue_evidence_ready`,
+`stage1_live_requeue_evidence_ready`, `decoded_tokens_match`,
+`distinct_stage_miners`, `stage_assignment_valid`,
+`public_swarm_inference_beta_pack.py`,
+`public_swarm_inference_beta_check.py`, `crowdtensor public-swarm-beta`,
+`public-swarm-beta product-beta`, `public-swarm-beta local-loopback`,
+`public-swarm-beta evidence-import`, `prepare`, `coordinator`, `miner`,
+`verify`, `collect`, `clean`, CPU-only, read-only, not libp2p, not DHT, not NAT
+traversal, not production Swarm Inference, and not large-model serving.
+
+Real small-model anchors: Real Small-LLM Sharded Inference Beta,
+`real_llm_sharded_infer`, `real_llm_sharded_infer_v1`,
+`real_llm_artifact_v1`, `real_llm_sharded_evidence_v1`,
+`remote_real_llm_sharded_beta_v1`,
+`real_llm_sharded_inference_evidence_pack.py`,
+`remote_real_llm_sharded_beta_pack.py`,
+`remote_real_llm_sharded_beta_check.py`,
+`crowdtensor real-llm-shard-infer`,
+`crowdtensor real-llm-shard-infer-beta`,
+`crowdtensor remote-demo --workload real-llm-sharded`,
+`--enable-hf-tiny-gpt-runtime`, `--hf-cache-dir`, `--real-llm-stage-role`,
+`real_llm_sharded_stage0`, `real_llm_sharded_stage1`,
+`real_llm_sharded_both`, `real_llm_artifact_ready`,
+`activation_transport_ready`, `baseline_match`, `decoded_tokens_match`,
+`stage_assignment_valid`, `remote_real_llm_sharded_ready`,
+`remote_two_machine_real_llm_sharded_ready`,
+`remote_real_llm_sharded_acceptance_v1`,
+`remote_real_llm_sharded_observability_v1`,
+`remote_python_real_llm_sharded_infer`, `hf_dependencies_missing`,
+`hf_transformers_cpu`, optional [hf], CPU-only, read-only, not P2P, not
+GGUF/llama.cpp, and not large-model.
+
+Live RC anchors: Real Small-LLM Sharded Inference Live RC,
+`real_llm_live_rc_v1`, `real_llm_live_rc_check.py`,
+`real_llm_live_rc_pack.py`, `kaggle_real_llm_live_package.py`,
+`kaggle_real_llm_live_package_v1`, `crowdtensor real-llm-live-rc`,
+`local-generated`, `kaggle-generated`, `external-existing`,
+`kaggle_real_llm_live_package_ready`, `kaggle-upload-real-llm-stage0`,
+`kaggle-upload-real-llm-stage1`,
+`local_generated_real_llm_stage_upload_standins_ready`,
+`external_runtime_verified`, `kaggle_real_llm_stage0_seen`,
+`kaggle_real_llm_stage1_seen`, `kaggle_real_llm_sharded_ready`,
+`real_llm_artifact_ready`, `--enable-hf-tiny-gpt-runtime`,
+`--real-llm-stage-role`, CPU-only, read-only, not P2P, not production Swarm
+Inference, and not large-model.
 
 ## Who Should Try It
 

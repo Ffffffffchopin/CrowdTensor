@@ -82,6 +82,7 @@ behind `public-real-llm-swarm-beta`.
 User-facing commands wrap the runtime into safer flows:
 
 - `crowdtensor local-proof`
+- `crowdtensor infer`
 - `crowdtensor cpu-infer`
 - `crowdtensor serve`
 - `crowdtensor join`
@@ -94,7 +95,7 @@ and keep shareable artifacts redacted.
 
 ## Request Lifecycle
 
-1. A client calls `generate` or a higher-level beta command.
+1. A client calls `infer`, `generate`, or a higher-level beta command.
 2. The Coordinator creates a read-only inference session.
 3. Stage-specific work is leased to capable Miners.
 4. Miners heartbeat while working.

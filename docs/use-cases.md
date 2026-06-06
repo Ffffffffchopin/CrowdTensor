@@ -14,13 +14,14 @@ Run:
 
 ```bash
 python -m pip install -e '.[dev,hf]'
-crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16 --json
+crowdtensor infer "CrowdTensor routes small models across home compute"
 ```
 
 You get:
 
 - A local discovery, Coordinator, and two-stage Miner proof.
 - Real tiny GPT split inference.
+- A compact user-facing `infer_summary.json`.
 - Decoded-token correctness checks.
 - Stage assignment and distinct Miner evidence.
 - Redacted artifacts under `dist/`.
@@ -72,6 +73,7 @@ Useful checks:
 ```bash
 python -m unittest discover -s tests
 crowdtensor local-proof --json
+crowdtensor infer "CrowdTensor routes small models across home compute" --json
 crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16 --json
 ```
 

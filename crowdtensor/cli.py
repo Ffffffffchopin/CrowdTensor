@@ -59,6 +59,8 @@ from crowdtensor.session_protocol import (
     safe_generation_summary,
     safe_stream_event,
     safe_stream_events,
+    stable_hash_payload,
+    stable_hash_text,
 )
 
 
@@ -104,6 +106,7 @@ PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
+INFER_CLI_SCHEMA = "crowdtensor_infer_cli_v1"
 P2P_LITE_CLI_SCHEMA = "p2p_lite_cli_v1"
 P2PD_CLI_SCHEMA = "p2pd_cli_v1"
 REAL_P2P_CLI_SCHEMA = "real_p2p_cli_v1"
@@ -3079,6 +3082,317 @@ def build_public_swarm_inference_v2(args: argparse.Namespace, *, runner: Runner 
     })
 
 
+def _safe_nested_get(payload: dict[str, Any], *keys: str) -> dict[str, Any]:
+    current: Any = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return {}
+        current = current.get(key)
+    return current if isinstance(current, dict) else {}
+
+
+def _infer_generation_from_report(payload: dict[str, Any]) -> dict[str, Any]:
+    generation = _safe_nested_get(payload, "readiness", "local_p2p_generate", "generation")
+    if generation:
+        return generation
+    generation = _safe_nested_get(payload, "readiness", "p2p_product_path", "generation")
+    if generation:
+        return generation
+    generation = payload.get("generation") if isinstance(payload.get("generation"), dict) else {}
+    return generation if isinstance(generation, dict) else {}
+
+
+def _infer_route_from_report(payload: dict[str, Any]) -> dict[str, Any]:
+    local = _safe_nested_get(payload, "readiness", "local_p2p_generate")
+    if local:
+        return {
+            "route_source": local.get("route_source"),
+            "route_ready": bool(local.get("route_ready")),
+            "distinct_stage_miners": bool(local.get("distinct_stage_miners")),
+            "stage_assignment_valid": bool(local.get("stage_assignment", {}).get("stage_assignment_valid"))
+            if isinstance(local.get("stage_assignment"), dict)
+            else bool(local.get("distinct_stage_miners")),
+            "accepted_rows": local.get("accepted_rows"),
+        }
+    p2p = _safe_nested_get(payload, "readiness", "p2p_product_path")
+    if p2p:
+        return {
+            "route_source": p2p.get("route_source"),
+            "route_ready": bool(p2p.get("route_ready")),
+            "distinct_stage_miners": bool(p2p.get("distinct_stage_miners")),
+            "stage_assignment_valid": bool(p2p.get("stage_assignment", {}).get("stage_assignment_valid"))
+            if isinstance(p2p.get("stage_assignment"), dict)
+            else bool(p2p.get("distinct_stage_miners")),
+            "accepted_rows": p2p.get("accepted_rows"),
+        }
+    route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
+    return {
+        "route_source": route.get("route_source"),
+        "route_ready": bool(route.get("usable_now") or route.get("coordinator_url_present")),
+        "distinct_stage_miners": False,
+        "stage_assignment_valid": False,
+        "accepted_rows": None,
+    }
+
+
+def _infer_model_from_report(payload: dict[str, Any], default_model_id: str) -> str:
+    local_model = _safe_nested_get(payload, "readiness", "local_p2p_generate", "model")
+    for source in [
+        payload.get("hf_model_id"),
+        _safe_nested_get(payload, "public_swarm_v2").get("hf_model_id"),
+        _safe_nested_get(payload, "usable_swarm").get("hf_model_id"),
+        _safe_nested_get(payload, "session").get("hf_model_id"),
+        _safe_nested_get(payload, "session").get("model_id"),
+        local_model.get("observed_hf_model_id"),
+        local_model.get("expected_hf_model_id"),
+    ]:
+        if isinstance(source, str) and source:
+            return source
+    return default_model_id
+
+
+def _infer_stream_from_report(payload: dict[str, Any]) -> dict[str, Any]:
+    stream = _safe_nested_get(payload, "readiness", "local_p2p_generate", "stream")
+    if stream:
+        return stream
+    stream = _safe_nested_get(payload, "readiness", "p2p_product_path", "stream")
+    if stream:
+        return stream
+    stream = payload.get("stream") if isinstance(payload.get("stream"), dict) else {}
+    return stream if isinstance(stream, dict) else {}
+
+
+def _infer_batch_from_report(payload: dict[str, Any]) -> dict[str, Any]:
+    batch = _safe_nested_get(payload, "readiness", "local_p2p_generate", "batch")
+    if batch:
+        return batch
+    batch = _safe_nested_get(payload, "readiness", "p2p_product_path", "batch")
+    if batch:
+        return batch
+    batch = payload.get("batch") if isinstance(payload.get("batch"), dict) else {}
+    return batch if isinstance(batch, dict) else {}
+
+
+def _infer_summary_from_payload(
+    args: argparse.Namespace,
+    payload: dict[str, Any],
+    *,
+    mode: str,
+    output_dir: Path,
+    step: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    generation = _infer_generation_from_report(payload)
+    route = _infer_route_from_report(payload)
+    stream = _infer_stream_from_report(payload)
+    batch = _infer_batch_from_report(payload)
+    local_output = payload.get("local_output") if isinstance(payload.get("local_output"), dict) else {}
+    allow_local_generated_text = bool(not getattr(args, "json", False))
+    generated_text = (
+        local_output.get("generated_text")
+        if allow_local_generated_text and isinstance(local_output.get("generated_text"), str)
+        else ""
+    )
+    generated_tokens = int(generation.get("generated_token_count") or 0)
+    max_new_tokens = int(generation.get("max_new_tokens") or getattr(args, "max_new_tokens", 0) or 0)
+    try:
+        prompts = parse_prompt_texts_arg(str(getattr(args, "prompt_text", "") or ""), str(getattr(args, "prompt_texts", "") or ""))
+    except ValueError:
+        prompts = [str(getattr(args, "prompt_text", "") or "")]
+    ok = bool(payload.get("ok") and generated_tokens >= max_new_tokens and max_new_tokens > 0)
+    codes = set(payload.get("diagnosis_codes") or [])
+    if ok:
+        codes.add("crowdtensor_infer_ready")
+        codes.add("user_friendly_infer_ready")
+    else:
+        codes.add("crowdtensor_infer_blocked")
+    summary = {
+        "schema": INFER_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": ok,
+        "mode": mode,
+        "output_dir": str(output_dir),
+        "prompt": {
+            "prompt_hash": stable_hash_payload([stable_hash_text(prompt) for prompt in prompts]),
+            "prompt_count": int(batch.get("expected_request_count") or batch.get("request_count") or 1),
+            "raw_prompt_public": False,
+        },
+        "model": {
+            "hf_model_id": _infer_model_from_report(payload, str(getattr(args, "hf_model_id", "") or "sshleifer/tiny-gpt2")),
+            "backend": str(getattr(args, "backend", "cpu") or "cpu"),
+        },
+        "generation": {
+            "generated_token_count": generated_tokens,
+            "max_new_tokens": max_new_tokens,
+            "generated_text_hash": generation.get("generated_text_hash"),
+            "decoded_tokens_match": generation.get("decoded_tokens_match"),
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        },
+        "route": route,
+        "batch": {
+            "enabled": bool(batch.get("enabled")),
+            "ready": bool(batch.get("batch_generation_ready")),
+            "observed_request_count": batch.get("observed_request_count"),
+        },
+        "stream": {
+            "enabled": bool(stream.get("enabled") or stream.get("requested")),
+            "ready": bool(stream.get("stream_generation_ready")),
+            "event_count": int(stream.get("event_count") or 0),
+            "source": stream.get("source"),
+        },
+        "local_output": {
+            "available": bool(generated_text),
+            "generated_text": generated_text if generated_text else "",
+            "display_only": bool(generated_text),
+            "public_artifact_safe": False,
+        },
+        "source_report": {
+            "schema": payload.get("schema"),
+            "mode": payload.get("mode"),
+            "ok": payload.get("ok"),
+        },
+        "step": step or {},
+        "diagnosis_codes": sorted(codes),
+        "safety": {
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "read_only_workload": True,
+            "not_production": True,
+            "coordinator_backed": True,
+        },
+        "limitations": [
+            "User-friendly inference front door for the current small-model swarm path.",
+            "Coordinator-backed, read-only, tiny/small-model scoped; not production Hivemind/Petals parity or large-model serving.",
+        ],
+    }
+    artifacts = {
+        "infer_summary": {
+            "kind": "crowdtensor_infer_summary",
+            "path": "infer_summary.json",
+            "present": True,
+            "schema": INFER_CLI_SCHEMA,
+            "ok": ok,
+        }
+    }
+    if mode == "local":
+        artifacts["public_swarm_v2_report"] = artifact_entry(
+            output_dir / "public-swarm-v2" / "public_swarm_inference_v2.json",
+            output_dir,
+            kind="public_swarm_inference_v2",
+            schema="public_swarm_inference_v2",
+            ok=payload.get("ok") if payload else None,
+        )
+    summary["artifacts"] = artifacts
+    output_dir.mkdir(parents=True, exist_ok=True)
+    persisted_summary = json.loads(json.dumps(summary))
+    if isinstance(persisted_summary.get("local_output"), dict):
+        persisted_summary["local_output"]["generated_text"] = ""
+        persisted_summary["local_output"]["display_only"] = False
+    (output_dir / "infer_summary.json").write_text(
+        json.dumps(sanitize(redact_values(persisted_summary)), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return sanitize(redact_values(summary))
+
+
+def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = getattr(args, "infer_mode", "local")
+    if mode == "existing":
+        generate_args = argparse.Namespace(
+            prompt_text=args.prompt_text,
+            prompt_texts=args.prompt_texts,
+            scenario_id=args.scenario_id,
+            max_new_tokens=args.max_new_tokens,
+            backend=args.backend,
+            hf_model_id=args.hf_model_id,
+            coordinator_url=args.coordinator_url,
+            peer_bootstrap=args.peer_bootstrap,
+            p2p=bool(args.p2p or args.peer_bootstrap),
+            p2p_backend=args.p2p_backend,
+            admin_token=args.admin_token,
+            timeout_seconds=args.timeout_seconds,
+            poll_interval=args.poll_interval,
+            http_timeout=args.http_timeout,
+            admin_results_limit=args.admin_results_limit,
+            dry_run=False,
+            include_output=args.include_output,
+            stream=args.stream,
+            json=args.json,
+        )
+        payload = build_product_generate(generate_args)
+        return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir)
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "public_swarm_inference_v2_pack.py"),
+        "local" if args.full_evidence else "local-model-variant",
+        "--output-dir",
+        str(output_dir / "public-swarm-v2"),
+        "--usable-report",
+        args.usable_report,
+        "--preview-report",
+        args.preview_report,
+        "--real-p2p-report",
+        args.real_p2p_report,
+        "--gpu-report",
+        args.gpu_report,
+        "--fresh-external-attempt-report",
+        args.fresh_external_attempt_report,
+        "--public-host",
+        args.public_host,
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--real-p2p-port",
+        str(args.real_p2p_port),
+        "--real-p2p-coordinator-port",
+        str(args.real_p2p_coordinator_port),
+        "--real-p2p-libp2p-port",
+        str(args.real_p2p_libp2p_port),
+        "--real-p2p-discovery-backend",
+        args.real_p2p_discovery_backend,
+        "--backend",
+        args.backend,
+        "--hf-model-id",
+        args.hf_model_id,
+        "--prompt-text",
+        args.prompt_text,
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--json",
+    ]
+    if args.prompt_texts:
+        command.extend(["--prompt-texts", args.prompt_texts])
+    if args.stream:
+        command.append("--stream-generation")
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    step, payload = run_json_step(
+        "crowdtensor_infer_local_swarm",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=int(max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 1800.0),
+    )
+    if not payload:
+        payload = {
+            "schema": "public_swarm_inference_v2",
+            "ok": False,
+            "mode": "local",
+            "diagnosis_codes": ["crowdtensor_infer_source_report_missing"],
+        }
+    return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir, step=step)
+
+
 def build_public_swarm_developer_preview(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -5269,6 +5583,35 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  note: {report.get('local_output_note')}")
 
 
+def print_infer(report: dict[str, Any]) -> None:
+    print("CrowdTensor infer")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  mode: {report.get('mode')}")
+    model = report.get("model") if isinstance(report.get("model"), dict) else {}
+    print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    print(
+        "  generation: "
+        f"{generation.get('generated_token_count')}/{generation.get('max_new_tokens')} "
+        f"hash={generation.get('generated_text_hash')}"
+    )
+    route = report.get("route") if isinstance(report.get("route"), dict) else {}
+    print(
+        "  route: "
+        f"source={route.get('route_source')} "
+        f"ready={route.get('route_ready')} "
+        f"distinct_stage_miners={route.get('distinct_stage_miners')}"
+    )
+    stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
+    if stream.get("enabled"):
+        print(f"  stream: ready={stream.get('ready')} events={stream.get('event_count')} source={stream.get('source')}")
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    if local_output.get("generated_text"):
+        print(f"  output: {local_output.get('generated_text')}")
+    print(f"  output_dir: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+
+
 def build_peer_cli(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     action = args.peer_action
     if action == "check":
@@ -6725,6 +7068,46 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     clean.add_argument("--include-reports", action="store_true", help="allow deletion of /tmp/crowdtensor_*.json/md reports")
     clean.add_argument("--older-than-hours", type=float, default=24.0)
     clean.add_argument("--json", action="store_true")
+
+    infer = subparsers.add_parser("infer", help="Run a user-friendly CrowdTensor swarm inference request.")
+    infer.add_argument("prompt_text", nargs="?", default="CrowdTensor routes small models across home compute")
+    infer.add_argument("--mode", dest="infer_mode", choices=["local", "existing"], default="local")
+    infer.add_argument("--output-dir", default="dist/infer")
+    infer.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
+    infer.add_argument("--max-new-tokens", type=int, default=16)
+    infer.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    infer.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    infer.add_argument("--hf-cache-dir", default="")
+    infer.add_argument("--stream", action="store_true", help="request safe stream-progress evidence")
+    infer.add_argument("--include-output", action="store_true", help="request local raw output from generate; JSON and saved artifacts still suppress it")
+    infer.add_argument("--full-evidence", action="store_true", help="use the full local Public Swarm v2 gate instead of the faster local-only path")
+    infer.add_argument("--coordinator-url", default="")
+    infer.add_argument("--peer-bootstrap", default="")
+    infer.add_argument("--p2p", action="store_true")
+    infer.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
+    infer.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    infer.add_argument("--scenario-id", default="crowdtensor-infer")
+    infer.add_argument("--public-host", default="127.0.0.1")
+    infer.add_argument("--p2p-port", type=int, default=9788)
+    infer.add_argument("--coordinator-port", type=int, default=9789)
+    infer.add_argument("--real-p2p-port", type=int, default=9790)
+    infer.add_argument("--real-p2p-coordinator-port", type=int, default=9791)
+    infer.add_argument("--real-p2p-libp2p-port", type=int, default=0)
+    infer.add_argument("--real-p2p-discovery-backend", choices=sorted(DISCOVERY_BACKENDS), default="http-provider-store")
+    infer.add_argument("--usable-report", default="dist/usable-swarm-inference-v1/usable_swarm_inference.json")
+    infer.add_argument("--preview-report", default="dist/public-swarm-preview-v04-final/public_swarm_preview_v04.json")
+    infer.add_argument(
+        "--real-p2p-report",
+        default="dist/goal-final-infer-real-p2p-core-fresh-16tok-import-strict-20260601/real_p2p_swarm_inference_core_rc.json",
+    )
+    infer.add_argument("--gpu-report", default="dist/public-swarm-gpu-beta-live-20260528-runtimepin/public_swarm_gpu_inference_beta_kaggle_auto.json")
+    infer.add_argument("--fresh-external-attempt-report", default="")
+    infer.add_argument("--startup-timeout", type=float, default=45.0)
+    infer.add_argument("--timeout-seconds", type=float, default=420.0)
+    infer.add_argument("--poll-interval", type=float, default=1.0)
+    infer.add_argument("--http-timeout", type=float, default=30.0)
+    infer.add_argument("--admin-results-limit", type=int, default=50)
+    infer.add_argument("--json", action="store_true")
 
     serve = subparsers.add_parser("serve", help="Print or run a product-facing Coordinator command.")
     serve.add_argument("--profile", choices=["cpu-real-llm", "gpu-generation"], default="cpu-real-llm")
@@ -8594,13 +8977,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_demo_kaggle_real.add_argument("--task-id", default="")
     remote_demo_kaggle_real.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if args.command in {"local-proof", "serve", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
             raise SystemExit("--request-count must be at least 1")
         if hasattr(args, "timeout_seconds") and args.timeout_seconds < 1:
             raise SystemExit("--timeout-seconds must be at least 1")
+    if args.command == "infer":
+        try:
+            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        if args.p2p_port < 1 or args.coordinator_port < 1 or args.real_p2p_port < 1 or args.real_p2p_coordinator_port < 1:
+            raise SystemExit("infer ports must be positive")
+        if args.real_p2p_libp2p_port < 0:
+            raise SystemExit("--real-p2p-libp2p-port must be non-negative")
+        for name in ["startup_timeout", "timeout_seconds", "poll_interval", "http_timeout"]:
+            if getattr(args, name) <= 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+        if args.admin_results_limit < 1:
+            raise SystemExit("--admin-results-limit must be at least 1")
+        if args.infer_mode == "existing":
+            if not args.coordinator_url and not args.peer_bootstrap and not args.p2p:
+                raise SystemExit("infer --mode existing requires --coordinator-url, --peer-bootstrap, or --p2p")
+            if not args.admin_token:
+                raise SystemExit("infer --mode existing requires --admin-token or CROWDTENSOR_ADMIN_TOKEN")
     if args.command == "serve":
         if args.port < 1:
             raise SystemExit("--port must be positive")
@@ -9475,6 +9879,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_cleanup_report(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "infer":
+        report = build_infer(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_infer(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "serve":
         report = build_product_serve(args)

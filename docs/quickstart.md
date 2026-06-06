@@ -52,9 +52,32 @@ For the CPU-only inference aggregate:
 crowdtensor cpu-infer --mode local --json
 ```
 
-## 3. Run The Real-LLM Swarm Beta
+## 3. Run User-Friendly Swarm Inference
 
-With `[hf]` installed, run the current user-facing real-model beta gate:
+With `[hf]` installed, the shortest user-facing inference path is:
+
+```bash
+crowdtensor infer "CrowdTensor routes small models across home compute"
+```
+
+It starts the controlled local swarm route, runs tiny GPT split inference, and
+writes a compact `infer_summary.json` under `dist/infer`.
+
+For machine-readable output:
+
+```bash
+crowdtensor infer \
+  "CrowdTensor routes small models across home compute" \
+  --max-new-tokens 16 \
+  --json
+```
+
+`crowdtensor infer --mode existing` can target an already running Coordinator or
+P2P-discovered swarm with `--coordinator-url` or `--peer-bootstrap`.
+
+## 4. Run The Real-LLM Swarm Beta Gate
+
+For maintainer-grade release evidence, run the stricter real-model beta gate:
 
 ```bash
 crowdtensor public-real-llm-swarm-beta release \
@@ -76,7 +99,7 @@ Useful readiness fields in the JSON output include:
 - `distinct_stage_miners`
 - `stage_assignment_valid`
 
-## 4. Run The Manual Five-Process Demo
+## 5. Run The Manual Five-Process Demo
 
 The release gate is convenient, but the manual flow shows the moving pieces.
 Open five terminals from the repository root.
@@ -118,7 +141,7 @@ Expected behavior:
 - The client receives the generated tokens.
 - The route records evidence for assignment and validation.
 
-## 5. Package A Controlled Remote Trial
+## 6. Package A Controlled Remote Trial
 
 For a two-machine style rehearsal, generate the package first:
 
@@ -132,7 +155,7 @@ Use the generated runbook and private env files only on trusted hosts. For real
 machines, put the Coordinator behind a trusted network boundary such as LAN,
 VPN, tunnel, or explicit firewall rules. Rotate temporary tokens after demos.
 
-## 6. Optional CUDA Tiny-Model Path
+## 7. Optional CUDA Tiny-Model Path
 
 CUDA is opt-in and only applies to the tiny real-model stage runtime. It should
 fail closed when CUDA is unavailable.
@@ -147,7 +170,7 @@ crowdtensor public-real-llm-swarm-beta release \
 
 CPU remains the default path.
 
-## 7. Clean Generated Artifacts
+## 8. Clean Generated Artifacts
 
 Dry-run cleanup:
 
