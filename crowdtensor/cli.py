@@ -3204,6 +3204,8 @@ def _infer_route_from_report(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "route_source": route.get("route_source"),
         "route_ready": bool(route.get("usable_now") or route.get("coordinator_url_present")),
+        "coordinator_url": route.get("coordinator_url"),
+        "missing_capabilities": route.get("missing_capabilities") if isinstance(route.get("missing_capabilities"), list) else [],
         "distinct_stage_miners": False,
         "stage_assignment_valid": False,
         "accepted_rows": None,
@@ -3472,6 +3474,8 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
     )
     if "hf_dependencies_missing" in codes or "product_swarm_mvp_hf_runtime_missing" in codes or "transformers" in detail:
         return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
+    if "p2p_discovery_unreachable" in codes:
+        return "Start the P2P discovery daemon with crowdtensor p2pd --run, or pass --coordinator-url for a direct Coordinator route."
     if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
         return "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm."
     if "coordinator_ready_failed" in codes:
@@ -3595,6 +3599,11 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
     coordinator_url = str(route.get("coordinator_url") or getattr(args, "coordinator_url", "") or "")
     peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "")
     use_p2p = bool(getattr(args, "p2p", False) or peer_bootstrap)
+    if "p2p_discovery_unreachable" in codes:
+        commands.append(command_entry(
+            "start P2P discovery daemon",
+            ["crowdtensor", "p2pd", "--port", str(local_coordinator_port_from_url(peer_bootstrap, default=8788)), "--run"],
+        ))
     route_missing = "coordinator_route_missing" in codes
     suggested_coordinator_url = coordinator_url or (
         "http://127.0.0.1:8787" if route_missing and not use_p2p else ""
@@ -3766,6 +3775,7 @@ def _infer_summary_from_payload(
             "generated_token_ids_public": False,
         },
         "route": route,
+        "p2p": payload.get("p2p") if isinstance(payload.get("p2p"), dict) else {},
         "coordinator_ready": payload.get("coordinator_ready") if isinstance(payload.get("coordinator_ready"), dict) else {},
         "stage_preflight": payload.get("stage_preflight") if isinstance(payload.get("stage_preflight"), dict) else {},
         "batch": {

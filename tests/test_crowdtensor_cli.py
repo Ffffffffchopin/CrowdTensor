@@ -4419,6 +4419,50 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertIn("admin_token_required", persisted["diagnosis_codes"])
 
+    def test_infer_existing_p2p_discovery_unreachable_is_actionable(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--p2p",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8799",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_peer_catalog", side_effect=OSError("offline")), patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("session creation should be blocked when discovery is offline"),
+        ):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+        self.assertEqual(report["p2p"]["discovery"]["error"], "OSError")
+        self.assertIn("P2P discovery daemon", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2pd --port 8799 --run", next_lines)
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --peer-bootstrap http://127.0.0.1:8799 --p2p",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
+        self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertIn("p2p_discovery_unreachable", persisted["diagnosis_codes"])
+        self.assertEqual(persisted["p2p"]["discovery"]["error"], "OSError")
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
+        self.assertNotIn("admin-secret", json.dumps(persisted, sort_keys=True))
+
     def test_infer_existing_dry_run_preflights_without_admin_token(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
