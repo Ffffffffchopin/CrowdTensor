@@ -3644,7 +3644,10 @@ def guarded_submit_label(label: str, ready_to_submit: dict[str, Any]) -> str:
         return f"{label} after checks pass"
     if next_step == "run_live_preflight" or readiness_label == "skipped":
         return f"{label} after live preflight"
-    if next_step == "run_stage_preflight" or (readiness_label == "partial" and "stage_preflight_skipped" in warnings):
+    if next_step == "run_stage_preflight" or (
+        readiness_label == "partial"
+        and ("stage_preflight_skipped" in warnings or "stage_preflight_unknown" in warnings)
+    ):
         return f"{label} after stage preflight"
     if next_step == "submit_with_caution":
         return f"{label} with caution"
@@ -3666,7 +3669,7 @@ def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
         return ""
     if ready_to_submit and ready_to_submit.get("ok") is True and not ready_to_submit.get("fully_verified"):
         warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or []))
-        if "stage_preflight_skipped" in warnings:
+        if "stage_preflight_skipped" in warnings or "stage_preflight_unknown" in warnings:
             return (
                 f"{kind} can be submitted, but stage0/stage1 were not fully verified; "
                 "rerun --dry-run with --observer-token to check /state before submitting."
