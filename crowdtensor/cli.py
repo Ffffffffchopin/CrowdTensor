@@ -7013,7 +7013,19 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
             "source": "not-checked",
             "public_artifact_safe": True,
         }
-    codes = list(payload.get("diagnosis_codes") or [])
+    replaced_preflight_codes = {
+        "coordinator_ready_preflight_ready",
+        "coordinator_ready_preflight_skipped",
+        "coordinator_ready_failed",
+        "stage_preflight_ready",
+        "stage_preflight_failed",
+        "stage_preflight_skipped",
+    }
+    codes = [
+        str(code)
+        for code in (payload.get("diagnosis_codes") or [])
+        if str(code) not in replaced_preflight_codes and str(code) != "generate_dry_run_ready"
+    ]
     if route_ready and coordinator_ready.get("ok"):
         codes.append("coordinator_ready_preflight_ready")
     elif route_ready:
