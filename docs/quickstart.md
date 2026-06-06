@@ -97,7 +97,8 @@ observer-token verification; `blocked` means follow `operator_action`; and
 `skipped` means live checks were intentionally bypassed. JSON reports mirror
 that status with `crowdtensor_infer_preflight_partial` for partial existing
 swarm checks and `crowdtensor_infer_preflight_ready` only after full route,
-Coordinator, and stage Miner verification.
+Coordinator, and stage Miner verification. `stage_preflight_not_checked` means
+the route or Coordinator check failed before stage Miners could be inspected.
 Add `--stream` when you want safe token-progress evidence in the CLI summary.
 
 ## 4. Run The Real-LLM Swarm Beta Gate
@@ -208,7 +209,9 @@ every live check was proven. The same decision is available as
 `ready_to_submit.next_step` for scripts and support tools, with stable values
 such as `submit`, `run_stage_preflight`, `run_live_preflight`,
 `submit_with_caution`, and `fix_blockers`. `stage_preflight_unknown` means a
-required stage check did not return a true/false result.
+required stage check did not return a true/false result. If
+`stage_preflight_not_checked` appears, fix the printed route or Coordinator
+blocker and rerun the dry-run before submitting.
 
 ## 6. Package A Controlled Remote Trial
 

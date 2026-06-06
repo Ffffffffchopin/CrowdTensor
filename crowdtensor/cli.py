@@ -9445,7 +9445,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "observer-token stage verification; blocked needs the printed operator_action;\n"
             "skipped is request-shape only. ready_to_submit.next_step is the script-friendly\n"
             "action: submit, run_stage_preflight, run_live_preflight, submit_with_caution,\n"
-            "or fix_blockers. stage_preflight_unknown means rerun the stage preflight.\n\n"
+            "or fix_blockers. stage_preflight_unknown means rerun the stage preflight;\n"
+            "stage_preflight_not_checked means fix route/Coordinator first.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -9599,7 +9600,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "stage verification; blocked needs the printed operator_action; skipped is request-shape only.\n"
             "ready_to_submit.next_step is the script-friendly action: submit, run_stage_preflight,\n"
             "run_live_preflight, submit_with_caution, or fix_blockers. stage_preflight_unknown\n"
-            "means rerun the stage preflight.\n\n"
+            "means rerun the stage preflight; stage_preflight_not_checked means fix route/Coordinator first.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),

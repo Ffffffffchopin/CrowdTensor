@@ -104,7 +104,9 @@ command first; `with caution` means the request can run but not every live
 check was proven. Machine-readable `next_step` uses stable values such as
 `submit`, `run_stage_preflight`, `run_live_preflight`, `submit_with_caution`,
 and `fix_blockers`. `stage_preflight_unknown` means the stage check was
-required but did not return a true/false result.
+required but did not return a true/false result. `stage_preflight_not_checked`
+means a route or Coordinator prerequisite failed first, so fix the printed
+blocker and rerun the dry-run before submitting.
 
 If `coordinator_ready` is not true, its line now includes `error=...` for a
 failed live probe or `reason=...` for an intentionally skipped check, so the
