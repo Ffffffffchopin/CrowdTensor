@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -288,6 +289,10 @@ def redacted_command(command: list[str], sensitive_flags: set[str]) -> list[str]
         if item in sensitive_flags:
             redact_next = True
     return result
+
+
+def command_line(command: list[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in command)
 
 
 def utc_now() -> str:
@@ -5277,12 +5282,14 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
     command = build_serve_command(args)
     public_bind = args.bind_host in {"0.0.0.0", "::"}
     if public_bind and not args.i_understand_public_bind:
+        safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token"})
         return sanitize({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "serve",
             "profile": args.profile,
-            "command": command,
+            "command": safe_command,
+            "command_line": command_line(safe_command),
             "diagnosis_codes": ["public_bind_requires_explicit_ack"],
             "operator_action": "Add --i-understand-public-bind only on a trusted network boundary, or keep --bind-host on 127.0.0.1.",
             "safety": {"public_bind_requires_explicit_ack": True},
@@ -5314,6 +5321,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
     else:
         peer = {}
 
+    safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token"})
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": bool(not args.p2p or peer_announce.get("ok")),
@@ -5326,7 +5334,8 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             "bootstrap": p2p_bootstrap if args.p2p else "",
             "announce": peer_announce,
         },
-        "command": redacted_command(command, {"--admin-token", "--miner-token", "--observer-token"}),
+        "command": safe_command,
+        "command_line": command_line(safe_command),
         "printed_only": not args.run,
         "diagnosis_codes": ["serve_command_ready"] + (
             [("real_p2p_coordinator_announce_ready" if _p2p_backend(args) == "real" else "p2p_coordinator_announce_ready")]
@@ -5517,6 +5526,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         peer = {}
     command = build_join_command(args, coordinator_url=coordinator_url)
     ready = bool(not args.p2p or peer_announce.get("ok"))
+    safe_command = redacted_command(command, {"--miner-token", "--peer-secret"})
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": ready,
@@ -5532,7 +5542,8 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             "stage_capabilities": _p2p_stage_capabilities(backend=args.backend, stage=args.stage),
             "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
         },
-        "command": redacted_command(command, {"--miner-token", "--peer-secret"}),
+        "command": safe_command,
+        "command_line": command_line(safe_command),
         "printed_only": not args.run,
         "diagnosis_codes": ["join_command_ready"] + (
             [("real_p2p_stage_miner_announce_ready" if p2p_backend == "real" else "p2p_stage_miner_announce_ready")]
@@ -6540,9 +6551,7 @@ def print_product_serve(report: dict[str, Any]) -> None:
             f"announced={announce.get('ok')}"
         )
     if report.get("printed_only"):
-        print("  command:")
-        for part in report.get("command") or []:
-            print(f"    {part}")
+        print(f"  command: {report.get('command_line') or command_line(report.get('command') or [])}")
     if report.get("returncode") is not None:
         print(f"  returncode: {report.get('returncode')}")
     if report.get("operator_action"):
@@ -6566,9 +6575,7 @@ def print_product_join(report: dict[str, Any]) -> None:
             f"stage_caps={','.join(str(item) for item in caps) if caps else 'none'}"
         )
     if report.get("printed_only"):
-        print("  command:")
-        for part in report.get("command") or []:
-            print(f"    {part}")
+        print(f"  command: {report.get('command_line') or command_line(report.get('command') or [])}")
     if report.get("returncode") is not None:
         print(f"  returncode: {report.get('returncode')}")
     if report.get("operator_action"):

@@ -234,13 +234,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("admin-secret", encoded)
         self.assertNotIn("miner-secret", encoded)
         self.assertIn("<redacted>", report["command"])
+        self.assertIn("command_line", report)
+        self.assertIn("--admin-token '<redacted>'", report["command_line"])
+        self.assertNotIn("admin-secret", report["command_line"])
+        self.assertNotIn("miner-secret", report["command_line"])
         self.assertIn("Rerun with --run", report["operator_action"])
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_serve(report)
         rendered = stdout.getvalue()
         self.assertIn("CrowdTensor serve", rendered)
-        self.assertIn("  command:", rendered)
+        self.assertIn("  command: ", rendered)
+        self.assertIn("--admin-token '<redacted>'", rendered)
         self.assertIn("  action: Rerun with --run", rendered)
         self.assertNotIn("admin-secret", rendered)
         self.assertNotIn("miner-secret", rendered)
@@ -259,6 +264,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertIn("public_bind_requires_explicit_ack", report["diagnosis_codes"])
+        self.assertIn("command_line", report)
         self.assertIn("trusted network boundary", report["operator_action"])
 
     def test_product_generate_dry_run_uses_session_protocol(self) -> None:
@@ -592,6 +598,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(command[command.index("--max-runtime-seconds") + 1], "30.0")
         self.assertIn("--max-request-attempts", command)
         self.assertEqual(command[command.index("--max-request-attempts") + 1], "9")
+        self.assertIn("command_line", report)
 
     def test_product_join_missing_route_action(self) -> None:
         args = cli.parse_args([
@@ -632,7 +639,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
 
         self.assertIn("CrowdTensor join", rendered)
-        self.assertIn("  command:", rendered)
+        self.assertIn("  command: ", rendered)
+        self.assertIn("--miner-token '<redacted>'", rendered)
         self.assertIn("  action: Rerun with --run", rendered)
         self.assertNotIn("miner-secret", rendered)
 
