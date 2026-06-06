@@ -114,6 +114,8 @@ REAL_P2P_CLI_SCHEMA = "real_p2p_cli_v1"
 P2P_DAEMON_CLI_SCHEMA = "p2p_daemon_cli_v1"
 DEFAULT_P2P_BOOTSTRAP = "http://127.0.0.1:8788"
 DEFAULT_PRODUCT_GENERATE_PROMPT = "CrowdTensor routes a tiny model across two stage miners."
+INFER_PROMPT_PLACEHOLDER = "<prompt>"
+INFER_BATCH_PROMPTS_PLACEHOLDER = "<prompt-1>,<prompt-2>"
 SECRET_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
     "CROWDTENSOR_OBSERVER_TOKEN",
@@ -3436,6 +3438,8 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
         return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
     if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
         return "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm."
+    if "coordinator_ready_failed" in codes:
+        return "Coordinator route exists but /ready is not reachable; start the Coordinator or fix --coordinator-url, then rerun --dry-run."
     if "stage_preflight_failed" in codes:
         return "Start or rejoin distinct stage0 and stage1 Miners, then rerun --dry-run with --observer-token to verify /state."
     if "admin_token_required" in codes:
@@ -3445,6 +3449,156 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
     if "crowdtensor_infer_source_report_missing" in codes:
         return "Inspect the child report under the output directory, then rerun with --json for machine-readable diagnostics."
     return "Inspect infer_summary.json and the child report under output_dir for the failing check."
+
+
+def _infer_command_args(
+    args: argparse.Namespace,
+    *,
+    include_prompt: bool = True,
+    mode: str | None = None,
+    dry_run: bool | None = None,
+    full_evidence: bool | None = None,
+    include_admin: bool = False,
+    include_observer: bool = False,
+) -> list[str]:
+    command = ["crowdtensor", "infer"]
+    resolved_mode = mode or getattr(args, "infer_mode", "local")
+    if include_prompt:
+        command.append(INFER_PROMPT_PLACEHOLDER)
+    command.extend(["--mode", resolved_mode])
+    output_dir = str(getattr(args, "output_dir", "") or "")
+    if output_dir:
+        command.extend(["--output-dir", output_dir])
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    if prompt_texts:
+        command.extend(["--prompt-texts", INFER_BATCH_PROMPTS_PLACEHOLDER])
+    try:
+        max_new_tokens = int(getattr(args, "max_new_tokens", 8) or 8)
+    except (TypeError, ValueError):
+        max_new_tokens = 8
+    backend = str(getattr(args, "backend", "cpu") or "cpu")
+    if backend != "cpu":
+        command.extend(["--backend", backend])
+    hf_model_id = str(getattr(args, "hf_model_id", "") or "sshleifer/tiny-gpt2")
+    if hf_model_id != "sshleifer/tiny-gpt2":
+        command.extend(["--hf-model-id", hf_model_id])
+    if getattr(args, "hf_cache_dir", ""):
+        command.extend(["--hf-cache-dir", str(args.hf_cache_dir)])
+    if bool(getattr(args, "stream", False)):
+        command.append("--stream")
+    if bool(getattr(args, "include_output", False)):
+        command.append("--include-output")
+    use_full_evidence = bool(getattr(args, "full_evidence", False)) if full_evidence is None else bool(full_evidence)
+    if resolved_mode == "local" and use_full_evidence:
+        max_new_tokens = min(max(max_new_tokens, 8), 32)
+    elif resolved_mode == "local":
+        max_new_tokens = min(max(max_new_tokens, 2), 8)
+    elif resolved_mode == "existing":
+        max_new_tokens = min(max(max_new_tokens, 2), 32)
+    command.extend(["--max-new-tokens", str(max_new_tokens)])
+    if use_full_evidence:
+        command.append("--full-evidence")
+    use_dry_run = bool(getattr(args, "dry_run", False)) if dry_run is None else bool(dry_run)
+    if use_dry_run:
+        command.append("--dry-run")
+    coordinator_url = str(getattr(args, "coordinator_url", "") or "")
+    peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "")
+    p2p = bool(getattr(args, "p2p", False) or (resolved_mode == "existing" and peer_bootstrap))
+    if coordinator_url:
+        command.extend(["--coordinator-url", coordinator_url])
+    if peer_bootstrap:
+        command.extend(["--peer-bootstrap", peer_bootstrap])
+    if p2p:
+        command.append("--p2p")
+        p2p_backend = str(getattr(args, "p2p_backend", "lite") or "lite")
+        if p2p_backend != "lite":
+            command.extend(["--p2p-backend", p2p_backend])
+    if include_admin and str(getattr(args, "admin_token", "") or ""):
+        command.extend(["--admin-token", "<redacted>"])
+    if include_observer and str(getattr(args, "observer_token", "") or ""):
+        command.extend(["--observer-token", "<redacted>"])
+    timeout_seconds = float(getattr(args, "timeout_seconds", 420.0) or 420.0)
+    if timeout_seconds != 420.0:
+        command.extend(["--timeout-seconds", str(timeout_seconds)])
+    return command
+
+
+def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, ok: bool, mode: str) -> list[dict[str, Any]]:
+    commands: list[dict[str, Any]] = []
+    if mode == "local":
+        commands.append(command_entry(
+            "run local inference",
+            _infer_command_args(args, full_evidence=False),
+        ))
+        if not bool(getattr(args, "full_evidence", False)):
+            commands.append(command_entry(
+                "run broader local evidence",
+                _infer_command_args(args, full_evidence=True),
+            ))
+        return commands
+
+    route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
+    coordinator_url = str(route.get("coordinator_url") or getattr(args, "coordinator_url", "") or "")
+    peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "")
+    use_p2p = bool(getattr(args, "p2p", False) or peer_bootstrap)
+    dry_run_command = _infer_command_args(args, mode="existing", dry_run=True, include_admin=False, include_observer=True)
+    submit_command = _infer_command_args(args, mode="existing", dry_run=False, include_admin=False, include_observer=False)
+    commands.append(command_entry(
+        "check existing swarm",
+        dry_run_command,
+        requires_env=_product_env_requirements(args, ["observer"]),
+    ))
+    commands.append(command_entry(
+        "submit inference",
+        submit_command,
+        requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+    ))
+    if not ok and ("generate_route_unavailable" in set(payload.get("diagnosis_codes") or []) or "coordinator_route_missing" in set(payload.get("diagnosis_codes") or [])):
+        serve_args = argparse.Namespace(
+            profile="gpu-generation" if getattr(args, "backend", "cpu") == "cuda" else "cpu-real-llm",
+            bind_host="127.0.0.1",
+            public_host="127.0.0.1",
+            port=8787,
+            state_dir="state",
+            hf_model_id=getattr(args, "hf_model_id", "sshleifer/tiny-gpt2"),
+            hf_cache_dir=getattr(args, "hf_cache_dir", ""),
+            lease_seconds=15.0,
+            p2p=use_p2p,
+            p2p_backend=getattr(args, "p2p_backend", "lite"),
+            peer_bootstrap=peer_bootstrap or DEFAULT_P2P_BOOTSTRAP,
+            swarm_id="default",
+            peer_id="",
+            peer_url="",
+            i_understand_public_bind=False,
+            admin_token=getattr(args, "admin_token", ""),
+            miner_token="",
+            observer_token=getattr(args, "observer_token", ""),
+            peer_secret="",
+        )
+        commands.extend([
+            command_entry("start Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
+            command_entry(
+                "start stage0 Miner",
+                _product_cli_join_command(
+                    serve_args,
+                    coordinator_url=coordinator_url or "http://127.0.0.1:8787",
+                    stage="stage0",
+                    miner_id="stage0-miner",
+                    include_run=True,
+                ),
+            ),
+            command_entry(
+                "start stage1 Miner",
+                _product_cli_join_command(
+                    serve_args,
+                    coordinator_url=coordinator_url or "http://127.0.0.1:8787",
+                    stage="stage1",
+                    miner_id="stage1-miner",
+                    include_run=True,
+                ),
+            ),
+        ])
+    return commands
 
 
 def _infer_summary_from_payload(
@@ -3504,6 +3658,7 @@ def _infer_summary_from_payload(
     else:
         codes.add("crowdtensor_infer_blocked")
     operator_action = _infer_operator_action(args, payload, ok=ok)
+    next_commands = _infer_next_commands(args, payload, ok=ok, mode=mode)
     summary = {
         "schema": INFER_CLI_SCHEMA,
         "generated_at": utc_now(),
@@ -3563,6 +3718,7 @@ def _infer_summary_from_payload(
             "ok": payload.get("ok"),
         },
         "operator_action": operator_action,
+        "next_commands": next_commands,
         "step": step or {},
         "diagnosis_codes": sorted(codes),
         "safety": {
@@ -7002,6 +7158,11 @@ def print_infer(report: dict[str, Any]) -> None:
     print(f"  output_dir: {report.get('output_dir')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    for index, item in enumerate(report.get("next_commands") or [], start=1):
+        if isinstance(item, dict) and item.get("command_line"):
+            requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
+            suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 

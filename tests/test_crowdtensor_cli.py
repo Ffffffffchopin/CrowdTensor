@@ -3238,8 +3238,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["generation"]["generated_token_count"], 8)
         self.assertEqual(report["route"]["route_source"], "local-product-loopback")
         self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode local --output-dir {output_dir} --max-new-tokens 8",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode local --output-dir {output_dir} --max-new-tokens 8 --full-evidence",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
         self.assertTrue(report["artifacts"]["product_swarm_mvp_report"]["present"] is False)
         self.assertTrue((output_dir / "infer_summary.json").is_file())
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         self.assertTrue(calls)
 
     def test_infer_full_evidence_uses_public_swarm_v2_local_gate(self) -> None:
@@ -3458,6 +3470,19 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False", stdout.getvalue())
+        self.assertIn("next[1] check existing swarm", stdout.getvalue())
+        self.assertIn("next[2] submit inference", stdout.getvalue())
+        self.assertIn("# requires CROWDTENSOR_ADMIN_TOKEN", stdout.getvalue())
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --include-output --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --include-output --max-new-tokens 8 --coordinator-url http://127.0.0.1:8787",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(report["next_commands"], sort_keys=True))
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["wait_progress"]["max_observed_token_count"], 16)
@@ -3724,6 +3749,40 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("pip install -e '.[hf]'", report["operator_action"])
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertIn("pip install -e '.[hf]'", persisted["operator_action"])
+
+    def test_infer_existing_route_failure_includes_startup_next_commands(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+        payload = {
+            "schema": "public_swarm_product_cli_v1",
+            "ok": False,
+            "mode": "generate",
+            "diagnosis_codes": ["coordinator_route_missing"],
+            "route": {"route_source": "coordinator-url", "coordinator_url_present": False},
+            "generation": {"generated_token_count": 0, "max_new_tokens": 8},
+        }
+
+        report = cli._infer_summary_from_payload(args, payload, mode="existing", output_dir=output_dir)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("Start a Coordinator", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run", next_lines)
+        self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run", next_lines)
+        self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run", next_lines)
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
 
     def test_infer_timeout_action_uses_wait_progress(self) -> None:
         cases = [
@@ -4085,6 +4144,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
+        self.assertIn("Coordinator route exists", report["operator_action"])
 
     def test_infer_dry_run_is_existing_mode_only(self) -> None:
         with self.assertRaises(SystemExit):
