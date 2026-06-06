@@ -402,6 +402,17 @@ def route_catalog_missing_text(route: dict[str, Any]) -> str:
     return ",".join(str(item) for item in missing) if missing else "none"
 
 
+def infer_route_distinct_stage_text(route: dict[str, Any], stage_preflight: dict[str, Any]) -> str:
+    if isinstance(stage_preflight, dict):
+        if stage_preflight.get("checked") is False:
+            return "not_checked"
+        if stage_preflight.get("checked") is True and "distinct_stage_miners" in stage_preflight:
+            return str(bool(stage_preflight.get("distinct_stage_miners")))
+    if "distinct_stage_miners" in route:
+        return str(route.get("distinct_stage_miners"))
+    return "unknown"
+
+
 def format_p2p_status(p2p: dict[str, Any]) -> str:
     discovery = p2p.get("discovery") if isinstance(p2p.get("discovery"), dict) else {}
     parts = [
@@ -7785,11 +7796,12 @@ def print_infer(report: dict[str, Any]) -> None:
         f"hash={generation.get('generated_text_hash')}"
     )
     route = report.get("route") if isinstance(report.get("route"), dict) else {}
+    stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
     print(
         "  route: "
         f"source={route.get('route_source')} "
         f"ready={route.get('route_ready')} "
-        f"distinct_stage_miners={route.get('distinct_stage_miners')}"
+        f"distinct_stage_miners={infer_route_distinct_stage_text(route, stage_preflight)}"
     )
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     if p2p:
@@ -7802,7 +7814,6 @@ def print_infer(report: dict[str, Any]) -> None:
             f"service={coordinator_ready.get('service')} "
             f"protocol={coordinator_ready.get('protocol')}"
         )
-    stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
     if stage_preflight:
         reason = str(stage_preflight.get("reason") or "")
         source = str(stage_preflight.get("source") or "")

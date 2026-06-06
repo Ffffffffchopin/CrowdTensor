@@ -129,6 +129,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             }),
             "real_llm_sharded_stage1",
         )
+        self.assertEqual(
+            cli.infer_route_distinct_stage_text({"distinct_stage_miners": False}, {"checked": False}),
+            "not_checked",
+        )
+        self.assertEqual(
+            cli.infer_route_distinct_stage_text({"distinct_stage_miners": False}, {"checked": True, "distinct_stage_miners": True}),
+            "True",
+        )
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()
@@ -5139,6 +5147,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
+        self.assertIn(
+            "  route: source=coordinator-url ready=True distinct_stage_miners=not_checked",
+            stdout.getvalue(),
+        )
         self.assertIn(
             "  stage_preflight: checked=False ok=None matched_miners=None missing=not_checked reason=coordinator_not_ready source=not-checked",
             stdout.getvalue(),
