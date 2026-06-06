@@ -90,6 +90,11 @@ debugging; `infer` and `generate` turn that progress into a concrete
 copyable follow-up commands. Human `infer` and `generate` output use your
 current local prompt in those next commands; JSON reports and saved artifacts
 keep raw prompts and token values represented as placeholders.
+If `ready_to_submit` is printed, use its `label` before submitting:
+`verified` means route, Coordinator, and distinct stage Miners were checked;
+`partial` means the request shape can submit but stage Miners still need
+observer-token verification; `blocked` means follow `operator_action`; and
+`skipped` means live checks were intentionally bypassed.
 Add `--stream` when you want safe token-progress evidence in the CLI summary.
 
 ## 4. Run The Real-LLM Swarm Beta Gate
@@ -174,8 +179,11 @@ Expected behavior:
 
 `generate --dry-run` prints `coordinator_ready`, `stage_preflight`, and
 `ready_to_submit` when it can check live endpoints or P2P-discovered stage
-capabilities. If the command is being used only for CI-safe packaging or
-offline request-shape checks, add `--skip-live-preflight`.
+capabilities. Treat `label=verified` as the normal submit-ready state;
+`label=partial` needs an observer-token preflight; `label=blocked` needs the
+printed action first. If the command is being used only for CI-safe packaging
+or offline request-shape checks, add `--skip-live-preflight` and expect
+`label=skipped`.
 
 ## 6. Package A Controlled Remote Trial
 

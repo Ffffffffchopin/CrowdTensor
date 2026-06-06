@@ -79,6 +79,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("examples:", rendered)
         self.assertIn('crowdtensor infer "your prompt" --max-new-tokens 8 --stream', rendered)
         self.assertIn("Reports include action and next[...] lines", rendered)
+        self.assertIn("ready_to_submit labels mean", rendered)
+        self.assertIn("partial can submit but still needs", rendered)
         self.assertIn("not production", rendered)
 
     def test_generate_help_shows_user_examples_and_boundaries(self) -> None:
@@ -93,6 +95,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("examples:", rendered)
         self.assertIn('crowdtensor generate "your prompt"', rendered)
         self.assertIn("missing routes return startup guidance", rendered)
+        self.assertIn("ready_to_submit labels mean", rendered)
+        self.assertIn("skipped is request-shape only", rendered)
         self.assertIn("not production", rendered)
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:

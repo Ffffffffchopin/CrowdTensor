@@ -86,7 +86,17 @@ checking tokens, Miner health, admin API access, or timeout limits. They also
 print `next[...]` lines with safe follow-up commands. Human `infer` and
 `generate` output use your current local prompt so the next command is directly
 copyable; JSON reports and saved artifacts keep raw prompts and token values
-replaced with placeholders.
+replaced with placeholders. When `ready_to_submit` is present, read
+`readiness_label` first:
+
+- `verified` means the route, Coordinator, and distinct stage Miners were
+  checked.
+- `partial` means the request can be submitted, but rerun the printed dry-run
+  command with `CROWDTENSOR_OBSERVER_TOKEN` to verify stage Miners first.
+- `blocked` means follow `operator_action` before submitting.
+- `skipped` means only the request shape was checked, usually because live
+  preflight was intentionally skipped.
+
 The manual `serve` and `join` commands also print `operator_action` and
 `next[...]`, so the five-process flow tells you whether to rerun with `--run`,
 start the missing stage Miner, or preflight with `generate --dry-run`.

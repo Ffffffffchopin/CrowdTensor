@@ -9158,7 +9158,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "across stage0/stage1 workers, prints local display-only output in human mode, and\n"
             "writes a redacted infer_summary.json. Use --mode existing to target an already\n"
             "running Coordinator or P2P-discovered swarm. Reports include action and next[...] lines\n"
-            "with copyable follow-up commands.\n\n"
+            "with copyable follow-up commands. ready_to_submit labels mean: verified is ready\n"
+            "after route, Coordinator, and stage Miner checks; partial can submit but still needs\n"
+            "observer-token stage verification; blocked needs the printed operator_action;\n"
+            "skipped is request-shape only.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -9307,7 +9310,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Create a bounded CrowdTensor generation request against an existing Coordinator\n"
             "or P2P-discovered product swarm. Reports include action and next[...] lines with\n"
             "copyable follow-up commands; missing routes return startup guidance instead of a\n"
-            "bare parser error.\n\n"
+            "bare parser error. ready_to_submit labels mean: verified is ready after route,\n"
+            "Coordinator, and stage Miner checks; partial can submit but still needs observer-token\n"
+            "stage verification; blocked needs the printed operator_action; skipped is request-shape only.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),
