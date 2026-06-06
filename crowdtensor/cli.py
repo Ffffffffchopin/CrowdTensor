@@ -316,6 +316,16 @@ def command_entry(
     return entry
 
 
+def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> str:
+    command = item.get("command") if isinstance(item.get("command"), list) else []
+    prompt = str(report.get("local_prompt_text") or "")
+    if prompt and command:
+        rendered = [str(part) for part in command]
+        rendered = [prompt if part == INFER_PROMPT_PLACEHOLDER else part for part in rendered]
+        return command_line(rendered)
+    return str(item.get("command_line") or command_line([str(part) for part in command]))
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -7275,7 +7285,7 @@ def print_infer(report: dict[str, Any]) -> None:
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
-            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+            print(f"  next[{index}] {item.get('label')}: {local_infer_command_line(item, report)}{suffix}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
@@ -11587,7 +11597,9 @@ def main(argv: list[str] | None = None) -> None:
         if args.json:
             print(json.dumps(report, sort_keys=True))
         else:
-            print_infer(report)
+            local_report = dict(report)
+            local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
+            print_infer(local_report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "serve":
         report = build_product_serve(args)

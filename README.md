@@ -83,8 +83,9 @@ safe `wait_progress` summary with poll count, accepted rows, endpoint readiness,
 and observed token progress so timeouts are actionable without exposing raw
 text; both `infer` and `generate` include `operator_action` suggestions for
 checking tokens, Miner health, admin API access, or timeout limits. They also
-print `next[...]` lines with safe, copyable follow-up commands. Raw prompts and
-token values are replaced with placeholders in those command suggestions.
+print `next[...]` lines with safe follow-up commands. Human `infer` output uses
+your current local prompt so the next command is directly copyable; JSON reports
+and saved artifacts keep raw prompts and token values replaced with placeholders.
 The manual `serve` and `join` commands also print `operator_action` and
 `next[...]`, so the five-process flow tells you whether to rerun with `--run`,
 start the missing stage Miner, or preflight with `generate --dry-run`.

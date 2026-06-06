@@ -87,8 +87,9 @@ redacted. Existing-swarm reports include `wait_progress` with poll count,
 accepted rows, endpoint readiness, and observed token progress for safe timeout
 debugging; `infer` and `generate` turn that progress into a concrete
 `operator_action`. Human output also includes `next[...]` lines with safe,
-copyable follow-up commands; raw prompts and token values are represented as
-placeholders in those suggestions.
+copyable follow-up commands. Human `infer` output uses your current local
+prompt in those next commands; JSON reports and saved artifacts keep raw prompts
+and token values represented as placeholders.
 Add `--stream` when you want safe token-progress evidence in the CLI summary.
 
 ## 4. Run The Real-LLM Swarm Beta Gate

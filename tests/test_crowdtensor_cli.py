@@ -3531,6 +3531,60 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["display_only"])
 
+    def test_infer_main_prints_copyable_local_prompt_without_persisting_it(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor user prompt"
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            return {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": True,
+                "mode": "existing",
+                "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "generation": {"generated_token_count": 8, "max_new_tokens": 8, "generated_text_hash": "sha256:generated"},
+                "route": {"route_source": "coordinator-url", "route_ready": True, "distinct_stage_miners": True},
+                "stream": {},
+                "local_output": {},
+                "output_dir": str(output_dir),
+                "next_commands": [
+                    cli.command_entry(
+                        "check existing swarm",
+                        [
+                            "crowdtensor",
+                            "infer",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--mode",
+                            "existing",
+                            "--output-dir",
+                            str(output_dir),
+                            "--dry-run",
+                        ],
+                    )
+                ],
+                "diagnosis_codes": ["crowdtensor_infer_ready"],
+            }
+
+        stdout = io.StringIO()
+        with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+            with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "infer",
+                    prompt,
+                    "--mode",
+                    "existing",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--admin-token",
+                    "admin-secret",
+                    "--output-dir",
+                    str(output_dir),
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn(f"next[1] check existing swarm: crowdtensor infer '{prompt}' --mode existing", rendered)
+        self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
+
     def test_infer_existing_batch_outputs_are_display_only(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
