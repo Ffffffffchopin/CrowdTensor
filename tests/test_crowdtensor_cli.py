@@ -669,6 +669,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["stage_preflight"]["reason"], "live_preflight_skipped")
         self.assertEqual(report["stage_preflight"]["missing_summary"], "not_checked")
         self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
+        self.assertIn("generate_request_shape_ready", report["diagnosis_codes"])
+        self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertEqual(
             report["operator_action"],

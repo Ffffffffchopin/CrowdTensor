@@ -96,6 +96,8 @@ replaced with placeholders. When `ready_to_submit` is present, read
 - `blocked` means follow `operator_action` before submitting.
 - `skipped` means only the request shape was checked, usually because live
   preflight was intentionally skipped.
+  Machine-readable `generate_request_shape_ready` has the same meaning and is
+  intentionally separate from `generate_dry_run_ready`.
 Submit commands mirror this state: labels such as `after stage preflight`,
 `after live preflight`, or `after checks pass` mean run the preceding check
 command first.

@@ -6952,7 +6952,10 @@ def _product_generate_dry_run_preflight(
         source="dry-run-preflight",
     )
     final_ok = bool(report.get("ok") and (live_ready is not False))
-    if not final_ok:
+    if skip_live_preflight:
+        codes.discard("generate_dry_run_ready")
+        codes.add("generate_request_shape_ready")
+    elif not final_ok:
         codes.discard("generate_dry_run_ready")
     report.update({
         "ok": final_ok,
