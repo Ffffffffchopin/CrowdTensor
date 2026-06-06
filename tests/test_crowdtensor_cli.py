@@ -396,6 +396,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("CrowdTensor prompt", encoded)
         self.assertNotIn("CrowdTensor prompt", json.dumps(report["next_commands"], sort_keys=True))
         self.assertIn("prompt_hash", encoded)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  stream: requested=True events=0 dry_run=True", rendered)
+        self.assertNotIn("stream_events: None", rendered)
 
     def test_generate_main_prints_copyable_local_prompt_without_persisting_it(self) -> None:
         prompt = "CrowdTensor prompt"

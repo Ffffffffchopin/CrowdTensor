@@ -7555,31 +7555,34 @@ def print_product_generate(report: dict[str, Any]) -> None:
         )
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     if stream.get("enabled"):
-        progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
-        expected_requests = _safe_int(progress.get("expected_request_count"), 1)
-        per_request_progress = (
-            progress.get("per_request_progress")
-            if isinstance(progress.get("per_request_progress"), list)
-            else []
-        )
-        observed_requests = _safe_int(progress.get("observed_request_count")) or len(per_request_progress)
-        complete = (
-            progress.get("per_request_progress_complete")
-            if expected_requests > 1
-            else progress.get("stream_progress_complete")
-        )
-        request_summary = (
-            f" requests={observed_requests}/{expected_requests}"
-            if expected_requests > 1
-            else ""
-        )
-        print(
-            "  stream_events: "
-            f"{stream.get('event_count')} "
-            f"source={stream.get('source')} "
-            f"complete={complete}"
-            f"{request_summary}"
-        )
+        if report.get("dry_run"):
+            print(f"  stream: requested=True events=0 dry_run=True")
+        else:
+            progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
+            expected_requests = _safe_int(progress.get("expected_request_count"), 1)
+            per_request_progress = (
+                progress.get("per_request_progress")
+                if isinstance(progress.get("per_request_progress"), list)
+                else []
+            )
+            observed_requests = _safe_int(progress.get("observed_request_count")) or len(per_request_progress)
+            complete = (
+                progress.get("per_request_progress_complete")
+                if expected_requests > 1
+                else progress.get("stream_progress_complete")
+            )
+            request_summary = (
+                f" requests={observed_requests}/{expected_requests}"
+                if expected_requests > 1
+                else ""
+            )
+            print(
+                "  stream_events: "
+                f"{stream.get('event_count')} "
+                f"source={stream.get('source')} "
+                f"complete={complete}"
+                f"{request_summary}"
+            )
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     if wait_progress:
         print(
