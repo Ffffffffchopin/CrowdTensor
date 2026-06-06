@@ -8906,7 +8906,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--admin-results-limit", type=int, default=50)
     infer.add_argument("--json", action="store_true")
 
-    serve = subparsers.add_parser("serve", help="Print or run a product-facing Coordinator command.")
+    serve = subparsers.add_parser(
+        "serve",
+        help="Print or run a product-facing Coordinator command.",
+        description=(
+            "Start or print the Coordinator used by the product inference flow. The Coordinator\n"
+            "leases read-only generation work to stage Miners; keep it running, then start one\n"
+            "stage0 and one stage1 Miner with crowdtensor join before running generate --dry-run."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run\n"
+            "  crowdtensor serve --profile cpu-real-llm --port 8787 --json\n"
+            "  crowdtensor serve --p2p --peer-bootstrap http://127.0.0.1:8788 --run\n"
+            "\n"
+            "Boundary: local/private Coordinator by default; use explicit network controls for remote hosts."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     serve.add_argument("--profile", choices=["cpu-real-llm", "gpu-generation"], default="cpu-real-llm")
     serve.add_argument("--bind-host", default="127.0.0.1")
     serve.add_argument("--public-host", default="127.0.0.1")
@@ -8931,7 +8948,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     serve.add_argument("--run", action="store_true")
     serve.add_argument("--json", action="store_true")
 
-    join = subparsers.add_parser("join", help="Print or run a product-facing Miner command.")
+    join = subparsers.add_parser(
+        "join",
+        help="Print or run a product-facing Miner command.",
+        description=(
+            "Start or print a product Miner for the bounded generation flow. Use distinct stage0\n"
+            "and stage1 Miners so generate --dry-run can confirm both halves of the tiny model\n"
+            "route before a token-backed generation request is submitted."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run\n"
+            "  crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run\n"
+            "  crowdtensor join --p2p --peer-bootstrap http://127.0.0.1:8788 --miner-id stage0-miner --stage stage0 --run\n"
+            "\n"
+            "Boundary: CPU tiny-model route by default; not large-model serving or permissionless P2P."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     join.add_argument("--coordinator-url", default="")
     join.add_argument("--peer-bootstrap", default="")
     join.add_argument("--p2p", action="store_true", help="discover Coordinator and announce stage capability through p2pd")

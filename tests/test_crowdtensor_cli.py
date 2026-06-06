@@ -95,6 +95,34 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("missing routes return startup guidance", rendered)
         self.assertIn("not production", rendered)
 
+    def test_serve_help_shows_inference_flow_examples(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["serve", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Start or print the Coordinator used by the product inference flow", rendered)
+        self.assertIn("stage0 and one stage1 Miner", rendered)
+        self.assertIn("generate --dry-run", rendered)
+        self.assertIn("crowdtensor serve --profile cpu-real-llm", rendered)
+        self.assertIn("Boundary: local/private Coordinator by default", rendered)
+
+    def test_join_help_shows_stage_miner_examples(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["join", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Start or print a product Miner", rendered)
+        self.assertIn("distinct stage0", rendered)
+        self.assertIn("generate --dry-run", rendered)
+        self.assertIn("--miner-id stage0-miner --stage stage0 --run", rendered)
+        self.assertIn("not large-model serving", rendered)
+
     def test_runtime_matrix_block_skips_demo_and_manifest(self) -> None:
         output_dir = Path(self._tmp_dir())
 
