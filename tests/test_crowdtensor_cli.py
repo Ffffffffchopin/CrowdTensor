@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -273,6 +274,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "warning_codes": ["coordinator_preflight_skipped"],
                 },
             ),
+        )
+        self.assertIn(
+            "Coordinator readiness first",
+            cli._infer_operator_action(
+                argparse.Namespace(dry_run=True, infer_mode="existing", full_evidence=False),
+                {"diagnosis_codes": ["stage_preflight_not_checked"]},
+                ok=False,
+            ),
+        )
+        self.assertIn(
+            "Coordinator readiness first",
+            cli._product_generate_operator_action({"ok": False, "diagnosis_codes": ["stage_preflight_not_checked"]}),
         )
         self.assertIn(
             "stage0/stage1 were not fully verified",
@@ -4659,6 +4672,41 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run", next_lines)
         self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run", next_lines)
         self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
+
+    def test_infer_existing_stage_not_checked_includes_startup_next_commands(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+        payload = {
+            "schema": "public_swarm_product_cli_v1",
+            "ok": False,
+            "mode": "generate",
+            "diagnosis_codes": ["stage_preflight_not_checked"],
+            "route": {
+                "route_source": "coordinator-url",
+                "coordinator_url": "http://127.0.0.1:8787",
+                "coordinator_url_present": True,
+            },
+            "generation": {"generated_token_count": 0, "max_new_tokens": 8},
+        }
+
+        report = cli._infer_summary_from_payload(args, payload, mode="existing", output_dir=output_dir)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("Coordinator readiness first", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run", next_lines)
+        self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run", next_lines)
+        self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run", next_lines)
 
     def test_infer_timeout_action_uses_wait_progress(self) -> None:
         cases = [

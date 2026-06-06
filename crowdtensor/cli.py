@@ -3729,6 +3729,8 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
         return "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm."
     if "coordinator_ready_failed" in codes:
         return "Coordinator route exists but /ready is not reachable; start the Coordinator or fix --coordinator-url, then rerun --dry-run."
+    if "stage_preflight_not_checked" in codes:
+        return "Fix the route or Coordinator readiness first, then rerun --dry-run with --observer-token to verify stage0/stage1."
     if "stage_preflight_failed" in codes:
         return "Start or rejoin distinct stage0 and stage1 Miners, then rerun --dry-run with --observer-token to verify /state."
     if "admin_token_required" in codes:
@@ -3893,6 +3895,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         "generate_route_unavailable",
         "coordinator_route_missing",
         "coordinator_ready_failed",
+        "stage_preflight_not_checked",
         "stage_preflight_failed",
     }
     needs_startup_commands = bool(not ok and codes.intersection(startup_needed))
@@ -6738,6 +6741,8 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
         return "Start the P2P discovery daemon with crowdtensor p2pd --run, or pass --coordinator-url for a direct Coordinator route."
     if "coordinator_ready_failed" in codes:
         return "Coordinator route exists but /ready failed; start or restart the Coordinator and retry generate --dry-run."
+    if "stage_preflight_not_checked" in codes:
+        return "Fix the route or Coordinator readiness first, then rerun generate --dry-run with --observer-token to verify stage0/stage1."
     if "stage_preflight_failed" in codes:
         return "Start or rejoin distinct stage0 and stage1 Miners, then rerun generate --dry-run with --observer-token when using /state."
     if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
@@ -6844,6 +6849,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         "generate_route_unavailable" in codes
         or "coordinator_route_missing" in codes
         or "coordinator_ready_failed" in codes
+        or "stage_preflight_not_checked" in codes
         or "stage_preflight_failed" in codes
     ):
         local_port = local_coordinator_port_from_url(suggested_coordinator_url or coordinator_url)
