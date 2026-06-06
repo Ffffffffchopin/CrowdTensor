@@ -4721,6 +4721,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             report["operator_action"],
             "Inference can be submitted, but stage0/stage1 were not fully verified; rerun --dry-run with --observer-token to check /state before submitting.",
         )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        self.assertIn(
+            "  stage_preflight: checked=False ok=None matched_miners=None missing=none reason=observer_token_missing source=not-checked",
+            stdout.getvalue(),
+        )
         next_commands = report["next_commands"]
         self.assertTrue(any("CROWDTENSOR_OBSERVER_TOKEN" in item.get("requires_env", []) for item in next_commands))
         next_lines = [item["command_line"] for item in next_commands]
@@ -5099,6 +5106,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
         self.assertIn("Coordinator route exists", report["operator_action"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        self.assertIn(
+            "  stage_preflight: checked=False ok=None matched_miners=None missing=none reason=coordinator_not_ready source=not-checked",
+            stdout.getvalue(),
+        )
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8792 --run",

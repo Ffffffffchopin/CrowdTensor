@@ -7637,12 +7637,18 @@ def print_product_generate(report: dict[str, Any]) -> None:
     stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
     if stage_preflight:
         missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
+        reason = str(stage_preflight.get("reason") or "")
+        source = str(stage_preflight.get("source") or "")
+        reason_text = f" reason={reason}" if reason else ""
+        source_text = f" source={source}" if source else ""
         print(
             "  stage_preflight: "
             f"checked={stage_preflight.get('checked')} "
             f"ok={stage_preflight.get('ok')} "
             f"matched_miners={stage_preflight.get('matched_miner_count')} "
             f"missing={','.join(str(item) for item in missing) if missing else 'none'}"
+            f"{reason_text}"
+            f"{source_text}"
         )
     ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
     if ready_to_submit:
@@ -7762,12 +7768,18 @@ def print_infer(report: dict[str, Any]) -> None:
     stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
     if stage_preflight:
         missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
+        reason = str(stage_preflight.get("reason") or "")
+        source = str(stage_preflight.get("source") or "")
+        reason_text = f" reason={reason}" if reason else ""
+        source_text = f" source={source}" if source else ""
         print(
             "  stage_preflight: "
             f"checked={stage_preflight.get('checked')} "
             f"ok={stage_preflight.get('ok')} "
             f"matched_miners={stage_preflight.get('matched_miner_count')} "
             f"missing={','.join(str(item) for item in missing) if missing else 'none'}"
+            f"{reason_text}"
+            f"{source_text}"
         )
     ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
     if ready_to_submit:
