@@ -6362,6 +6362,8 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
     detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
     if "hf_dependencies_missing" in codes or "transformers" in detail:
         return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
+    if "p2p_discovery_unreachable" in codes:
+        return "Start the P2P discovery daemon with crowdtensor p2pd --run, or pass --coordinator-url for a direct Coordinator route."
     if "coordinator_ready_failed" in codes:
         return "Coordinator route exists but /ready failed; start or restart the Coordinator and retry generate --dry-run."
     if "stage_preflight_failed" in codes:
@@ -6405,6 +6407,11 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         commands.append(command_entry(
             "install Hugging Face runtime",
             ["python", "-m", "pip", "install", "-e", ".[hf]"],
+        ))
+    if "p2p_discovery_unreachable" in codes:
+        commands.append(command_entry(
+            "start P2P discovery daemon",
+            ["crowdtensor", "p2pd", "--port", str(local_coordinator_port_from_url(peer_bootstrap, default=8788)), "--run"],
         ))
     route_missing = "coordinator_route_missing" in codes
     suggested_coordinator_url = coordinator_url or (
@@ -6813,14 +6820,23 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     peers: list[dict[str, Any]] = []
     catalog_payload: dict[str, Any] = {}
     route_lookup_payload: dict[str, Any] = {}
+    discovery_error: dict[str, Any] = {}
     if p2p_bootstrap:
-        resolved_url, peers, catalog_payload = resolve_coordinator_from_discovery(
-            p2p_bootstrap,
-            timeout=args.http_timeout,
-            backend=p2p_backend if args.p2p else "lite",
-            session_request=session_request,
-        )
-        coordinator_url = coordinator_url or resolved_url
+        try:
+            resolved_url, peers, catalog_payload = resolve_coordinator_from_discovery(
+                p2p_bootstrap,
+                timeout=args.http_timeout,
+                backend=p2p_backend if args.p2p else "lite",
+                session_request=session_request,
+            )
+            coordinator_url = coordinator_url or resolved_url
+        except Exception as exc:
+            discovery_error = {
+                "ok": False,
+                "error": type(exc).__name__,
+                "detail": str(exc)[:200],
+                "bootstrap": p2p_bootstrap,
+            }
         if args.p2p and p2p_backend == "real":
             try:
                 route_lookup_payload = post_route_lookup(
@@ -6852,16 +6868,21 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                 "peer_count": len(peers),
                 "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
                 "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
+                "discovery": discovery_error,
             },
-            "diagnosis_codes": [
-                (
-                    route_ready_code
-                    if route.get("usable_now")
-                    else ("coordinator_route_missing" if not route.get("coordinator_url_present") else "stage_capability_missing")
-                )
-                if args.p2p
-                else ("generate_dry_run_ready" if route.get("coordinator_url_present") else "coordinator_route_missing")
-            ],
+            "diagnosis_codes": (
+                ["p2p_discovery_unreachable", "coordinator_route_missing"]
+                if args.p2p and discovery_error
+                else [
+                    (
+                        route_ready_code
+                        if route.get("usable_now")
+                        else ("coordinator_route_missing" if not route.get("coordinator_url_present") else "stage_capability_missing")
+                    )
+                    if args.p2p
+                    else ("generate_dry_run_ready" if route.get("coordinator_url_present") else "coordinator_route_missing")
+                ]
+            ),
         }
         report = _product_generate_dry_run_preflight(
             report,

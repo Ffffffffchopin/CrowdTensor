@@ -1002,6 +1002,39 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
 
+    def test_product_generate_p2p_discovery_unreachable_returns_actionable_report(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "CrowdTensor prompt",
+            "--p2p",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8799",
+            "--max-new-tokens",
+            "2",
+            "--dry-run",
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_peer_catalog", side_effect=OSError("offline")):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertEqual(report["p2p"]["discovery"]["error"], "OSError")
+        self.assertIn("P2P discovery daemon", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2pd --port 8799 --run", next_lines)
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --p2p --peer-bootstrap http://127.0.0.1:8799 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor prompt", json.dumps(report, sort_keys=True))
+
     def test_product_generate_p2p_dry_run_filters_coordinator_by_model_id(self) -> None:
         args = cli.parse_args([
             "generate",
