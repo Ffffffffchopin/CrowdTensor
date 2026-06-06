@@ -6906,8 +6906,13 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                 "peer_count": len(peers),
                 "catalog_schema": catalog_payload.get("schema") if catalog_payload else "",
                 "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
+                "discovery": discovery_error,
             },
-            "diagnosis_codes": ["generate_route_unavailable"],
+            "diagnosis_codes": (
+                ["p2p_discovery_unreachable", "coordinator_route_missing"]
+                if discovery_error
+                else ["generate_route_unavailable"]
+            ),
         })
     if not effective_coordinator_url:
         return _finalize_product_generate_report({

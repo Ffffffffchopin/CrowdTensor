@@ -1417,6 +1417,40 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn("CrowdTensor prompt", json.dumps(report["next_commands"], sort_keys=True))
 
+    def test_product_generate_p2p_non_dry_run_discovery_unreachable_is_actionable(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "CrowdTensor prompt",
+            "--p2p",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8799",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_peer_catalog", side_effect=OSError("offline")), patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("session creation should be blocked when discovery is offline"),
+        ):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertEqual(report["p2p"]["discovery"]["error"], "OSError")
+        self.assertIn("P2P discovery daemon", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2pd --port 8799 --run", next_lines)
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor prompt", json.dumps(report, sort_keys=True))
+
     def test_product_generate_missing_route_returns_actionable_report(self) -> None:
         args = cli.parse_args([
             "generate",
