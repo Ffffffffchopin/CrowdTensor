@@ -239,6 +239,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("admin-secret", report["command_line"])
         self.assertNotIn("miner-secret", report["command_line"])
         self.assertIn("Rerun with --run", report["operator_action"])
+        self.assertIn("generate --coordinator-url http://127.0.0.1:8787 --dry-run", report["operator_action"])
+        self.assertNotIn("generate --p2p", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run",
+            next_lines,
+        )
+        self.assertNotIn(cli.DEFAULT_PRODUCT_GENERATE_PROMPT, encoded)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_serve(report)
@@ -247,6 +255,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  command: ", rendered)
         self.assertIn("--admin-token '<redacted>'", rendered)
         self.assertIn("  action: Rerun with --run", rendered)
+        self.assertIn("  next[4] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run", rendered)
+        self.assertIn("# requires CROWDTENSOR_MINER_TOKEN", rendered)
         self.assertNotIn("admin-secret", rendered)
         self.assertNotIn("miner-secret", rendered)
 
@@ -291,6 +301,24 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["session_request"]["hf_model_id"], "distilgpt2")
         self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
         self.assertNotIn("CrowdTensor prompt", encoded)
+        self.assertIn("prompt_hash", encoded)
+
+    def test_product_generate_dry_run_has_safe_default_prompt(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--json",
+        ])
+
+        report = cli.build_product_generate(args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["session_request"]["prompt_chars"], len(cli.DEFAULT_PRODUCT_GENERATE_PROMPT))
+        self.assertNotIn(cli.DEFAULT_PRODUCT_GENERATE_PROMPT, encoded)
         self.assertIn("prompt_hash", encoded)
 
     def test_product_generate_dry_run_checks_coordinator_and_stage_preflight(self) -> None:
@@ -448,6 +476,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertIn("p2p_coordinator_announce_ready", report["diagnosis_codes"])
         self.assertIn("generate --p2p --dry-run", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --p2p --peer-bootstrap http://127.0.0.1:8788 --dry-run",
+            next_lines,
+        )
+        self.assertTrue(any("CROWDTENSOR_P2P_PEER_SECRET" in item.get("requires_env", []) for item in report["next_commands"]))
         peer = announced.call_args.args[1]
         self.assertEqual(peer["role"], "coordinator")
         self.assertEqual(peer["urls"]["coordinator"], "http://coord.example:8787")
@@ -517,6 +551,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["coordinator_url"], "http://127.0.0.1:8787")
         self.assertIn("p2p_stage_miner_announce_ready", report["diagnosis_codes"])
         self.assertIn("Rerun with --run", report["operator_action"])
+        self.assertIn("generate --p2p --dry-run", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --p2p --peer-bootstrap http://127.0.0.1:8788 --dry-run",
+            next_lines,
+        )
         peer = announced.call_args.args[1]
         self.assertEqual(peer["role"], "miner")
         self.assertIn("real_llm_sharded_stage0", peer["capabilities"]["real_llm_sharded_stage_capabilities"])
@@ -599,6 +639,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("--max-request-attempts", command)
         self.assertEqual(command[command.index("--max-request-attempts") + 1], "9")
         self.assertIn("command_line", report)
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run",
+            next_lines,
+        )
 
     def test_product_join_missing_route_action(self) -> None:
         args = cli.parse_args([
@@ -642,6 +687,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  command: ", rendered)
         self.assertIn("--miner-token '<redacted>'", rendered)
         self.assertIn("  action: Rerun with --run", rendered)
+        self.assertIn("  next[3] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run", rendered)
+        self.assertIn("# requires CROWDTENSOR_MINER_TOKEN", rendered)
         self.assertNotIn("miner-secret", rendered)
 
     def test_discovery_refresh_rebuilds_signed_record_timestamps(self) -> None:

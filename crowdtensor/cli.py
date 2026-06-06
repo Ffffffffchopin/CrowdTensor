@@ -113,6 +113,7 @@ P2PD_CLI_SCHEMA = "p2pd_cli_v1"
 REAL_P2P_CLI_SCHEMA = "real_p2p_cli_v1"
 P2P_DAEMON_CLI_SCHEMA = "p2p_daemon_cli_v1"
 DEFAULT_P2P_BOOTSTRAP = "http://127.0.0.1:8788"
+DEFAULT_PRODUCT_GENERATE_PROMPT = "CrowdTensor routes a tiny model across two stage miners."
 SECRET_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
     "CROWDTENSOR_OBSERVER_TOKEN",
@@ -293,6 +294,24 @@ def redacted_command(command: list[str], sensitive_flags: set[str]) -> list[str]
 
 def command_line(command: list[str]) -> str:
     return " ".join(shlex.quote(str(part)) for part in command)
+
+
+def command_entry(
+    label: str,
+    command: list[str],
+    *,
+    sensitive_flags: set[str] | None = None,
+    requires_env: list[str] | None = None,
+) -> dict[str, Any]:
+    safe_command = redacted_command(command, sensitive_flags or set())
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": safe_command,
+        "command_line": command_line(safe_command),
+    }
+    if requires_env:
+        entry["requires_env"] = list(requires_env)
+    return entry
 
 
 def utc_now() -> str:
@@ -5278,9 +5297,309 @@ def build_serve_command(args: argparse.Namespace) -> list[str]:
     return command
 
 
+def _product_cli_serve_command(args: argparse.Namespace, *, include_run: bool = True) -> list[str]:
+    command = [
+        "crowdtensor",
+        "serve",
+        "--profile",
+        args.profile,
+        "--bind-host",
+        args.bind_host,
+        "--public-host",
+        args.public_host,
+        "--port",
+        str(args.port),
+    ]
+    if args.state_dir != "state":
+        command.extend(["--state-dir", args.state_dir])
+    if args.hf_model_id != "sshleifer/tiny-gpt2":
+        command.extend(["--hf-model-id", args.hf_model_id])
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if args.lease_seconds != 15.0:
+        command.extend(["--lease-seconds", str(args.lease_seconds)])
+    if args.p2p:
+        command.append("--p2p")
+        if args.p2p_backend != "lite":
+            command.extend(["--p2p-backend", args.p2p_backend])
+        command.extend(["--peer-bootstrap", args.peer_bootstrap or DEFAULT_P2P_BOOTSTRAP])
+        if args.swarm_id != "default":
+            command.extend(["--swarm-id", args.swarm_id])
+        if args.peer_id:
+            command.extend(["--peer-id", args.peer_id])
+        if args.peer_url:
+            command.extend(["--peer-url", args.peer_url])
+    if args.bind_host in {"0.0.0.0", "::"} and args.i_understand_public_bind:
+        command.append("--i-understand-public-bind")
+    if include_run:
+        command.append("--run")
+    return command
+
+
+def _product_cli_join_command(
+    args: argparse.Namespace,
+    *,
+    coordinator_url: str,
+    stage: str | None = None,
+    miner_id: str | None = None,
+    include_run: bool = True,
+) -> list[str]:
+    command = ["crowdtensor", "join"]
+    stage_value = stage or args.stage
+    miner_value = miner_id or args.miner_id
+    backend = str(
+        getattr(args, "backend", "")
+        or ("cuda" if getattr(args, "profile", "") == "gpu-generation" else "cpu")
+    )
+    if args.p2p:
+        command.append("--p2p")
+        if args.p2p_backend != "lite":
+            command.extend(["--p2p-backend", args.p2p_backend])
+        command.extend(["--peer-bootstrap", args.peer_bootstrap or DEFAULT_P2P_BOOTSTRAP])
+        if args.swarm_id != "default":
+            command.extend(["--swarm-id", args.swarm_id])
+        if args.peer_id and stage is None and miner_id is None:
+            command.extend(["--peer-id", args.peer_id])
+        if args.peer_url and stage is None and miner_id is None:
+            command.extend(["--peer-url", args.peer_url])
+    else:
+        command.extend(["--coordinator-url", coordinator_url])
+    command.extend(["--miner-id", miner_value, "--stage", stage_value])
+    if backend != "cpu":
+        command.extend(["--backend", backend])
+    if args.hf_model_id != "sshleifer/tiny-gpt2":
+        command.extend(["--hf-model-id", args.hf_model_id])
+    if getattr(args, "hf_cache_dir", ""):
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if getattr(args, "once", False):
+        command.append("--once")
+    if getattr(args, "max_tasks", 0) > 0:
+        command.extend(["--max-tasks", str(args.max_tasks)])
+    if getattr(args, "max_runtime_seconds", 0.0) > 0:
+        command.extend(["--max-runtime-seconds", str(args.max_runtime_seconds)])
+    if getattr(args, "compute_seconds", 0.0) > 0:
+        command.extend(["--compute-seconds", str(args.compute_seconds)])
+    if getattr(args, "max_request_attempts", 3) != 3:
+        command.extend(["--max-request-attempts", str(args.max_request_attempts)])
+    if include_run:
+        command.append("--run")
+    return command
+
+
+def _product_cli_generate_command(
+    *,
+    p2p: bool,
+    coordinator_url: str,
+    peer_bootstrap: str,
+    p2p_backend: str,
+    backend: str,
+    hf_model_id: str,
+    dry_run: bool,
+    max_new_tokens: int = 16,
+) -> list[str]:
+    command = [
+        "crowdtensor",
+        "generate",
+        "--max-new-tokens",
+        str(max_new_tokens),
+    ]
+    if p2p:
+        command.append("--p2p")
+        if p2p_backend != "lite":
+            command.extend(["--p2p-backend", p2p_backend])
+        command.extend(["--peer-bootstrap", peer_bootstrap or DEFAULT_P2P_BOOTSTRAP])
+    else:
+        command.extend(["--coordinator-url", coordinator_url])
+    if backend != "cpu":
+        command.extend(["--backend", backend])
+    if hf_model_id != "sshleifer/tiny-gpt2":
+        command.extend(["--hf-model-id", hf_model_id])
+    if dry_run:
+        command.append("--dry-run")
+    return command
+
+
+def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> list[str]:
+    env_by_name = {
+        "admin": "CROWDTENSOR_ADMIN_TOKEN",
+        "miner": "CROWDTENSOR_MINER_TOKEN",
+        "observer": "CROWDTENSOR_OBSERVER_TOKEN",
+        "peer": "CROWDTENSOR_P2P_PEER_SECRET",
+    }
+    requirements: list[str] = []
+    for name in names:
+        env_name = env_by_name[name]
+        value = ""
+        if name == "admin":
+            value = str(getattr(args, "admin_token", "") or "")
+            if value == "local-admin":
+                value = ""
+        elif name == "miner":
+            value = str(getattr(args, "miner_token", "") or "")
+        elif name == "observer":
+            value = str(getattr(args, "observer_token", "") or "")
+        elif name == "peer":
+            value = str(getattr(args, "peer_secret", "") or "")
+        if value and env_name not in requirements:
+            requirements.append(env_name)
+    return requirements
+
+
+def _product_serve_next_commands(args: argparse.Namespace, *, coordinator_url: str) -> list[dict[str, Any]]:
+    backend = "cuda" if args.profile == "gpu-generation" else "cpu"
+    p2p_bootstrap = args.peer_bootstrap or DEFAULT_P2P_BOOTSTRAP
+    return [
+        command_entry(
+            "start Coordinator",
+            _product_cli_serve_command(args, include_run=True),
+            requires_env=_product_env_requirements(args, ["admin", "miner", "observer", "peer"]),
+        ),
+        command_entry(
+            "start stage0 Miner",
+            _product_cli_join_command(
+                args,
+                coordinator_url=coordinator_url,
+                stage="stage0",
+                miner_id="stage0-miner",
+                include_run=True,
+            ),
+            requires_env=_product_env_requirements(args, ["miner", "peer"]),
+        ),
+        command_entry(
+            "start stage1 Miner",
+            _product_cli_join_command(
+                args,
+                coordinator_url=coordinator_url,
+                stage="stage1",
+                miner_id="stage1-miner",
+                include_run=True,
+            ),
+            requires_env=_product_env_requirements(args, ["miner", "peer"]),
+        ),
+        command_entry(
+            "check generation route",
+            _product_cli_generate_command(
+                p2p=bool(args.p2p),
+                coordinator_url=coordinator_url,
+                peer_bootstrap=p2p_bootstrap,
+                p2p_backend=_p2p_backend(args),
+                backend=backend,
+                hf_model_id=args.hf_model_id,
+                dry_run=True,
+            ),
+            requires_env=_product_env_requirements(args, ["observer"]) if not args.p2p else None,
+        ),
+        command_entry(
+            "submit generation",
+            _product_cli_generate_command(
+                p2p=bool(args.p2p),
+                coordinator_url=coordinator_url,
+                peer_bootstrap=p2p_bootstrap,
+                p2p_backend=_p2p_backend(args),
+                backend=backend,
+                hf_model_id=args.hf_model_id,
+                dry_run=False,
+            ),
+            requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+        ),
+    ]
+
+
+def _product_public_bind_next_commands(args: argparse.Namespace) -> list[dict[str, Any]]:
+    local_command = [
+        "crowdtensor",
+        "serve",
+        "--profile",
+        args.profile,
+        "--bind-host",
+        "127.0.0.1",
+        "--public-host",
+        "127.0.0.1",
+        "--port",
+        str(args.port),
+        "--run",
+    ]
+    public_command = _product_cli_serve_command(args, include_run=True)
+    public_command.append("--i-understand-public-bind")
+    return [
+        command_entry(
+            "start local-only Coordinator",
+            local_command,
+            requires_env=_product_env_requirements(args, ["admin", "miner", "observer", "peer"]),
+        ),
+        command_entry(
+            "start trusted public Coordinator",
+            public_command,
+            requires_env=_product_env_requirements(args, ["admin", "miner", "observer", "peer"]),
+        ),
+    ]
+
+
+def _product_join_next_commands(args: argparse.Namespace, *, coordinator_url: str) -> list[dict[str, Any]]:
+    p2p_bootstrap = args.peer_bootstrap or (DEFAULT_P2P_BOOTSTRAP if args.p2p else "")
+    commands = [
+        command_entry(
+            "start this Miner",
+            _product_cli_join_command(args, coordinator_url=coordinator_url, include_run=True),
+            requires_env=_product_env_requirements(args, ["miner", "peer"]),
+        )
+    ]
+    if args.stage == "stage0":
+        commands.append(command_entry(
+            "start stage1 Miner",
+            _product_cli_join_command(
+                args,
+                coordinator_url=coordinator_url,
+                stage="stage1",
+                miner_id="stage1-miner",
+                include_run=True,
+            ),
+            requires_env=_product_env_requirements(args, ["miner", "peer"]),
+        ))
+    elif args.stage == "stage1":
+        commands.append(command_entry(
+            "start stage0 Miner",
+            _product_cli_join_command(
+                args,
+                coordinator_url=coordinator_url,
+                stage="stage0",
+                miner_id="stage0-miner",
+                include_run=True,
+            ),
+            requires_env=_product_env_requirements(args, ["miner", "peer"]),
+        ))
+    commands.append(command_entry(
+        "check generation route",
+        _product_cli_generate_command(
+            p2p=bool(args.p2p),
+            coordinator_url=coordinator_url,
+            peer_bootstrap=p2p_bootstrap,
+            p2p_backend=_p2p_backend(args),
+            backend=args.backend,
+            hf_model_id=args.hf_model_id,
+            dry_run=True,
+        ),
+    ))
+    commands.append(command_entry(
+        "submit generation",
+        _product_cli_generate_command(
+            p2p=bool(args.p2p),
+            coordinator_url=coordinator_url,
+            peer_bootstrap=p2p_bootstrap,
+            p2p_backend=_p2p_backend(args),
+            backend=args.backend,
+            hf_model_id=args.hf_model_id,
+            dry_run=False,
+        ),
+        requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+    ))
+    return commands
+
+
 def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     command = build_serve_command(args)
     public_bind = args.bind_host in {"0.0.0.0", "::"}
+    coordinator_url = f"http://{args.public_host}:{args.port}"
     if public_bind and not args.i_understand_public_bind:
         safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token"})
         return sanitize({
@@ -5290,6 +5609,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             "profile": args.profile,
             "command": safe_command,
             "command_line": command_line(safe_command),
+            "next_commands": _product_public_bind_next_commands(args),
             "diagnosis_codes": ["public_bind_requires_explicit_ack"],
             "operator_action": "Add --i-understand-public-bind only on a trusted network boundary, or keep --bind-host on 127.0.0.1.",
             "safety": {"public_bind_requires_explicit_ack": True},
@@ -5302,7 +5622,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             swarm_id=args.swarm_id,
             peer_id=args.peer_id or stable_peer_id(f"{args.swarm_id}:coordinator:{args.public_host}:{args.port}"),
             role="coordinator",
-            coordinator_url=f"http://{args.public_host}:{args.port}",
+            coordinator_url=coordinator_url,
             peer_url=args.peer_url,
             backend="cuda" if args.profile == "gpu-generation" else "cpu",
             hf_model_id=args.hf_model_id,
@@ -5327,7 +5647,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
         "ok": bool(not args.p2p or peer_announce.get("ok")),
         "mode": "serve",
         "profile": args.profile,
-        "coordinator_url": f"http://{args.public_host}:{args.port}",
+        "coordinator_url": coordinator_url,
         "p2p": {
             "enabled": bool(args.p2p),
             "backend": _p2p_backend(args) if args.p2p else "",
@@ -5336,6 +5656,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
         },
         "command": safe_command,
         "command_line": command_line(safe_command),
+        "next_commands": _product_serve_next_commands(args, coordinator_url=coordinator_url),
         "printed_only": not args.run,
         "diagnosis_codes": ["serve_command_ready"] + (
             [("real_p2p_coordinator_announce_ready" if _p2p_backend(args) == "real" else "p2p_coordinator_announce_ready")]
@@ -5376,11 +5697,12 @@ def _product_serve_operator_action(report: dict[str, Any]) -> str:
     if "p2p_coordinator_announce_failed" in codes or "real_p2p_coordinator_announce_failed" in codes:
         return "Start the matching P2P discovery daemon, check --peer-bootstrap/--peer-secret, then rerun serve --p2p."
     if report.get("ok"):
+        generate_hint = "crowdtensor generate --p2p --dry-run" if (report.get("p2p") or {}).get("enabled") else f"crowdtensor generate --coordinator-url {report.get('coordinator_url')} --dry-run"
         if report.get("printed_only"):
-            return "Rerun with --run to start the Coordinator, start stage0 and stage1 Miners with crowdtensor join, then run crowdtensor generate --p2p --dry-run."
+            return f"Rerun with --run to start the Coordinator, start stage0 and stage1 Miners with crowdtensor join, then run {generate_hint}."
         if (report.get("p2p") or {}).get("enabled"):
             return "Start or keep stage0 and stage1 Miners joined, then run crowdtensor generate --p2p --dry-run before submitting."
-        return "Start stage0 and stage1 Miners with --coordinator-url, then run crowdtensor generate --dry-run."
+        return f"Start stage0 and stage1 Miners with --coordinator-url, then run {generate_hint}."
     if report.get("returncode") not in {None, 0}:
         return "Coordinator process exited; inspect its stderr/logs, fix the runtime error, and rerun serve --run."
     return "Inspect the serve JSON report and Coordinator command for the failing check."
@@ -5497,6 +5819,10 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "join",
+            "next_commands": [
+                command_entry("start local Coordinator", ["crowdtensor", "serve", "--run"]),
+                command_entry("discover through P2P", ["crowdtensor", "join", "--p2p", "--peer-bootstrap", p2p_bootstrap or DEFAULT_P2P_BOOTSTRAP, "--run"]),
+            ],
             "diagnosis_codes": ["coordinator_route_missing"],
             "operator_action": "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery.",
         })
@@ -5544,6 +5870,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         },
         "command": safe_command,
         "command_line": command_line(safe_command),
+        "next_commands": _product_join_next_commands(args, coordinator_url=coordinator_url),
         "printed_only": not args.run,
         "diagnosis_codes": ["join_command_ready"] + (
             [("real_p2p_stage_miner_announce_ready" if p2p_backend == "real" else "p2p_stage_miner_announce_ready")]
@@ -5587,9 +5914,10 @@ def _product_join_operator_action(report: dict[str, Any]) -> str:
     if report.get("ok"):
         stage_caps = ((report.get("p2p") or {}).get("stage_capabilities") or [])
         stage_text = "/".join(stage_caps) if stage_caps else "the selected stage"
+        generate_hint = "crowdtensor generate --p2p --dry-run" if (report.get("p2p") or {}).get("enabled") else f"crowdtensor generate --coordinator-url {report.get('coordinator_url')} --dry-run"
         if report.get("printed_only"):
-            return f"Rerun with --run to start {stage_text}; keep one stage0 and one stage1 Miner running before generate."
-        return "Keep this Miner running; start the other stage if needed, then run crowdtensor generate --dry-run."
+            return f"Rerun with --run to start {stage_text}; keep one stage0 and one stage1 Miner running, then run {generate_hint}."
+        return f"Keep this Miner running; start the other stage if needed, then run {generate_hint}."
     if report.get("returncode") not in {None, 0}:
         return "Miner process exited; inspect its stderr/logs, fix the runtime error, and rerun join --run."
     return "Inspect the join JSON report and Miner command for the failing check."
@@ -6556,6 +6884,11 @@ def print_product_serve(report: dict[str, Any]) -> None:
         print(f"  returncode: {report.get('returncode')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    for index, item in enumerate(report.get("next_commands") or [], start=1):
+        if isinstance(item, dict) and item.get("command_line"):
+            requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
+            suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
@@ -6580,6 +6913,11 @@ def print_product_join(report: dict[str, Any]) -> None:
         print(f"  returncode: {report.get('returncode')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    for index, item in enumerate(report.get("next_commands") or [], start=1):
+        if isinstance(item, dict) and item.get("command_line"):
+            requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
+            suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
@@ -8220,7 +8558,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     join.add_argument("--json", action="store_true")
 
     generate = subparsers.add_parser("generate", help="Create a bounded public product generation session.")
-    generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default="")
+    generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=DEFAULT_PRODUCT_GENERATE_PROMPT)
     generate.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
     generate.add_argument("--scenario-id", default="public-swarm-product-rc")
     generate.add_argument("--max-new-tokens", type=int, default=16)
