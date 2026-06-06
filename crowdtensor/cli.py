@@ -3496,6 +3496,7 @@ def _infer_command_args(
     full_evidence: bool | None = None,
     include_admin: bool = False,
     include_observer: bool = False,
+    coordinator_url_override: str = "",
 ) -> list[str]:
     command = ["crowdtensor", "infer"]
     resolved_mode = mode or getattr(args, "infer_mode", "local")
@@ -3537,7 +3538,7 @@ def _infer_command_args(
     use_dry_run = bool(getattr(args, "dry_run", False)) if dry_run is None else bool(dry_run)
     if use_dry_run:
         command.append("--dry-run")
-    coordinator_url = str(getattr(args, "coordinator_url", "") or "")
+    coordinator_url = coordinator_url_override or str(getattr(args, "coordinator_url", "") or "")
     peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "")
     p2p = bool(getattr(args, "p2p", False) or (resolved_mode == "existing" and peer_bootstrap))
     if coordinator_url:
@@ -3594,26 +3595,45 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
     coordinator_url = str(route.get("coordinator_url") or getattr(args, "coordinator_url", "") or "")
     peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "")
     use_p2p = bool(getattr(args, "p2p", False) or peer_bootstrap)
-    dry_run_command = _infer_command_args(args, mode="existing", dry_run=True, include_admin=False, include_observer=True)
-    submit_command = _infer_command_args(args, mode="existing", dry_run=False, include_admin=False, include_observer=False)
-    commands.append(command_entry(
+    route_missing = "coordinator_route_missing" in codes
+    suggested_coordinator_url = coordinator_url or (
+        "http://127.0.0.1:8787" if route_missing and not use_p2p else ""
+    )
+    dry_run_command = _infer_command_args(
+        args,
+        mode="existing",
+        dry_run=True,
+        include_admin=False,
+        include_observer=True,
+        coordinator_url_override=suggested_coordinator_url,
+    )
+    submit_command = _infer_command_args(
+        args,
+        mode="existing",
+        dry_run=False,
+        include_admin=False,
+        include_observer=False,
+        coordinator_url_override=suggested_coordinator_url,
+    )
+    check_command = command_entry(
         "check existing swarm",
         dry_run_command,
         requires_env=_product_env_requirements(args, ["observer"]),
-    ))
-    commands.append(command_entry(
+    )
+    submit_command_entry = command_entry(
         "submit inference",
         submit_command,
         requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
-    ))
+    )
     startup_needed = {
         "generate_route_unavailable",
         "coordinator_route_missing",
         "coordinator_ready_failed",
         "stage_preflight_failed",
     }
-    if not ok and codes.intersection(startup_needed):
-        local_port = local_coordinator_port_from_url(coordinator_url)
+    needs_startup_commands = bool(not ok and codes.intersection(startup_needed))
+    if needs_startup_commands:
+        local_port = local_coordinator_port_from_url(suggested_coordinator_url or coordinator_url)
         serve_args = argparse.Namespace(
             profile="gpu-generation" if getattr(args, "backend", "cpu") == "cuda" else "cpu-real-llm",
             bind_host="127.0.0.1",
@@ -3641,7 +3661,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
                 "start stage0 Miner",
                 _product_cli_join_command(
                     serve_args,
-                    coordinator_url=coordinator_url or f"http://127.0.0.1:{local_port}",
+                    coordinator_url=suggested_coordinator_url or coordinator_url or f"http://127.0.0.1:{local_port}",
                     stage="stage0",
                     miner_id="stage0-miner",
                     include_run=True,
@@ -3651,13 +3671,15 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
                 "start stage1 Miner",
                 _product_cli_join_command(
                     serve_args,
-                    coordinator_url=coordinator_url or f"http://127.0.0.1:{local_port}",
+                    coordinator_url=suggested_coordinator_url or coordinator_url or f"http://127.0.0.1:{local_port}",
                     stage="stage1",
                     miner_id="stage1-miner",
                     include_run=True,
                 ),
             ),
         ])
+    commands.append(check_command)
+    commands.append(submit_command_entry)
     return commands
 
 
@@ -10766,10 +10788,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 raise SystemExit(f"--{name.replace('_', '-')} must be positive")
         if args.admin_results_limit < 1:
             raise SystemExit("--admin-results-limit must be at least 1")
-        if args.infer_mode == "existing":
-            if not args.coordinator_url and not args.peer_bootstrap and not args.p2p:
-                raise SystemExit("infer --mode existing requires --coordinator-url, --peer-bootstrap, or --p2p")
-        elif args.dry_run:
+        if args.infer_mode != "existing" and args.dry_run:
             raise SystemExit("infer --dry-run is supported for --mode existing route preflight only")
     if args.command == "serve":
         if args.port < 1:

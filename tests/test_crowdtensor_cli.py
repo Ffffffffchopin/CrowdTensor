@@ -4103,8 +4103,51 @@ class CrowdTensorCliTests(unittest.TestCase):
                 self.assertIn(expected, persisted["operator_action"])
 
     def test_infer_existing_requires_route(self) -> None:
-        with self.assertRaises(SystemExit):
-            cli.parse_args(["infer", "prompt", "--mode", "existing", "--admin-token", "admin-secret"])
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+        self.assertEqual(
+            report["operator_action"],
+            "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm.",
+        )
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --coordinator-url http://127.0.0.1:8787",
+            next_lines,
+        )
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertIn("coordinator_route_missing", persisted["diagnosis_codes"])
 
     def test_infer_existing_missing_admin_token_returns_actionable_report(self) -> None:
         output_dir = Path(self._tmp_dir())
