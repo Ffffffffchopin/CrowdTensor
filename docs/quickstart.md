@@ -80,6 +80,7 @@ P2P-discovered swarm with `--coordinator-url` or `--peer-bootstrap`.
 Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
 redacted.
+Add `--stream` when you want safe token-progress evidence in the CLI summary.
 
 ## 4. Run The Real-LLM Swarm Beta Gate
 

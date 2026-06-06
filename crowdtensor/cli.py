@@ -3183,6 +3183,60 @@ def _infer_batch_from_report(payload: dict[str, Any]) -> dict[str, Any]:
     return batch if isinstance(batch, dict) else {}
 
 
+def _safe_infer_stream_progress(stream: dict[str, Any]) -> dict[str, Any]:
+    progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
+    per_request_progress = []
+    raw_per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
+    for item in raw_per_request:
+        if not isinstance(item, dict):
+            continue
+        counts = item.get("observed_token_counts") if isinstance(item.get("observed_token_counts"), list) else []
+        per_request_progress.append({
+            "request_id": item.get("request_id"),
+            "prompt_hash": item.get("prompt_hash"),
+            "event_count": _safe_int(item.get("event_count")),
+            "observed_token_counts": [_safe_int(count) for count in counts],
+            "max_observed_token_count": _safe_int(item.get("max_observed_token_count")),
+            "target_token_count": _safe_int(item.get("target_token_count")),
+            "monotonic_progress": bool(item.get("monotonic_progress")),
+            "stream_progress_complete": bool(item.get("stream_progress_complete")),
+        })
+    counts = progress.get("observed_token_counts") if isinstance(progress.get("observed_token_counts"), list) else []
+    return {
+        "stream_progress_complete": bool(progress.get("stream_progress_complete")),
+        "all_token_events_ready": bool(progress.get("all_token_events_ready")),
+        "monotonic_progress": bool(progress.get("monotonic_progress")),
+        "observed_token_counts": [_safe_int(count) for count in counts],
+        "max_observed_token_count": _safe_int(progress.get("max_observed_token_count")),
+        "target_token_count": _safe_int(progress.get("target_token_count") or progress.get("max_new_tokens")),
+        "expected_request_count": _safe_int(progress.get("expected_request_count"), 1),
+        "per_request_progress": per_request_progress,
+        "per_request_progress_complete": bool(progress.get("per_request_progress_complete")),
+        "per_request_monotonic_progress": bool(progress.get("per_request_monotonic_progress")),
+    }
+
+
+def _safe_infer_stream_events(stream: dict[str, Any]) -> list[dict[str, Any]]:
+    events = stream.get("events") if isinstance(stream.get("events"), list) else []
+    safe_events = []
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        safe_events.append({
+            "schema": item.get("schema"),
+            "request_id": item.get("request_id"),
+            "prompt_hash": item.get("prompt_hash"),
+            "generated_token_count": _safe_int(item.get("generated_token_count")),
+            "max_new_tokens": item.get("max_new_tokens"),
+            "generation_step": item.get("generation_step"),
+            "generated_text_hash": item.get("generated_text_hash"),
+            "decoded_tokens_match": item.get("decoded_tokens_match"),
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        })
+    return safe_events
+
+
 def _iter_infer_generated_text_candidates(value: Any, *, _seen: set[int] | None = None) -> list[dict[str, Any]]:
     seen = _seen if _seen is not None else set()
     candidates: list[dict[str, Any]] = []
@@ -3417,6 +3471,10 @@ def _infer_summary_from_payload(
             "ready": bool(stream.get("stream_generation_ready")),
             "event_count": int(stream.get("event_count") or 0),
             "source": stream.get("source"),
+            "progress": _safe_infer_stream_progress(stream),
+            "events": _safe_infer_stream_events(stream),
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
         },
         "local_output": {
             "available": bool(generated_text or display_outputs),
@@ -5904,6 +5962,24 @@ def print_infer(report: dict[str, Any]) -> None:
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     if stream.get("enabled"):
         print(f"  stream: ready={stream.get('ready')} events={stream.get('event_count')} source={stream.get('source')}")
+        progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
+        per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
+        if len(per_request) > 1:
+            for index, item in enumerate(per_request, start=1):
+                if not isinstance(item, dict):
+                    continue
+                counts = item.get("observed_token_counts") or []
+                print(
+                    f"  stream[{index}]: "
+                    f"counts={counts} "
+                    f"complete={item.get('stream_progress_complete')}"
+                )
+        elif progress:
+            print(
+                "  stream_progress: "
+                f"counts={progress.get('observed_token_counts') or []} "
+                f"complete={progress.get('stream_progress_complete')}"
+            )
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
     if len(outputs) <= 1 and local_output.get("generated_text"):

@@ -2893,6 +2893,79 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
 
+    def test_infer_local_preserves_safe_stream_progress(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "3",
+            "--stream",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("--stream-generation", command)
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "generation": {
+                    "generated_token_count": 3,
+                    "max_new_tokens": 3,
+                    "generated_text_hash": "sha256:generated",
+                    "decoded_tokens_match": True,
+                },
+                "stream": {
+                    "enabled": True,
+                    "requested": True,
+                    "event_count": 3,
+                    "source": "admin-session-stream",
+                    "stream_generation_ready": True,
+                    "progress": {
+                        "stream_progress_complete": True,
+                        "all_token_events_ready": True,
+                        "monotonic_progress": True,
+                        "observed_token_counts": [1, 2, 3],
+                        "max_observed_token_count": 3,
+                        "target_token_count": 3,
+                        "expected_request_count": 1,
+                    },
+                    "events": [
+                        {
+                            "schema": "session_stream_event_v1",
+                            "generated_token_count": 1,
+                            "max_new_tokens": 3,
+                            "generation_step": 0,
+                            "generated_text_hash": "sha256:step0",
+                            "generated_text": "must not leak",
+                            "generated_token_ids": [1],
+                        },
+                    ],
+                },
+                "stage_assignment": {"distinct_stage_miners": True},
+                "ledger": {"accepted_rows": 6},
+                "diagnosis_codes": ["product_swarm_mvp_ready", "public_swarm_generate_stream_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["stream"]["ready"])
+        self.assertEqual(report["stream"]["progress"]["observed_token_counts"], [1, 2, 3])
+        self.assertEqual(report["stream"]["events"][0]["generated_text_hash"], "sha256:step0")
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn("must not leak", encoded)
+        self.assertNotIn('"generated_token_ids": [1]', encoded)
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        persisted_encoded = json.dumps(persisted, sort_keys=True)
+        self.assertEqual(persisted["stream"]["progress"]["observed_token_counts"], [1, 2, 3])
+        self.assertNotIn("must not leak", persisted_encoded)
+        self.assertNotIn('"generated_token_ids": [1]', persisted_encoded)
+
     def test_infer_local_can_display_private_generated_text_without_persisting_it(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompt = "CrowdTensor user prompt"
@@ -3051,6 +3124,112 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["local_output"]["display_only"])
         self.assertNotIn("first output", json.dumps(persisted, sort_keys=True))
         self.assertNotIn("second output", json.dumps(persisted, sort_keys=True))
+
+    def test_infer_existing_batch_stream_progress_is_human_readable_and_safe(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "first prompt",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--admin-token",
+            "admin-secret",
+            "--stream",
+            "--output-dir",
+            str(output_dir),
+        ])
+        generate_payload = {
+            "schema": "public_swarm_product_cli_v1",
+            "ok": True,
+            "mode": "generate",
+            "generation": {
+                "generated_token_count": 2,
+                "max_new_tokens": 2,
+                "generated_text_hash": "sha256:batch",
+                "decoded_tokens_match": True,
+                "request_count": 2,
+                "batch_generation_ready": True,
+            },
+            "batch": {"enabled": True, "request_count": 2, "batch_generation_ready": True},
+            "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
+            "stream": {
+                "enabled": True,
+                "event_count": 4,
+                "source": "admin-session-stream",
+                "stream_generation_ready": True,
+                "progress": {
+                    "stream_progress_complete": True,
+                    "all_token_events_ready": True,
+                    "monotonic_progress": False,
+                    "observed_token_counts": [1, 2, 1, 2],
+                    "max_observed_token_count": 2,
+                    "target_token_count": 2,
+                    "expected_request_count": 2,
+                    "per_request_progress_complete": True,
+                    "per_request_monotonic_progress": True,
+                    "per_request_progress": [
+                        {
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:p1",
+                            "event_count": 2,
+                            "observed_token_counts": [1, 2],
+                            "max_observed_token_count": 2,
+                            "target_token_count": 2,
+                            "monotonic_progress": True,
+                            "stream_progress_complete": True,
+                        },
+                        {
+                            "request_id": "req-2",
+                            "prompt_hash": "sha256:p2",
+                            "event_count": 2,
+                            "observed_token_counts": [1, 2],
+                            "max_observed_token_count": 2,
+                            "target_token_count": 2,
+                            "monotonic_progress": True,
+                            "stream_progress_complete": True,
+                        },
+                    ],
+                },
+                "events": [
+                    {
+                        "schema": "session_stream_event_v1",
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 1,
+                        "max_new_tokens": 2,
+                        "generation_step": 0,
+                        "generated_text_hash": "sha256:r1-step0",
+                        "generated_text": "must not leak",
+                        "generated_token_ids": [1],
+                    }
+                ],
+            },
+            "diagnosis_codes": ["public_swarm_generate_ready", "public_swarm_generate_stream_ready"],
+        }
+
+        with patch.object(cli, "build_product_generate", return_value=generate_payload):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["stream"]["ready"])
+        self.assertEqual(report["stream"]["progress"]["expected_request_count"], 2)
+        self.assertEqual(
+            [item["observed_token_counts"] for item in report["stream"]["progress"]["per_request_progress"]],
+            [[1, 2], [1, 2]],
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  stream[1]: counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[2]: counts=[1, 2] complete=True", rendered)
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn("must not leak", encoded)
+        self.assertNotIn('"generated_token_ids": [1]', encoded)
 
     def test_infer_json_suppresses_raw_text_in_returned_payload(self) -> None:
         output_dir = Path(self._tmp_dir())
