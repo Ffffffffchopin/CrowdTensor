@@ -85,11 +85,13 @@ text; both `infer` and `generate` include `operator_action` suggestions for
 checking tokens, Miner health, admin API access, or timeout limits.
 
 To check an already running Coordinator or P2P-discovered swarm before
-submitting a request, use `crowdtensor infer --mode existing --dry-run` with
-`--coordinator-url` or `--peer-bootstrap`; it validates route metadata and the
-Coordinator `/ready` endpoint without creating an inference session. Add
-`--observer-token "$CROWDTENSOR_OBSERVER_TOKEN"` when `/state` is protected and
-you want the dry run to verify visible stage0/stage1 Miner capabilities too.
+submitting a request, use `crowdtensor infer --mode existing --dry-run` or
+`crowdtensor generate --dry-run` with `--coordinator-url` or
+`--peer-bootstrap`. The dry run validates the session request, route metadata,
+Coordinator `/ready` when live preflight is enabled, and visible stage0/stage1
+Miner capability coverage when discovery or `--observer-token` makes that
+safe. CI/package checks can add `--skip-live-preflight` to keep `generate
+--dry-run` as an offline request-shape check.
 
 For maintainer-grade release evidence, run the full public swarm beta gate:
 

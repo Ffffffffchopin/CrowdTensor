@@ -247,6 +247,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--hf-model-id",
             "distilgpt2",
             "--dry-run",
+            "--skip-live-preflight",
             "--json",
         ])
 
@@ -259,6 +260,100 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
         self.assertNotIn("CrowdTensor prompt", encoded)
         self.assertIn("prompt_hash", encoded)
+
+    def test_product_generate_dry_run_checks_coordinator_and_stage_preflight(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--observer-token",
+            "observer-secret",
+            "--dry-run",
+            "--json",
+        ])
+        calls: list[tuple[str, str, str]] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            observer_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del payload, admin_token, timeout
+            calls.append((method, base_url, path))
+            if path == "/ready":
+                return {"schema": "ready_v1", "service": "crowdtensord", "protocol": "runtime_contract_v1"}
+            if path == "/state":
+                self.assertEqual(observer_token, "observer-secret")
+                return {
+                    "miner_profiles": {
+                        "stage0": {
+                            "last_capabilities": {
+                                "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"]
+                            }
+                        },
+                        "stage1": {
+                            "last_capabilities": {
+                                "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage1"]
+                            }
+                        },
+                    }
+                }
+            raise AssertionError(path)
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["ready_to_submit"]["ok"])
+        self.assertTrue(report["coordinator_ready"]["ok"])
+        self.assertTrue(report["stage_preflight"]["ok"])
+        self.assertEqual(report["stage_preflight"]["matched_miner_count"], 2)
+        self.assertIn("coordinator_ready_preflight_ready", report["diagnosis_codes"])
+        self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
+        self.assertIn(("GET", "http://127.0.0.1:8787", "/ready"), calls)
+        self.assertIn(("GET", "http://127.0.0.1:8787", "/state"), calls)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  coordinator_ready: True service=crowdtensord protocol=runtime_contract_v1", rendered)
+        self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
+        self.assertIn("  ready_to_submit: True route=True coordinator=True stage=True", rendered)
+
+    def test_product_generate_dry_run_can_skip_live_preflight_for_ci(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--json",
+        ])
+
+        with patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("skip-live-preflight should not touch live Coordinator endpoints"),
+        ):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIsNone(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["ready_to_submit"]["coordinator_preflight_required"])
+        self.assertEqual(report["coordinator_ready"]["reason"], "live_preflight_skipped")
+        self.assertEqual(report["stage_preflight"]["reason"], "live_preflight_skipped")
+        self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
+        self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
+        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
 
     def test_p2pd_top_level_prints_daemon_command(self) -> None:
         args = cli.parse_args([
@@ -535,6 +630,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["route"]["route_source"], "p2p-discovery")
         self.assertIn("p2p_generate_route_ready", report["diagnosis_codes"])
+        self.assertTrue(report["ready_to_submit"]["ok"])
+        self.assertTrue(report["stage_preflight"]["ok"])
+        self.assertEqual(report["stage_preflight"]["source"], "p2p-route")
+        self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
+        self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
 
     def test_product_generate_p2p_dry_run_filters_coordinator_by_model_id(self) -> None:
         args = cli.parse_args([
@@ -591,6 +691,40 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["route"]["coordinator_url"], "http://distil.example:8787")
         self.assertEqual(report["route"]["coordinator_filter"]["mismatched_peers"], ["coord-tiny"])
         self.assertIn("session_route_coordinator_filter_ready", report["route"]["diagnosis_codes"])
+        self.assertEqual(report["coordinator_ready"]["reason"], "not_checked_for_discovered_remote_coordinator")
+        self.assertTrue(report["ready_to_submit"]["ok"])
+
+    def test_product_generate_p2p_dry_run_reports_missing_stage_preflight_action(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--p2p",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--max-new-tokens",
+            "2",
+            "--dry-run",
+            "--json",
+        ])
+        catalog = {
+            "peers": [
+                {"role": "coordinator", "peer_id": "coord", "urls": {"coordinator": "http://127.0.0.1:8787"}},
+                {
+                    "role": "miner",
+                    "peer_id": "stage0",
+                    "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"]},
+                },
+            ]
+        }
+
+        with patch.object(cli, "fetch_peer_catalog", return_value=catalog):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertFalse(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["stage_preflight"]["ok"])
+        self.assertEqual(report["stage_preflight"]["missing_capabilities"], ["real_llm_sharded_stage1"])
+        self.assertIn("stage_preflight_failed", report["diagnosis_codes"])
+        self.assertIn("stage0 and stage1 Miners", report["operator_action"])
 
     def test_product_generate_real_p2p_dry_run_uses_route_lookup(self) -> None:
         args = cli.parse_args([

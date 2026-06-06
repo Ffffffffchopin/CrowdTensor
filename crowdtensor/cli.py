@@ -3614,6 +3614,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             http_timeout=args.http_timeout,
             admin_results_limit=args.admin_results_limit,
             dry_run=args.dry_run,
+            skip_live_preflight=bool(args.dry_run),
             include_output=args.include_output,
             stream=args.stream,
             json=args.json,
@@ -5663,12 +5664,24 @@ def _safe_stream_payload_event(event: dict[str, Any], *, max_new_tokens: int) ->
 def _product_generate_operator_action(report: dict[str, Any]) -> str:
     if report.get("ok"):
         if bool(report.get("dry_run")):
+            ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
+            if ready_to_submit and ready_to_submit.get("ok") is False:
+                stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
+                if stage_preflight.get("checked") and not stage_preflight.get("ok"):
+                    return "Dry-run request shape is valid, but stage0/stage1 Miners are not both visible; start or rejoin stage Miners before submitting."
+                coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
+                if coordinator_ready and coordinator_ready.get("ok") is False:
+                    return "Dry-run request shape is valid, but Coordinator /ready is not reachable; start the Coordinator before submitting."
             return "Rerun without --dry-run to submit the generation request."
         return ""
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
     if "hf_dependencies_missing" in codes or "transformers" in detail:
         return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
+    if "coordinator_ready_failed" in codes:
+        return "Coordinator route exists but /ready failed; start or restart the Coordinator and retry generate --dry-run."
+    if "stage_preflight_failed" in codes:
+        return "Start or rejoin distinct stage0 and stage1 Miners, then rerun generate --dry-run with --observer-token when using /state."
     if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
         return "Start a Coordinator and distinct stage0/stage1 Miners, or pass --peer-bootstrap for discovery."
     if "admin_token_required" in codes:
@@ -5683,6 +5696,98 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
 def _finalize_product_generate_report(report: dict[str, Any], *, admin_token: str = "") -> dict[str, Any]:
     report.setdefault("operator_action", _product_generate_operator_action(report))
     return sanitize(redact_values(report, [admin_token]))
+
+
+def _should_live_check_generate_coordinator(args: argparse.Namespace, coordinator_url: str) -> bool:
+    del coordinator_url
+    return bool(getattr(args, "coordinator_url", ""))
+
+
+def _product_generate_dry_run_preflight(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    route: dict[str, Any],
+    effective_coordinator_url: str,
+) -> dict[str, Any]:
+    route_ready = bool(route.get("usable_now") if getattr(args, "p2p", False) else route.get("coordinator_url_present"))
+    skip_live_preflight = bool(getattr(args, "skip_live_preflight", False))
+    should_live_check = bool(not skip_live_preflight and _should_live_check_generate_coordinator(args, effective_coordinator_url))
+    coordinator_ready = (
+        _coordinator_ready_preflight(effective_coordinator_url, timeout=float(getattr(args, "http_timeout", 30.0)))
+        if should_live_check
+        else {
+            "ok": None,
+            "checked": False,
+            "reason": (
+                "live_preflight_skipped"
+                if skip_live_preflight
+                else ("not_checked_for_discovered_remote_coordinator" if effective_coordinator_url else "coordinator_url_missing")
+            ),
+            "public_artifact_safe": True,
+        }
+    )
+    backend = str(getattr(args, "backend", "cpu") or "cpu")
+    p2p_route = bool(getattr(args, "p2p", False) or getattr(args, "peer_bootstrap", ""))
+    if skip_live_preflight:
+        stage_preflight = {
+            "checked": False,
+            "ok": None,
+            "reason": "live_preflight_skipped",
+            "source": "not-checked",
+            "required_capabilities": required_stage_capabilities(backend=backend, stage_mode="split"),
+            "public_artifact_safe": True,
+        }
+    elif p2p_route:
+        stage_preflight = _route_stage_preflight(route, backend=backend)
+    elif should_live_check and effective_coordinator_url and coordinator_ready.get("ok"):
+        stage_preflight = _coordinator_stage_preflight(
+            effective_coordinator_url,
+            observer_token=str(getattr(args, "observer_token", "") or ""),
+            backend=backend,
+            timeout=float(getattr(args, "http_timeout", 30.0)),
+        )
+    else:
+        stage_preflight = {
+            "checked": False,
+            "ok": None,
+            "reason": "coordinator_not_ready" if effective_coordinator_url else "route_not_ready",
+            "source": "not-checked",
+            "required_capabilities": required_stage_capabilities(backend=backend, stage_mode="split"),
+            "public_artifact_safe": True,
+        }
+    stage_required = bool(stage_preflight.get("checked"))
+    stage_ok = bool(stage_preflight.get("ok")) if stage_required else None
+    coordinator_ok = bool(coordinator_ready.get("ok")) if should_live_check else None
+    live_ready = None if skip_live_preflight else bool(route_ready and (coordinator_ok is not False) and (stage_ok is not False))
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    if should_live_check:
+        codes.add("coordinator_ready_preflight_ready" if coordinator_ready.get("ok") else "coordinator_ready_failed")
+    else:
+        codes.add("coordinator_ready_preflight_skipped")
+    if stage_preflight.get("checked") and stage_preflight.get("ok"):
+        codes.add("stage_preflight_ready")
+    elif stage_preflight.get("checked"):
+        codes.add("stage_preflight_failed")
+    else:
+        codes.add("stage_preflight_skipped")
+    report.update({
+        "ok": bool(report.get("ok") and (live_ready is not False)),
+        "coordinator_ready": coordinator_ready,
+        "stage_preflight": stage_preflight,
+        "ready_to_submit": {
+            "ok": live_ready,
+            "route_ready": route_ready,
+            "coordinator_ready": coordinator_ok,
+            "coordinator_preflight_required": should_live_check,
+            "stage_preflight_ok": stage_ok,
+            "stage_preflight_required": stage_required,
+            "source": "dry-run-preflight",
+            "public_artifact_safe": True,
+        },
+        "diagnosis_codes": sorted(codes),
+    })
+    return report
 
 
 def _coordinator_ready_preflight(base_url: str, *, timeout: float) -> dict[str, Any]:
@@ -5802,6 +5907,13 @@ def _route_stage_preflight(route: dict[str, Any], *, backend: str) -> dict[str, 
         for capability, miner_id in matched.items()
         if str(capability) in set(required) and str(miner_id)
     }
+    if not safe_matched:
+        matched_peers = [str(peer_id) for peer_id in (route.get("matched_peers") or []) if str(peer_id)]
+        if len(matched_peers) >= len(required):
+            safe_matched = {
+                capability: matched_peers[index]
+                for index, capability in enumerate(required)
+            }
     missing = [capability for capability in required if capability not in safe_matched]
     distinct_stage_miners = len({miner_id for miner_id in safe_matched.values() if miner_id}) >= len(required)
     ok = bool(not missing and distinct_stage_miners)
@@ -5918,7 +6030,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     effective_coordinator_url = str(route.get("coordinator_url") or coordinator_url or "")
     route_ready_code = "real_p2p_generate_route_ready" if p2p_backend == "real" else "p2p_generate_route_ready"
     if args.dry_run:
-        return _finalize_product_generate_report({
+        report = {
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": bool(route.get("usable_now") if args.p2p else route.get("coordinator_url_present")),
             "mode": "generate",
@@ -5935,11 +6047,22 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                 "route_lookup_schema": route_lookup_payload.get("schema") if route_lookup_payload else "",
             },
             "diagnosis_codes": [
-                route_ready_code if args.p2p and route.get("usable_now") else (
-                    "generate_dry_run_ready" if route.get("coordinator_url_present") else "coordinator_route_missing"
+                (
+                    route_ready_code
+                    if route.get("usable_now")
+                    else ("coordinator_route_missing" if not route.get("coordinator_url_present") else "stage_capability_missing")
                 )
+                if args.p2p
+                else ("generate_dry_run_ready" if route.get("coordinator_url_present") else "coordinator_route_missing")
             ],
-        })
+        }
+        report = _product_generate_dry_run_preflight(
+            report,
+            args,
+            route=route,
+            effective_coordinator_url=effective_coordinator_url,
+        )
+        return _finalize_product_generate_report(report)
     if args.p2p and not route.get("usable_now"):
         return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -6327,6 +6450,33 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"source={route.get('route_source')} "
             f"coordinator={route.get('coordinator_url_present')} "
             f"missing={','.join(missing) if missing else 'none'}"
+        )
+    coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
+    if coordinator_ready:
+        print(
+            "  coordinator_ready: "
+            f"{coordinator_ready.get('ok')} "
+            f"service={coordinator_ready.get('service')} "
+            f"protocol={coordinator_ready.get('protocol')}"
+        )
+    stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
+    if stage_preflight:
+        missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
+        print(
+            "  stage_preflight: "
+            f"checked={stage_preflight.get('checked')} "
+            f"ok={stage_preflight.get('ok')} "
+            f"matched_miners={stage_preflight.get('matched_miner_count')} "
+            f"missing={','.join(str(item) for item in missing) if missing else 'none'}"
+        )
+    ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
+    if ready_to_submit:
+        print(
+            "  ready_to_submit: "
+            f"{ready_to_submit.get('ok')} "
+            f"route={ready_to_submit.get('route_ready')} "
+            f"coordinator={ready_to_submit.get('coordinator_ready')} "
+            f"stage={ready_to_submit.get('stage_preflight_ok')}"
         )
     if report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
@@ -7982,11 +8132,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     generate.add_argument("--p2p", action="store_true", help="resolve Coordinator and stage peers through p2pd")
     generate.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
     generate.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    generate.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
     generate.add_argument("--timeout-seconds", type=float, default=120.0)
     generate.add_argument("--poll-interval", type=float, default=1.0)
     generate.add_argument("--http-timeout", type=float, default=30.0)
     generate.add_argument("--admin-results-limit", type=int, default=50)
     generate.add_argument("--dry-run", action="store_true")
+    generate.add_argument("--skip-live-preflight", action="store_true", help="dry-run only: skip Coordinator /ready and /state checks for CI-safe protocol/package checks")
     generate.add_argument("--include-output", action="store_true")
     generate.add_argument("--stream", action="store_true", help="emit safe per-token progress while waiting for the final result")
     generate.add_argument("--json", action="store_true")

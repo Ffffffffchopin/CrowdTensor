@@ -468,13 +468,13 @@ The Public Swarm Product RC is the current product-surface milestone:
 crowdtensor serve --profile gpu-generation --json
 crowdtensor join --coordinator-url http://127.0.0.1:8787 --stage stage0 --backend cuda --json
 crowdtensor join --coordinator-url http://127.0.0.1:8787 --stage stage1 --backend cuda --json
-crowdtensor generate --coordinator-url http://127.0.0.1:8787 --prompt-text "CrowdTensor product RC" --backend cuda --dry-run --json
+crowdtensor generate --coordinator-url http://127.0.0.1:8787 --prompt-text "CrowdTensor product RC" --backend cuda --dry-run --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" --json
 crowdtensor peer check --json
 crowdtensor public-swarm-product-rc --json
 python scripts/public_swarm_product_rc_check.py --json
 ```
 
-`crowdtensor serve` prints or runs the Coordinator command for `cpu-real-llm` or `gpu-generation`; public bind requires explicit acknowledgement. `crowdtensor join` prints or runs a Miner command for stage0/stage1/both and can resolve a Coordinator through `--peer-bootstrap`. `crowdtensor generate` creates a bounded `session_protocol_v1` request, hashes the prompt in public output, and uses `POST /admin/inference-sessions` when not in `--dry-run`. `crowdtensor peer daemon`, `peer announce`, `peer resolve`, and `peer check` expose `p2p_lite_peer_v1` HTTP-gossip discovery. The RC artifact imports the retained `gpu_sharded_generation_beta_v1` Kaggle evidence and requires `coordinator_product_surface_ready`, `session_protocol_ready`, `p2p_lite_discovery_ready`, and `gpu_generation_evidence_import_ready`. P2P-lite does not replace Coordinator leases, heartbeats, validation, or result ledgers; it is not libp2p, DHT, NAT traversal, decentralized security, Hivemind/Petals-level serving, or large-model serving.
+`crowdtensor serve` prints or runs the Coordinator command for `cpu-real-llm` or `gpu-generation`; public bind requires explicit acknowledgement. `crowdtensor join` prints or runs a Miner command for stage0/stage1/both and can resolve a Coordinator through `--peer-bootstrap`. `crowdtensor generate` creates a bounded `session_protocol_v1` request, hashes the prompt in public output, and uses `POST /admin/inference-sessions` when not in `--dry-run`. `generate --dry-run` can also print live `coordinator_ready`, `stage_preflight`, and `ready_to_submit` checks; package-only CI paths use `--skip-live-preflight` to keep this as an offline request-shape check. `crowdtensor peer daemon`, `peer announce`, `peer resolve`, and `peer check` expose `p2p_lite_peer_v1` HTTP-gossip discovery. The RC artifact imports the retained `gpu_sharded_generation_beta_v1` Kaggle evidence and requires `coordinator_product_surface_ready`, `session_protocol_ready`, `p2p_lite_discovery_ready`, and `gpu_generation_evidence_import_ready`. P2P-lite does not replace Coordinator leases, heartbeats, validation, or result ledgers; it is not libp2p, DHT, NAT traversal, decentralized security, Hivemind/Petals-level serving, or large-model serving.
 
 The v0.3 Product Swarm MVP check is the shortest strict proof that the product commands themselves can run a real tiny-GPT two-stage generation loop:
 

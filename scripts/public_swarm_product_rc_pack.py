@@ -93,6 +93,7 @@ def run_cli_builds(output_dir: Path) -> dict[str, Any]:
         "--max-new-tokens",
         "8",
         "--dry-run",
+        "--skip-live-preflight",
         "--json",
     ])
     peer_args = cli.parse_args(["peer", "check", "--json"])

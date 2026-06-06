@@ -139,6 +139,17 @@ crowdtensor join --stage stage1 --p2p --swarm-id public-swarm-v2 --miner-id stag
 ```
 
 ```bash
+# Optional preflight before submitting the real request.
+crowdtensor generate \
+  --p2p \
+  --swarm-id public-swarm-v2 \
+  --prompt "CrowdTensor routes small models across home compute" \
+  --max-new-tokens 16 \
+  --http-timeout 30 \
+  --dry-run
+```
+
+```bash
 # Terminal 5
 crowdtensor generate \
   --p2p \
@@ -154,6 +165,11 @@ Expected behavior:
 - Stage 0 and stage 1 claim their stage-specific work.
 - The client receives the generated tokens.
 - The route records evidence for assignment and validation.
+
+`generate --dry-run` prints `coordinator_ready`, `stage_preflight`, and
+`ready_to_submit` when it can check live endpoints or P2P-discovered stage
+capabilities. If the command is being used only for CI-safe packaging or
+offline request-shape checks, add `--skip-live-preflight`.
 
 ## 6. Package A Controlled Remote Trial
 
