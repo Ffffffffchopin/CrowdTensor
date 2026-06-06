@@ -1752,7 +1752,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["wait_progress"]["target_token_count"], 4)
         self.assertFalse(report["wait_progress"]["completion_observed"])
         self.assertIn("Generation reached 1/4 tokens", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --timeout-seconds 120",
+            next_lines,
+        )
+        retry = next(item for item in report["next_commands"] if item["label"] == "retry generation with longer timeout")
+        self.assertEqual(retry["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
         self.assertNotIn("must not leak", encoded)
+        self.assertNotIn("CrowdTensor prompt", encoded)
+        self.assertNotIn("admin-secret", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -1760,6 +1769,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=True", rendered)
         self.assertIn("  action: Generation reached 1/4 tokens before timeout", rendered)
+        self.assertIn("  next[", rendered)
+        self.assertIn("retry generation with longer timeout", rendered)
 
     def test_product_generate_uses_longer_timeout_for_session_create(self) -> None:
         args = cli.parse_args([

@@ -6499,6 +6499,11 @@ def _safe_generate_error(exc: Exception) -> tuple[str, str]:
     return type(exc).__name__, detail
 
 
+def _retry_timeout_seconds(wait_progress: dict[str, Any]) -> int:
+    current = _safe_int(wait_progress.get("timeout_seconds"), 120)
+    return min(max(current * 2, current + 60, 120), 1800)
+
+
 def _safe_stream_payload_event(event: dict[str, Any], *, max_new_tokens: int) -> dict[str, Any]:
     try:
         generated_count = int(event.get("generated_token_count") or 0)
@@ -6685,6 +6690,31 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         commands.append(check_command)
     if submit_command:
         commands.append(submit_command)
+    if "generation_timeout" in codes and (p2p_enabled or suggested_coordinator_url or coordinator_url):
+        retry_command = (
+            submit_command["command"][:]
+            if isinstance(submit_command, dict) and isinstance(submit_command.get("command"), list)
+            else _product_cli_generate_command(
+                p2p=p2p_enabled,
+                coordinator_url=suggested_coordinator_url or coordinator_url,
+                peer_bootstrap=peer_bootstrap,
+                p2p_backend=p2p_backend,
+                backend=backend,
+                hf_model_id=hf_model_id,
+                dry_run=False,
+                max_new_tokens=max_new_tokens,
+                prompt_text=prompt_placeholder,
+                prompt_texts=prompt_texts_placeholder,
+                swarm_id=swarm_id,
+            )
+        )
+        wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
+        retry_command.extend(["--timeout-seconds", str(_retry_timeout_seconds(wait_progress))])
+        commands.append(command_entry(
+            "retry generation with longer timeout",
+            retry_command,
+            requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+        ))
     return commands
 
 
