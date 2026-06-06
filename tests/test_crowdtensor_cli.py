@@ -1250,6 +1250,46 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn("CrowdTensor prompt", json.dumps(report["next_commands"], sort_keys=True))
 
+    def test_product_generate_missing_route_returns_actionable_report(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+
+        report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertIn("Start a Coordinator", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor prompt", json.dumps(report["next_commands"], sort_keys=True))
+
     def test_product_generate_requires_admin_token_with_action(self) -> None:
         args = cli.parse_args([
             "generate",

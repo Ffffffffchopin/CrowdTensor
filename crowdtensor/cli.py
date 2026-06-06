@@ -6346,9 +6346,13 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             "install Hugging Face runtime",
             ["python", "-m", "pip", "install", "-e", ".[hf]"],
         ))
+    route_missing = "coordinator_route_missing" in codes
+    suggested_coordinator_url = coordinator_url or (
+        "http://127.0.0.1:8787" if route_missing and not p2p_enabled else ""
+    )
     route_command = _product_cli_generate_command(
         p2p=p2p_enabled,
-        coordinator_url=coordinator_url,
+        coordinator_url=suggested_coordinator_url or coordinator_url,
         peer_bootstrap=peer_bootstrap,
         p2p_backend=p2p_backend,
         backend=backend,
@@ -6358,13 +6362,17 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         prompt_text=prompt_placeholder,
         prompt_texts=prompt_texts_placeholder,
     )
-    if p2p_enabled or coordinator_url:
-        commands.append(command_entry("check generation route", route_command))
-        commands.append(command_entry(
+    check_command = (
+        command_entry("check generation route", route_command)
+        if p2p_enabled or suggested_coordinator_url or coordinator_url
+        else None
+    )
+    submit_command = (
+        command_entry(
             "submit generation",
             _product_cli_generate_command(
                 p2p=p2p_enabled,
-                coordinator_url=coordinator_url,
+                coordinator_url=suggested_coordinator_url or coordinator_url,
                 peer_bootstrap=peer_bootstrap,
                 p2p_backend=p2p_backend,
                 backend=backend,
@@ -6375,14 +6383,17 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 prompt_texts=prompt_texts_placeholder,
             ),
             requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
-        ))
+        )
+        if p2p_enabled or suggested_coordinator_url or coordinator_url
+        else None
+    )
     if (
         "generate_route_unavailable" in codes
         or "coordinator_route_missing" in codes
         or "coordinator_ready_failed" in codes
         or "stage_preflight_failed" in codes
     ):
-        local_port = local_coordinator_port_from_url(coordinator_url)
+        local_port = local_coordinator_port_from_url(suggested_coordinator_url or coordinator_url)
         serve_args = argparse.Namespace(
             profile="gpu-generation" if backend == "cuda" else "cpu-real-llm",
             bind_host="127.0.0.1",
@@ -6408,19 +6419,23 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             command_entry("start Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
             command_entry("start stage0 Miner", _product_cli_join_command(
                 serve_args,
-                coordinator_url=coordinator_url or f"http://127.0.0.1:{local_port}",
+                coordinator_url=suggested_coordinator_url or coordinator_url or f"http://127.0.0.1:{local_port}",
                 stage="stage0",
                 miner_id="stage0-miner",
                 include_run=True,
             )),
             command_entry("start stage1 Miner", _product_cli_join_command(
                 serve_args,
-                coordinator_url=coordinator_url or f"http://127.0.0.1:{local_port}",
+                coordinator_url=suggested_coordinator_url or coordinator_url or f"http://127.0.0.1:{local_port}",
                 stage="stage1",
                 miner_id="stage1-miner",
                 include_run=True,
             )),
         ])
+    if check_command:
+        commands.append(check_command)
+    if submit_command:
+        commands.append(submit_command)
     return commands
 
 
@@ -10825,8 +10840,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
-        if not args.coordinator_url and not args.peer_bootstrap and not args.p2p:
-            raise SystemExit("generate requires --coordinator-url or --peer-bootstrap")
         if args.poll_interval <= 0:
             raise SystemExit("--poll-interval must be positive")
         if args.http_timeout <= 0:
