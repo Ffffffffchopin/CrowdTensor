@@ -8607,7 +8607,11 @@ def print_remote_cli_report(report: dict[str, Any], *, title: str) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="crowdtensor", description="CrowdTensor user-facing command line tools.")
+    parser = argparse.ArgumentParser(
+        prog="crowdtensor",
+        description="CrowdTensor user-facing command line tools.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     local = subparsers.add_parser("local-proof", help="Run the CPU-only local proof and collect safe artifacts.")
     local.add_argument("--output-dir", default="dist/local-proof")
@@ -8623,7 +8627,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     clean.add_argument("--older-than-hours", type=float, default=24.0)
     clean.add_argument("--json", action="store_true")
 
-    infer = subparsers.add_parser("infer", help="Run a user-friendly CrowdTensor swarm inference request.")
+    infer = subparsers.add_parser(
+        "infer",
+        help="Run a user-friendly CrowdTensor swarm inference request.",
+        description=(
+            "Run the shortest user-facing CrowdTensor inference path.\n\n"
+            "Default mode starts the fast local product loopback proof, runs a tiny real GPT split\n"
+            "across stage0/stage1 workers, prints local display-only output in human mode, and\n"
+            "writes a redacted infer_summary.json. Use --mode existing to target an already\n"
+            "running Coordinator or P2P-discovered swarm. Reports include action and next[...] lines\n"
+            "with copyable follow-up commands.\n\n"
+            "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
+            "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crowdtensor infer \"CrowdTensor routes small models across home compute\"\n"
+            "  crowdtensor infer \"your prompt\" --max-new-tokens 8 --stream\n"
+            "  crowdtensor infer \"your prompt\" --mode existing --coordinator-url http://127.0.0.1:8787 --dry-run\n"
+            "  CROWDTENSOR_ADMIN_TOKEN=... crowdtensor infer \"your prompt\" --mode existing --coordinator-url http://127.0.0.1:8787\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     infer.add_argument("prompt_text", nargs="?", default="CrowdTensor routes small models across home compute")
     infer.add_argument("--mode", dest="infer_mode", choices=["local", "existing"], default="local")
     infer.add_argument("--output-dir", default="dist/infer")

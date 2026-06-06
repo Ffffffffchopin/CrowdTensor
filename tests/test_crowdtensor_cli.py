@@ -67,6 +67,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue((output_dir / "local_proof_summary.json").is_file())
         self.assertTrue(any("demo_manifest_pack.py" in command[1] for command in calls))
 
+    def test_infer_help_shows_user_examples_and_boundaries(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["infer", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Run the shortest user-facing CrowdTensor inference path.", rendered)
+        self.assertIn("examples:", rendered)
+        self.assertIn('crowdtensor infer "your prompt" --max-new-tokens 8 --stream', rendered)
+        self.assertIn("Reports include action and next[...] lines", rendered)
+        self.assertIn("not production", rendered)
+
     def test_runtime_matrix_block_skips_demo_and_manifest(self) -> None:
         output_dir = Path(self._tmp_dir())
 
