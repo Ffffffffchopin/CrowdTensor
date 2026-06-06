@@ -5434,6 +5434,41 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
     return sanitize(redact_values(report, [args.miner_token, args.peer_secret]))
 
 
+def _product_generate_local_output_from_validation(validation: dict[str, Any], *, max_chars: int = 4096) -> dict[str, Any]:
+    outputs: list[dict[str, Any]] = []
+    raw_results = validation.get("inference_results") if isinstance(validation.get("inference_results"), list) else []
+    if not raw_results and isinstance(validation.get("inference_result"), dict):
+        raw_results = [validation["inference_result"]]
+    if not raw_results and isinstance(validation.get("generated_text"), str) and validation.get("generated_text"):
+        raw_results = [validation]
+    seen: set[str] = set()
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("generated_text")
+        if not isinstance(text, str) or not text:
+            continue
+        key = str(item.get("request_id") or item.get("prompt_hash") or len(outputs))
+        if key in seen:
+            continue
+        seen.add(key)
+        outputs.append({
+            "request_id": item.get("request_id"),
+            "prompt_hash": item.get("prompt_hash"),
+            "generated_token_count": item.get("generated_token_count"),
+            "generated_text": text[:max_chars],
+        })
+    if not outputs:
+        return {}
+    return {
+        "generated_text": str(outputs[0].get("generated_text") or ""),
+        "outputs": outputs,
+        "output_count": len(outputs),
+        "display_only": True,
+        "public_artifact_safe": False,
+    }
+
+
 def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     prompt_texts = parse_prompt_texts_arg(args.prompt_text, getattr(args, "prompt_texts", ""))
     prompt_text = prompt_texts[0]
@@ -5782,12 +5817,9 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     }
     if (args.include_output or not args.json) and result_row and not args.json:
         validation = result_row.get("validation") if isinstance(result_row.get("validation"), dict) else {}
-        generated_text = str(validation.get("generated_text") or "")
-        report["local_output"] = {
-            "generated_text": generated_text,
-            "display_only": True,
-            "public_artifact_safe": False,
-        }
+        local_output = _product_generate_local_output_from_validation(validation)
+        if local_output:
+            report["local_output"] = local_output
         report["local_output_note"] = "Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only."
     elif args.include_output:
         report["local_output_note"] = "Raw generated text is suppressed in JSON/public output; rerun without --json for local display."
@@ -5830,8 +5862,13 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"complete={progress.get('stream_progress_complete')}"
         )
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
-    if local_output.get("generated_text"):
+    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    if len(outputs) <= 1 and local_output.get("generated_text"):
         print(f"  output: {local_output.get('generated_text')}")
+    elif outputs:
+        for index, item in enumerate(outputs, start=1):
+            if isinstance(item, dict) and item.get("generated_text"):
+                print(f"  output[{index}]: {item.get('generated_text')}")
     route = report.get("route") if isinstance(report.get("route"), dict) else {}
     if route:
         missing = route.get("missing_capabilities") or []

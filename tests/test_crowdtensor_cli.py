@@ -2339,6 +2339,96 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("local_output", json_report)
         self.assertNotIn("default human output", json.dumps(json_report, sort_keys=True))
 
+    def test_product_generate_human_batch_outputs_are_display_only(self) -> None:
+        base_argv = [
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+        ]
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, path, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:batch",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "generated_text": " raw one",
+                                    "generated_token_ids": [1, 2],
+                                    "decoded_tokens_match": True,
+                                },
+                                {
+                                    "request_id": "req-2",
+                                    "prompt_hash": "sha256:p2",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g2",
+                                    "generated_text": " raw two",
+                                    "generated_token_ids": [3, 4],
+                                    "decoded_tokens_match": True,
+                                },
+                            ],
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            human_report = cli.build_product_generate(cli.parse_args(base_argv))
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            json_report = cli.build_product_generate(cli.parse_args([*base_argv, "--json"]))
+
+        self.assertTrue(human_report["ok"], human_report)
+        self.assertEqual(human_report["local_output"]["generated_text"], " raw one")
+        self.assertEqual([row["generated_text"] for row in human_report["local_output"]["outputs"]], [" raw one", " raw two"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(human_report)
+        rendered = stdout.getvalue()
+        self.assertNotIn("  output:  raw one", rendered)
+        self.assertIn("  output[1]:  raw one", rendered)
+        self.assertIn("  output[2]:  raw two", rendered)
+        self.assertTrue(json_report["ok"], json_report)
+        self.assertNotIn("local_output", json_report)
+        encoded = json.dumps(json_report, sort_keys=True)
+        self.assertNotIn("raw one", encoded)
+        self.assertNotIn("raw two", encoded)
+        self.assertNotIn('"generated_token_ids":', encoded)
+
     def test_public_real_llm_swarm_beta_cli_wraps_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
@@ -2899,6 +2989,68 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["display_only"])
+
+    def test_infer_existing_batch_outputs_are_display_only(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "first prompt",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+        ])
+        generate_payload = {
+            "schema": "public_swarm_product_cli_v1",
+            "ok": True,
+            "mode": "generate",
+            "session": {"hf_model_id": "sshleifer/tiny-gpt2"},
+            "generation": {
+                "generated_token_count": 2,
+                "max_new_tokens": 2,
+                "generated_text_hash": "sha256:batch",
+                "decoded_tokens_match": True,
+                "request_count": 2,
+                "batch_generation_ready": True,
+            },
+            "batch": {"enabled": True, "request_count": 2, "batch_generation_ready": True},
+            "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
+            "local_output": {
+                "generated_text": " first output",
+                "outputs": [
+                    {"request_id": "req-1", "prompt_hash": "sha256:p1", "generated_token_count": 2, "generated_text": " first output"},
+                    {"request_id": "req-2", "prompt_hash": "sha256:p2", "generated_token_count": 2, "generated_text": " second output"},
+                ],
+            },
+            "diagnosis_codes": ["public_swarm_generate_ready", "public_swarm_generate_batch_ready"],
+        }
+
+        with patch.object(cli, "build_product_generate", return_value=generate_payload):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["local_output"]["output_count"], 2)
+        self.assertEqual([row["generated_text"] for row in report["local_output"]["outputs"]], [" first output", " second output"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertNotIn("  output:  first output", rendered)
+        self.assertIn("  output[1]:  first output", rendered)
+        self.assertIn("  output[2]:  second output", rendered)
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["local_output"]["output_count"], 2)
+        self.assertEqual([row["generated_text"] for row in persisted["local_output"]["outputs"]], ["", ""])
+        self.assertFalse(persisted["local_output"]["available"])
+        self.assertFalse(persisted["local_output"]["display_only"])
+        self.assertNotIn("first output", json.dumps(persisted, sort_keys=True))
+        self.assertNotIn("second output", json.dumps(persisted, sort_keys=True))
 
     def test_infer_json_suppresses_raw_text_in_returned_payload(self) -> None:
         output_dir = Path(self._tmp_dir())
