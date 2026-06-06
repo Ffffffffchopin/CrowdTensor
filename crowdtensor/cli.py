@@ -7800,7 +7800,7 @@ def print_infer(report: dict[str, Any]) -> None:
     print(
         "  route: "
         f"source={route.get('route_source')} "
-        f"ready={route.get('route_ready')} "
+        f"candidate={route.get('route_ready')} "
         f"distinct_stage_miners={infer_route_distinct_stage_text(route, stage_preflight)}"
     )
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}

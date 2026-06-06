@@ -5148,7 +5148,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         self.assertIn(
-            "  route: source=coordinator-url ready=True distinct_stage_miners=not_checked",
+            "  route: source=coordinator-url candidate=True distinct_stage_miners=not_checked",
             stdout.getvalue(),
         )
         self.assertIn(
