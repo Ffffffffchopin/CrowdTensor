@@ -3525,6 +3525,23 @@ def _infer_command_args(
 
 def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, ok: bool, mode: str) -> list[dict[str, Any]]:
     commands: list[dict[str, Any]] = []
+    codes = set(str(code) for code in (payload.get("diagnosis_codes") or []))
+    step = payload.get("step") if isinstance(payload.get("step"), dict) else {}
+    detail = " ".join(
+        str(value)
+        for value in [payload.get("detail"), payload.get("error"), step.get("stderr_tail"), step.get("error")]
+        if value
+    )
+    hf_missing = (
+        "hf_dependencies_missing" in codes
+        or "product_swarm_mvp_hf_runtime_missing" in codes
+        or "transformers" in detail
+    )
+    if hf_missing:
+        commands.append(command_entry(
+            "install Hugging Face runtime",
+            ["python", "-m", "pip", "install", "-e", ".[hf]"],
+        ))
     if mode == "local":
         commands.append(command_entry(
             "run local inference",

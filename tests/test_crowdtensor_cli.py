@@ -3761,8 +3761,15 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertIn("pip install -e '.[hf]'", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("python -m pip install -e '.[hf]'", next_lines)
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode local --output-dir {output_dir} --max-new-tokens 2",
+            next_lines,
+        )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertIn("pip install -e '.[hf]'", persisted["operator_action"])
+        self.assertIn("python -m pip install -e '.[hf]'", [item["command_line"] for item in persisted["next_commands"]])
 
     def test_infer_existing_route_failure_includes_startup_next_commands(self) -> None:
         output_dir = Path(self._tmp_dir())
