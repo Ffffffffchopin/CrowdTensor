@@ -8959,7 +8959,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     join.add_argument("--run", action="store_true")
     join.add_argument("--json", action="store_true")
 
-    generate = subparsers.add_parser("generate", help="Create a bounded public product generation session.")
+    generate = subparsers.add_parser(
+        "generate",
+        help="Create a bounded public product generation session.",
+        description=(
+            "Create a bounded CrowdTensor generation request against an existing Coordinator\n"
+            "or P2P-discovered product swarm. Reports include action and next[...] lines with\n"
+            "copyable follow-up commands; missing routes return startup guidance instead of a\n"
+            "bare parser error.\n\n"
+            "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
+            "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crowdtensor generate \"your prompt\"\n"
+            "  crowdtensor generate \"your prompt\" --coordinator-url http://127.0.0.1:8787 --dry-run\n"
+            "  CROWDTENSOR_ADMIN_TOKEN=... crowdtensor generate \"your prompt\" --coordinator-url http://127.0.0.1:8787\n"
+            "  crowdtensor generate --prompt-texts \"first prompt,second prompt\" --coordinator-url http://127.0.0.1:8787 --dry-run\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     generate.add_argument("prompt_text_arg", nargs="?", default="", help="optional prompt text, equivalent to --prompt-text")
     generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=DEFAULT_PRODUCT_GENERATE_PROMPT)
     generate.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")

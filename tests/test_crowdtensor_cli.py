@@ -81,6 +81,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Reports include action and next[...] lines", rendered)
         self.assertIn("not production", rendered)
 
+    def test_generate_help_shows_user_examples_and_boundaries(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["generate", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Create a bounded CrowdTensor generation request", rendered)
+        self.assertIn("examples:", rendered)
+        self.assertIn('crowdtensor generate "your prompt"', rendered)
+        self.assertIn("missing routes return startup guidance", rendered)
+        self.assertIn("not production", rendered)
+
     def test_runtime_matrix_block_skips_demo_and_manifest(self) -> None:
         output_dir = Path(self._tmp_dir())
 
