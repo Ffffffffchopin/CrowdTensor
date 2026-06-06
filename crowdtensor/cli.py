@@ -3511,9 +3511,24 @@ def _ready_to_submit_status(
         warning_codes.append("stage_preflight_failed")
     elif stage_verification == "skipped":
         warning_codes.append("stage_preflight_skipped")
+    fully_verified = bool(submit_ok and route_ready and coordinator_ok is not False and stage_verification == "ready")
+    if submit_ok is True and fully_verified:
+        readiness_label = "verified"
+        readiness_summary = "Route, Coordinator, and distinct stage Miners are verified."
+    elif submit_ok is True:
+        readiness_label = "partial"
+        readiness_summary = "Request can be submitted, but stage Miner readiness is not fully verified."
+    elif submit_ok is False:
+        readiness_label = "blocked"
+        readiness_summary = "Request is not ready to submit; follow operator_action and rerun preflight."
+    else:
+        readiness_label = "skipped"
+        readiness_summary = "Request shape is valid, but live readiness was skipped."
     return {
         "ok": submit_ok,
-        "fully_verified": bool(submit_ok and route_ready and coordinator_ok is not False and stage_verification == "ready"),
+        "fully_verified": fully_verified,
+        "readiness_label": readiness_label,
+        "readiness_summary": readiness_summary,
         "route_ready": route_ready,
         "coordinator_ready": coordinator_ok,
         "coordinator_preflight_required": coordinator_preflight_required,
@@ -7490,12 +7505,15 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(
             "  ready_to_submit: "
             f"{ready_to_submit.get('ok')} "
+            f"label={ready_to_submit.get('readiness_label')} "
             f"fully_verified={ready_to_submit.get('fully_verified')} "
             f"route={ready_to_submit.get('route_ready')} "
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
             f"stage={ready_to_submit.get('stage_preflight_ok')} "
             f"stage_verification={ready_to_submit.get('stage_verification')}"
         )
+        if ready_to_submit.get("readiness_summary"):
+            print(f"  readiness: {ready_to_submit.get('readiness_summary')}")
     if report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
     if report.get("operator_action"):
@@ -7609,12 +7627,15 @@ def print_infer(report: dict[str, Any]) -> None:
         print(
             "  ready_to_submit: "
             f"{ready_to_submit.get('ok')} "
+            f"label={ready_to_submit.get('readiness_label')} "
             f"fully_verified={ready_to_submit.get('fully_verified')} "
             f"route={ready_to_submit.get('route_ready')} "
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
             f"stage={ready_to_submit.get('stage_preflight_ok')} "
             f"stage_verification={ready_to_submit.get('stage_verification')}"
         )
+        if ready_to_submit.get("readiness_summary"):
+            print(f"  readiness: {ready_to_submit.get('readiness_summary')}")
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     if stream.get("enabled"):
         print(f"  stream: ready={stream.get('ready')} events={stream.get('event_count')} source={stream.get('source')}")
