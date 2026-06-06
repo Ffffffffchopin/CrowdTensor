@@ -124,7 +124,15 @@ Useful readiness fields in the JSON output include:
 ## 5. Run The Manual Five-Process Demo
 
 The release gate is convenient, but the manual flow shows the moving pieces.
-Open five terminals from the repository root.
+Open five terminals from the repository root. Use the same local tokens in
+terminals 2-5:
+
+```bash
+export CROWDTENSOR_ADMIN_TOKEN=local-admin
+export CROWDTENSOR_MINER_TOKEN=local-miner
+export CROWDTENSOR_OBSERVER_TOKEN=local-observer
+```
+
 The `serve`, `join`, and `generate` commands print an `action` line in human
 mode; follow it when a step is only printing a command, missing a route, or
 waiting for the other stage Miner.
@@ -157,7 +165,8 @@ crowdtensor generate \
   --prompt "CrowdTensor routes small models across home compute" \
   --max-new-tokens 16 \
   --http-timeout 30 \
-  --dry-run
+  --dry-run \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN"
 ```
 
 ```bash

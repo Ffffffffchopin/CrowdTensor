@@ -127,6 +127,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("--miner-id stage0-miner --stage stage0 --run", rendered)
         self.assertIn("not large-model serving", rendered)
 
+    def test_user_docs_manual_demo_sets_tokens_before_submit(self) -> None:
+        readme = (cli.ROOT / "README.md").read_text(encoding="utf-8")
+        quickstart = (cli.ROOT / "docs" / "quickstart.md").read_text(encoding="utf-8")
+
+        for rendered in [readme, quickstart]:
+            self.assertIn("export CROWDTENSOR_ADMIN_TOKEN=local-admin", rendered)
+            self.assertIn("export CROWDTENSOR_MINER_TOKEN=local-miner", rendered)
+            self.assertIn("export CROWDTENSOR_OBSERVER_TOKEN=local-observer", rendered)
+            self.assertIn('--observer-token "$CROWDTENSOR_OBSERVER_TOKEN"', rendered)
+            self.assertIn("--dry-run", rendered)
+
     def test_runtime_matrix_block_skips_demo_and_manifest(self) -> None:
         output_dir = Path(self._tmp_dir())
 

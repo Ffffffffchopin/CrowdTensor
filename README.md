@@ -132,7 +132,14 @@ crowdtensor cpu-infer --mode local --json
 ## Manual Swarm Demo
 
 The beta can also be run as separate local processes. Open five terminals from
-the repository root after installing the package.
+the repository root after installing the package. Use the same local tokens in
+terminals 2-5:
+
+```bash
+export CROWDTENSOR_ADMIN_TOKEN=local-admin
+export CROWDTENSOR_MINER_TOKEN=local-miner
+export CROWDTENSOR_OBSERVER_TOKEN=local-observer
+```
 
 ```bash
 # Terminal 1: discovery
@@ -148,6 +155,15 @@ crowdtensor join --stage stage0 --p2p --swarm-id public-swarm-v2 --miner-id stag
 crowdtensor join --stage stage1 --p2p --swarm-id public-swarm-v2 --miner-id stage1 --run
 
 # Terminal 5: user request
+crowdtensor generate \
+  --p2p \
+  --swarm-id public-swarm-v2 \
+  --prompt "CrowdTensor routes small models across home compute" \
+  --max-new-tokens 16 \
+  --http-timeout 30 \
+  --dry-run \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN"
+
 crowdtensor generate \
   --p2p \
   --swarm-id public-swarm-v2 \
