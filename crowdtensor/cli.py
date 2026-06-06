@@ -6246,8 +6246,99 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
     return "Inspect the generated JSON report and Coordinator admin results for the failing check."
 
 
+def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, Any]]:
+    route = report.get("route") if isinstance(report.get("route"), dict) else {}
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    session_request = report.get("session_request") if isinstance(report.get("session_request"), dict) else {}
+    p2p_enabled = bool(p2p.get("enabled"))
+    p2p_backend = str(p2p.get("backend") or "lite")
+    peer_bootstrap = str(p2p.get("bootstrap") or (DEFAULT_P2P_BOOTSTRAP if p2p_enabled else ""))
+    coordinator_url = str(route.get("coordinator_url") or "")
+    backend = str(session_request.get("backend") or route.get("backend") or "cpu")
+    hf_model_id = str(session_request.get("hf_model_id") or route.get("hf_model_id") or "sshleifer/tiny-gpt2")
+    try:
+        max_new_tokens = int(session_request.get("max_new_tokens") or report.get("max_new_tokens") or 16)
+    except (TypeError, ValueError):
+        max_new_tokens = 16
+    commands: list[dict[str, Any]] = []
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
+    if "hf_dependencies_missing" in codes or "transformers" in detail:
+        commands.append(command_entry(
+            "install Hugging Face runtime",
+            ["python", "-m", "pip", "install", "-e", ".[hf]"],
+        ))
+    route_command = _product_cli_generate_command(
+        p2p=p2p_enabled,
+        coordinator_url=coordinator_url,
+        peer_bootstrap=peer_bootstrap,
+        p2p_backend=p2p_backend,
+        backend=backend,
+        hf_model_id=hf_model_id,
+        dry_run=True,
+        max_new_tokens=max_new_tokens,
+    )
+    if p2p_enabled or coordinator_url:
+        commands.append(command_entry("check generation route", route_command))
+        commands.append(command_entry(
+            "submit generation",
+            _product_cli_generate_command(
+                p2p=p2p_enabled,
+                coordinator_url=coordinator_url,
+                peer_bootstrap=peer_bootstrap,
+                p2p_backend=p2p_backend,
+                backend=backend,
+                hf_model_id=hf_model_id,
+                dry_run=False,
+                max_new_tokens=max_new_tokens,
+            ),
+            requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+        ))
+    if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes or "stage_preflight_failed" in codes:
+        serve_args = argparse.Namespace(
+            profile="gpu-generation" if backend == "cuda" else "cpu-real-llm",
+            bind_host="127.0.0.1",
+            public_host="127.0.0.1",
+            port=8787,
+            state_dir="state",
+            hf_model_id=hf_model_id,
+            hf_cache_dir="",
+            lease_seconds=15.0,
+            p2p=p2p_enabled,
+            p2p_backend=p2p_backend,
+            peer_bootstrap=peer_bootstrap or DEFAULT_P2P_BOOTSTRAP,
+            swarm_id="default",
+            peer_id="",
+            peer_url="",
+            i_understand_public_bind=False,
+            admin_token="",
+            miner_token="",
+            observer_token="",
+            peer_secret="",
+        )
+        commands.extend([
+            command_entry("start Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
+            command_entry("start stage0 Miner", _product_cli_join_command(
+                serve_args,
+                coordinator_url=coordinator_url or "http://127.0.0.1:8787",
+                stage="stage0",
+                miner_id="stage0-miner",
+                include_run=True,
+            )),
+            command_entry("start stage1 Miner", _product_cli_join_command(
+                serve_args,
+                coordinator_url=coordinator_url or "http://127.0.0.1:8787",
+                stage="stage1",
+                miner_id="stage1-miner",
+                include_run=True,
+            )),
+        ])
+    return commands
+
+
 def _finalize_product_generate_report(report: dict[str, Any], *, admin_token: str = "") -> dict[str, Any]:
     report.setdefault("operator_action", _product_generate_operator_action(report))
+    report.setdefault("next_commands", _product_generate_next_commands(report))
     return sanitize(redact_values(report, [admin_token]))
 
 
@@ -7035,6 +7126,11 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  note: {report.get('local_output_note')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    for index, item in enumerate(report.get("next_commands") or [], start=1):
+        if isinstance(item, dict) and item.get("command_line"):
+            requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
+            suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
 
 
 def print_product_serve(report: dict[str, Any]) -> None:

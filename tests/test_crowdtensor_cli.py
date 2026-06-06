@@ -314,7 +314,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["session_request"]["schema"], "session_protocol_v1")
         self.assertEqual(report["session_request"]["hf_model_id"], "distilgpt2")
         self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --dry-run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2",
+            next_lines,
+        )
         self.assertNotIn("CrowdTensor prompt", encoded)
+        self.assertNotIn("CrowdTensor prompt", json.dumps(report["next_commands"], sort_keys=True))
         self.assertIn("prompt_hash", encoded)
 
     def test_product_generate_dry_run_has_safe_default_prompt(self) -> None:
@@ -400,6 +410,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  coordinator_ready: True service=crowdtensord protocol=runtime_contract_v1", rendered)
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
         self.assertIn("  ready_to_submit: True route=True coordinator=True stage=True", rendered)
+        self.assertIn("  next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run", rendered)
+        self.assertIn("  next[2] submit generation: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787  # requires CROWDTENSOR_ADMIN_TOKEN", rendered)
 
     def test_product_generate_dry_run_can_skip_live_preflight_for_ci(self) -> None:
         args = cli.parse_args([
@@ -1150,6 +1162,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["diagnosis_codes"], ["generate_route_unavailable"])
         self.assertIn("real_llm_sharded_stage1", report["route"]["missing_capabilities"])
         self.assertIn("stage0/stage1", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --p2p --peer-bootstrap http://127.0.0.1:8788 --dry-run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --p2p --peer-bootstrap http://127.0.0.1:8788 --miner-id stage1-miner --stage stage1 --run",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor prompt", json.dumps(report["next_commands"], sort_keys=True))
 
     def test_product_generate_requires_admin_token_with_action(self) -> None:
         args = cli.parse_args([
@@ -1168,6 +1190,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("admin_token_required", report["diagnosis_codes"])
         self.assertEqual(report["operator_action"], "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --dry-run",
+            next_lines,
+        )
+        self.assertTrue(any("CROWDTENSOR_ADMIN_TOKEN" in item.get("requires_env", []) for item in report["next_commands"]))
 
     def test_product_generate_preserves_safe_generation_counts(self) -> None:
         args = cli.parse_args([
