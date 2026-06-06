@@ -94,7 +94,10 @@ If `ready_to_submit` is printed, use its `label` before submitting:
 `verified` means route, Coordinator, and distinct stage Miners were checked;
 `partial` means the request shape can submit but stage Miners still need
 observer-token verification; `blocked` means follow `operator_action`; and
-`skipped` means live checks were intentionally bypassed.
+`skipped` means live checks were intentionally bypassed. JSON reports mirror
+that status with `crowdtensor_infer_preflight_partial` for partial existing
+swarm checks and `crowdtensor_infer_preflight_ready` only after full route,
+Coordinator, and stage Miner verification.
 Add `--stream` when you want safe token-progress evidence in the CLI summary.
 
 ## 4. Run The Real-LLM Swarm Beta Gate
@@ -190,9 +193,10 @@ Expected behavior:
 `ready_to_submit` when it can check live endpoints or P2P-discovered stage
 capabilities. Treat `label=verified` as the normal submit-ready state;
 `label=partial` needs an observer-token preflight; `label=blocked` needs the
-printed action first. If the command is being used only for CI-safe packaging
-or offline request-shape checks, add `--skip-live-preflight` and expect
-`label=skipped`.
+printed action first. For `infer --mode existing --dry-run`, JSON uses
+`crowdtensor_infer_preflight_partial` until the stage Miner check is fully
+verified. If the command is being used only for CI-safe packaging or offline
+request-shape checks, add `--skip-live-preflight` and expect `label=skipped`.
 
 ## 6. Package A Controlled Remote Trial
 

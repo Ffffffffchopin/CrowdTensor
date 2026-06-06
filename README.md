@@ -97,6 +97,11 @@ replaced with placeholders. When `ready_to_submit` is present, read
 - `skipped` means only the request shape was checked, usually because live
   preflight was intentionally skipped.
 
+Machine-readable reports use the same distinction: partial existing-swarm
+preflight emits `crowdtensor_infer_preflight_partial`, while a fully verified
+dry run emits `crowdtensor_infer_preflight_ready`. Treat partial as runnable
+but not fully checked.
+
 The manual `serve` and `join` commands also print `operator_action` and
 `next[...]`, so the five-process flow tells you whether to rerun with `--run`,
 start the missing stage Miner, or preflight with `generate --dry-run`.
