@@ -118,6 +118,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.annotate_stage_preflight({"checked": False})["missing_summary"],
             "not_checked",
         )
+        self.assertEqual(cli.ready_to_submit_stage_text({"stage_verification": "ready"}), "ready")
+        self.assertEqual(cli.ready_to_submit_stage_text({"stage_preflight_ok": False}), "failed")
+        self.assertEqual(cli.ready_to_submit_stage_text({}), "not_checked")
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()
@@ -580,7 +583,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  coordinator_ready: True service=crowdtensord protocol=runtime_contract_v1", rendered)
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
-        self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=True stage_verification=ready", rendered)
+        self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
         self.assertIn("  next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}", rendered)
         self.assertIn("# requires CROWDTENSOR_OBSERVER_TOKEN", rendered)
@@ -4913,7 +4916,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
-        self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=True stage_verification=ready", rendered)
+        self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["stage_preflight"]["ok"])

@@ -3573,6 +3573,18 @@ def _ready_to_submit_status(
     }
 
 
+def ready_to_submit_stage_text(ready_to_submit: dict[str, Any]) -> str:
+    stage_verification = str(ready_to_submit.get("stage_verification") or "")
+    if stage_verification:
+        return stage_verification
+    stage_ok = ready_to_submit.get("stage_preflight_ok")
+    if stage_ok is True:
+        return "ready"
+    if stage_ok is False:
+        return "failed"
+    return "not_checked"
+
+
 def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
     if ready_to_submit and ready_to_submit.get("ok") is True and not ready_to_submit.get("fully_verified"):
         warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or []))
@@ -7678,7 +7690,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"fully_verified={ready_to_submit.get('fully_verified')} "
             f"route={ready_to_submit.get('route_ready')} "
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
-            f"stage={ready_to_submit.get('stage_preflight_ok')} "
+            f"stage={ready_to_submit_stage_text(ready_to_submit)} "
             f"stage_verification={ready_to_submit.get('stage_verification')}"
         )
         if ready_to_submit.get("readiness_summary"):
@@ -7808,7 +7820,7 @@ def print_infer(report: dict[str, Any]) -> None:
             f"fully_verified={ready_to_submit.get('fully_verified')} "
             f"route={ready_to_submit.get('route_ready')} "
             f"coordinator={ready_to_submit.get('coordinator_ready')} "
-            f"stage={ready_to_submit.get('stage_preflight_ok')} "
+            f"stage={ready_to_submit_stage_text(ready_to_submit)} "
             f"stage_verification={ready_to_submit.get('stage_verification')}"
         )
         if ready_to_submit.get("readiness_summary"):
