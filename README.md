@@ -73,10 +73,12 @@ Run the user-friendly local swarm inference entry point:
 crowdtensor infer "CrowdTensor routes small models across home compute"
 ```
 
-It starts the controlled local swarm path, runs split tiny GPT inference, and
-writes a compact `infer_summary.json` under `dist/infer`. JSON and public
-artifacts keep raw prompts, generated text, token ids, credentials, and
-activations out of shareable files.
+It starts the fast local product loopback path, runs split tiny GPT inference,
+prints the local display-only generated text, and writes a compact
+`infer_summary.json` under `dist/infer`. JSON and public artifacts keep raw
+prompts, generated text, token ids, credentials, and activations out of
+shareable files. Use `--full-evidence` when you want the broader Public Swarm
+v2 gate instead of the faster user path.
 
 For maintainer-grade release evidence, run the full public swarm beta gate:
 

@@ -19,8 +19,9 @@ crowdtensor infer "CrowdTensor routes small models across home compute"
 
 You get:
 
-- A local discovery, Coordinator, and two-stage Miner proof.
+- A fast local Coordinator and two-stage Miner loopback proof.
 - Real tiny GPT split inference.
+- Local terminal output for the generated text.
 - A compact user-facing `infer_summary.json`.
 - Decoded-token correctness checks.
 - Stage assignment and distinct Miner evidence.

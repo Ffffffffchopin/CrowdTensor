@@ -60,15 +60,18 @@ With `[hf]` installed, the shortest user-facing inference path is:
 crowdtensor infer "CrowdTensor routes small models across home compute"
 ```
 
-It starts the controlled local swarm route, runs tiny GPT split inference, and
-writes a compact `infer_summary.json` under `dist/infer`.
+It starts the fast local product loopback route, runs tiny GPT split inference,
+prints the local display-only generated text, and writes a compact
+`infer_summary.json` under `dist/infer`. JSON mode and saved reports keep raw
+prompts and generated text redacted. Use `--full-evidence` when you want the
+broader Public Swarm v2 gate instead of the faster user path.
 
 For machine-readable output:
 
 ```bash
 crowdtensor infer \
   "CrowdTensor routes small models across home compute" \
-  --max-new-tokens 16 \
+  --max-new-tokens 8 \
   --json
 ```
 

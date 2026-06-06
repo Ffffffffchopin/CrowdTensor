@@ -3103,6 +3103,16 @@ def _infer_generation_from_report(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _infer_route_from_report(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("schema") == "product_swarm_mvp_check_v1":
+        stage = payload.get("stage_assignment") if isinstance(payload.get("stage_assignment"), dict) else {}
+        ledger = payload.get("ledger") if isinstance(payload.get("ledger"), dict) else {}
+        return {
+            "route_source": "local-product-loopback",
+            "route_ready": bool(payload.get("ok")),
+            "distinct_stage_miners": bool(stage.get("distinct_stage_miners")),
+            "stage_assignment_valid": bool(stage.get("distinct_stage_miners") or "stage_assignment_valid" in (payload.get("diagnosis_codes") or [])),
+            "accepted_rows": ledger.get("accepted_rows"),
+        }
     local = _safe_nested_get(payload, "readiness", "local_p2p_generate")
     if local:
         return {
@@ -3173,6 +3183,158 @@ def _infer_batch_from_report(payload: dict[str, Any]) -> dict[str, Any]:
     return batch if isinstance(batch, dict) else {}
 
 
+def _iter_infer_generated_text_candidates(value: Any, *, _seen: set[int] | None = None) -> list[dict[str, Any]]:
+    seen = _seen if _seen is not None else set()
+    candidates: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        marker = id(value)
+        if marker in seen:
+            return candidates
+        seen.add(marker)
+        if isinstance(value.get("generated_text"), str) and value.get("generated_text"):
+            candidates.append(value)
+        for item in value.values():
+            candidates.extend(_iter_infer_generated_text_candidates(item, _seen=seen))
+    elif isinstance(value, list):
+        for item in value:
+            candidates.extend(_iter_infer_generated_text_candidates(item, _seen=seen))
+    return candidates
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _infer_local_output_from_private_state(
+    output_dir: Path,
+    *,
+    prompts: list[str],
+    generation: dict[str, Any],
+    max_chars: int = 4096,
+) -> dict[str, Any]:
+    """Extract local display-only text from private task state.
+
+    The public evidence packs intentionally redact generated text.  For the
+    human CLI path we can recover it from the local private run directory, but
+    the returned value must never be persisted into shareable artifacts.
+    """
+
+    expected_hash = str(generation.get("generated_text_hash") or "")
+    expected_tokens = _safe_int(generation.get("generated_token_count"))
+    prompt_hashes = [stable_hash_text(prompt) for prompt in prompts if prompt]
+    prompt_hash_set = set(prompt_hashes)
+    best_by_prompt: dict[str, tuple[int, dict[str, Any]]] = {}
+    fallback: tuple[int, dict[str, Any]] | None = None
+    for path in sorted(output_dir.rglob("tasks.jsonl")):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            for candidate in _iter_infer_generated_text_candidates(payload):
+                text = candidate.get("generated_text")
+                if not isinstance(text, str) or not text:
+                    continue
+                candidate_prompt_hash = str(candidate.get("prompt_hash") or "")
+                if prompt_hash_set and candidate_prompt_hash and candidate_prompt_hash not in prompt_hash_set:
+                    continue
+                candidate_tokens = _safe_int(candidate.get("generated_token_count"))
+                if expected_tokens and candidate_tokens and candidate_tokens < expected_tokens:
+                    continue
+                candidate_hash = str(candidate.get("generated_text_hash") or stable_hash_text(text))
+                if expected_hash and candidate_hash != expected_hash and candidate_tokens < expected_tokens:
+                    continue
+                score = 0
+                if expected_hash and candidate_hash == expected_hash:
+                    score += 1000
+                if expected_tokens and candidate_tokens >= expected_tokens:
+                    score += 100
+                score += min(candidate_tokens, 64)
+                if candidate.get("decoded_tokens_match") is True or candidate.get("baseline_match") is True:
+                    score += 10
+                if _safe_int(candidate.get("stage_id"), -1) == 1 or _safe_int(candidate.get("split_index"), -1) == 1:
+                    score += 5
+                output = {
+                    "request_id": candidate.get("request_id"),
+                    "prompt_hash": candidate_prompt_hash,
+                    "generated_token_count": candidate_tokens,
+                    "generated_text": text[:max_chars],
+                }
+                key = candidate_prompt_hash or str(candidate.get("request_id") or "")
+                if key:
+                    current = best_by_prompt.get(key)
+                    if current is None or score > current[0]:
+                        best_by_prompt[key] = (score, output)
+                if fallback is None or score > fallback[0]:
+                    fallback = (score, output)
+    ordered_outputs: list[dict[str, Any]] = []
+    for prompt_hash in prompt_hashes:
+        if prompt_hash in best_by_prompt:
+            ordered_outputs.append(best_by_prompt[prompt_hash][1])
+    if not ordered_outputs and fallback is not None:
+        ordered_outputs.append(fallback[1])
+    if not ordered_outputs:
+        return {}
+    return {
+        "source": "local-private-task-state",
+        "outputs": ordered_outputs,
+        "generated_text": str(ordered_outputs[0].get("generated_text") or ""),
+        "output_count": len(ordered_outputs),
+        "display_only": True,
+        "public_artifact_safe": False,
+        "note": "Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
+    }
+
+
+def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
+    local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
+    if not local_output:
+        return summary
+    local_output["available"] = False
+    local_output["generated_text"] = ""
+    local_output["display_only"] = False
+    outputs = local_output.get("outputs")
+    if isinstance(outputs, list):
+        for output in outputs:
+            if isinstance(output, dict):
+                output["generated_text"] = ""
+    return summary
+
+
+def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *, ok: bool) -> str:
+    if ok:
+        if getattr(args, "infer_mode", "local") == "local" and not getattr(args, "full_evidence", False):
+            return "Run with --full-evidence for the broader Public Swarm v2 proof."
+        return ""
+    codes = set(str(code) for code in (payload.get("diagnosis_codes") or []))
+    step = payload.get("step") if isinstance(payload.get("step"), dict) else {}
+    detail = " ".join(
+        str(value)
+        for value in [payload.get("detail"), payload.get("error"), step.get("stderr_tail"), step.get("error")]
+        if value
+    )
+    if "hf_dependencies_missing" in codes or "product_swarm_mvp_hf_runtime_missing" in codes or "transformers" in detail:
+        return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
+    if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
+        return "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm."
+    if "admin_token_required" in codes:
+        return "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN."
+    if "generation_timeout" in codes:
+        return "Increase --timeout-seconds and confirm both stage Miners are running."
+    if "crowdtensor_infer_source_report_missing" in codes:
+        return "Inspect the child report under the output directory, then rerun with --json for machine-readable diagnostics."
+    return "Inspect infer_summary.json and the child report under output_dir for the failing check."
+
+
 def _infer_summary_from_payload(
     args: argparse.Namespace,
     payload: dict[str, Any],
@@ -3192,6 +3354,21 @@ def _infer_summary_from_payload(
         if allow_local_generated_text and isinstance(local_output.get("generated_text"), str)
         else ""
     )
+    raw_outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    display_outputs = []
+    if allow_local_generated_text:
+        for item in raw_outputs:
+            if not isinstance(item, dict):
+                continue
+            display_outputs.append({
+                "request_id": item.get("request_id"),
+                "prompt_hash": item.get("prompt_hash"),
+                "generated_token_count": item.get("generated_token_count"),
+                "generated_text": item.get("generated_text") if isinstance(item.get("generated_text"), str) else "",
+            })
+    if not generated_text and display_outputs:
+        first_output = display_outputs[0]
+        generated_text = str(first_output.get("generated_text") or "")
     generated_tokens = int(generation.get("generated_token_count") or 0)
     max_new_tokens = int(generation.get("max_new_tokens") or getattr(args, "max_new_tokens", 0) or 0)
     try:
@@ -3205,6 +3382,7 @@ def _infer_summary_from_payload(
         codes.add("user_friendly_infer_ready")
     else:
         codes.add("crowdtensor_infer_blocked")
+    operator_action = _infer_operator_action(args, payload, ok=ok)
     summary = {
         "schema": INFER_CLI_SCHEMA,
         "generated_at": utc_now(),
@@ -3241,9 +3419,13 @@ def _infer_summary_from_payload(
             "source": stream.get("source"),
         },
         "local_output": {
-            "available": bool(generated_text),
+            "available": bool(generated_text or display_outputs),
             "generated_text": generated_text if generated_text else "",
-            "display_only": bool(generated_text),
+            "outputs": display_outputs,
+            "output_count": len(display_outputs) if display_outputs else (1 if generated_text else 0),
+            "source": local_output.get("source") or "",
+            "note": local_output.get("note") or "",
+            "display_only": bool(generated_text or display_outputs),
             "public_artifact_safe": False,
         },
         "source_report": {
@@ -3251,6 +3433,7 @@ def _infer_summary_from_payload(
             "mode": payload.get("mode"),
             "ok": payload.get("ok"),
         },
+        "operator_action": operator_action,
         "step": step or {},
         "diagnosis_codes": sorted(codes),
         "safety": {
@@ -3276,19 +3459,26 @@ def _infer_summary_from_payload(
         }
     }
     if mode == "local":
-        artifacts["public_swarm_v2_report"] = artifact_entry(
-            output_dir / "public-swarm-v2" / "public_swarm_inference_v2.json",
-            output_dir,
-            kind="public_swarm_inference_v2",
-            schema="public_swarm_inference_v2",
-            ok=payload.get("ok") if payload else None,
-        )
+        if payload.get("schema") == "product_swarm_mvp_check_v1":
+            artifacts["product_swarm_mvp_report"] = artifact_entry(
+                output_dir / "product-swarm-mvp" / "product_swarm_mvp_check.json",
+                output_dir,
+                kind="product_swarm_mvp_check",
+                schema="product_swarm_mvp_check_v1",
+                ok=payload.get("ok") if payload else None,
+            )
+        else:
+            artifacts["public_swarm_v2_report"] = artifact_entry(
+                output_dir / "public-swarm-v2" / "public_swarm_inference_v2.json",
+                output_dir,
+                kind="public_swarm_inference_v2",
+                schema="public_swarm_inference_v2",
+                ok=payload.get("ok") if payload else None,
+            )
     summary["artifacts"] = artifacts
     output_dir.mkdir(parents=True, exist_ok=True)
     persisted_summary = json.loads(json.dumps(summary))
-    if isinstance(persisted_summary.get("local_output"), dict):
-        persisted_summary["local_output"]["generated_text"] = ""
-        persisted_summary["local_output"]["display_only"] = False
+    _strip_infer_local_output_text(persisted_summary)
     (output_dir / "infer_summary.json").write_text(
         json.dumps(sanitize(redact_values(persisted_summary)), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -3324,10 +3514,70 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         )
         payload = build_product_generate(generate_args)
         return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir)
+    if not args.full_evidence:
+        command = [
+            sys.executable,
+            str(SCRIPTS_DIR / "product_swarm_mvp_check.py"),
+            "--output-dir",
+            str(output_dir / "product-swarm-mvp"),
+            "--port",
+            str(args.coordinator_port),
+            "--backend",
+            args.backend,
+            "--hf-model-id",
+            args.hf_model_id,
+            "--prompt-text",
+            args.prompt_text,
+            "--max-new-tokens",
+            str(args.max_new_tokens),
+            "--startup-timeout",
+            str(args.startup_timeout),
+            "--session-queue-timeout",
+            str(args.timeout_seconds),
+            "--miner-timeout",
+            str(args.timeout_seconds),
+            "--generate-timeout",
+            str(args.timeout_seconds),
+            "--require-hf-runtime",
+            "--json",
+        ]
+        if args.prompt_texts:
+            command.extend(["--prompt-texts", args.prompt_texts])
+        if args.stream:
+            command.append("--stream-generation")
+        if args.hf_cache_dir:
+            command.extend(["--hf-cache-dir", args.hf_cache_dir])
+        step, payload = run_json_step(
+            "crowdtensor_infer_local_product_loopback",
+            command,
+            runner=runner,
+            cwd=ROOT,
+            timeout_seconds=int(max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 900.0),
+        )
+        if not payload:
+            payload = {
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": False,
+                "mode": "local-loopback",
+                "diagnosis_codes": ["crowdtensor_infer_source_report_missing"],
+            }
+        if not args.json:
+            try:
+                prompts = parse_prompt_texts_arg(str(args.prompt_text or ""), str(args.prompt_texts or ""))
+            except ValueError:
+                prompts = [str(args.prompt_text or "")]
+            local_output = _infer_local_output_from_private_state(
+                output_dir / "product-swarm-mvp",
+                prompts=prompts,
+                generation=_infer_generation_from_report(payload),
+            )
+            if local_output:
+                payload = {**payload, "local_output": local_output}
+        return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir, step=step)
     command = [
         sys.executable,
         str(SCRIPTS_DIR / "public_swarm_inference_v2_pack.py"),
-        "local" if args.full_evidence else "local-model-variant",
+        "local",
         "--output-dir",
         str(output_dir / "public-swarm-v2"),
         "--usable-report",
@@ -3390,6 +3640,18 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             "mode": "local",
             "diagnosis_codes": ["crowdtensor_infer_source_report_missing"],
         }
+    if not args.json:
+        try:
+            prompts = parse_prompt_texts_arg(str(args.prompt_text or ""), str(args.prompt_texts or ""))
+        except ValueError:
+            prompts = [str(args.prompt_text or "")]
+        local_output = _infer_local_output_from_private_state(
+            output_dir / "public-swarm-v2",
+            prompts=prompts,
+            generation=_infer_generation_from_report(payload),
+        )
+        if local_output:
+            payload = {**payload, "local_output": local_output}
     return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir, step=step)
 
 
@@ -5606,9 +5868,18 @@ def print_infer(report: dict[str, Any]) -> None:
     if stream.get("enabled"):
         print(f"  stream: ready={stream.get('ready')} events={stream.get('event_count')} source={stream.get('source')}")
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
-    if local_output.get("generated_text"):
+    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    if len(outputs) <= 1 and local_output.get("generated_text"):
         print(f"  output: {local_output.get('generated_text')}")
+    if len(outputs) > 1:
+        for index, item in enumerate(outputs, start=1):
+            if isinstance(item, dict) and item.get("generated_text"):
+                print(f"  output[{index}]: {item.get('generated_text')}")
+    if local_output.get("note"):
+        print(f"  note: {local_output.get('note')}")
     print(f"  output_dir: {report.get('output_dir')}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
@@ -7074,13 +7345,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--mode", dest="infer_mode", choices=["local", "existing"], default="local")
     infer.add_argument("--output-dir", default="dist/infer")
     infer.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
-    infer.add_argument("--max-new-tokens", type=int, default=16)
+    infer.add_argument("--max-new-tokens", type=int, default=8)
     infer.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
     infer.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
     infer.add_argument("--hf-cache-dir", default="")
     infer.add_argument("--stream", action="store_true", help="request safe stream-progress evidence")
     infer.add_argument("--include-output", action="store_true", help="request local raw output from generate; JSON and saved artifacts still suppress it")
-    infer.add_argument("--full-evidence", action="store_true", help="use the full local Public Swarm v2 gate instead of the faster local-only path")
+    infer.add_argument("--full-evidence", action="store_true", help="use the full local Public Swarm v2 gate instead of the faster product loopback path")
     infer.add_argument("--coordinator-url", default="")
     infer.add_argument("--peer-bootstrap", default="")
     infer.add_argument("--p2p", action="store_true")
@@ -8989,8 +9260,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
-        if args.max_new_tokens < 2 or args.max_new_tokens > 32:
-            raise SystemExit("--max-new-tokens must be between 2 and 32")
+        if args.infer_mode == "local" and args.full_evidence and (args.max_new_tokens < 8 or args.max_new_tokens > 32):
+            raise SystemExit("infer --mode local --full-evidence requires --max-new-tokens between 8 and 32")
+        if args.infer_mode == "local" and not args.full_evidence and (args.max_new_tokens < 2 or args.max_new_tokens > 8):
+            raise SystemExit("infer --mode local requires --max-new-tokens between 2 and 8, or use --full-evidence for 8..32")
+        if args.infer_mode == "existing" and (args.max_new_tokens < 2 or args.max_new_tokens > 32):
+            raise SystemExit("infer --mode existing requires --max-new-tokens between 2 and 32")
         if args.p2p_port < 1 or args.coordinator_port < 1 or args.real_p2p_port < 1 or args.real_p2p_coordinator_port < 1:
             raise SystemExit("infer ports must be positive")
         if args.real_p2p_libp2p_port < 0:
