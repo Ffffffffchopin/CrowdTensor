@@ -121,6 +121,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(cli.ready_to_submit_stage_text({"stage_verification": "ready"}), "ready")
         self.assertEqual(cli.ready_to_submit_stage_text({"stage_preflight_ok": False}), "failed")
         self.assertEqual(cli.ready_to_submit_stage_text({}), "not_checked")
+        self.assertEqual(cli.route_catalog_missing_text({"route_source": "coordinator-url"}), "not_used")
+        self.assertEqual(
+            cli.route_catalog_missing_text({
+                "route_source": "p2p-discovery",
+                "missing_capabilities": ["real_llm_sharded_stage1"],
+            }),
+            "real_llm_sharded_stage1",
+        )
 
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()
@@ -581,6 +589,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
+        self.assertIn("  route: source=coordinator-url coordinator=True catalog_missing=not_used", rendered)
         self.assertIn("  coordinator_ready: True service=crowdtensord protocol=runtime_contract_v1", rendered)
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
         self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready", rendered)

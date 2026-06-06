@@ -395,6 +395,13 @@ def annotate_stage_preflight(stage_preflight: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def route_catalog_missing_text(route: dict[str, Any]) -> str:
+    if str(route.get("route_source") or "") == "coordinator-url":
+        return "not_used"
+    missing = route.get("missing_capabilities") if isinstance(route.get("missing_capabilities"), list) else []
+    return ",".join(str(item) for item in missing) if missing else "none"
+
+
 def format_p2p_status(p2p: dict[str, Any]) -> str:
     discovery = p2p.get("discovery") if isinstance(p2p.get("discovery"), dict) else {}
     parts = [
@@ -7648,12 +7655,11 @@ def print_product_generate(report: dict[str, Any]) -> None:
                 print(f"  output[{index}]: {item.get('generated_text')}")
     route = report.get("route") if isinstance(report.get("route"), dict) else {}
     if route:
-        missing = route.get("missing_capabilities") or []
         print(
             "  route: "
             f"source={route.get('route_source')} "
             f"coordinator={route.get('coordinator_url_present')} "
-            f"missing={','.join(missing) if missing else 'none'}"
+            f"catalog_missing={route_catalog_missing_text(route)}"
         )
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     if p2p:
