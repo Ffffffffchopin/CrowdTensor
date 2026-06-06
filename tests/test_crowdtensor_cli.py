@@ -4541,6 +4541,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["coordinator_ready"]["protocol"], "runtime_contract_v1")
         self.assertFalse(report["stage_preflight"]["checked"])
         self.assertEqual(report["stage_preflight"]["reason"], "observer_token_missing")
+        self.assertEqual(report["ready_to_submit"], {
+            "ok": True,
+            "route_ready": True,
+            "coordinator_ready": True,
+            "coordinator_preflight_required": True,
+            "stage_preflight_ok": None,
+            "stage_preflight_required": False,
+            "source": "infer-existing-preflight",
+            "public_artifact_safe": True,
+        })
         self.assertIn("coordinator_ready_preflight_ready", report["diagnosis_codes"])
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
@@ -4550,6 +4560,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["dry_run"])
         self.assertTrue(persisted["coordinator_ready"]["ok"])
         self.assertFalse(persisted["stage_preflight"]["checked"])
+        self.assertTrue(persisted["ready_to_submit"]["ok"])
         self.assertFalse(persisted["local_output"]["available"])
 
     def test_infer_existing_p2p_preserves_swarm_id_in_next_commands(self) -> None:
@@ -4581,6 +4592,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertEqual(report["p2p"]["swarm_id"], "public-swarm-v2")
+        self.assertFalse(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["ready_to_submit"]["route_ready"])
+        self.assertIsNone(report["ready_to_submit"]["coordinator_ready"])
+        self.assertFalse(report["ready_to_submit"]["stage_preflight_required"])
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("stage_preflight_failed", report["diagnosis_codes"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -4667,10 +4682,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["stage_preflight"]["ok"])
         self.assertEqual(report["stage_preflight"]["matched_capabilities"]["real_llm_sharded_stage0"], "stage0-miner")
         self.assertEqual(report["stage_preflight"]["matched_capabilities"]["real_llm_sharded_stage1"], "stage1-miner")
+        self.assertTrue(report["ready_to_submit"]["ok"])
+        self.assertTrue(report["ready_to_submit"]["route_ready"])
+        self.assertTrue(report["ready_to_submit"]["coordinator_ready"])
+        self.assertTrue(report["ready_to_submit"]["stage_preflight_ok"])
+        self.assertTrue(report["ready_to_submit"]["stage_preflight_required"])
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
         self.assertNotIn("observer-secret", json.dumps(report, sort_keys=True))
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["stage_preflight"]["ok"])
+        self.assertTrue(persisted["ready_to_submit"]["ok"])
         self.assertNotIn("observer-secret", json.dumps(persisted, sort_keys=True))
 
     def test_infer_existing_batch_next_commands_use_only_batch_placeholder(self) -> None:

@@ -3720,6 +3720,44 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
     return commands
 
 
+def _infer_ready_to_submit(
+    payload: dict[str, Any],
+    route: dict[str, Any],
+    *,
+    ok: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
+    source = payload.get("ready_to_submit") if isinstance(payload.get("ready_to_submit"), dict) else {}
+    if not dry_run and not source:
+        return {}
+    coordinator_ready = payload.get("coordinator_ready") if isinstance(payload.get("coordinator_ready"), dict) else {}
+    stage_preflight = payload.get("stage_preflight") if isinstance(payload.get("stage_preflight"), dict) else {}
+    stage_checked = bool(stage_preflight.get("checked"))
+    stage_ok = bool(stage_preflight.get("ok")) if stage_checked else None
+    return {
+        "ok": bool(source.get("ok")) if source.get("ok") is not None else (bool(ok) if dry_run else None),
+        "route_ready": bool(source.get("route_ready")) if "route_ready" in source else bool(route.get("route_ready")),
+        "coordinator_ready": (
+            bool(source.get("coordinator_ready"))
+            if source.get("coordinator_ready") is not None
+            else (
+                bool(coordinator_ready.get("ok"))
+                if "ok" in coordinator_ready
+                else None
+            )
+        ),
+        "coordinator_preflight_required": source.get("coordinator_preflight_required"),
+        "stage_preflight_ok": source.get("stage_preflight_ok") if source.get("stage_preflight_ok") is not None else stage_ok,
+        "stage_preflight_required": (
+            bool(source.get("stage_preflight_required"))
+            if "stage_preflight_required" in source
+            else stage_checked
+        ),
+        "source": source.get("source") or ("infer-dry-run-preflight" if dry_run else "infer-submit-result"),
+        "public_artifact_safe": True,
+    }
+
+
 def _infer_summary_from_payload(
     args: argparse.Namespace,
     payload: dict[str, Any],
@@ -3776,6 +3814,7 @@ def _infer_summary_from_payload(
             codes.add("user_friendly_infer_ready")
     else:
         codes.add("crowdtensor_infer_blocked")
+    ready_to_submit = _infer_ready_to_submit(payload, route, ok=ok, dry_run=dry_run)
     operator_action = _infer_operator_action(args, payload, ok=ok)
     next_commands = _infer_next_commands(args, payload, ok=ok, mode=mode)
     summary = {
@@ -3806,6 +3845,7 @@ def _infer_summary_from_payload(
         "p2p": payload.get("p2p") if isinstance(payload.get("p2p"), dict) else {},
         "coordinator_ready": payload.get("coordinator_ready") if isinstance(payload.get("coordinator_ready"), dict) else {},
         "stage_preflight": payload.get("stage_preflight") if isinstance(payload.get("stage_preflight"), dict) else {},
+        "ready_to_submit": ready_to_submit,
         "batch": {
             "enabled": bool(batch.get("enabled")),
             "ready": bool(batch.get("batch_generation_ready")),
@@ -6843,6 +6883,16 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
         **payload,
         "coordinator_ready": coordinator_ready,
         "stage_preflight": stage_preflight,
+        "ready_to_submit": {
+            "ok": bool(route_ready and coordinator_ready.get("ok") and stage_ok),
+            "route_ready": route_ready,
+            "coordinator_ready": bool(coordinator_ready.get("ok")) if route_ready else None,
+            "coordinator_preflight_required": route_ready,
+            "stage_preflight_ok": bool(stage_preflight.get("ok")) if stage_required else None,
+            "stage_preflight_required": stage_required,
+            "source": "infer-existing-preflight",
+            "public_artifact_safe": True,
+        },
         "diagnosis_codes": sorted(set(str(code) for code in codes)),
     }
     merged["ok"] = bool(payload.get("ok") and route_ready and coordinator_ready.get("ok") and stage_ok)
@@ -7474,6 +7524,15 @@ def print_infer(report: dict[str, Any]) -> None:
             f"ok={stage_preflight.get('ok')} "
             f"matched_miners={stage_preflight.get('matched_miner_count')} "
             f"missing={','.join(str(item) for item in missing) if missing else 'none'}"
+        )
+    ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
+    if ready_to_submit:
+        print(
+            "  ready_to_submit: "
+            f"{ready_to_submit.get('ok')} "
+            f"route={ready_to_submit.get('route_ready')} "
+            f"coordinator={ready_to_submit.get('coordinator_ready')} "
+            f"stage={ready_to_submit.get('stage_preflight_ok')}"
         )
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     if stream.get("enabled"):
