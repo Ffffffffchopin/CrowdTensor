@@ -334,6 +334,20 @@ def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> st
     return str(item.get("command_line") or command_line([str(part) for part in command]))
 
 
+def local_generate_command_line(item: dict[str, Any], report: dict[str, Any]) -> str:
+    command = item.get("command") if isinstance(item.get("command"), list) else []
+    if not command:
+        return str(item.get("command_line") or "")
+    prompt = str(report.get("local_prompt_text") or "")
+    prompt_texts = str(report.get("local_prompt_texts") or "")
+    rendered = [str(part) for part in command]
+    if prompt_texts:
+        rendered = [prompt_texts if part == INFER_BATCH_PROMPTS_PLACEHOLDER else part for part in rendered]
+    elif prompt:
+        rendered = [prompt if part == INFER_PROMPT_PLACEHOLDER else part for part in rendered]
+    return command_line(rendered)
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -5594,6 +5608,8 @@ def _product_cli_generate_command(
     hf_model_id: str,
     dry_run: bool,
     max_new_tokens: int = 16,
+    prompt_text: str = "",
+    prompt_texts: str = "",
 ) -> list[str]:
     command = [
         "crowdtensor",
@@ -5612,6 +5628,10 @@ def _product_cli_generate_command(
         command.extend(["--backend", backend])
     if hf_model_id != "sshleifer/tiny-gpt2":
         command.extend(["--hf-model-id", hf_model_id])
+    if prompt_texts:
+        command.extend(["--prompt-texts", prompt_texts])
+    elif prompt_text:
+        command.extend(["--prompt-text", prompt_text])
     if dry_run:
         command.append("--dry-run")
     return command
@@ -6281,6 +6301,13 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
     coordinator_url = str(route.get("coordinator_url") or "")
     backend = str(session_request.get("backend") or route.get("backend") or "cpu")
     hf_model_id = str(session_request.get("hf_model_id") or route.get("hf_model_id") or "sshleifer/tiny-gpt2")
+    batch = session_request.get("batch") if isinstance(session_request.get("batch"), dict) else {}
+    try:
+        request_count = int(batch.get("request_count") or session_request.get("request_count") or 1)
+    except (TypeError, ValueError):
+        request_count = 1
+    prompt_placeholder = "" if request_count != 1 else INFER_PROMPT_PLACEHOLDER
+    prompt_texts_placeholder = INFER_BATCH_PROMPTS_PLACEHOLDER if request_count > 1 else ""
     try:
         max_new_tokens = int(session_request.get("max_new_tokens") or report.get("max_new_tokens") or 16)
     except (TypeError, ValueError):
@@ -6302,6 +6329,8 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         hf_model_id=hf_model_id,
         dry_run=True,
         max_new_tokens=max_new_tokens,
+        prompt_text=prompt_placeholder,
+        prompt_texts=prompt_texts_placeholder,
     )
     if p2p_enabled or coordinator_url:
         commands.append(command_entry("check generation route", route_command))
@@ -6316,6 +6345,8 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 hf_model_id=hf_model_id,
                 dry_run=False,
                 max_new_tokens=max_new_tokens,
+                prompt_text=prompt_placeholder,
+                prompt_texts=prompt_texts_placeholder,
             ),
             requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
         ))
@@ -7161,7 +7192,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
-            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+            print(f"  next[{index}] {item.get('label')}: {local_generate_command_line(item, report)}{suffix}")
 
 
 def print_product_serve(report: dict[str, Any]) -> None:
@@ -11641,7 +11672,10 @@ def main(argv: list[str] | None = None) -> None:
         if args.json:
             print(json.dumps(report, sort_keys=True))
         else:
-            print_product_generate(report)
+            local_report = dict(report)
+            local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
+            local_report["local_prompt_texts"] = str(getattr(args, "prompt_texts", "") or "")
+            print_product_generate(local_report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "p2pd":
         report = build_p2pd_cli(args)
