@@ -3795,6 +3795,15 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         ])
     commands.append(check_command)
     commands.append(submit_command_entry)
+    if "generation_timeout" in codes:
+        wait_progress = payload.get("wait_progress") if isinstance(payload.get("wait_progress"), dict) else {}
+        retry_command = submit_command[:]
+        retry_command.extend(["--timeout-seconds", str(_retry_timeout_seconds(wait_progress))])
+        commands.append(command_entry(
+            "retry inference with longer timeout",
+            retry_command,
+            requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+        ))
     return commands
 
 

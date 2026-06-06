@@ -4431,8 +4431,21 @@ class CrowdTensorCliTests(unittest.TestCase):
                 self.assertFalse(report["ok"], report)
                 self.assertIn(expected, report["operator_action"])
                 self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+                next_lines = [item["command_line"] for item in report["next_commands"]]
+                self.assertIn(
+                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds 240",
+                    next_lines,
+                )
+                retry = next(item for item in report["next_commands"] if item["label"] == "retry inference with longer timeout")
+                self.assertEqual(retry["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
+                self.assertNotIn("CrowdTensor user prompt", json.dumps(report["next_commands"], sort_keys=True))
+                self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
                 persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
                 self.assertIn(expected, persisted["operator_action"])
+                self.assertIn(
+                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds 240",
+                    [item["command_line"] for item in persisted["next_commands"]],
+                )
 
     def test_infer_existing_requires_route(self) -> None:
         output_dir = Path(self._tmp_dir())
