@@ -6085,6 +6085,10 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             run=True,
             json=False,
         )
+        p2p_join_args = argparse.Namespace(**vars(args))
+        p2p_join_args.p2p = True
+        p2p_join_args.peer_bootstrap = p2p_bootstrap or DEFAULT_P2P_BOOTSTRAP
+        p2p_join_args.coordinator_url = ""
         return sanitize({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
@@ -6094,7 +6098,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
                 *_product_join_next_commands(args, coordinator_url=local_coordinator_url),
                 command_entry(
                     "discover through P2P",
-                    ["crowdtensor", "join", "--p2p", "--peer-bootstrap", p2p_bootstrap or DEFAULT_P2P_BOOTSTRAP, "--run"],
+                    _product_cli_join_command(p2p_join_args, coordinator_url="", include_run=True),
                 ),
             ],
             "diagnosis_codes": ["coordinator_route_missing"],

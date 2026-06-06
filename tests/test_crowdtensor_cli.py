@@ -866,6 +866,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run",
             next_lines,
         )
+        self.assertIn(
+            "crowdtensor join --p2p --peer-bootstrap http://127.0.0.1:8788 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
 
     def test_product_join_human_output_includes_action_and_redacts_token(self) -> None:
         args = cli.parse_args([
