@@ -5660,6 +5660,31 @@ def _safe_stream_payload_event(event: dict[str, Any], *, max_new_tokens: int) ->
     }
 
 
+def _product_generate_operator_action(report: dict[str, Any]) -> str:
+    if report.get("ok"):
+        if bool(report.get("dry_run")):
+            return "Rerun without --dry-run to submit the generation request."
+        return ""
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
+    if "hf_dependencies_missing" in codes or "transformers" in detail:
+        return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
+    if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
+        return "Start a Coordinator and distinct stage0/stage1 Miners, or pass --peer-bootstrap for discovery."
+    if "admin_token_required" in codes:
+        return "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN."
+    if "session_create_failed" in codes:
+        return "Check Coordinator reachability, --admin-token, and /admin/inference-sessions; rerun with --dry-run first."
+    if "generation_timeout" in codes:
+        return _infer_wait_progress_action(report)
+    return "Inspect the generated JSON report and Coordinator admin results for the failing check."
+
+
+def _finalize_product_generate_report(report: dict[str, Any], *, admin_token: str = "") -> dict[str, Any]:
+    report.setdefault("operator_action", _product_generate_operator_action(report))
+    return sanitize(redact_values(report, [admin_token]))
+
+
 def _coordinator_ready_preflight(base_url: str, *, timeout: float) -> dict[str, Any]:
     if not base_url:
         return {"ok": False, "error": "coordinator_url_missing"}
@@ -5893,7 +5918,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     effective_coordinator_url = str(route.get("coordinator_url") or coordinator_url or "")
     route_ready_code = "real_p2p_generate_route_ready" if p2p_backend == "real" else "p2p_generate_route_ready"
     if args.dry_run:
-        return sanitize({
+        return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": bool(route.get("usable_now") if args.p2p else route.get("coordinator_url_present")),
             "mode": "generate",
@@ -5916,7 +5941,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             ],
         })
     if args.p2p and not route.get("usable_now"):
-        return sanitize({
+        return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
@@ -5934,7 +5959,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "diagnosis_codes": ["generate_route_unavailable"],
         })
     if not effective_coordinator_url:
-        return sanitize({
+        return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
@@ -5944,7 +5969,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "diagnosis_codes": ["coordinator_route_missing"],
         })
     if not args.admin_token:
-        return sanitize({
+        return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
@@ -5980,7 +6005,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         elif "requires optional Hugging Face dependencies" in str(exc) or "transformers" in str(exc):
             diagnosis.append("hf_dependencies_missing")
             detail = "real_llm_sharded_infer requires optional Hugging Face dependencies; install with python -m pip install -e '.[hf]'"
-        return sanitize({
+        return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
@@ -5990,7 +6015,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "diagnosis_codes": diagnosis,
             "error": type(exc).__name__,
             "detail": detail,
-        })
+        }, admin_token=args.admin_token)
     result_row: dict[str, Any] | None = None
     stream_events: list[dict[str, Any]] = []
     stream_seen_keys: set[tuple[str, int]] = set()
@@ -6238,7 +6263,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         report["local_output_note"] = "Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only."
     elif args.include_output:
         report["local_output_note"] = "Raw generated text is suppressed in JSON/public output; rerun without --json for local display."
-    return sanitize(redact_values(report, [args.admin_token]))
+    return _finalize_product_generate_report(report, admin_token=args.admin_token)
 
 
 def print_product_generate(report: dict[str, Any]) -> None:
@@ -6305,6 +6330,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
         )
     if report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
 
 
 def print_infer(report: dict[str, Any]) -> None:

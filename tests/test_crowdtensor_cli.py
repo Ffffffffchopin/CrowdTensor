@@ -256,6 +256,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["session_request"]["schema"], "session_protocol_v1")
         self.assertEqual(report["session_request"]["hf_model_id"], "distilgpt2")
+        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
         self.assertNotIn("CrowdTensor prompt", encoded)
         self.assertIn("prompt_hash", encoded)
 
@@ -871,6 +872,25 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertEqual(report["diagnosis_codes"], ["generate_route_unavailable"])
         self.assertIn("real_llm_sharded_stage1", report["route"]["missing_capabilities"])
+        self.assertIn("stage0/stage1", report["operator_action"])
+
+    def test_product_generate_requires_admin_token_with_action(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+
+        report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("admin_token_required", report["diagnosis_codes"])
+        self.assertEqual(report["operator_action"], "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.")
 
     def test_product_generate_preserves_safe_generation_counts(self) -> None:
         args = cli.parse_args([
@@ -1029,12 +1049,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["wait_progress"]["max_observed_token_count"], 1)
         self.assertEqual(report["wait_progress"]["target_token_count"], 4)
         self.assertFalse(report["wait_progress"]["completion_observed"])
+        self.assertIn("Generation reached 1/4 tokens", report["operator_action"])
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
-        self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=True", stdout.getvalue())
+        rendered = stdout.getvalue()
+        self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=True", rendered)
+        self.assertIn("  action: Generation reached 1/4 tokens before timeout", rendered)
 
     def test_product_generate_uses_longer_timeout_for_session_create(self) -> None:
         args = cli.parse_args([
