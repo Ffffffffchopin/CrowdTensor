@@ -3330,6 +3330,78 @@ class CrowdTensorCliTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli.parse_args(["infer", "prompt", "--mode", "existing", "--coordinator-url", "http://127.0.0.1:8787"])
 
+    def test_infer_existing_dry_run_preflights_without_admin_token(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["dry_run"])
+        self.assertEqual(report["route"]["route_source"], "coordinator-url")
+        self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
+        self.assertNotIn("crowdtensor_infer_ready", report["diagnosis_codes"])
+        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the inference request.")
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(persisted["dry_run"])
+        self.assertFalse(persisted["local_output"]["available"])
+
+    def test_infer_existing_dry_run_uses_p2p_route_preflight(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--p2p",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8788",
+            "--dry-run",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+        catalog = {
+            "peers": [
+                {"role": "coordinator", "peer_id": "coord", "urls": {"coordinator": "http://127.0.0.1:8787"}},
+                {
+                    "role": "miner",
+                    "peer_id": "stage0",
+                    "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"]},
+                },
+                {
+                    "role": "miner",
+                    "peer_id": "stage1",
+                    "capabilities": {"real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage1"]},
+                },
+            ]
+        }
+
+        with patch.object(cli, "fetch_peer_catalog", return_value=catalog):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["dry_run"])
+        self.assertEqual(report["route"]["route_source"], "p2p-discovery")
+        self.assertTrue(report["route"]["route_ready"])
+        self.assertIn("p2p_generate_route_ready", report["diagnosis_codes"])
+        self.assertIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
+
+    def test_infer_dry_run_is_existing_mode_only(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["infer", "prompt", "--dry-run"])
+
     def test_infer_token_limits_match_mode(self) -> None:
         with self.assertRaises(SystemExit):
             cli.parse_args(["infer", "prompt", "--max-new-tokens", "16"])

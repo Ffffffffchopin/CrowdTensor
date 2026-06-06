@@ -3366,6 +3366,8 @@ def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
 
 def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *, ok: bool) -> str:
     if ok:
+        if bool(payload.get("dry_run")):
+            return "Rerun without --dry-run to submit the inference request."
         if getattr(args, "infer_mode", "local") == "local" and not getattr(args, "full_evidence", False):
             return "Run with --full-evidence for the broader Public Swarm v2 proof."
         return ""
@@ -3429,11 +3431,19 @@ def _infer_summary_from_payload(
         prompts = parse_prompt_texts_arg(str(getattr(args, "prompt_text", "") or ""), str(getattr(args, "prompt_texts", "") or ""))
     except ValueError:
         prompts = [str(getattr(args, "prompt_text", "") or "")]
-    ok = bool(payload.get("ok") and generated_tokens >= max_new_tokens and max_new_tokens > 0)
+    dry_run = bool(payload.get("dry_run"))
+    if dry_run:
+        ok = bool(payload.get("ok") and route.get("route_ready"))
+    else:
+        ok = bool(payload.get("ok") and generated_tokens >= max_new_tokens and max_new_tokens > 0)
     codes = set(payload.get("diagnosis_codes") or [])
     if ok:
-        codes.add("crowdtensor_infer_ready")
-        codes.add("user_friendly_infer_ready")
+        if dry_run:
+            codes.add("crowdtensor_infer_preflight_ready")
+            codes.add("user_friendly_infer_preflight_ready")
+        else:
+            codes.add("crowdtensor_infer_ready")
+            codes.add("user_friendly_infer_ready")
     else:
         codes.add("crowdtensor_infer_blocked")
     operator_action = _infer_operator_action(args, payload, ok=ok)
@@ -3442,6 +3452,7 @@ def _infer_summary_from_payload(
         "generated_at": utc_now(),
         "ok": ok,
         "mode": mode,
+        "dry_run": dry_run,
         "output_dir": str(output_dir),
         "prompt": {
             "prompt_hash": stable_hash_payload([stable_hash_text(prompt) for prompt in prompts]),
@@ -3565,7 +3576,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             poll_interval=args.poll_interval,
             http_timeout=args.http_timeout,
             admin_results_limit=args.admin_results_limit,
-            dry_run=False,
+            dry_run=args.dry_run,
             include_output=args.include_output,
             stream=args.stream,
             json=args.json,
@@ -7464,6 +7475,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--hf-cache-dir", default="")
     infer.add_argument("--stream", action="store_true", help="request safe stream-progress evidence")
     infer.add_argument("--include-output", action="store_true", help="request local raw output from generate; JSON and saved artifacts still suppress it")
+    infer.add_argument("--dry-run", action="store_true", help="check route/session readiness without submitting an inference task")
     infer.add_argument("--full-evidence", action="store_true", help="use the full local Public Swarm v2 gate instead of the faster product loopback path")
     infer.add_argument("--coordinator-url", default="")
     infer.add_argument("--peer-bootstrap", default="")
@@ -9391,8 +9403,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if args.infer_mode == "existing":
             if not args.coordinator_url and not args.peer_bootstrap and not args.p2p:
                 raise SystemExit("infer --mode existing requires --coordinator-url, --peer-bootstrap, or --p2p")
-            if not args.admin_token:
+            if not args.dry_run and not args.admin_token:
                 raise SystemExit("infer --mode existing requires --admin-token or CROWDTENSOR_ADMIN_TOKEN")
+        elif args.dry_run:
+            raise SystemExit("infer --dry-run is supported for --mode existing route preflight only")
     if args.command == "serve":
         if args.port < 1:
             raise SystemExit("--port must be positive")

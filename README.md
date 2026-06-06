@@ -80,6 +80,10 @@ prompts, generated text, token ids, credentials, and activations out of
 shareable files. Use `--full-evidence` when you want the broader Public Swarm
 v2 gate instead of the faster user path.
 
+To check an already running Coordinator or P2P-discovered swarm before
+submitting a request, use `crowdtensor infer --mode existing --dry-run` with
+`--coordinator-url` or `--peer-bootstrap`.
+
 For maintainer-grade release evidence, run the full public swarm beta gate:
 
 ```bash

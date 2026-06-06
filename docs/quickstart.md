@@ -77,6 +77,8 @@ crowdtensor infer \
 
 `crowdtensor infer --mode existing` can target an already running Coordinator or
 P2P-discovered swarm with `--coordinator-url` or `--peer-bootstrap`.
+Add `--dry-run` to check the route and session metadata before submitting a
+real inference request.
 Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
 redacted.
