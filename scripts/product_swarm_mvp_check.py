@@ -43,7 +43,7 @@ if str(ROOT / "scripts") not in sys.path:
 
 import support_bundle  # noqa: E402
 from crowdtensor.real_llm import cuda_runtime_summary, missing_hf_dependencies  # noqa: E402
-from crowdtensor.session_protocol import MAX_BATCH_REQUESTS, public_leak_paths, stable_hash_text  # noqa: E402
+from crowdtensor.session_protocol import MAX_BATCH_REQUESTS, MAX_PROMPT_CHARS, public_leak_paths, stable_hash_text  # noqa: E402
 
 
 SCHEMA = "product_swarm_mvp_check_v1"
@@ -488,8 +488,8 @@ def validate_prompt_texts(prompts: list[str]) -> list[str]:
     if len(prompts) > MAX_BATCH_REQUESTS:
         raise ValueError(f"prompt_texts must contain at most {MAX_BATCH_REQUESTS} prompts")
     for prompt in prompts:
-        if len(prompt) > 256:
-            raise ValueError("prompt_text must be at most 256 characters")
+        if len(prompt) > MAX_PROMPT_CHARS:
+            raise ValueError(f"prompt_text must be at most {MAX_PROMPT_CHARS} characters")
     return prompts
 
 
@@ -501,12 +501,15 @@ def read_prompt_texts_file(path_value: str) -> list[str]:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ValueError(f"could not read prompt texts file: {exc}") from exc
-    try:
-        return validate_prompt_texts([line.strip() for line in text.splitlines() if line.strip()])
-    except ValueError as exc:
-        if str(exc) == "prompt_text is required":
-            raise ValueError("prompt_texts_file is empty") from exc
-        raise
+    line_prompts = [(lineno, line.strip()) for lineno, line in enumerate(text.splitlines(), start=1) if line.strip()]
+    if not line_prompts:
+        raise ValueError("prompt_texts_file is empty")
+    if len(line_prompts) > MAX_BATCH_REQUESTS:
+        raise ValueError(f"prompt_texts_file must contain at most {MAX_BATCH_REQUESTS} prompts")
+    for lineno, prompt in line_prompts:
+        if len(prompt) > MAX_PROMPT_CHARS:
+            raise ValueError(f"prompt_texts_file line {lineno} must be at most {MAX_PROMPT_CHARS} characters")
+    return [prompt for _, prompt in line_prompts]
 
 
 def prompt_list_from_args(args: argparse.Namespace) -> list[str]:

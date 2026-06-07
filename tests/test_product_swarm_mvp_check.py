@@ -500,6 +500,29 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
         self.assertEqual(args.prompt_texts_file, str(prompt_file))
         self.assertEqual(args.prompt_texts_list, prompts)
 
+    def test_parse_args_rejects_prompt_texts_file_over_batch_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = Path(tmp) / "too-many-prompts.txt"
+            prompt_file.write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+
+            with self.assertRaises(SystemExit) as raised:
+                product_check.parse_args(["--prompt-texts-file", str(prompt_file)])
+
+        self.assertEqual(str(raised.exception), "prompt_texts_file must contain at most 4 prompts")
+
+    def test_parse_args_rejects_prompt_texts_file_long_line_with_line_number(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = Path(tmp) / "long-prompts.txt"
+            private_prompt = "x" * 257
+            prompt_file.write_text(f"one\n{private_prompt}\n", encoding="utf-8")
+
+            with self.assertRaises(SystemExit) as raised:
+                product_check.parse_args(["--prompt-texts-file", str(prompt_file)])
+
+        error = str(raised.exception)
+        self.assertEqual(error, "prompt_texts_file line 2 must be at most 256 characters")
+        self.assertNotIn(private_prompt, error)
+
     def test_parse_args_rejects_prompt_texts_and_file_together(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             prompt_file = Path(tmp) / "prompts.txt"

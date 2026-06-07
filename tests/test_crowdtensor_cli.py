@@ -1762,6 +1762,17 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(str(raised.exception), "prompt_texts_file is empty")
 
+    def test_generate_rejects_long_prompt_texts_file_line_with_line_number(self) -> None:
+        prompt_file = Path(self._tmp_dir()) / "long-prompts.txt"
+        private_prompt = "x" * 257
+        prompt_file.write_text(f"short prompt\n{private_prompt}\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["generate", "--prompt-texts-file", str(prompt_file)])
+
+        error = str(raised.exception)
+        self.assertEqual(error, "prompt_texts_file line 2 must be at most 256 characters")
+        self.assertNotIn(private_prompt, error)
+
     def test_infer_accepts_prompt_text_alias_like_generate(self) -> None:
         prompt = "CrowdTensor flag prompt"
         args = cli.parse_args([
@@ -10269,6 +10280,17 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.parse_args(["infer", "--prompt-texts-file", str(prompt_file)])
 
         self.assertEqual(str(raised.exception), "prompt_texts_file is empty")
+
+    def test_infer_rejects_long_prompt_texts_file_line_with_line_number(self) -> None:
+        prompt_file = Path(self._tmp_dir()) / "long-infer-prompts.txt"
+        private_prompt = "x" * 257
+        prompt_file.write_text(f"first prompt\n\n{private_prompt}\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["infer", "--prompt-texts-file", str(prompt_file)])
+
+        error = str(raised.exception)
+        self.assertEqual(error, "prompt_texts_file line 3 must be at most 256 characters")
+        self.assertNotIn(private_prompt, error)
 
     def test_infer_existing_dry_run_with_observer_token_blocks_missing_stage_state(self) -> None:
         output_dir = Path(self._tmp_dir())
