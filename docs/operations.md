@@ -38,6 +38,14 @@ crowdtensor join --stage stage1 --p2p --swarm-id public-swarm-v2 --miner-id stag
 crowdtensor generate --p2p --swarm-id public-swarm-v2 --prompt "CrowdTensor routes small models across home compute" --max-new-tokens 16 --http-timeout 30
 ```
 
+The CLI keeps token and peer-secret values out of reports. When a printed
+`next[...]` command includes `# requires CROWDTENSOR_ADMIN_TOKEN`,
+`CROWDTENSOR_MINER_TOKEN`, `CROWDTENSOR_OBSERVER_TOKEN`, or
+`CROWDTENSOR_P2P_PEER_SECRET`, export the named variables before copying the
+command. The default route uses P2P-lite and `crowdtensor p2pd`; if you run
+`serve` / `join` / `generate` with `--p2p-backend real`, blocked discovery
+reports should point at the matching `crowdtensor p2p-daemon` fallback.
+
 For a two-machine or Kaggle rehearsal, keep `p2pd` and `serve` on the Coordinator host and point stage Miners at the same bootstrap:
 
 ```bash
@@ -112,6 +120,12 @@ crowdtensor join --stage stage0 --p2p --miner-id stage0 --run
 crowdtensor join --stage stage1 --p2p --miner-id stage1 --run
 crowdtensor generate --p2p --prompt "CrowdTensor routes small models across home compute" --max-new-tokens 8
 ```
+
+Follow the printed `action` and `next[...]` lines when a step blocks. Required
+token or peer-secret values are surfaced as `# requires CROWDTENSOR_...`
+environment hints rather than embedded in shareable output. P2P-lite uses
+`crowdtensor p2pd`; the real provider-discovery preview uses
+`crowdtensor p2p-daemon` when commands are run with `--p2p-backend real`.
 
 For a two-machine or public-host rehearsal, keep `p2pd` and `serve` on the Coordinator host and point stage Miners at the same bootstrap:
 

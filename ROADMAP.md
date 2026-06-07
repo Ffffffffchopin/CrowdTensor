@@ -35,6 +35,8 @@ Hivemind-level large-model serving.
 - Shorten the two-machine setup path.
 - Improve join packs for non-expert Miner operators.
 - Make logs, diagnosis codes, and support bundles easier to read.
+- Keep printed next commands copyable while surfacing tokens and peer secrets
+  as environment requirements rather than report contents.
 - Keep private tokens and generated runtime state out of shareable artifacts by
   default.
 - Add more operator-facing examples for local, LAN, VPN, and temporary public

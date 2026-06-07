@@ -177,10 +177,16 @@ export CROWDTENSOR_OBSERVER_TOKEN=local-observer
 
 The `serve`, `join`, and `generate` commands print an `action` line in human
 mode; follow it when a step is only printing a command, missing a route, or
-waiting for the other stage Miner. `generate` also writes safe
-`generate_summary.json` and `generate_summary.md` files under `dist/generate`
-by default; raw prompts, generated text, token ids, and tokens stay out of
-those shareable artifacts.
+waiting for the other stage Miner. If a printed `next[...]` command ends with
+`# requires CROWDTENSOR_...`, export those environment variables before copying
+the command; token and peer-secret values are deliberately kept out of
+shareable reports. The default quickstart uses P2P-lite with
+`crowdtensor p2pd`. If you run the real provider-discovery preview with
+`--p2p-backend real`, follow the printed `crowdtensor p2p-daemon` fallback
+command instead.
+`generate` also writes safe `generate_summary.json` and
+`generate_summary.md` files under `dist/generate` by default; raw prompts,
+generated text, token ids, and tokens stay out of those shareable artifacts.
 
 ```bash
 # Terminal 1
@@ -321,9 +327,11 @@ If Hugging Face or torch dependencies are unavailable:
 If a multi-process demo hangs:
 
 - Start `p2pd` first.
+- If you selected `--p2p-backend real`, start `p2p-daemon` first instead.
 - Start `serve` before Miners.
 - Use the same `--swarm-id` in every terminal.
 - Check that stage 0 and stage 1 use different `--miner-id` values.
+- Set any `CROWDTENSOR_...` variables named in printed `# requires` hints.
 
 ## Boundaries
 

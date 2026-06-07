@@ -161,6 +161,13 @@ but not fully checked.
 The manual `serve` and `join` commands also print `operator_action` and
 `next[...]`, so the five-process flow tells you whether to rerun with `--run`,
 start the missing stage Miner, or preflight with `generate --dry-run`.
+When a printed next command includes `# requires CROWDTENSOR_...`, export those
+environment variables before copying the command. Token and peer-secret values
+are intentionally shown as environment requirements instead of embedded in
+shareable JSON/Markdown reports. The default P2P-lite path starts
+`crowdtensor p2pd`; if you choose `--p2p-backend real`, blocked discovery
+reports will point you at the matching `crowdtensor p2p-daemon` command
+instead.
 `generate` writes safe `generate_summary.json` and `generate_summary.md` files
 under `dist/generate` by default; the `artifacts` line tells you which Markdown
 file to open first, and raw prompts, generated text, token ids, and tokens stay
