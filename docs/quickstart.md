@@ -86,8 +86,9 @@ Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
 redacted. When human output shows generated text, it prints `answer:` or
 `answer[n]:` before `answer_scope` and `local_output` safety metadata.
-`answer_scope` says the visible answer is terminal-only; JSON and Markdown
-summaries keep hashes/placeholders instead of raw generated text. `local_output`
+`answer_scope` distinguishes terminal-visible answers from saved reports; the
+Markdown `What To Do Next` and `Details` sections repeat that saved JSON and
+Markdown contain no generated text. `local_output`
 adds safe output `count` and `source` fields such as
 `local-private-task-state` or `coordinator-validation`.
 Pick one prompt source per command: positional prompt,

@@ -506,6 +506,7 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
     artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
     recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
+    answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
     state = str(user_status.get("state") or review_summary.get("state") or issue_summary.get("state") or "unknown")
     headline = str(user_status.get("headline") or issue_summary.get("headline") or "")
     next_step = str(user_status.get("next_step") or review_summary.get("next_step") or issue_summary.get("next_step") or "none")
@@ -545,7 +546,10 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
         lines.append(f"- Requires env: `{', '.join(str(name) for name in requires_env)}`")
     if operator_action:
         lines.append(f"- Action: {operator_action}")
-    lines.append("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.")
+    safety = "saved Markdown keeps prompt placeholders and redacted generated output."
+    if answer_scope.get("summary"):
+        safety = f"{safety} {answer_scope.get('summary')}"
+    lines.append(f"- Safety: {safety}")
     return lines
 
 
@@ -11588,8 +11592,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "When local text is shown, the terminal prints it as answer: or answer[n]: before\n"
             "answer_scope and local_output safety metadata with safe count/source fields such as\n"
             "local-private-task-state or coordinator-validation; saved artifacts keep\n"
-            "hashes/placeholders only. answer_scope is terminal-only, meaning the visible answer\n"
-            "was not written to saved JSON/Markdown.\n\n"
+            "hashes/placeholders only. answer_scope distinguishes terminal-visible answers from\n"
+            "saved reports, and Markdown repeats that saved JSON/Markdown contain no generated text.\n\n"
             "The output_display line makes the display policy explicit: non-JSON human output\n"
             "may show local generated text, while JSON stdout and saved Markdown/JSON stay\n"
             "hash-only and redacted. --include-output records that local display was requested;\n"
@@ -11778,8 +11782,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "When local text is shown, the terminal prints it as answer: or answer[n]: before\n"
             "answer_scope and local_output safety metadata with safe count/source fields such as\n"
             "local-private-task-state or coordinator-validation; saved artifacts keep\n"
-            "hashes/placeholders only. answer_scope is terminal-only, meaning the visible answer\n"
-            "was not written to saved JSON/Markdown.\n\n"
+            "hashes/placeholders only. answer_scope distinguishes terminal-visible answers from\n"
+            "saved reports, and Markdown repeats that saved JSON/Markdown contain no generated text.\n\n"
             "The output_display line makes the display policy explicit: non-JSON human output\n"
             "may show local generated text, while JSON stdout and saved Markdown/JSON stay\n"
             "hash-only and redacted. --include-output records that local display was requested;\n"
