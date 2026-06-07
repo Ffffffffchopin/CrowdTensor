@@ -82,6 +82,9 @@ when you want the broader Public Swarm v2 gate instead of the faster user path.
 In human mode, `infer` and `generate` print a short safe stderr start hint before
 long-running checks so the terminal does not look idle; `--json` keeps stdout
 machine-readable.
+When generated text is available in human mode, the terminal prints it as
+`answer:` or `answer[n]:` before safety metadata; JSON and Markdown summaries
+keep hashes/placeholders instead of raw generated text.
 Pick one prompt source per command: use the positional prompt,
 `--prompt-text`/`--prompt`, or `--prompt-texts` for a bounded batch. The CLI
 rejects mixed prompt sources instead of guessing. Reports expose
