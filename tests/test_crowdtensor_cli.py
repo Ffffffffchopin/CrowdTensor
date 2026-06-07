@@ -85,12 +85,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage_preflight_unknown means rerun the stage preflight", rendered)
         self.assertIn("stage_preflight_not_checked means fix route/Coordinator, then rerun with observer token", rendered)
         self.assertIn("partial can submit but still needs", rendered)
-        self.assertIn("Use one prompt source at a time: positional prompt", rendered)
+        self.assertIn("Use one prompt source at a time: positional prompt, --prompt-text/--prompt", rendered)
         self.assertIn("ambiguous mixes are rejected", rendered)
         self.assertIn("output_request.include_output", rendered)
         self.assertIn("output_request.raw_generated_text_public false", rendered)
         self.assertIn("existing mode only: check route/session readiness", rendered)
-        self.assertIn("not also pass a positional prompt", rendered)
+        self.assertIn("mutually exclusive with positional", rendered)
+        self.assertIn("prompt and --prompt-texts", rendered)
+        self.assertIn("mutually exclusive with single-prompt sources", rendered)
         self.assertIn("show raw generated text only in local human output", rendered)
         self.assertIn("not production", rendered)
 
@@ -785,6 +787,24 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
             next_lines,
         )
+
+    def test_infer_accepts_prompt_text_alias_like_generate(self) -> None:
+        prompt = "CrowdTensor flag prompt"
+        args = cli.parse_args([
+            "infer",
+            "--prompt",
+            prompt,
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--json",
+        ])
+
+        self.assertEqual(args.prompt_text, prompt)
+        self.assertEqual(args.prompt_text_arg, "")
+        self.assertEqual(args.prompt_texts, "")
 
     def test_generate_rejects_ambiguous_prompt_sources(self) -> None:
         cases = [
@@ -5470,17 +5490,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("second private prompt", encoded)
 
     def test_infer_rejects_ambiguous_prompt_sources(self) -> None:
-        with self.assertRaises(SystemExit) as raised:
-            cli.parse_args([
-                "infer",
-                "positional prompt",
-                "--prompt-texts",
-                "first prompt,second prompt",
-            ])
-        self.assertEqual(
-            str(raised.exception),
-            "infer accepts one prompt source: positional prompt or --prompt-texts",
-        )
+        cases = [
+            ["infer", "positional prompt", "--prompt-text", "flag prompt"],
+            ["infer", "positional prompt", "--prompt-texts", "first prompt,second prompt"],
+            ["infer", "--prompt", "flag prompt", "--prompt-texts", "first prompt,second prompt"],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
+                cli.parse_args(argv)
+            self.assertEqual(
+                str(raised.exception),
+                "infer accepts one prompt source: positional prompt, --prompt-text/--prompt, or --prompt-texts",
+            )
 
     def test_infer_existing_dry_run_with_observer_token_blocks_missing_stage_state(self) -> None:
         output_dir = Path(self._tmp_dir())

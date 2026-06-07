@@ -79,7 +79,7 @@ prints the local display-only generated text, and writes a compact
 prompts, generated text, token ids, credentials, and activations out of
 shareable files. Use `--full-evidence` when you want the broader Public Swarm
 v2 gate instead of the faster user path. Pick one prompt source per command:
-use the positional prompt, `--prompt-text`/`--prompt` for `generate`, or
+use the positional prompt, `--prompt-text`/`--prompt`, or
 `--prompt-texts` for a bounded batch. The CLI rejects mixed prompt sources
 instead of guessing. Reports expose `output_request.include_output` while
 keeping `output_request.raw_generated_text_public` false in JSON and saved

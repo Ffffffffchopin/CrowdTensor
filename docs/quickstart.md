@@ -84,7 +84,7 @@ read `/state` and verify visible stage0/stage1 Miner capabilities.
 Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
 redacted. Pick one prompt source per command: positional prompt,
-`--prompt-text`/`--prompt` for `generate`, or `--prompt-texts` for a bounded
+`--prompt-text`/`--prompt`, or `--prompt-texts` for a bounded
 batch. The CLI rejects mixed prompt sources instead of guessing. Reports expose
 `output_request.include_output` while keeping
 `output_request.raw_generated_text_public` false in JSON and saved artifacts.

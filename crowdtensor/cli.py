@@ -9549,7 +9549,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "action: submit, run_stage_preflight, run_live_preflight, submit_with_caution,\n"
             "or fix_blockers. stage_preflight_unknown means rerun the stage preflight;\n"
             "stage_preflight_not_checked means fix route/Coordinator, then rerun with observer token.\n\n"
-            "Use one prompt source at a time: positional prompt for one request, or --prompt-texts\n"
+            "Use one prompt source at a time: positional prompt, --prompt-text/--prompt,\n"
+            "or --prompt-texts\n"
             "for a bounded batch; ambiguous mixes are rejected. Reports include\n"
             "output_request.include_output and keep output_request.raw_generated_text_public false.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
@@ -9564,10 +9565,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    infer.add_argument("prompt_text", nargs="?", default=None)
+    infer.add_argument("prompt_text_arg", nargs="?", default="", help="optional single prompt text; mutually exclusive with --prompt-text/--prompt and --prompt-texts")
     infer.add_argument("--mode", dest="infer_mode", choices=["local", "existing"], default="local")
     infer.add_argument("--output-dir", default="dist/infer")
-    infer.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; do not also pass a positional prompt")
+    infer.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with positional prompt and --prompt-texts")
+    infer.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; mutually exclusive with single-prompt sources")
     infer.add_argument("--max-new-tokens", type=int, default=8)
     infer.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
     infer.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
@@ -11547,9 +11549,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if hasattr(args, "timeout_seconds") and args.timeout_seconds < 1:
             raise SystemExit("--timeout-seconds must be at least 1")
     if args.command == "infer":
-        if args.prompt_text and args.prompt_texts:
-            raise SystemExit("infer accepts one prompt source: positional prompt or --prompt-texts")
-        if args.prompt_text is None:
+        prompt_sources = [
+            label
+            for label, value in [
+                ("positional prompt", args.prompt_text_arg),
+                ("--prompt-text/--prompt", args.prompt_text),
+                ("--prompt-texts", args.prompt_texts),
+            ]
+            if str(value or "").strip()
+        ]
+        if len(prompt_sources) > 1:
+            raise SystemExit("infer accepts one prompt source: positional prompt, --prompt-text/--prompt, or --prompt-texts")
+        if args.prompt_text_arg:
+            args.prompt_text = args.prompt_text_arg
+        elif args.prompt_text is None:
             args.prompt_text = "CrowdTensor routes small models across home compute" if not args.prompt_texts else ""
         try:
             parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
