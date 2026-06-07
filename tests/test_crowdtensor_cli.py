@@ -425,6 +425,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("mixed prompt sources", rendered)
             self.assertIn("output_request.include_output", rendered)
             self.assertIn("output_request.raw_generated_text_public", rendered)
+            self.assertIn("failure", rendered)
+            self.assertIn("redacted", rendered)
+            self.assertIn("prompt text", rendered)
 
     def test_runtime_matrix_block_skips_demo_and_manifest(self) -> None:
         output_dir = Path(self._tmp_dir())

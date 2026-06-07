@@ -219,7 +219,9 @@ such as `submit`, `run_stage_preflight`, `run_live_preflight`,
 required stage check did not return a true/false result. If
 `stage_preflight_not_checked` appears, fix the printed route or Coordinator
 blocker, then rerun the dry-run with `CROWDTENSOR_OBSERVER_TOKEN` before
-submitting.
+submitting. Session-create failure details are redacted before they are printed
+or written to JSON, including prompt text and token values echoed by a remote
+endpoint.
 
 ## 6. Package A Controlled Remote Trial
 

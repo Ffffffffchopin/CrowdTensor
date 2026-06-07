@@ -91,7 +91,9 @@ checking tokens, Miner health, admin API access, or timeout limits. They also
 print `next[...]` lines with safe follow-up commands. Human `infer` and
 `generate` output use your current local prompt so the next command is directly
 copyable; JSON reports and saved artifacts keep raw prompts and token values
-replaced with placeholders. When `ready_to_submit` is present, read
+replaced with placeholders. Coordinator/session failure `detail` fields are
+redacted the same way, even if a remote endpoint echoes prompt text or tokens.
+When `ready_to_submit` is present, read
 `readiness_label` and `next_step` first:
 
 - `verified` means the route, Coordinator, and distinct stage Miners were
