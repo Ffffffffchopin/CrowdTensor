@@ -1781,6 +1781,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["include_output"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertNotIn("markdown_section_missing:operator_action", result["errors"])
+        self.assertNotIn("markdown_operator_action_missing", result["errors"])
+        self.assertNotIn("support_bundle_operator_action_mismatch", result["errors"])
         artifacts = result["artifacts"]
         for artifact_name in [
             "public_real_llm_swarm_beta_json",
@@ -1795,6 +1798,34 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         persisted_check = json.loads((output_dir / "public_real_llm_swarm_beta_check.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted_check["review_summary"]["next_step"], "review_checked_artifacts")
         self.assertTrue(persisted_check["artifact_summary"]["check_json"].endswith("public_real_llm_swarm_beta_check.json"))
+
+    def test_check_validation_requires_markdown_operator_actions(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+        markdown_path = output_dir / "beta" / "public_real_llm_swarm_beta.md"
+        markdown = markdown_path.read_text(encoding="utf-8")
+        markdown = markdown.replace("## Operator Action", "## Next Steps")
+        markdown = markdown.replace(payload["operator_action"][0], "operator action missing from markdown")
+        markdown_path.write_text(markdown, encoding="utf-8")
+
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+
+        self.assertIn("markdown_section_missing:operator_action", errors)
+        self.assertIn("markdown_operator_action_missing", errors)
+
+    def test_check_validation_requires_support_bundle_review_actions(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+        support_path = output_dir / "beta" / "support_bundle.json"
+        support = json.loads(support_path.read_text(encoding="utf-8"))
+        support["operator_action"] = ["stale action"]
+        support["not_completed"] = ["stale blocker"]
+        support_path.write_text(json.dumps(support, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+
+        self.assertIn("support_bundle_operator_action_mismatch", errors)
+        self.assertIn("support_bundle_not_completed_mismatch", errors)
 
     def test_pack_human_summary_shows_final_status_and_artifacts(self) -> None:
         output_dir = self._tmp_dir()

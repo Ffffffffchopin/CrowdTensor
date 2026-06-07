@@ -144,6 +144,38 @@ def completed(payload: dict[str, Any], returncode: int = 0) -> subprocess.Comple
     return subprocess.CompletedProcess(args=["cmd"], returncode=returncode, stdout=json.dumps(payload) + "\n", stderr="")
 
 
+def artifact_file_path(payload: dict[str, Any], name: str, fallback: str) -> Path:
+    output_dir = Path(str(payload.get("output_dir") or ""))
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
+    raw_path = str(artifact.get("path") or "")
+    if raw_path:
+        path = Path(raw_path)
+        return path if path.is_absolute() else output_dir / path
+    return output_dir / fallback
+
+
+def artifact_text(payload: dict[str, Any], name: str, fallback: str) -> str:
+    path = artifact_file_path(payload, name, fallback)
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def artifact_json(payload: dict[str, Any], name: str, fallback: str) -> dict[str, Any]:
+    text = artifact_text(payload, name, fallback)
+    if not text:
+        return {}
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def model_block(model_id: str) -> dict[str, Any]:
     return {
         "expected_hf_model_id": model_id,
@@ -840,6 +872,12 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         errors.append("review_summary_raw_generated_text_public_mismatch")
     if review_summary.get("generated_token_ids_public") is not False:
         errors.append("review_summary_generated_token_ids_public_mismatch")
+    operator_actions = [
+        str(item)
+        for item in (payload.get("operator_action") if isinstance(payload.get("operator_action"), list) else [])
+    ]
+    if not operator_actions:
+        errors.append("operator_action_missing")
     artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
     required_artifacts = [
         "public_real_llm_swarm_beta_json",
@@ -855,6 +893,73 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
         if artifact.get("present") is not True:
             errors.append(f"missing_artifact:{name}")
+    markdown = artifact_text(
+        payload,
+        "public_real_llm_swarm_beta_markdown",
+        "public_real_llm_swarm_beta.md",
+    )
+    if not markdown:
+        errors.append("markdown_artifact_unreadable")
+    else:
+        required_markdown_sections = {
+            "## Review": "review",
+            "## Operator Action": "operator_action",
+            "## Output Scope": "output_scope",
+            "## Artifacts": "artifacts",
+            "## Diagnosis": "diagnosis",
+            "## Not Completed": "not_completed",
+            "## Boundaries": "boundaries",
+        }
+        for section, label in required_markdown_sections.items():
+            if section not in markdown:
+                errors.append(f"markdown_section_missing:{label}")
+        if "- inspect first: `public_real_llm_swarm_beta.md`" not in markdown:
+            errors.append("markdown_review_inspect_first_missing")
+        if "- support bundle: `support_bundle.json`" not in markdown:
+            errors.append("markdown_support_bundle_missing")
+        if "- machine readable: `public_real_llm_swarm_beta.json`" not in markdown:
+            errors.append("markdown_machine_readable_missing")
+        if "- answer scope: `no-local-answer`" not in markdown:
+            errors.append("markdown_answer_scope_missing")
+        for item in operator_actions[:3]:
+            if item not in markdown:
+                errors.append("markdown_operator_action_missing")
+                break
+        for item in [str(entry) for entry in not_completed[:3]]:
+            if item not in markdown:
+                errors.append("markdown_not_completed_item_missing")
+                break
+        if not not_completed and "- none" not in markdown:
+            errors.append("markdown_not_completed_none_missing")
+    runbook = artifact_text(payload, "runbook", "PUBLIC_REAL_LLM_SWARM_BETA.md")
+    if not runbook:
+        errors.append("runbook_artifact_unreadable")
+    else:
+        for fragment in [
+            "## Review The Result",
+            "`Review`, `Operator Action`, and `Not Completed`",
+            "public_real_llm_swarm_beta.md",
+            "support_bundle.json",
+            "## Share Safely",
+            "raw prompts, generated text, generated token ids, credentials, activations, and lease tokens are excluded",
+        ]:
+            if fragment not in runbook:
+                errors.append("runbook_review_guidance_missing")
+                break
+    support = artifact_json(payload, "support_bundle_json", "support_bundle.json")
+    if not support:
+        errors.append("support_bundle_unreadable")
+    else:
+        if support.get("operator_action") != payload.get("operator_action"):
+            errors.append("support_bundle_operator_action_mismatch")
+        if support.get("not_completed") != payload.get("not_completed"):
+            errors.append("support_bundle_not_completed_mismatch")
+        support_review = support.get("review_summary") if isinstance(support.get("review_summary"), dict) else {}
+        if support_review.get("next_step") != review_summary.get("next_step"):
+            errors.append("support_bundle_review_next_step_mismatch")
+        support_artifacts = support.get("artifact_summary") if isinstance(support.get("artifact_summary"), dict) else {}
+        if support_artifacts.get("inspect_first") != "public_real_llm_swarm_beta.md":
+            errors.append("support_bundle_inspect_first_mismatch")
     encoded = json.dumps(payload, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment in encoded:
