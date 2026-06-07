@@ -486,6 +486,7 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     inspect_first = str(review_summary.get("inspect_first") or artifact_summary.get("inspect_first") or "")
     recommended_label = str(recommended.get("label") or review_summary.get("recommended_label") or "")
     recommended_reason = str(recommended.get("reason") or review_summary.get("recommended_reason") or "")
+    attention = str(review_summary.get("attention") or "")
     command = markdown_command_line(recommended) if recommended.get("command_line") else ""
     requires_env = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
     operator_action = str(summary.get("operator_action") or issue_summary.get("operator_action") or "")
@@ -498,6 +499,8 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     ]
     if headline:
         lines.append(f"- Meaning: {headline}")
+    if attention:
+        lines.append(f"- Attention: `{attention}`")
     if inspect_first:
         lines.append(f"- Inspect first: `{inspect_first}`")
     if recommended_label:

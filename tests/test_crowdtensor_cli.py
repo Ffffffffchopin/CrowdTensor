@@ -952,6 +952,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("## What To Do Next", markdown)
         self.assertIn("- State: `preflight-partial`", markdown)
         self.assertIn("- Next step: `run_live_preflight`", markdown)
+        self.assertIn("- Attention: `coordinator_preflight_skipped,stage_preflight_skipped`", markdown)
         self.assertIn("- Recommended: `check generation route` reason=`confirm_live_preflight`", markdown)
         self.assertIn("- Copy command: `crowdtensor generate --max-new-tokens 16", markdown)
         self.assertIn(
@@ -7229,6 +7230,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("must not leak", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("attention=request[2]=req-2:1/2", markdown)
+        self.assertIn("- Attention: `request[2]=req-2:1/2`", markdown)
         self.assertIn("- Review next: `label=submit inference reason=rerun_inference", markdown)
         self.assertIn("- Stream issue: `request[2]=req-2:1/2`", markdown)
         self.assertIn("Inference completed, but stream progress is incomplete", markdown)
