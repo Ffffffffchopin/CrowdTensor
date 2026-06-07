@@ -1419,6 +1419,7 @@ def write_runbook(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
         "## Review The Result",
         "",
         f"- Open `{output_dir / 'public_real_llm_swarm_beta.md'}` for the human summary.",
+        "- Start with the Markdown `Review`, `Operator Action`, and `Not Completed` sections.",
         f"- Open `{output_dir / 'support_bundle.json'}` for diagnostics.",
         f"- Open `{output_dir / 'public_real_llm_swarm_beta.json'}` for machine-readable evidence.",
         "- If `ok` is false, read the `Not Completed` section first; each item maps to a missing readiness proof or artifact.",
@@ -2395,6 +2396,13 @@ def render_markdown(report: dict[str, Any]) -> str:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     shareable_paths = artifact_overview.get("shareable_paths") if isinstance(artifact_overview.get("shareable_paths"), list) else []
+    raw_operator_actions = report.get("operator_action")
+    if isinstance(raw_operator_actions, list):
+        operator_actions = [str(item) for item in raw_operator_actions]
+    elif raw_operator_actions:
+        operator_actions = [str(raw_operator_actions)]
+    else:
+        operator_actions = []
     lines = [
         "# CrowdTensor Public Real-LLM Swarm Inference Beta v1",
         "",
@@ -2414,9 +2422,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- support bundle: `{review.get('support_bundle')}`",
         f"- not completed count: `{review.get('not_completed_count')}`",
         "",
-        "## Readiness",
+        "## Operator Action",
         "",
     ]
+    lines.extend(f"- {item}" for item in operator_actions) if operator_actions else lines.append("- none")
+    lines.extend([
+        "",
+        "## Readiness",
+        "",
+    ])
     for name in ["product_path", "external_kaggle", "p2p_candidate", "public_swarm_v2", "usable_p2p_kv_cache", "cuda_optional"]:
         item = readiness.get(name) if isinstance(readiness.get(name), dict) else {}
         if item:
