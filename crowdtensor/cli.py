@@ -9504,6 +9504,60 @@ def print_product_generate(report: dict[str, Any]) -> None:
             print(f"  next[{index}] {item.get('label')}: {rendered_command}{suffix}")
 
 
+def print_infer_start_hint(args: argparse.Namespace) -> None:
+    mode = str(getattr(args, "infer_mode", "local") or "local")
+    if mode == "local":
+        run_label = (
+            "full local Public Swarm v2 evidence run"
+            if bool(getattr(args, "full_evidence", False))
+            else "local two-stage tiny-model proof"
+        )
+        print(
+            f"CrowdTensor infer: starting {run_label}; this can take about a minute.",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif bool(getattr(args, "dry_run", False)):
+        print(
+            "CrowdTensor infer: checking the existing route before submitting work.",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        print(
+            "CrowdTensor infer: submitting to the existing swarm and waiting for a result.",
+            file=sys.stderr,
+            flush=True,
+        )
+    print(
+        "CrowdTensor infer: final output will include status, action, recommended_next, "
+        "and redacted JSON/Markdown artifacts.",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def print_generate_start_hint(args: argparse.Namespace) -> None:
+    if bool(getattr(args, "dry_run", False)):
+        print(
+            "CrowdTensor generate: checking route and stage readiness before submitting work.",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        print(
+            "CrowdTensor generate: submitting a bounded generation request and waiting for a result.",
+            file=sys.stderr,
+            flush=True,
+        )
+    print(
+        "CrowdTensor generate: final output will include status, action, recommended_next, "
+        "and redacted JSON/Markdown artifacts.",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def print_product_serve(report: dict[str, Any]) -> None:
     print("CrowdTensor serve")
     print(f"  ok: {report.get('ok')}")
@@ -14163,6 +14217,8 @@ def main(argv: list[str] | None = None) -> None:
             print_cleanup_report(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "infer":
+        if not args.json:
+            print_infer_start_hint(args)
         report = build_infer(args)
         if args.json:
             print(json.dumps(report, sort_keys=True))
@@ -14187,6 +14243,8 @@ def main(argv: list[str] | None = None) -> None:
             print_product_join(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "generate":
+        if not args.json:
+            print_generate_start_hint(args)
         report = build_product_generate(args)
         if args.json:
             print(json.dumps(report, sort_keys=True))

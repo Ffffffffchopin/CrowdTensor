@@ -1057,8 +1057,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             }
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with patch.object(cli, "build_product_generate", side_effect=fake_build_product_generate):
-            with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
                 cli.main([
                     "generate",
                     "--coordinator-url",
@@ -1070,6 +1071,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertIn("checking route and stage readiness", progress)
+        self.assertIn("status, action, recommended_next", progress)
+        self.assertNotIn(prompt, progress)
         self.assertIn(
             f"review_next: label=check generation route reason=verify_stage_miners command=crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run",
             rendered,
@@ -1141,8 +1146,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             }
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with patch.object(cli, "build_product_generate", side_effect=fake_build_product_generate):
-            with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
                 cli.main([
                     "generate",
                     "--coordinator-url",
@@ -5722,6 +5728,79 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         self.assertTrue(calls)
 
+    def test_infer_main_prints_safe_start_hint_before_human_output(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor user prompt"
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            self.assertEqual(getattr(args, "prompt_text"), prompt)
+            return {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": True,
+                "mode": "local",
+                "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "generation": {"generated_token_count": 2, "max_new_tokens": 2, "generated_text_hash": "sha256:generated"},
+                "result": {
+                    "status": "complete",
+                    "generated_token_count": 2,
+                    "max_new_tokens": 2,
+                    "output_count": 1,
+                    "display": "hash-only",
+                    "generated_text_hash": "sha256:generated",
+                    "public_artifact_safe": True,
+                },
+                "route": {"route_source": "local-product-loopback", "route_ready": True},
+                "shareable_summary": {"saved_artifacts_public_safe": True},
+                "output_dir": str(output_dir),
+                "diagnosis_codes": ["crowdtensor_infer_ready"],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "infer",
+                    prompt,
+                    "--output-dir",
+                    str(output_dir),
+                    "--max-new-tokens",
+                    "2",
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertIn("CrowdTensor infer", rendered)
+        self.assertIn("starting local two-stage tiny-model proof", progress)
+        self.assertIn("status, action, recommended_next", progress)
+        self.assertNotIn(prompt, progress)
+
+    def test_infer_json_suppresses_start_hint(self) -> None:
+        output_dir = Path(self._tmp_dir())
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            self.assertTrue(getattr(args, "json"))
+            return {"schema": "crowdtensor_infer_cli_v1", "ok": True, "mode": "local"}
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "infer",
+                    "CrowdTensor user prompt",
+                    "--output-dir",
+                    str(output_dir),
+                    "--max-new-tokens",
+                    "2",
+                    "--json",
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertIn('"schema": "crowdtensor_infer_cli_v1"', stdout.getvalue())
+
     def test_infer_local_batch_forwards_only_prompt_texts_to_product_loopback(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
@@ -6546,8 +6625,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             }
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with patch.object(cli, "build_infer", side_effect=fake_build_infer):
-            with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
                 cli.main([
                     "infer",
                     prompt,
@@ -6637,8 +6717,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             }
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with patch.object(cli, "build_infer", side_effect=fake_build_infer):
-            with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
                 cli.main([
                     "infer",
                     "--prompt-texts",
