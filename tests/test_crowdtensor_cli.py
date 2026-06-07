@@ -25,6 +25,29 @@ class CrowdTensorCliTests(unittest.TestCase):
     def _cleanup_args(self, *extra: str) -> object:
         return cli.parse_args(["clean-artifacts", *extra])
 
+    def test_wait_progress_text_adds_batch_request_progress_only_for_batches(self) -> None:
+        single = {
+            "poll_count": 2,
+            "accepted_rows_seen": 1,
+            "max_observed_token_count": 4,
+            "target_token_count": 4,
+            "expected_request_count": 1,
+            "observed_request_count": 1,
+            "batch_generation_ready": True,
+            "ledger_endpoint_ready": True,
+            "stream_endpoint_ready": False,
+        }
+        batch = dict(single, expected_request_count=2, observed_request_count=1, batch_generation_ready=False)
+
+        self.assertEqual(
+            cli.wait_progress_text(single),
+            "polls=2 accepted_rows=1 tokens=4/4 ledger=True stream=False",
+        )
+        self.assertEqual(
+            cli.wait_progress_text(batch),
+            "polls=2 accepted_rows=1 tokens=4/4 requests=1/2 batch_ready=False ledger=True stream=False",
+        )
+
     def test_local_proof_success_summarizes_steps_and_artifacts(self) -> None:
         calls: list[list[str]] = []
         output_dir = Path(self._tmp_dir())
@@ -2407,6 +2430,155 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  action: Generation reached 1/4 tokens before timeout", rendered)
         self.assertIn("  next[", rendered)
         self.assertIn("retry generation with longer timeout", rendered)
+
+    def test_product_generate_batch_timeout_prints_request_progress(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--timeout-seconds",
+            "1",
+            "--poll-interval",
+            "0.01",
+            "--json",
+        ])
+        monotonic_values = iter([0.0, 0.2, 1.2])
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch-timeout",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            self.assertIn("session_id=real-llm-session-batch-timeout", path)
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "request_count": 2,
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:partial",
+                            "decoded_tokens_match": True,
+                            "inference_results": [
+                                {
+                                    "request_id": "req-1",
+                                    "prompt_hash": "sha256:p1",
+                                    "generated_token_count": 2,
+                                    "max_new_tokens": 2,
+                                    "generated_text_hash": "sha256:g1",
+                                    "generated_text": "raw one must not leak",
+                                    "generated_token_ids": [1, 2],
+                                    "decoded_tokens_match": True,
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request), patch.object(
+            cli.time,
+            "monotonic",
+            side_effect=lambda: next(monotonic_values),
+        ), patch.object(cli.time, "sleep", return_value=None):
+            report = cli.build_product_generate(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertFalse(report["ok"], report)
+        self.assertIn("generation_timeout", report["diagnosis_codes"])
+        self.assertEqual(report["wait_progress"]["expected_request_count"], 2)
+        self.assertEqual(report["wait_progress"]["observed_request_count"], 1)
+        self.assertFalse(report["wait_progress"]["batch_generation_ready"])
+        self.assertIn("Only 1/2 batch results appeared", report["operator_action"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  batch: requests=2 observed=1 ready=False", rendered)
+        self.assertIn("  wait: polls=1 accepted_rows=1 tokens=2/2 requests=1/2 batch_ready=False ledger=True stream=False", rendered)
+        self.assertNotIn("first private prompt", encoded)
+        self.assertNotIn("second private prompt", encoded)
+        self.assertNotIn("raw one must not leak", encoded)
+        self.assertNotIn('"generated_token_ids":', encoded)
+        self.assertNotIn("admin-secret", encoded)
+
+    def test_product_generate_batch_timeout_without_rows_keeps_zero_request_progress(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--timeout-seconds",
+            "1",
+            "--poll-interval",
+            "0.01",
+            "--json",
+        ])
+        monotonic_values = iter([0.0, 0.2, 1.2])
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, path, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-empty-batch-timeout",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            return {"results": []}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request), patch.object(
+            cli.time,
+            "monotonic",
+            side_effect=lambda: next(monotonic_values),
+        ), patch.object(cli.time, "sleep", return_value=None):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["wait_progress"]["expected_request_count"], 2)
+        self.assertEqual(report["wait_progress"]["observed_request_count"], 0)
+        self.assertEqual(report["batch"]["observed_request_count"], 0)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  batch: requests=2 observed=0 ready=False", rendered)
+        self.assertIn("  wait: polls=1 accepted_rows=0 tokens=0/2 requests=0/2 batch_ready=False ledger=True stream=False", rendered)
 
     def test_product_generate_uses_longer_timeout_for_session_create(self) -> None:
         args = cli.parse_args([
@@ -4907,6 +5079,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "batch_generation_ready": True,
             },
             "batch": {"enabled": True, "request_count": 2, "batch_generation_ready": True},
+            "wait_progress": {
+                "poll_count": 2,
+                "accepted_rows_seen": 1,
+                "max_observed_token_count": 2,
+                "target_token_count": 2,
+                "expected_request_count": 2,
+                "observed_request_count": 2,
+                "batch_generation_ready": True,
+                "ledger_endpoint_ready": True,
+                "stream_endpoint_ready": False,
+                "public_artifact_safe": True,
+            },
             "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
             "local_output": {
                 "generated_text": " first output",
@@ -4929,6 +5113,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_infer(report)
         rendered = stdout.getvalue()
         self.assertIn("  batch: requests=2 observed=2 ready=True", rendered)
+        self.assertIn("  wait: polls=2 accepted_rows=1 tokens=2/2 requests=2/2 batch_ready=True ledger=True stream=False", rendered)
         self.assertNotIn("  output:  first output", rendered)
         self.assertIn("  output[1]:  first output", rendered)
         self.assertIn("  output[2]:  second output", rendered)

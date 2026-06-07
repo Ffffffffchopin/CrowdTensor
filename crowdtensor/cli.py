@@ -505,6 +505,24 @@ def batch_status_text(batch: dict[str, Any]) -> str:
     )
 
 
+def wait_progress_text(wait_progress: dict[str, Any]) -> str:
+    parts = [
+        f"polls={wait_progress.get('poll_count')}",
+        f"accepted_rows={wait_progress.get('accepted_rows_seen')}",
+        f"tokens={wait_progress.get('max_observed_token_count')}/{wait_progress.get('target_token_count')}",
+    ]
+    expected_requests = _safe_int(wait_progress.get("expected_request_count"), 1)
+    observed_requests = _safe_int(wait_progress.get("observed_request_count"))
+    if expected_requests > 1:
+        parts.append(f"requests={observed_requests}/{expected_requests}")
+        parts.append(f"batch_ready={bool(wait_progress.get('batch_generation_ready'))}")
+    parts.extend([
+        f"ledger={wait_progress.get('ledger_endpoint_ready')}",
+        f"stream={wait_progress.get('stream_endpoint_ready')}",
+    ])
+    return " ".join(parts)
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -6738,6 +6756,12 @@ def _empty_generate_wait_progress(*, timeout_seconds: float, poll_interval: floa
     }
 
 
+def _generation_observed_request_count(generation: dict[str, Any]) -> int:
+    if "observed_request_count" in generation:
+        return _safe_int(generation.get("observed_request_count"))
+    return _safe_int(generation.get("request_count"))
+
+
 def _update_generate_wait_progress(
     progress: dict[str, Any],
     *,
@@ -6756,7 +6780,7 @@ def _update_generate_wait_progress(
     )
     progress["observed_request_count"] = max(
         int(progress.get("observed_request_count") or 0),
-        int(generation.get("observed_request_count") or generation.get("request_count") or 0),
+        _generation_observed_request_count(generation),
     )
     progress["expected_request_count"] = max(
         int(progress.get("expected_request_count") or 0),
@@ -7722,7 +7746,10 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "enabled": batch_enabled,
             "request_count": len(prompt_texts),
             "expected_request_count": len(prompt_texts),
-            "observed_request_count": int(generation.get("observed_request_count") or generation.get("request_count") or 0),
+            "observed_request_count": max(
+                _generation_observed_request_count(generation),
+                _safe_int(wait_progress.get("observed_request_count")),
+            ),
             "prompt_hashes": session_request.get("prompt_hashes") or [],
             "prompt_char_counts": session_request.get("prompt_char_counts") or [],
             "batch_generation_ready": batch_ready,
@@ -7845,14 +7872,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
             )
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     if wait_progress:
-        print(
-            "  wait: "
-            f"polls={wait_progress.get('poll_count')} "
-            f"accepted_rows={wait_progress.get('accepted_rows_seen')} "
-            f"tokens={wait_progress.get('max_observed_token_count')}/{wait_progress.get('target_token_count')} "
-            f"ledger={wait_progress.get('ledger_endpoint_ready')} "
-            f"stream={wait_progress.get('stream_endpoint_ready')}"
-        )
+        print(f"  wait: {wait_progress_text(wait_progress)}")
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
@@ -8064,14 +8084,7 @@ def print_infer(report: dict[str, Any]) -> None:
             )
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     if wait_progress:
-        print(
-            "  wait: "
-            f"polls={wait_progress.get('poll_count')} "
-            f"accepted_rows={wait_progress.get('accepted_rows_seen')} "
-            f"tokens={wait_progress.get('max_observed_token_count')}/{wait_progress.get('target_token_count')} "
-            f"ledger={wait_progress.get('ledger_endpoint_ready')} "
-            f"stream={wait_progress.get('stream_endpoint_ready')}"
-        )
+        print(f"  wait: {wait_progress_text(wait_progress)}")
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")

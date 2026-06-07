@@ -89,8 +89,9 @@ batch. The CLI rejects mixed prompt sources instead of guessing. Reports expose
 `output_request.include_output` while keeping
 `output_request.raw_generated_text_public` false in JSON and saved artifacts.
 Existing-swarm reports include `wait_progress` with poll count, accepted rows,
-endpoint readiness, and observed token progress for safe timeout debugging;
-`infer` and `generate` turn that progress into a concrete `operator_action`.
+endpoint readiness, observed token progress, and batch request progress for safe
+timeout debugging; `infer` and `generate` turn that progress into a concrete
+`operator_action`.
 Human output also includes `next[...]` lines with safe, copyable follow-up
 commands. Human `infer` and `generate` output use your current local prompt in
 those next commands; JSON reports and saved artifacts keep raw prompts and token
