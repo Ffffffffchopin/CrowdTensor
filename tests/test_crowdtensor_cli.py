@@ -213,7 +213,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Markdown summary to open first", rendered)
         self.assertIn("review_next line", rendered)
         self.assertIn("safe recommended command", rendered)
-        self.assertIn("terminal output renders your local prompt for copying", rendered)
+        self.assertIn("terminal output renders local prompt sources for copying", rendered)
+        self.assertIn("using a pipe placeholder for --prompt-stdin", rendered)
         self.assertIn("saved artifacts", rendered)
         self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("existing mode only: check route/session readiness", rendered)
@@ -289,7 +290,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Markdown summary to open first", rendered)
         self.assertIn("review_next line", rendered)
         self.assertIn("safe recommended command", rendered)
-        self.assertIn("terminal output renders your local prompt for copying", rendered)
+        self.assertIn("terminal output renders local prompt sources for copying", rendered)
+        self.assertIn("using a pipe placeholder for --prompt-stdin", rendered)
         self.assertIn("saved artifacts", rendered)
         self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("redacted detail is available", rendered)
@@ -701,7 +703,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("`review_next` line", rendered)
             self.assertIn("safe recommended command", rendered)
             self.assertIn("human terminal output renders it", rendered)
-            self.assertIn("with your current local prompt for copying", rendered)
+            self.assertIn("with local prompt sources for copying", rendered)
+            self.assertIn("`printf` pipe placeholder", rendered)
             self.assertIn("JSON/Markdown artifacts keep", rendered)
             self.assertIn("prompt placeholders", rendered)
             self.assertIn("first Markdown summary to inspect", rendered)
@@ -1517,6 +1520,26 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
 
+    def test_generate_prompt_file_does_not_pollute_startup_commands(self) -> None:
+        prompt_file = Path(self._tmp_dir()) / "prompt.txt"
+        prompt_file.write_text("Prompt file private text", encoding="utf-8")
+        report = {
+            "local_prompt_file": str(prompt_file),
+            "next_commands": [
+                cli.command_entry("start Coordinator", ["crowdtensor", "serve", "--run"]),
+                cli.command_entry("check generation route", ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER, "--dry-run"]),
+            ],
+        }
+
+        self.assertEqual(
+            cli.local_generate_command_line(report["next_commands"][0], report),
+            "crowdtensor serve --run",
+        )
+        self.assertEqual(
+            cli.local_generate_command_line(report["next_commands"][1], report),
+            f"crowdtensor generate --prompt-file {prompt_file} --dry-run",
+        )
+
     def test_generate_main_prints_prompt_stdin_without_expanding_prompt(self) -> None:
         prompt = "Prompt stdin private text"
 
@@ -1594,6 +1617,37 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
+
+    def test_generate_prompt_stdin_does_not_pollute_startup_or_env_commands(self) -> None:
+        report = {
+            "local_prompt_stdin": True,
+            "next_commands": [
+                cli.command_entry("start Coordinator", ["crowdtensor", "serve", "--run"]),
+                cli.command_entry("start stage0 Miner", ["crowdtensor", "join", "--stage", "stage0", "--run"]),
+                cli.command_entry(
+                    "submit generation",
+                    ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER],
+                    requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+                ),
+            ],
+        }
+
+        self.assertEqual(
+            cli.local_generate_command_line(report["next_commands"][0], report),
+            "crowdtensor serve --run",
+        )
+        self.assertEqual(
+            cli.local_generate_command_line(report["next_commands"][1], report),
+            "crowdtensor join --stage stage0 --run",
+        )
+        rendered_submit = cli.human_next_command_line(
+            report["next_commands"][2],
+            cli.local_generate_command_line(report["next_commands"][2], report),
+        )
+        self.assertEqual(
+            rendered_submit,
+            "printf %s '<prompt>' | CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --prompt-stdin",
+        )
 
     def test_generate_without_admin_token_prints_credential_start_hint(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -8710,6 +8764,26 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
 
+    def test_infer_prompt_file_does_not_pollute_startup_commands(self) -> None:
+        prompt_file = Path(self._tmp_dir()) / "prompt.txt"
+        prompt_file.write_text("Infer file private text", encoding="utf-8")
+        report = {
+            "local_prompt_file": str(prompt_file),
+            "next_commands": [
+                cli.command_entry("start Coordinator", ["crowdtensor", "serve", "--run"]),
+                cli.command_entry("check existing swarm", ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing"]),
+            ],
+        }
+
+        self.assertEqual(
+            cli.local_infer_command_line(report["next_commands"][0], report),
+            "crowdtensor serve --run",
+        )
+        self.assertEqual(
+            cli.local_infer_command_line(report["next_commands"][1], report),
+            f"crowdtensor infer --prompt-file {prompt_file} --mode existing",
+        )
+
     def test_infer_main_prints_prompt_texts_file_without_expanding_prompts(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompts = ["Infer file prompt, with comma", "Second infer file prompt"]
@@ -8890,6 +8964,37 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("infer '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
+
+    def test_infer_prompt_stdin_does_not_pollute_startup_or_env_commands(self) -> None:
+        report = {
+            "local_prompt_stdin": True,
+            "next_commands": [
+                cli.command_entry("start Coordinator", ["crowdtensor", "serve", "--run"]),
+                cli.command_entry("start stage0 Miner", ["crowdtensor", "join", "--stage", "stage0", "--run"]),
+                cli.command_entry(
+                    "submit inference",
+                    ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing"],
+                    requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+                ),
+            ],
+        }
+
+        self.assertEqual(
+            cli.local_infer_command_line(report["next_commands"][0], report),
+            "crowdtensor serve --run",
+        )
+        self.assertEqual(
+            cli.local_infer_command_line(report["next_commands"][1], report),
+            "crowdtensor join --stage stage0 --run",
+        )
+        rendered_submit = cli.human_next_command_line(
+            report["next_commands"][2],
+            cli.local_infer_command_line(report["next_commands"][2], report),
+        )
+        self.assertEqual(
+            rendered_submit,
+            "printf %s '<prompt>' | CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer --prompt-stdin --mode existing",
+        )
 
     def test_infer_main_prints_copyable_local_batch_prompts_without_persisting_them(self) -> None:
         output_dir = Path(self._tmp_dir())

@@ -143,13 +143,13 @@ such as incomplete stream evidence or skipped preflights; Markdown explains
 those warnings in `What To Do Next`. The adjacent `inspect_first` line points to
 the Markdown summary to open first. The adjacent `review_next` line repeats the
 safe recommended command near that summary; human terminal output renders it
-with your current local prompt for copying, while JSON/Markdown artifacts keep
-prompt placeholders. Then use the `status` line or
+with local prompt sources for copying, using a `printf` pipe placeholder for
+`--prompt-stdin`, while JSON/Markdown artifacts keep prompt placeholders. Then use the `status` line or
 `user_status` for detail: `completed` means the request finished,
 `preflight-ready` means submit next, `preflight-partial` means run the
 recommended check first, and `blocked` means follow `action` /
-`recommended_next`. Human `infer` and `generate` output use your current local
-prompt so the next command is directly copyable; JSON reports and saved
+`recommended_next`. Human `infer` and `generate` output use local prompt
+sources in next commands so they are directly copyable; JSON reports and saved
 artifacts keep raw prompts and token values replaced with placeholders.
 Coordinator/session failure `detail` fields are redacted the same way, even if
 a remote endpoint echoes prompt text or tokens.

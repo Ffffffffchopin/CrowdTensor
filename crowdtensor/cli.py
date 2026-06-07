@@ -402,6 +402,9 @@ def human_next_command_line(item: dict[str, Any], command_line_text: str) -> str
         for name in requirements
         if str(name).startswith("CROWDTENSOR_") and str(name) not in command_line_text
     ]
+    if prefixes and command_line_text.startswith("printf ") and " | " in command_line_text:
+        pipe_source, pipe_sep, pipe_target = command_line_text.partition(" | ")
+        return f"{pipe_source}{pipe_sep}{' '.join(prefixes)} {pipe_target}"
     return f"{' '.join(prefixes)} {command_line_text}" if prefixes else command_line_text
 
 
@@ -455,28 +458,17 @@ def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> st
     prompt_stdin = bool(report.get("local_prompt_stdin"))
     if command:
         rendered = [str(part) for part in command]
-        if prompt_stdin:
+        has_prompt_slot = command_has_prompt_slot(rendered)
+        if prompt_stdin and has_prompt_slot:
             rendered = replace_single_prompt_with_stdin(rendered)
             return pipe_prompt_placeholder_for_stdin(command_line(rendered))
-        elif prompt_file:
+        elif prompt_file and has_prompt_slot:
             rendered = replace_single_prompt_with_file(rendered, prompt_file)
-        elif prompt_texts_file:
+        elif prompt_texts_file and has_prompt_slot:
             rendered = replace_batch_prompt_with_file(rendered, prompt_texts_file)
-        elif prompt_texts:
-            filtered: list[str] = []
-            skip_next = False
-            for part in rendered:
-                if skip_next:
-                    skip_next = False
-                    continue
-                if part == "--prompt-text":
-                    skip_next = True
-                    continue
-                if part == INFER_PROMPT_PLACEHOLDER:
-                    continue
-                filtered.append(prompt_texts if part == INFER_BATCH_PROMPTS_PLACEHOLDER else part)
-            rendered = filtered
-        elif prompt:
+        elif prompt_texts and has_prompt_slot:
+            rendered = replace_batch_prompt_with_texts(rendered, prompt_texts)
+        elif prompt and has_prompt_slot:
             rendered = [prompt if part == INFER_PROMPT_PLACEHOLDER else part for part in rendered]
         return command_line(rendered)
     return str(item.get("command_line") or command_line([str(part) for part in command]))
@@ -492,33 +484,31 @@ def local_generate_command_line(item: dict[str, Any], report: dict[str, Any]) ->
     prompt_texts_file = str(report.get("local_prompt_texts_file") or "")
     prompt_stdin = bool(report.get("local_prompt_stdin"))
     rendered = [str(part) for part in command]
-    if prompt_stdin:
+    has_prompt_slot = command_has_prompt_slot(rendered)
+    if prompt_stdin and has_prompt_slot:
         rendered = replace_single_prompt_with_stdin(rendered)
         return pipe_prompt_placeholder_for_stdin(command_line(rendered))
-    elif prompt_file:
+    elif prompt_file and has_prompt_slot:
         rendered = replace_single_prompt_with_file(rendered, prompt_file)
-    elif prompt_texts_file:
+    elif prompt_texts_file and has_prompt_slot:
         rendered = replace_batch_prompt_with_file(rendered, prompt_texts_file)
-    elif prompt_texts:
-        filtered: list[str] = []
-        skip_next = False
-        for part in rendered:
-            if skip_next:
-                skip_next = False
-                continue
-            if part == "--prompt-text":
-                skip_next = True
-                continue
-            if part == INFER_PROMPT_PLACEHOLDER:
-                continue
-            filtered.append(prompt_texts if part == INFER_BATCH_PROMPTS_PLACEHOLDER else part)
-        rendered = filtered
-    elif prompt:
+    elif prompt_texts and has_prompt_slot:
+        rendered = replace_batch_prompt_with_texts(rendered, prompt_texts)
+    elif prompt and has_prompt_slot:
         rendered = [prompt if part == INFER_PROMPT_PLACEHOLDER else part for part in rendered]
     return command_line(rendered)
 
 
-def replace_single_prompt_with_file(command: list[str], prompt_file: str) -> list[str]:
+PROMPT_VALUE_FLAGS = {"--prompt-text", "--prompt", "--prompt-file", "--prompt-texts", "--prompt-texts-file"}
+PROMPT_BOOL_FLAGS = {"--prompt-stdin"}
+PROMPT_PLACEHOLDERS = {INFER_PROMPT_PLACEHOLDER, INFER_BATCH_PROMPTS_PLACEHOLDER}
+
+
+def command_has_prompt_slot(command: list[str]) -> bool:
+    return any(str(part) in PROMPT_VALUE_FLAGS or str(part) in PROMPT_BOOL_FLAGS or str(part) in PROMPT_PLACEHOLDERS for part in command)
+
+
+def replace_prompt_source(command: list[str], replacement: list[str]) -> list[str]:
     rendered: list[str] = []
     replaced = False
     skip_next = False
@@ -526,42 +516,29 @@ def replace_single_prompt_with_file(command: list[str], prompt_file: str) -> lis
         if skip_next:
             skip_next = False
             continue
-        if part == "--prompt-text":
-            rendered.extend(["--prompt-file", prompt_file])
-            replaced = True
+        if part in PROMPT_VALUE_FLAGS:
+            if not replaced:
+                rendered.extend(replacement)
+                replaced = True
             skip_next = True
             continue
-        if part == INFER_PROMPT_PLACEHOLDER:
-            rendered.extend(["--prompt-file", prompt_file])
-            replaced = True
+        if part in PROMPT_BOOL_FLAGS or part in PROMPT_PLACEHOLDERS:
+            if not replaced:
+                rendered.extend(replacement)
+                replaced = True
             continue
         rendered.append(part)
     if not replaced:
-        rendered.extend(["--prompt-file", prompt_file])
+        rendered.extend(replacement)
     return rendered
+
+
+def replace_single_prompt_with_file(command: list[str], prompt_file: str) -> list[str]:
+    return replace_prompt_source(command, ["--prompt-file", prompt_file])
 
 
 def replace_single_prompt_with_stdin(command: list[str]) -> list[str]:
-    rendered: list[str] = []
-    replaced = False
-    skip_next = False
-    for part in command:
-        if skip_next:
-            skip_next = False
-            continue
-        if part == "--prompt-text":
-            rendered.append("--prompt-stdin")
-            replaced = True
-            skip_next = True
-            continue
-        if part == INFER_PROMPT_PLACEHOLDER:
-            rendered.append("--prompt-stdin")
-            replaced = True
-            continue
-        rendered.append(part)
-    if not replaced:
-        rendered.append("--prompt-stdin")
-    return rendered
+    return replace_prompt_source(command, ["--prompt-stdin"])
 
 
 def pipe_prompt_placeholder_for_stdin(command_line: str) -> str:
@@ -572,6 +549,14 @@ def pipe_prompt_placeholder_for_stdin(command_line: str) -> str:
 
 
 def replace_batch_prompt_with_file(command: list[str], prompt_texts_file: str) -> list[str]:
+    return replace_batch_prompt_source(command, ["--prompt-texts-file", prompt_texts_file])
+
+
+def replace_batch_prompt_with_texts(command: list[str], prompt_texts: str) -> list[str]:
+    return replace_batch_prompt_source(command, ["--prompt-texts", prompt_texts])
+
+
+def replace_batch_prompt_source(command: list[str], replacement: list[str]) -> list[str]:
     rendered: list[str] = []
     replaced = False
     skip_next = False
@@ -579,22 +564,25 @@ def replace_batch_prompt_with_file(command: list[str], prompt_texts_file: str) -
         if skip_next:
             skip_next = False
             continue
-        if part == "--prompt-text":
+        if part in {"--prompt-text", "--prompt", "--prompt-file"}:
             skip_next = True
             continue
-        if part == "--prompt-texts":
-            rendered.extend(["--prompt-texts-file", prompt_texts_file])
-            replaced = True
-            skip_next = True
+        if part == "--prompt-stdin" or part == INFER_PROMPT_PLACEHOLDER:
             continue
-        if part in {INFER_PROMPT_PLACEHOLDER, INFER_BATCH_PROMPTS_PLACEHOLDER}:
+        if part in {"--prompt-texts", "--prompt-texts-file"}:
             if not replaced:
-                rendered.extend(["--prompt-texts-file", prompt_texts_file])
+                rendered.extend(replacement)
+                replaced = True
+            skip_next = True
+            continue
+        if part == INFER_BATCH_PROMPTS_PLACEHOLDER:
+            if not replaced:
+                rendered.extend(replacement)
                 replaced = True
             continue
         rendered.append(part)
     if not replaced:
-        rendered.extend(["--prompt-texts-file", prompt_texts_file])
+        rendered.extend(replacement)
     return rendered
 
 
@@ -12688,7 +12676,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "attention warnings such as incomplete stream evidence.\n"
             "The inspect_first line points directly to the Markdown summary to open first.\n"
             "The review_next line keeps the safe recommended command next to that first-screen summary;\n"
-            "human terminal output renders your local prompt for copying; saved artifacts keep prompt placeholders.\n\n"
+            "human terminal output renders local prompt sources for copying, using a pipe placeholder for --prompt-stdin;\n"
+            "saved artifacts keep prompt placeholders.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -12888,7 +12877,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "attention warnings such as incomplete stream evidence.\n"
             "The inspect_first line points directly to the Markdown summary to open first.\n"
             "The review_next line keeps the safe recommended command next to that first-screen summary;\n"
-            "human terminal output renders your local prompt for copying; saved artifacts keep prompt placeholders.\n\n"
+            "human terminal output renders local prompt sources for copying, using a pipe placeholder for --prompt-stdin;\n"
+            "saved artifacts keep prompt placeholders.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),
