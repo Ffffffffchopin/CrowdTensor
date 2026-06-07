@@ -819,6 +819,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("requires=`CROWDTENSOR_OBSERVER_TOKEN`", markdown)
         self.assertIn("Generation request shape is valid", markdown)
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
+        self.assertIn("## Artifacts", markdown)
+        self.assertIn(
+            "- `generate_summary`: path=`generate_summary.json` present=`True` kind=`crowdtensor_generate_summary`",
+            markdown,
+        )
+        self.assertIn(
+            "- `generate_summary_markdown`: path=`generate_summary.md` present=`True` kind=`crowdtensor_generate_summary_markdown`",
+            markdown,
+        )
         self.assertIn("`check generation route`", markdown)
         self.assertIn("Replace `<prompt>` with your local prompt before running saved commands.", markdown)
         self.assertIn("Set required environment variables before running commands: `CROWDTENSOR_ADMIN_TOKEN, CROWDTENSOR_OBSERVER_TOKEN`.", markdown)
@@ -2548,6 +2557,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Generation: `2/2` hash=`sha256:generated`", markdown)
+        self.assertIn("## Artifacts", markdown)
+        self.assertIn(
+            "- `generate_summary`: path=`generate_summary.json` present=`True` kind=`crowdtensor_generate_summary`",
+            markdown,
+        )
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertNotIn("local generated text must stay local", markdown)
         stdout = io.StringIO()
