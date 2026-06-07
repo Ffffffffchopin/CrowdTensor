@@ -3540,6 +3540,7 @@ def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     local_output["available"] = False
     local_output["generated_text"] = ""
     local_output["display_only"] = False
+    local_output["public_artifact_safe"] = True
     outputs = local_output.get("outputs")
     if isinstance(outputs, list):
         for output in outputs:
@@ -4094,6 +4095,7 @@ def _infer_summary_from_payload(
             codes.add("user_friendly_infer_preflight_partial")
     operator_action = _infer_operator_action(args, payload, ok=ok)
     next_commands = _infer_next_commands(args, payload, ok=ok, mode=mode)
+    has_local_display_output = bool(generated_text or display_outputs)
     summary = {
         "schema": INFER_CLI_SCHEMA,
         "generated_at": utc_now(),
@@ -4145,14 +4147,14 @@ def _infer_summary_from_payload(
             "public_artifact_safe": True,
         },
         "local_output": {
-            "available": bool(generated_text or display_outputs),
+            "available": has_local_display_output,
             "generated_text": generated_text if generated_text else "",
             "outputs": display_outputs,
             "output_count": len(display_outputs) if display_outputs else (1 if generated_text else 0),
             "source": local_output.get("source") or "",
             "note": local_output_note,
-            "display_only": bool(generated_text or display_outputs),
-            "public_artifact_safe": False,
+            "display_only": has_local_display_output,
+            "public_artifact_safe": not has_local_display_output,
         },
         "local_output_note": local_output_note,
         "source_report": {

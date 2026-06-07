@@ -4320,6 +4320,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["local_output"]["generated_text"], generated_text)
         self.assertEqual(report["local_output"]["source"], "local-private-task-state")
         self.assertEqual(report["local_output"]["outputs"][0]["generated_text"], generated_text)
+        self.assertFalse(report["local_output"]["public_artifact_safe"])
         self.assertEqual(
             report["local_output_note"],
             "Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
@@ -4329,6 +4330,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["available"])
         self.assertFalse(persisted["local_output"]["display_only"])
+        self.assertTrue(persisted["local_output"]["public_artifact_safe"])
 
     def test_infer_existing_uses_generate_and_does_not_persist_raw_text(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -4403,6 +4405,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
+        self.assertFalse(report["local_output"]["public_artifact_safe"])
         self.assertEqual(
             report["local_output_note"],
             "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
@@ -4413,6 +4416,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["display_only"])
+        self.assertTrue(persisted["local_output"]["public_artifact_safe"])
         self.assertEqual(
             persisted["local_output_note"],
             "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
@@ -4739,6 +4743,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["output_request"]["include_output"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertEqual(report["local_output"]["generated_text"], "")
+        self.assertTrue(report["local_output"]["public_artifact_safe"])
         self.assertEqual(
             report["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
@@ -4746,6 +4751,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["output_request"]["include_output"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
+        self.assertTrue(persisted["local_output"]["public_artifact_safe"])
         self.assertEqual(
             persisted["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
