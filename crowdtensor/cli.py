@@ -655,6 +655,17 @@ def infer_result_text(result: dict[str, Any]) -> str:
     )
 
 
+def infer_trace_text(trace: dict[str, Any]) -> str:
+    return (
+        f"session={trace.get('session_id') or 'none'} "
+        f"requests={trace.get('request_count')} "
+        f"ledger_rows={trace.get('accepted_rows_seen')} "
+        f"stream_events={trace.get('stream_event_count')} "
+        f"source={trace.get('source')} "
+        f"public_artifact_safe={bool(trace.get('public_artifact_safe'))}"
+    )
+
+
 def local_output_text(local_output: dict[str, Any]) -> str:
     available = (
         bool(local_output.get("available"))
@@ -3759,6 +3770,98 @@ def _safe_infer_stream_events(stream: dict[str, Any]) -> list[dict[str, Any]]:
     return safe_events
 
 
+def _infer_request_trace_from_payload(
+    payload: dict[str, Any],
+    *,
+    generation: dict[str, Any],
+    stream_events: list[dict[str, Any]],
+    stream_progress: dict[str, Any],
+    local_output: dict[str, Any],
+) -> list[dict[str, Any]]:
+    trace: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_item(source: str, item: dict[str, Any]) -> None:
+        request_id = item.get("request_id")
+        prompt_hash = item.get("prompt_hash")
+        if request_id is None and prompt_hash is None:
+            return
+        key = (str(request_id or ""), str(prompt_hash or ""))
+        if key in seen:
+            return
+        seen.add(key)
+        trace.append({
+            "source": source,
+            "request_id": request_id,
+            "prompt_hash": prompt_hash,
+            "generated_token_count": item.get("generated_token_count"),
+            "max_new_tokens": item.get("max_new_tokens"),
+            "generated_text_hash": item.get("generated_text_hash"),
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "public_artifact_safe": True,
+        })
+
+    for event in stream_events:
+        if isinstance(event, dict):
+            add_item("stream", event)
+    for item in stream_progress.get("per_request_progress") or []:
+        if isinstance(item, dict):
+            add_item("stream-progress", item)
+    for item in generation.get("results") or []:
+        if isinstance(item, dict):
+            add_item("generation-results", item)
+    for item in local_output.get("outputs") or []:
+        if isinstance(item, dict):
+            add_item("local-output", item)
+
+    session_request = payload.get("session_request") if isinstance(payload.get("session_request"), dict) else {}
+    prompt_hashes = session_request.get("prompt_hashes") if isinstance(session_request.get("prompt_hashes"), list) else []
+    for prompt_hash in prompt_hashes:
+        if prompt_hash:
+            add_item("session-request", {"prompt_hash": prompt_hash})
+    return trace
+
+
+def _infer_trace_from_payload(
+    payload: dict[str, Any],
+    *,
+    route: dict[str, Any],
+    generation: dict[str, Any],
+    stream: dict[str, Any],
+    stream_progress: dict[str, Any],
+    stream_events: list[dict[str, Any]],
+    wait_progress: dict[str, Any],
+    local_output: dict[str, Any],
+    expected_request_count: int,
+) -> dict[str, Any]:
+    session = payload.get("session") if isinstance(payload.get("session"), dict) else {}
+    request_trace = _infer_request_trace_from_payload(
+        payload,
+        generation=generation,
+        stream_events=stream_events,
+        stream_progress=stream_progress,
+        local_output=local_output,
+    )
+    accepted_rows = route.get("accepted_rows")
+    if accepted_rows is None:
+        accepted_rows = wait_progress.get("accepted_rows_seen")
+    return {
+        "session_id": session.get("session_id"),
+        "workload_type": session.get("workload_type"),
+        "request_count": max(expected_request_count, len(request_trace)),
+        "request_trace": request_trace,
+        "accepted_rows_seen": _safe_int(accepted_rows),
+        "stream_event_count": _safe_int(stream.get("event_count")) or len(stream_events),
+        "source": payload.get("schema") or "",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+    }
+
+
 def _iter_infer_generated_text_candidates(value: Any, *, _seen: set[int] | None = None) -> list[dict[str, Any]]:
     seen = _seen if _seen is not None else set()
     candidates: list[dict[str, Any]] = []
@@ -4393,6 +4496,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     prompt = summary.get("prompt") if isinstance(summary.get("prompt"), dict) else {}
     model = summary.get("model") if isinstance(summary.get("model"), dict) else {}
     result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
+    trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -4421,6 +4525,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             f"hash=`{generation.get('generated_text_hash')}`"
         ),
         f"- Result: `{infer_result_text(result)}`",
+        f"- Trace: `{infer_trace_text(trace)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{route.get('route_ready')}`",
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
@@ -4535,6 +4640,7 @@ def _infer_summary_from_payload(
     route = _infer_route_from_report(payload)
     stream = _infer_stream_from_report(payload)
     stream_progress = _safe_infer_stream_progress(stream)
+    stream_events = _safe_infer_stream_events(stream)
     stream_issue = str(stream.get("issue_summary") or "").strip()
     if not stream_issue and bool(stream.get("enabled") or stream.get("requested")):
         stream_issue = stream_progress_issue_summary(stream_progress)
@@ -4642,6 +4748,17 @@ def _infer_summary_from_payload(
         diagnosis_codes=set(str(code) for code in codes),
         full_evidence=bool(getattr(args, "full_evidence", False)),
     )
+    trace = _infer_trace_from_payload(
+        payload,
+        route=route,
+        generation=generation,
+        stream=stream,
+        stream_progress=stream_progress,
+        stream_events=stream_events,
+        wait_progress=wait_progress,
+        local_output=local_output,
+        expected_request_count=expected_request_count,
+    )
     source_saved_summary = payload.get("saved_summary") if isinstance(payload.get("saved_summary"), dict) else {}
     summary = {
         "schema": INFER_CLI_SCHEMA,
@@ -4678,6 +4795,7 @@ def _infer_summary_from_payload(
             "generated_token_ids_public": False,
             "public_artifact_safe": not has_local_display_output,
         },
+        "trace": trace,
         "route": route,
         "p2p": payload.get("p2p") if isinstance(payload.get("p2p"), dict) else {},
         "coordinator_ready": payload.get("coordinator_ready") if isinstance(payload.get("coordinator_ready"), dict) else {},
@@ -4696,7 +4814,7 @@ def _infer_summary_from_payload(
             "source": stream.get("source"),
             "progress": stream_progress,
             "issue_summary": stream_issue,
-            "events": _safe_infer_stream_events(stream),
+            "events": stream_events,
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
         },
@@ -8683,6 +8801,9 @@ def print_infer(report: dict[str, Any]) -> None:
     result = report.get("result") if isinstance(report.get("result"), dict) else {}
     if result:
         print(f"  result: {infer_result_text(result)}")
+    trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
+    if trace:
+        print(f"  trace: {infer_trace_text(trace)}")
     batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
     if batch.get("enabled"):
         print(f"  batch: {batch_status_text(batch)}")

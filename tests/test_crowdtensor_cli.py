@@ -5388,12 +5388,27 @@ class CrowdTensorCliTests(unittest.TestCase):
             "schema": "public_swarm_product_cli_v1",
             "ok": True,
             "mode": "generate",
-            "session": {"hf_model_id": "sshleifer/tiny-gpt2"},
+            "session": {
+                "session_id": "real-llm-session-infer",
+                "workload_type": "real_llm_sharded_infer",
+                "hf_model_id": "sshleifer/tiny-gpt2",
+            },
             "generation": {
                 "generated_token_count": 16,
                 "max_new_tokens": 16,
                 "generated_text_hash": "sha256:generated",
                 "decoded_tokens_match": True,
+                "results": [
+                    {
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 16,
+                        "max_new_tokens": 16,
+                        "generated_text_hash": "sha256:generated",
+                        "generated_text": "must not leak",
+                        "generated_token_ids": [1, 2],
+                    }
+                ],
             },
             "wait_progress": {
                 "poll_count": 2,
@@ -5429,6 +5444,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("raw_public=False", stdout.getvalue())
         self.assertIn(
             "  result: status=complete tokens=16/16 outputs=1 display=local-private hash=sha256:generated public_artifact_safe=False",
+            stdout.getvalue(),
+        )
+        self.assertIn(
+            "  trace: session=real-llm-session-infer requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True",
             stdout.getvalue(),
         )
         self.assertIn(
@@ -5506,11 +5525,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["output_count"], 1)
         self.assertEqual(persisted["result"]["display"], "hash-only")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
+        self.assertEqual(persisted["trace"]["session_id"], "real-llm-session-infer")
+        self.assertEqual(persisted["trace"]["workload_type"], "real_llm_sharded_infer")
+        self.assertEqual(persisted["trace"]["accepted_rows_seen"], 1)
+        self.assertEqual(persisted["trace"]["request_trace"][0]["request_id"], "req-1")
+        self.assertEqual(persisted["trace"]["request_trace"][0]["prompt_hash"], "sha256:p1")
+        self.assertFalse(persisted["trace"]["raw_prompt_public"])
+        self.assertFalse(persisted["trace"]["raw_generated_text_public"])
+        self.assertTrue(persisted["trace"]["public_artifact_safe"])
         self.assertEqual(persisted["recommended_next_command"]["label"], "submit inference")
         self.assertEqual(persisted["recommended_next_command"]["reason"], "rerun_inference")
         self.assertEqual(persisted["recommended_next_command"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
         self.assertIn(cli.INFER_PROMPT_PLACEHOLDER, persisted["recommended_next_command"]["command_line"])
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted["recommended_next_command"], sort_keys=True))
+        self.assertNotIn("must not leak", json.dumps(persisted, sort_keys=True))
+        self.assertNotIn('"generated_token_ids": [1, 2]', json.dumps(persisted, sort_keys=True))
         self.assertEqual(
             persisted["local_output_note"],
             "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
@@ -5525,6 +5554,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Generation: `16/16` hash=`sha256:generated`", markdown)
         self.assertIn(
             "- Result: `status=complete tokens=16/16 outputs=1 display=hash-only hash=sha256:generated public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn(
+            "- Trace: `session=real-llm-session-infer requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -5792,6 +5825,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["output_count"], 2)
         self.assertEqual([row["generated_text"] for row in persisted["local_output"]["outputs"]], ["", ""])
+        self.assertEqual(persisted["trace"]["request_count"], 2)
+        self.assertEqual(
+            [(row["request_id"], row["prompt_hash"]) for row in persisted["trace"]["request_trace"]],
+            [("req-1", "sha256:p1"), ("req-2", "sha256:p2")],
+        )
+        self.assertTrue(persisted["trace"]["public_artifact_safe"])
         self.assertFalse(persisted["local_output"]["available"])
         self.assertFalse(persisted["local_output"]["display_only"])
         self.assertNotIn("first output", json.dumps(persisted, sort_keys=True))
@@ -5915,6 +5954,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn('"generated_token_ids": [1]', encoded)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["stream"]["issue_summary"], "request[2]=req-2:1/2")
+        self.assertEqual(persisted["trace"]["stream_event_count"], 3)
+        self.assertEqual(
+            [(row["request_id"], row["prompt_hash"]) for row in persisted["trace"]["request_trace"]],
+            [("req-1", "sha256:p1"), ("req-2", "sha256:p2")],
+        )
         self.assertEqual(
             persisted["operator_action"],
             "Inference completed, but stream progress is incomplete (request[2]=req-2:1/2); rerun with --stream if you need live token evidence.",
