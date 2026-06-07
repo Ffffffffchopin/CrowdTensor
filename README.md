@@ -83,10 +83,11 @@ In human mode, `infer` and `generate` print a short safe stderr start hint befor
 long-running checks so the terminal does not look idle; `--json` keeps stdout
 machine-readable.
 When generated text is available in human mode, the terminal prints it as
-`answer:` or `answer[n]:` before `local_output` safety metadata. It includes
-safe output `count` and `source` fields such as `local-private-task-state` or
-`coordinator-validation`; JSON and Markdown summaries keep hashes/placeholders
-instead of raw generated text.
+`answer:` or `answer[n]:` before `answer_scope` and `local_output` safety
+metadata. `answer_scope` says the visible answer is terminal-only; JSON and
+Markdown summaries keep hashes/placeholders instead of raw generated text.
+`local_output` includes safe output `count` and `source` fields such as
+`local-private-task-state` or `coordinator-validation`.
 Pick one prompt source per command: use the positional prompt,
 `--prompt-text`/`--prompt`, or `--prompt-texts` for a bounded batch. The CLI
 rejects mixed prompt sources instead of guessing. Reports expose

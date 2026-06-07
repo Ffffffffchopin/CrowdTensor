@@ -85,9 +85,11 @@ read `/state` and verify visible stage0/stage1 Miner capabilities.
 Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
 redacted. When human output shows generated text, it prints `answer:` or
-`answer[n]:` before `local_output` safety metadata with
-safe output `count` and `source` fields such as `local-private-task-state` or
-`coordinator-validation`.
+`answer[n]:` before `answer_scope` and `local_output` safety metadata.
+`answer_scope` says the visible answer is terminal-only; JSON and Markdown
+summaries keep hashes/placeholders instead of raw generated text. `local_output`
+adds safe output `count` and `source` fields such as
+`local-private-task-state` or `coordinator-validation`.
 Pick one prompt source per command: positional prompt,
 `--prompt-text`/`--prompt`, or `--prompt-texts` for a bounded
 batch. The CLI rejects mixed prompt sources instead of guessing. Reports expose
