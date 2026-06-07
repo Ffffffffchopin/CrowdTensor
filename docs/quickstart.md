@@ -145,7 +145,9 @@ those warnings in `What To Do Next`. The adjacent `inspect_first` line points to
 the Markdown summary to open first. The adjacent `review_next` line repeats the
 safe recommended command near that summary; human terminal output renders it
 with local prompt sources for copying, using a `printf` pipe placeholder for
-`--prompt-stdin`, while JSON/Markdown artifacts keep prompt placeholders. Then use the `status` line or
+`--prompt-stdin`, while JSON/Markdown artifacts keep prompt placeholders and
+prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when rerunning
+saved commands. Then use the `status` line or
 `user_status` for detail: `completed` means the request finished,
 `preflight-ready` means submit next, `preflight-partial` means run the
 recommended check first, and `blocked` means follow `action` /
