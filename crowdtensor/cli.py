@@ -5525,10 +5525,10 @@ def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
     last_error = str(progress.get("last_error_type") or "")
     if last_error and accepted <= 0 and observed <= 0:
         return f"Coordinator polling reported {last_error}; check token permissions and Coordinator reachability, then rerun with --dry-run."
-    if accepted <= 0:
-        return "No accepted result rows appeared; confirm both stage Miners are joined, healthy, and advertising the requested backend."
     if expected_requests > 1 and observed_requests < expected_requests:
         return f"Only {observed_requests}/{expected_requests} batch results appeared; keep both stage Miners running and increase --timeout-seconds."
+    if accepted <= 0:
+        return "No accepted result rows appeared; confirm both stage Miners are joined, healthy, and advertising the requested backend."
     if expected_requests > 1 and stream_issue:
         return f"Stream progress is incomplete ({stream_issue}); keep stage Miners running and increase --timeout-seconds."
     if observed > 0 and target > 0 and observed < target:
@@ -6158,8 +6158,6 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if stream.get("issue_summary"):
         lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
-    if summary.get("operator_action"):
-        lines.append(f"- Action: {summary.get('operator_action')}")
     if recommended:
         requires_env = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
         suffix = f" requires=`{','.join(str(name) for name in requires_env)}`" if requires_env else ""
@@ -6287,24 +6285,54 @@ def _infer_summary_from_payload(
     except ValueError:
         prompts = [str(getattr(args, "prompt_text", "") or "")]
     expected_request_count = int(batch.get("expected_request_count") or batch.get("request_count") or len(prompts) or 1)
-    observed_request_count = (
-        batch.get("observed_request_count")
-        or generation.get("observed_request_count")
-        or generation.get("request_count")
-        or len(display_outputs)
-        or (1 if generated_text else 0)
+    if "observed_request_count" in batch:
+        observed_request_count = batch.get("observed_request_count")
+    elif "observed_request_count" in generation:
+        observed_request_count = generation.get("observed_request_count")
+    elif "observed_request_count" in wait_progress:
+        observed_request_count = wait_progress.get("observed_request_count")
+    elif batch.get("batch_generation_ready") or generation.get("batch_generation_ready"):
+        observed_request_count = generation.get("request_count") or len(display_outputs) or (1 if generated_text else 0)
+    else:
+        observed_request_count = len(display_outputs) or (1 if generated_text else 0)
+    observed_request_count_int = _safe_int(observed_request_count)
+    batch_generation_ready = bool(batch.get("batch_generation_ready"))
+    batch_complete = bool(
+        expected_request_count <= 1
+        or batch_generation_ready
+        or observed_request_count_int >= expected_request_count
     )
+    batch_incomplete = bool(expected_request_count > 1 and not batch_complete)
+    if batch_incomplete:
+        wait_progress = {
+            "session_created": wait_progress.get("session_created", True),
+            "poll_count": wait_progress.get("poll_count"),
+            "accepted_rows_seen": wait_progress.get("accepted_rows_seen", observed_request_count_int),
+            "max_observed_token_count": wait_progress.get("max_observed_token_count", generated_tokens),
+            "target_token_count": wait_progress.get("target_token_count", max_new_tokens),
+            "expected_request_count": wait_progress.get("expected_request_count", expected_request_count),
+            "observed_request_count": wait_progress.get("observed_request_count", observed_request_count_int),
+            "batch_generation_ready": wait_progress.get("batch_generation_ready", False),
+            "ledger_endpoint_ready": wait_progress.get("ledger_endpoint_ready", True),
+            "stream_endpoint_ready": wait_progress.get("stream_endpoint_ready", False),
+            "timeout_seconds": wait_progress.get("timeout_seconds"),
+            "public_artifact_safe": True,
+        }
     dry_run = bool(payload.get("dry_run"))
     if dry_run:
         ok = bool(payload.get("ok") and route.get("route_ready"))
     else:
-        ok = bool(payload.get("ok") and generated_tokens >= max_new_tokens and max_new_tokens > 0)
+        ok = bool(payload.get("ok") and generated_tokens >= max_new_tokens and max_new_tokens > 0 and not batch_incomplete)
     codes = set(payload.get("diagnosis_codes") or [])
     codes.difference_update({
         "generate_dry_run_ready",
         "generate_dry_run_partial",
         "generate_request_shape_ready",
     })
+    if batch_incomplete:
+        codes.discard("public_swarm_generate_ready")
+        codes.discard("public_swarm_generate_batch_ready")
+        codes.add("generation_timeout")
     if ok:
         if dry_run:
             codes.add("crowdtensor_infer_preflight_ready")
@@ -6324,8 +6352,13 @@ def _infer_summary_from_payload(
         else:
             codes.add("crowdtensor_infer_preflight_partial")
             codes.add("user_friendly_infer_preflight_partial")
-    action_payload = {
+    summary_payload = {
         **payload,
+        "diagnosis_codes": sorted(codes),
+        "wait_progress": wait_progress,
+    }
+    action_payload = {
+        **summary_payload,
         "stream": {
             **stream,
             "ready": bool(stream.get("stream_generation_ready")),
@@ -6333,7 +6366,7 @@ def _infer_summary_from_payload(
         },
     }
     operator_action = _infer_operator_action(args, action_payload, ok=ok)
-    next_commands = _infer_next_commands(args, payload, ok=ok, mode=mode)
+    next_commands = _infer_next_commands(args, summary_payload, ok=ok, mode=mode)
     has_local_display_output = bool(generated_text or display_outputs)
     display_output_count = len(display_outputs) if display_outputs else (1 if generated_text else 0)
     result_output_count = display_output_count
@@ -6345,7 +6378,6 @@ def _infer_summary_from_payload(
             result_output_count = expected_request_count
         else:
             result_output_count = 0
-    batch_generation_ready = bool(batch.get("batch_generation_ready"))
     if (
         _safe_int(observed_request_count) <= 0
         and result_output_count > 0
@@ -9271,8 +9303,6 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             lines.append(f"- Answer scope note: {answer_scope.get('summary')}")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
-    if summary.get("operator_action"):
-        lines.append(f"- Action: {summary.get('operator_action')}")
     if recommended:
         requires_env = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
         suffix = f" requires=`{','.join(str(name) for name in requires_env)}`" if requires_env else ""
