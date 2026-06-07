@@ -3433,6 +3433,94 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(f"  output_dir: {output_dir}", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
+    def test_product_generate_marks_truncated_local_output(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        tail = "GENERATE_SECRET_TAIL"
+        generated_text = ("g" * cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS) + tail
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+        ])
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, path, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-truncated",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                }
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": cli.stable_hash_text(generated_text),
+                            "generated_text": generated_text,
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(len(report["local_output"]["generated_text"]), cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS)
+        self.assertTrue(report["local_output"]["truncated"])
+        self.assertEqual(report["local_output"]["max_chars"], cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS)
+        self.assertEqual(report["local_output"]["omitted_char_count"], len(tail))
+        self.assertTrue(report["local_output"]["outputs"][0]["truncated"])
+        self.assertNotIn(tail, json.dumps(report, sort_keys=True))
+        self.assertIn(
+            f"Terminal answer text is truncated to {cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} chars per output. Omitted chars: {len(tail)}.",
+            report["local_output_note"],
+        )
+        persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["local_output"]["generated_text"], "")
+        self.assertTrue(persisted["local_output"]["truncated"])
+        self.assertEqual(persisted["local_output"]["omitted_char_count"], len(tail))
+        self.assertTrue(persisted["local_output"]["public_artifact_safe"])
+        self.assertNotIn(tail, json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            f"- Local output: `available=False display_only=False public_artifact_safe=True truncated=True max_chars={cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} omitted_chars={len(tail)}` count=`1` source=`coordinator-validation`",
+            markdown,
+        )
+        self.assertIn("Terminal answer text is truncated", markdown)
+        self.assertNotIn(tail, markdown)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            f"local_output: available=True display_only=True public_artifact_safe=False truncated=True max_chars={cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} omitted_chars={len(tail)} count=1 source=coordinator-validation",
+            rendered,
+        )
+        self.assertIn("Terminal answer text is truncated", rendered)
+        self.assertNotIn(tail, rendered)
+
     def test_product_generate_timeout_reports_safe_wait_progress(self) -> None:
         args = cli.parse_args([
             "generate",
@@ -7378,6 +7466,86 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn(generated_text, markdown)
         self.assertNotIn(prompt, markdown)
+
+    def test_infer_local_marks_truncated_private_generated_text(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor user prompt"
+        tail = "INFER_SECRET_TAIL"
+        generated_text = ("i" * cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS) + tail
+        args = cli.parse_args([
+            "infer",
+            prompt,
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "8",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            state_dir = output_dir / "product-swarm-mvp" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            row = {
+                "type": "task_completed",
+                "validation": {
+                    "generated_text": generated_text,
+                    "generated_text_hash": cli.stable_hash_text(generated_text),
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "prompt_hash": cli.stable_hash_text(prompt),
+                    "decoded_tokens_match": True,
+                    "stage_id": 1,
+                },
+            }
+            (state_dir / "tasks.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "generation": {
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "generated_text_hash": cli.stable_hash_text(generated_text),
+                    "decoded_tokens_match": True,
+                },
+                "stage_assignment": {"distinct_stage_miners": True},
+                "ledger": {"accepted_rows": 16},
+                "diagnosis_codes": ["product_swarm_mvp_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(len(report["local_output"]["generated_text"]), cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS)
+        self.assertTrue(report["local_output"]["truncated"])
+        self.assertEqual(report["local_output"]["max_chars"], cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS)
+        self.assertEqual(report["local_output"]["omitted_char_count"], len(tail))
+        self.assertTrue(report["local_output"]["outputs"][0]["truncated"])
+        self.assertNotIn(tail, json.dumps(report, sort_keys=True))
+        self.assertIn("Terminal answer text is truncated", report["local_output_note"])
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["local_output"]["generated_text"], "")
+        self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
+        self.assertTrue(persisted["local_output"]["truncated"])
+        self.assertEqual(persisted["local_output"]["omitted_char_count"], len(tail))
+        self.assertTrue(persisted["local_output"]["public_artifact_safe"])
+        self.assertNotIn(tail, json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            f"- Local output: `available=False display_only=False public_artifact_safe=True truncated=True max_chars={cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} omitted_chars={len(tail)}` count=`1` source=`local-private-task-state`",
+            markdown,
+        )
+        self.assertIn("Terminal answer text is truncated", markdown)
+        self.assertNotIn(tail, markdown)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            f"local_output: available=True display_only=True public_artifact_safe=False truncated=True max_chars={cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} omitted_chars={len(tail)} count=1 source=local-private-task-state",
+            rendered,
+        )
+        self.assertIn("Terminal answer text is truncated", rendered)
+        self.assertNotIn(tail, rendered)
 
     def test_infer_existing_uses_generate_and_does_not_persist_raw_text(self) -> None:
         output_dir = Path(self._tmp_dir())

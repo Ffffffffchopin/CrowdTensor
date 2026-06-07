@@ -894,6 +894,7 @@ LOCAL_ANSWER_SCOPE_TEXT = "terminal-only; saved JSON/Markdown keep hashes/redact
 SAVED_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; rerun without --json for local display."
 SAVED_NO_ANSWER_SCOPE_TEXT = "no local answer text was available in this run; saved JSON/Markdown contain no generated text."
 SAVED_TERMINAL_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; the answer was shown only in local human output."
+LOCAL_OUTPUT_DISPLAY_MAX_CHARS = 4096
 
 
 def print_local_output_block(report: dict[str, Any]) -> bool:
@@ -1181,11 +1182,18 @@ def local_output_text(local_output: dict[str, Any]) -> str:
         if "available" in local_output
         else bool(local_output.get("generated_text") or local_output.get("outputs"))
     )
-    return (
-        f"available={available} "
-        f"display_only={bool(local_output.get('display_only'))} "
-        f"public_artifact_safe={bool(local_output.get('public_artifact_safe'))}"
-    )
+    parts = [
+        f"available={available}",
+        f"display_only={bool(local_output.get('display_only'))}",
+        f"public_artifact_safe={bool(local_output.get('public_artifact_safe'))}",
+    ]
+    if local_output.get("truncated"):
+        parts.append("truncated=True")
+        if local_output.get("max_chars") is not None:
+            parts.append(f"max_chars={local_output.get('max_chars')}")
+        if local_output.get("omitted_char_count") is not None:
+            parts.append(f"omitted_chars={local_output.get('omitted_char_count')}")
+    return " ".join(parts)
 
 
 def local_output_terminal_text(local_output: dict[str, Any]) -> str:
@@ -5047,12 +5055,23 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _local_output_truncation_suffix(local_output: dict[str, Any]) -> str:
+    if not bool(local_output.get("truncated")):
+        return ""
+    max_chars = _safe_int(local_output.get("max_chars"), LOCAL_OUTPUT_DISPLAY_MAX_CHARS)
+    omitted = _safe_int(local_output.get("omitted_char_count"))
+    suffix = f" Terminal answer text is truncated to {max_chars} chars per output."
+    if omitted > 0:
+        suffix += f" Omitted chars: {omitted}."
+    return suffix
+
+
 def _infer_local_output_from_private_state(
     output_dir: Path,
     *,
     prompts: list[str],
     generation: dict[str, Any],
-    max_chars: int = 4096,
+    max_chars: int = LOCAL_OUTPUT_DISPLAY_MAX_CHARS,
 ) -> dict[str, Any]:
     """Extract local display-only text from private task state.
 
@@ -5102,11 +5121,15 @@ def _infer_local_output_from_private_state(
                     score += 10
                 if _safe_int(candidate.get("stage_id"), -1) == 1 or _safe_int(candidate.get("split_index"), -1) == 1:
                     score += 5
+                truncated = len(text) > max_chars
                 output = {
                     "request_id": candidate.get("request_id"),
                     "prompt_hash": candidate_prompt_hash,
                     "generated_token_count": candidate_tokens,
                     "generated_text": text[:max_chars],
+                    "truncated": truncated,
+                    "max_chars": max_chars,
+                    "omitted_char_count": max(0, len(text) - max_chars),
                 }
                 key = candidate_prompt_hash or str(candidate.get("request_id") or "")
                 if key:
@@ -5123,6 +5146,17 @@ def _infer_local_output_from_private_state(
         ordered_outputs.append(fallback[1])
     if not ordered_outputs:
         return {}
+    truncated = any(bool(output.get("truncated")) for output in ordered_outputs)
+    omitted_char_count = sum(_safe_int(output.get("omitted_char_count")) for output in ordered_outputs)
+    truncation_summary = {
+        "truncated": truncated,
+        "max_chars": max_chars,
+        "omitted_char_count": omitted_char_count,
+    }
+    note = (
+        "Shown only in local human output; JSON and saved artifacts keep raw generated text redacted."
+        + _local_output_truncation_suffix(truncation_summary)
+    )
     return {
         "source": "local-private-task-state",
         "outputs": ordered_outputs,
@@ -5130,7 +5164,10 @@ def _infer_local_output_from_private_state(
         "output_count": len(ordered_outputs),
         "display_only": True,
         "public_artifact_safe": False,
-        "note": "Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
+        "truncated": truncated,
+        "max_chars": max_chars,
+        "omitted_char_count": omitted_char_count,
+        "note": note,
     }
 
 
@@ -5187,6 +5224,26 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
 
 def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     return _strip_local_output_text(summary)
+
+
+def _local_output_truncation_summary(local_output: dict[str, Any], outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    truncated = bool(
+        local_output.get("truncated")
+        or any(isinstance(output, dict) and output.get("truncated") for output in outputs)
+    )
+    max_chars = _safe_int(local_output.get("max_chars"), LOCAL_OUTPUT_DISPLAY_MAX_CHARS)
+    omitted = _safe_int(local_output.get("omitted_char_count"))
+    if omitted <= 0:
+        omitted = sum(
+            _safe_int(output.get("omitted_char_count"))
+            for output in outputs
+            if isinstance(output, dict)
+        )
+    return {
+        "truncated": truncated,
+        "max_chars": max_chars,
+        "omitted_char_count": omitted,
+    }
 
 
 def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
@@ -5919,13 +5976,22 @@ def _infer_summary_from_payload(
                 "prompt_hash": item.get("prompt_hash"),
                 "generated_token_count": item.get("generated_token_count"),
                 "generated_text": item.get("generated_text") if isinstance(item.get("generated_text"), str) else "",
+                "truncated": bool(item.get("truncated")),
+                "max_chars": item.get("max_chars"),
+                "omitted_char_count": item.get("omitted_char_count"),
             })
     if not generated_text and display_outputs:
         first_output = display_outputs[0]
         generated_text = str(first_output.get("generated_text") or "")
+    truncation_summary = _local_output_truncation_summary(local_output, display_outputs)
     local_output_note = str(local_output.get("note") or "")
     if (generated_text or display_outputs) and not local_output_note:
-        local_output_note = "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only."
+        local_output_note = (
+            "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only."
+            + _local_output_truncation_suffix(truncation_summary)
+        )
+    elif (generated_text or display_outputs) and truncation_summary["truncated"] and "truncated" not in local_output_note:
+        local_output_note += _local_output_truncation_suffix(truncation_summary)
     elif getattr(args, "include_output", False) and getattr(args, "json", False):
         local_output_note = "Raw generated text is suppressed in JSON/public output; rerun without --json for local display."
     generated_tokens = int(generation.get("generated_token_count") or 0)
@@ -6104,6 +6170,9 @@ def _infer_summary_from_payload(
             "note": local_output_note,
             "display_only": has_local_display_output,
             "public_artifact_safe": not has_local_display_output,
+            "truncated": truncation_summary["truncated"],
+            "max_chars": truncation_summary["max_chars"],
+            "omitted_char_count": truncation_summary["omitted_char_count"],
         },
         "local_output_note": local_output_note,
         "source_report": {
@@ -8615,7 +8684,11 @@ def _product_join_operator_action(report: dict[str, Any]) -> str:
     return "Inspect the join JSON report and Miner command for the failing check."
 
 
-def _product_generate_local_output_from_validation(validation: dict[str, Any], *, max_chars: int = 4096) -> dict[str, Any]:
+def _product_generate_local_output_from_validation(
+    validation: dict[str, Any],
+    *,
+    max_chars: int = LOCAL_OUTPUT_DISPLAY_MAX_CHARS,
+) -> dict[str, Any]:
     outputs: list[dict[str, Any]] = []
     raw_results = validation.get("inference_results") if isinstance(validation.get("inference_results"), list) else []
     if not raw_results and isinstance(validation.get("inference_result"), dict):
@@ -8633,14 +8706,20 @@ def _product_generate_local_output_from_validation(validation: dict[str, Any], *
         if key in seen:
             continue
         seen.add(key)
+        truncated = len(text) > max_chars
         outputs.append({
             "request_id": item.get("request_id"),
             "prompt_hash": item.get("prompt_hash"),
             "generated_token_count": item.get("generated_token_count"),
             "generated_text": text[:max_chars],
+            "truncated": truncated,
+            "max_chars": max_chars,
+            "omitted_char_count": max(0, len(text) - max_chars),
         })
     if not outputs:
         return {}
+    truncated = any(bool(output.get("truncated")) for output in outputs)
+    omitted_char_count = sum(_safe_int(output.get("omitted_char_count")) for output in outputs)
     return {
         "source": "coordinator-validation",
         "generated_text": str(outputs[0].get("generated_text") or ""),
@@ -8648,6 +8727,9 @@ def _product_generate_local_output_from_validation(validation: dict[str, Any], *
         "output_count": len(outputs),
         "display_only": True,
         "public_artifact_safe": False,
+        "truncated": truncated,
+        "max_chars": max_chars,
+        "omitted_char_count": omitted_char_count,
     }
 
 
@@ -9989,7 +10071,10 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         local_output = _product_generate_local_output_from_validation(validation)
         if local_output:
             report["local_output"] = local_output
-        report["local_output_note"] = "Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only."
+        report["local_output_note"] = (
+            "Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only."
+            + _local_output_truncation_suffix(local_output)
+        )
     elif args.include_output:
         report["local_output_note"] = "Raw generated text is suppressed in JSON/public output; rerun without --json for local display."
     return _finalize_product_generate_report(report, admin_token=args.admin_token, output_dir=output_dir)
