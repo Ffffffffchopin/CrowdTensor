@@ -997,10 +997,19 @@ def infer_route_distinct_stage_text(route: dict[str, Any], stage_preflight: dict
 
 
 def coordinator_ready_text(coordinator_ready: dict[str, Any]) -> str:
+    ok_value = coordinator_ready.get("ok")
+    if ok_value is True:
+        ok_text = "ready"
+    elif ok_value is False:
+        ok_text = "not_ready"
+    elif ok_value is None:
+        ok_text = "not_checked"
+    else:
+        ok_text = str(ok_value)
     parts = [
-        str(coordinator_ready.get("ok")),
-        f"service={coordinator_ready.get('service')}",
-        f"protocol={coordinator_ready.get('protocol')}",
+        ok_text,
+        f"service={coordinator_ready.get('service') or 'none'}",
+        f"protocol={coordinator_ready.get('protocol') or 'none'}",
     ]
     error = str(coordinator_ready.get("error") or "")
     reason = str(coordinator_ready.get("reason") or "")
@@ -1009,6 +1018,38 @@ def coordinator_ready_text(coordinator_ready: dict[str, Any]) -> str:
     elif reason:
         parts.append(f"reason={reason}")
     return " ".join(parts)
+
+
+def ready_to_submit_status_text(ready_to_submit: dict[str, Any]) -> str:
+    ok_value = ready_to_submit.get("ok")
+    if ok_value is True:
+        status = "ready"
+    elif ok_value is False:
+        status = "blocked"
+    elif ok_value is None:
+        status = "not_checked"
+    else:
+        status = str(ok_value)
+    coordinator_value = ready_to_submit.get("coordinator_ready")
+    if coordinator_value is True:
+        coordinator = "ready"
+    elif coordinator_value is False:
+        coordinator = "not_ready"
+    elif coordinator_value is None:
+        coordinator = "not_checked"
+    else:
+        coordinator = str(coordinator_value)
+    return (
+        f"{status} "
+        f"label={ready_to_submit.get('readiness_label') or 'unknown'} "
+        f"fully_verified={bool(ready_to_submit.get('fully_verified'))} "
+        f"route={bool(ready_to_submit.get('route_ready'))} "
+        f"coordinator={coordinator} "
+        f"stage={ready_to_submit_stage_text(ready_to_submit)} "
+        f"stage_verification={ready_to_submit.get('stage_verification') or 'unknown'} "
+        f"next_step={ready_to_submit.get('next_step') or 'none'} "
+        f"warnings={ready_to_submit_warning_text(ready_to_submit)}"
+    )
 
 
 def format_p2p_status(p2p: dict[str, Any]) -> str:
@@ -6049,7 +6090,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             "- Ready to submit: "
             f"label=`{ready_to_submit.get('readiness_label')}` "
             f"next_step=`{ready_to_submit.get('next_step')}` "
-            f"fully_verified=`{bool(ready_to_submit.get('fully_verified'))}`"
+            f"fully_verified=`{bool(ready_to_submit.get('fully_verified'))}` "
+            f"status=`{ready_to_submit_status_text(ready_to_submit)}`"
         )
     if coordinator_ready:
         lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
@@ -9143,7 +9185,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             "- Ready to submit: "
             f"label=`{ready_to_submit.get('readiness_label')}` "
             f"next_step=`{ready_to_submit.get('next_step')}` "
-            f"fully_verified=`{bool(ready_to_submit.get('fully_verified'))}`"
+            f"fully_verified=`{bool(ready_to_submit.get('fully_verified'))}` "
+            f"status=`{ready_to_submit_status_text(ready_to_submit)}`"
         )
     if coordinator_ready:
         lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
@@ -10473,18 +10516,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
         )
     ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
     if ready_to_submit:
-        print(
-            "  ready_to_submit: "
-            f"{ready_to_submit.get('ok')} "
-            f"label={ready_to_submit.get('readiness_label')} "
-            f"fully_verified={ready_to_submit.get('fully_verified')} "
-            f"route={ready_to_submit.get('route_ready')} "
-            f"coordinator={ready_to_submit.get('coordinator_ready')} "
-            f"stage={ready_to_submit_stage_text(ready_to_submit)} "
-            f"stage_verification={ready_to_submit.get('stage_verification')} "
-            f"next_step={ready_to_submit.get('next_step')} "
-            f"warnings={ready_to_submit_warning_text(ready_to_submit)}"
-        )
+        print(f"  ready_to_submit: {ready_to_submit_status_text(ready_to_submit)}")
         if ready_to_submit.get("readiness_summary"):
             print(f"  readiness: {ready_to_submit.get('readiness_summary')}")
     saved_summary = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
@@ -10730,18 +10762,7 @@ def print_infer(report: dict[str, Any]) -> None:
         )
     ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
     if ready_to_submit:
-        print(
-            "  ready_to_submit: "
-            f"{ready_to_submit.get('ok')} "
-            f"label={ready_to_submit.get('readiness_label')} "
-            f"fully_verified={ready_to_submit.get('fully_verified')} "
-            f"route={ready_to_submit.get('route_ready')} "
-            f"coordinator={ready_to_submit.get('coordinator_ready')} "
-            f"stage={ready_to_submit_stage_text(ready_to_submit)} "
-            f"stage_verification={ready_to_submit.get('stage_verification')} "
-            f"next_step={ready_to_submit.get('next_step')} "
-            f"warnings={ready_to_submit_warning_text(ready_to_submit)}"
-        )
+        print(f"  ready_to_submit: {ready_to_submit_status_text(ready_to_submit)}")
         if ready_to_submit.get("readiness_summary"):
             print(f"  readiness: {ready_to_submit.get('readiness_summary')}")
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
