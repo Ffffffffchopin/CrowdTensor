@@ -9494,6 +9494,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  issue: {issue_summary_text(issue_summary)}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    if review_summary.get("inspect_first"):
+        print(f"  inspect_first: {review_summary.get('inspect_first')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
@@ -9787,6 +9789,8 @@ def print_infer(report: dict[str, Any]) -> None:
         print(f"  issue: {issue_summary_text(issue_summary)}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    if review_summary.get("inspect_first"):
+        print(f"  inspect_first: {review_summary.get('inspect_first')}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}

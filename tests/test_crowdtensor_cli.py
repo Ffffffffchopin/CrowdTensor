@@ -1013,7 +1013,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("  action: Generation request shape is valid, but live readiness was skipped", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
+        self.assertIn(f"  inspect_first: {output_dir / 'generate_summary.md'}", rendered)
         self.assertLess(rendered.index("  action: "), rendered.index("  diagnosis: "))
+        self.assertLess(rendered.index("  inspect_first: "), rendered.index("  diagnosis: "))
         self.assertIn(
             "  trace: session=none requests=1 ledger_rows=0 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True",
             rendered,
@@ -4584,7 +4586,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  stream_issue: request[2]=req-2:1/2", rendered)
         self.assertIn("  action: Generation completed, but stream progress is incomplete (request[2]=req-2:1/2); retry with --stream if you need live token evidence.", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
+        self.assertIn(f"  inspect_first: {output_dir / 'generate_summary.md'}", rendered)
         self.assertLess(rendered.index("  action: "), rendered.index("  diagnosis: "))
+        self.assertLess(rendered.index("  inspect_first: "), rendered.index("  diagnosis: "))
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
         self.assertNotIn("first private prompt", rendered)
@@ -7190,7 +7194,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  stream_issue: request[2]=req-2:1/2", rendered)
         self.assertIn("  action: Inference completed, but stream progress is incomplete (request[2]=req-2:1/2); rerun with --stream if you need live token evidence.", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
+        self.assertIn(f"  inspect_first: {output_dir / 'infer_summary.md'}", rendered)
         self.assertLess(rendered.index("  action: "), rendered.index("  model: "))
+        self.assertLess(rendered.index("  inspect_first: "), rendered.index("  model: "))
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)
