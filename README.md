@@ -93,6 +93,10 @@ limits. Live and summary stream progress use safe request ids or hash prefixes,
 print per-request token/target progress for bounded batch streams, mark missing
 stream slots, print `stream_issue` when a request is missing or incomplete, and
 print `recommended_next` plus `next[...]` lines with safe follow-up commands.
+The `trace` line in human output and the `trace` object in JSON/Markdown give a
+safe troubleshooting summary: session id, request count, accepted ledger rows,
+stream event count, and per-request ids or prompt hashes. It never includes raw
+prompt text, generated text, generated token ids, credentials, or activations.
 Start by reading the `status` line in human output, or `user_status` in JSON and
 Markdown: `completed` means the request finished, `preflight-ready` means submit
 next, `preflight-partial` means run the recommended check first, and `blocked`

@@ -10701,6 +10701,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "or --prompt-texts\n"
             "for a bounded batch; ambiguous mixes are rejected. Reports include\n"
             "output_request.include_output and keep output_request.raw_generated_text_public false.\n\n"
+            "The trace line summarizes session, request count, ledger rows, stream events,\n"
+            "and safe per-request ids or prompt hashes; it never exposes raw prompt text,\n"
+            "generated text, generated token ids, credentials, or activations.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -10864,6 +10867,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Use one prompt source at a time: positional prompt, --prompt-text/--prompt, or\n"
             "--prompt-texts; ambiguous mixes are rejected. Reports include\n"
             "output_request.include_output and keep output_request.raw_generated_text_public false.\n\n"
+            "The trace line summarizes session, request count, ledger rows, stream events,\n"
+            "and safe per-request ids or prompt hashes; it never exposes raw prompt text,\n"
+            "generated text, generated token ids, credentials, or activations.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),
