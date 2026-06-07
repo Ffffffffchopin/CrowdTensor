@@ -1864,6 +1864,29 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, encoded)
         self.assertIn(str(prompt_file), encoded)
 
+    def test_generate_prompt_stdin_next_commands_keep_stdin_source_without_prompt_text(self) -> None:
+        prompt = "Generate stdin prompt stays private"
+        with patch.object(cli.sys, "stdin", io.StringIO(prompt + "\n")):
+            args = cli.parse_args([
+                "generate",
+                "--prompt-stdin",
+                "--coordinator-url",
+                "http://127.0.0.1:8787",
+                "--dry-run",
+                "--skip-live-preflight",
+                "--json",
+            ])
+
+        report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["prompt_stdin"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertTrue(any("--prompt-stdin" in line for line in next_lines))
+        self.assertFalse(any("--prompt-text '<prompt>'" in line for line in next_lines))
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(prompt, encoded)
+
     def test_generate_rejects_empty_prompt_stdin(self) -> None:
         with patch.object(cli.sys, "stdin", io.StringIO("")):
             with self.assertRaises(SystemExit) as raised:
@@ -2051,6 +2074,30 @@ class CrowdTensorCliTests(unittest.TestCase):
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn(prompt, encoded)
         self.assertIn(str(prompt_file), encoded)
+
+    def test_infer_prompt_stdin_next_commands_keep_stdin_source_without_prompt_text(self) -> None:
+        prompt = "Infer stdin prompt stays private"
+        with patch.object(cli.sys, "stdin", io.StringIO(prompt + "\n")):
+            args = cli.parse_args([
+                "infer",
+                "--prompt-stdin",
+                "--mode",
+                "existing",
+                "--coordinator-url",
+                "http://127.0.0.1:8787",
+                "--dry-run",
+                "--skip-live-preflight",
+                "--json",
+            ])
+
+        report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertTrue(any("--prompt-stdin" in line for line in next_lines))
+        self.assertFalse(any("infer '<prompt>'" in line for line in next_lines))
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(prompt, encoded)
 
     def test_generate_rejects_ambiguous_prompt_sources(self) -> None:
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"

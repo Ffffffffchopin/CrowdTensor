@@ -5675,7 +5675,8 @@ def _infer_command_args(
     prompt_texts = str(getattr(args, "prompt_texts", "") or "")
     prompt_file = str(getattr(args, "prompt_file", "") or "")
     prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
-    if include_prompt and not prompt_texts and not prompt_file and not prompt_texts_file:
+    prompt_stdin = bool(getattr(args, "prompt_stdin", False))
+    if include_prompt and not prompt_texts and not prompt_file and not prompt_texts_file and not prompt_stdin:
         command.append(INFER_PROMPT_PLACEHOLDER)
     command.extend(["--mode", resolved_mode])
     output_dir = str(getattr(args, "output_dir", "") or "")
@@ -5685,6 +5686,8 @@ def _infer_command_args(
         command.extend(["--prompt-texts-file", prompt_texts_file])
     elif prompt_file:
         command.extend(["--prompt-file", prompt_file])
+    elif prompt_stdin:
+        command.append("--prompt-stdin")
     elif prompt_texts:
         command.extend(["--prompt-texts", INFER_BATCH_PROMPTS_PLACEHOLDER])
     try:
@@ -6475,6 +6478,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         generate_args = argparse.Namespace(
             prompt_text=args.prompt_text,
             prompt_file=getattr(args, "prompt_file", ""),
+            prompt_stdin=bool(getattr(args, "prompt_stdin", False)),
             prompt_texts=args.prompt_texts,
             prompt_texts_file=getattr(args, "prompt_texts_file", ""),
             prompt_texts_list=list(getattr(args, "prompt_texts_list", []) or []),
@@ -8263,6 +8267,7 @@ def _product_cli_generate_command(
     output_dir: str = "",
     prompt_text: str = "",
     prompt_file: str = "",
+    prompt_stdin: bool = False,
     prompt_texts: str = "",
     prompt_texts_file: str = "",
     swarm_id: str = "default",
@@ -8295,6 +8300,8 @@ def _product_cli_generate_command(
         command.extend(["--prompt-texts-file", prompt_texts_file])
     elif prompt_file:
         command.extend(["--prompt-file", prompt_file])
+    elif prompt_stdin:
+        command.append("--prompt-stdin")
     elif prompt_texts:
         command.extend(["--prompt-texts", prompt_texts])
     elif prompt_text:
@@ -9272,6 +9279,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
     backend = str(session_request.get("backend") or route.get("backend") or "cpu")
     hf_model_id = str(session_request.get("hf_model_id") or route.get("hf_model_id") or "sshleifer/tiny-gpt2")
     output_dir = str(report.get("output_dir") or "") if report.get("output_dir_explicit") else ""
+    prompt_stdin = bool(report.get("prompt_stdin") or session_request.get("prompt_stdin"))
     batch = session_request.get("batch") if isinstance(session_request.get("batch"), dict) else {}
     try:
         request_count = int(batch.get("request_count") or session_request.get("request_count") or 1)
@@ -9335,6 +9343,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         output_dir=output_dir,
         prompt_text=prompt_placeholder,
         prompt_file=str(report.get("prompt_file") or session_request.get("prompt_file") or ""),
+        prompt_stdin=prompt_stdin,
         prompt_texts=prompt_texts_placeholder,
         prompt_texts_file=str(report.get("prompt_texts_file") or session_request.get("prompt_texts_file") or ""),
         swarm_id=swarm_id,
@@ -9363,6 +9372,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 output_dir=output_dir,
                 prompt_text=prompt_placeholder,
                 prompt_file=str(report.get("prompt_file") or session_request.get("prompt_file") or ""),
+                prompt_stdin=prompt_stdin,
                 prompt_texts=prompt_texts_placeholder,
                 prompt_texts_file=str(report.get("prompt_texts_file") or session_request.get("prompt_texts_file") or ""),
                 swarm_id=swarm_id,
@@ -9434,6 +9444,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 output_dir=output_dir,
                 prompt_text=prompt_placeholder,
                 prompt_file=str(report.get("prompt_file") or session_request.get("prompt_file") or ""),
+                prompt_stdin=prompt_stdin,
                 prompt_texts=prompt_texts_placeholder,
                 prompt_texts_file=str(report.get("prompt_texts_file") or session_request.get("prompt_texts_file") or ""),
                 swarm_id=swarm_id,
@@ -9905,6 +9916,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     effective_coordinator_url = str(route.get("coordinator_url") or coordinator_url or "")
     route_ready_code = "real_p2p_generate_route_ready" if p2p_backend == "real" else "p2p_generate_route_ready"
     prompt_file_source = str(getattr(args, "prompt_file", "") or "")
+    prompt_stdin_source = bool(getattr(args, "prompt_stdin", False))
     prompt_texts_file_source = str(getattr(args, "prompt_texts_file", "") or "")
     if args.dry_run:
         report = {
@@ -9917,6 +9929,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "prompt_file": prompt_file_source,
+            "prompt_stdin": prompt_stdin_source,
             "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
@@ -9963,6 +9976,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "prompt_file": prompt_file_source,
+            "prompt_stdin": prompt_stdin_source,
             "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
@@ -9994,6 +10008,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "prompt_file": prompt_file_source,
+            "prompt_stdin": prompt_stdin_source,
             "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
@@ -10011,6 +10026,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "prompt_file": prompt_file_source,
+            "prompt_stdin": prompt_stdin_source,
             "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
@@ -10055,6 +10071,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "prompt_file": prompt_file_source,
+            "prompt_stdin": prompt_stdin_source,
             "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
@@ -10238,6 +10255,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         "output_dir_explicit": output_dir_explicit,
         "session_request": session_request,
         "prompt_file": prompt_file_source,
+        "prompt_stdin": prompt_stdin_source,
         "prompt_texts_file": prompt_texts_file_source,
         "batch": {
             "enabled": batch_enabled,
