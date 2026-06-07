@@ -176,6 +176,12 @@ def artifact_json(payload: dict[str, Any], name: str, fallback: str) -> dict[str
     return loaded if isinstance(loaded, dict) else {}
 
 
+def append_sensitive_artifact_errors(errors: list[str], *, artifact_name: str, text: str) -> None:
+    for fragment in SECRET_FRAGMENTS:
+        if fragment in text:
+            errors.append(f"sensitive_artifact:{artifact_name}:{fragment}")
+
+
 def model_block(model_id: str) -> dict[str, Any]:
     return {
         "expected_hf_model_id": model_id,
@@ -901,6 +907,7 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
     if not markdown:
         errors.append("markdown_artifact_unreadable")
     else:
+        append_sensitive_artifact_errors(errors, artifact_name="public_real_llm_swarm_beta_markdown", text=markdown)
         required_markdown_sections = {
             "## Review": "review",
             "## Operator Action": "operator_action",
@@ -947,6 +954,9 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
                 errors.append("runbook_review_guidance_missing")
                 break
     support = artifact_json(payload, "support_bundle_json", "support_bundle.json")
+    support_text = artifact_text(payload, "support_bundle_json", "support_bundle.json")
+    if support_text:
+        append_sensitive_artifact_errors(errors, artifact_name="support_bundle_json", text=support_text)
     if not support:
         errors.append("support_bundle_unreadable")
     else:

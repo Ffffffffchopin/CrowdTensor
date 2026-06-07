@@ -1829,6 +1829,31 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("support_bundle_operator_action_mismatch", errors)
         self.assertIn("support_bundle_not_completed_mismatch", errors)
 
+    def test_check_validation_rejects_sensitive_markdown_artifact(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+        markdown_path = output_dir / "beta" / "public_real_llm_swarm_beta.md"
+        markdown_path.write_text(
+            markdown_path.read_text(encoding="utf-8") + "\nCROWDTENSOR_ADMIN_TOKEN=leaked\n",
+            encoding="utf-8",
+        )
+
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+
+        self.assertIn("sensitive_artifact:public_real_llm_swarm_beta_markdown:CROWDTENSOR_ADMIN_TOKEN=", errors)
+
+    def test_check_validation_rejects_sensitive_support_bundle_artifact(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+        support_path = output_dir / "beta" / "support_bundle.json"
+        support = json.loads(support_path.read_text(encoding="utf-8"))
+        support["prompt_text"] = "leaked"
+        support_path.write_text(json.dumps(support, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+
+        self.assertIn('sensitive_artifact:support_bundle_json:"prompt_text":', errors)
+
     def test_pack_human_summary_shows_final_status_and_artifacts(self) -> None:
         output_dir = self._tmp_dir()
 
