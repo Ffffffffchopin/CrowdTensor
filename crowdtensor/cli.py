@@ -4202,6 +4202,10 @@ def _infer_summary_from_payload(
     generation = _infer_generation_from_report(payload)
     route = _infer_route_from_report(payload)
     stream = _infer_stream_from_report(payload)
+    stream_progress = _safe_infer_stream_progress(stream)
+    stream_issue = str(stream.get("issue_summary") or "").strip()
+    if not stream_issue and bool(stream.get("enabled") or stream.get("requested")):
+        stream_issue = stream_progress_issue_summary(stream_progress)
     batch = _infer_batch_from_report(payload)
     wait_progress = payload.get("wait_progress") if isinstance(payload.get("wait_progress"), dict) else {}
     local_output = payload.get("local_output") if isinstance(payload.get("local_output"), dict) else {}
@@ -4313,7 +4317,8 @@ def _infer_summary_from_payload(
             "ready": bool(stream.get("stream_generation_ready")),
             "event_count": int(stream.get("event_count") or 0),
             "source": stream.get("source"),
-            "progress": _safe_infer_stream_progress(stream),
+            "progress": stream_progress,
+            "issue_summary": stream_issue,
             "events": _safe_infer_stream_events(stream),
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,

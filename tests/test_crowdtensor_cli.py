@@ -5466,18 +5466,18 @@ class CrowdTensorCliTests(unittest.TestCase):
             "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
             "stream": {
                 "enabled": True,
-                "event_count": 4,
+                "event_count": 3,
                 "source": "admin-session-stream",
-                "stream_generation_ready": True,
+                "stream_generation_ready": False,
                 "progress": {
-                    "stream_progress_complete": True,
+                    "stream_progress_complete": False,
                     "all_token_events_ready": True,
                     "monotonic_progress": False,
-                    "observed_token_counts": [1, 2, 1, 2],
+                    "observed_token_counts": [1, 2, 1],
                     "max_observed_token_count": 2,
                     "target_token_count": 2,
                     "expected_request_count": 2,
-                    "per_request_progress_complete": True,
+                    "per_request_progress_complete": False,
                     "per_request_monotonic_progress": True,
                     "per_request_progress": [
                         {
@@ -5493,15 +5493,16 @@ class CrowdTensorCliTests(unittest.TestCase):
                         {
                             "request_id": "req-2",
                             "prompt_hash": "sha256:p2",
-                            "event_count": 2,
-                            "observed_token_counts": [1, 2],
-                            "max_observed_token_count": 2,
+                            "event_count": 1,
+                            "observed_token_counts": [1],
+                            "max_observed_token_count": 1,
                             "target_token_count": 2,
                             "monotonic_progress": True,
-                            "stream_progress_complete": True,
+                            "stream_progress_complete": False,
                         },
                     ],
                 },
+                "issue_summary": "request[2]=req-2:1/2",
                 "events": [
                     {
                         "schema": "session_stream_event_v1",
@@ -5516,28 +5517,103 @@ class CrowdTensorCliTests(unittest.TestCase):
                     }
                 ],
             },
-            "diagnosis_codes": ["public_swarm_generate_ready", "public_swarm_generate_stream_ready"],
+            "diagnosis_codes": ["public_swarm_generate_ready"],
         }
 
         with patch.object(cli, "build_product_generate", return_value=generate_payload):
             report = cli.build_infer(args)
 
         self.assertTrue(report["ok"], report)
-        self.assertTrue(report["stream"]["ready"])
+        self.assertFalse(report["stream"]["ready"])
+        self.assertEqual(report["stream"]["issue_summary"], "request[2]=req-2:1/2")
         self.assertEqual(report["stream"]["progress"]["expected_request_count"], 2)
         self.assertEqual(
+            cli.stream_progress_issue_summary(report["stream"]["progress"]),
+            "request[2]=req-2:1/2",
+        )
+        self.assertEqual(
             [item["observed_token_counts"] for item in report["stream"]["progress"]["per_request_progress"]],
-            [[1, 2], [1, 2]],
+            [[1, 2], [1]],
         )
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
         self.assertIn("  stream[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
-        self.assertIn("  stream[2]: request=req-2 tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
+        self.assertIn("  stream[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False", rendered)
+        self.assertIn("  stream_issue: request[2]=req-2:1/2", rendered)
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["stream"]["issue_summary"], "request[2]=req-2:1/2")
+        self.assertNotIn("must not leak", json.dumps(persisted, sort_keys=True))
+
+    def test_infer_existing_recomputes_missing_stream_issue_summary(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--admin-token",
+            "admin-secret",
+            "--stream",
+            "--output-dir",
+            str(output_dir),
+        ])
+        generate_payload = {
+            "schema": "public_swarm_product_cli_v1",
+            "ok": True,
+            "mode": "generate",
+            "generation": {
+                "generated_token_count": 2,
+                "max_new_tokens": 2,
+                "generated_text_hash": "sha256:batch",
+                "request_count": 2,
+                "batch_generation_ready": True,
+            },
+            "batch": {"enabled": True, "request_count": 2, "batch_generation_ready": True},
+            "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
+            "stream": {
+                "enabled": True,
+                "event_count": 2,
+                "source": "admin-session-stream",
+                "stream_generation_ready": False,
+                "progress": {
+                    "expected_request_count": 2,
+                    "target_token_count": 2,
+                    "per_request_progress_complete": False,
+                    "per_request_progress": [
+                        {
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:p1",
+                            "event_count": 2,
+                            "observed_token_counts": [1, 2],
+                            "max_observed_token_count": 2,
+                            "target_token_count": 2,
+                            "stream_progress_complete": True,
+                        },
+                    ],
+                },
+            },
+            "diagnosis_codes": ["public_swarm_generate_ready"],
+        }
+
+        with patch.object(cli, "build_product_generate", return_value=generate_payload):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["stream"]["issue_summary"], "missing_requests=1/2 request[2]=missing")
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        self.assertIn("  stream_issue: missing_requests=1/2 request[2]=missing", stdout.getvalue())
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["stream"]["issue_summary"], "missing_requests=1/2 request[2]=missing")
 
     def test_infer_json_suppresses_raw_text_in_returned_payload(self) -> None:
         output_dir = Path(self._tmp_dir())
