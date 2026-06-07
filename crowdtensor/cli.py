@@ -11614,6 +11614,9 @@ def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
 
 def print_public_swarm_live_preview_rc(report: dict[str, Any]) -> None:
     preview = report.get("live_preview") if isinstance(report.get("live_preview"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Public Swarm Live Preview RC")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -11622,6 +11625,12 @@ def print_public_swarm_live_preview_rc(report: dict[str, Any]) -> None:
     print(f"  ready: {preview.get('ready')}")
     print(f"  external_runtime_verified: {preview.get('external_runtime_verified')}")
     print(f"  fresh_live_kaggle_run: {preview.get('fresh_live_kaggle_run')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):

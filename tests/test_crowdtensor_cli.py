@@ -10545,6 +10545,51 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "public_swarm_live_preview_rc_v1")
 
+    def test_print_live_preview_outputs_scope_summary(self) -> None:
+        report = {
+            "schema": "public_swarm_live_preview_rc_v1",
+            "cli_schema": "public_swarm_live_preview_rc_cli_v1",
+            "ok": True,
+            "mode": "local-smoke",
+            "live_preview": {
+                "ready": True,
+                "external_runtime_verified": False,
+                "fresh_live_kaggle_run": False,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "visible_in_terminal": False,
+                "terminal_only": False,
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "output_dir": str(Path(self._tmp_dir())),
+            "diagnosis_codes": ["public_swarm_live_preview_rc_ready"],
+            "artifacts": {},
+        }
+        with patch("builtins.print") as mocked_print:
+            cli.print_public_swarm_live_preview_rc(report)
+
+        rendered = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("output_request: include_output=False", rendered)
+        self.assertIn("answer_scope: state=no-local-answer", rendered)
+        self.assertIn("shareable: saved_artifacts=True", rendered)
+
     def test_operator_preview_wraps_pack_and_redacts_tokens(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []

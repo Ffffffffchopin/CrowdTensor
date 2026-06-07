@@ -297,6 +297,56 @@ def validate_payload(payload: dict[str, Any], *, mode: str) -> list[str]:
             errors.append(f"safety_missing:{key}")
     if safety.get("read_only_workload") != pack.WORKLOAD_TYPE:
         errors.append("safety_workload_mismatch")
+    output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    if output_request.get("include_output") is not False:
+        errors.append("output_request_include_output_mismatch")
+    if output_request.get("raw_prompt_public") is not False:
+        errors.append("output_request_raw_prompt_public_mismatch")
+    if output_request.get("raw_generated_text_public") is not False:
+        errors.append("output_request_raw_generated_text_public_mismatch")
+    if output_request.get("generated_token_ids_public") is not False:
+        errors.append("output_request_generated_token_ids_public_mismatch")
+    if output_request.get("local_output_display_only") is not False:
+        errors.append("output_request_local_output_display_only_mismatch")
+    if output_request.get("public_artifact_safe") is not True:
+        errors.append("output_request_public_artifact_safe_mismatch")
+    answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    if answer_scope.get("scope_state") != "no-local-answer":
+        errors.append("answer_scope_state_mismatch")
+    if answer_scope.get("visible_in_terminal") is not False:
+        errors.append("answer_scope_visible_in_terminal_mismatch")
+    if answer_scope.get("terminal_only") is not False:
+        errors.append("answer_scope_terminal_only_mismatch")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        errors.append("answer_scope_saved_json_display_mismatch")
+    if answer_scope.get("saved_markdown_display") != "hash-only":
+        errors.append("answer_scope_saved_markdown_display_mismatch")
+    if answer_scope.get("raw_prompt_public") is not False:
+        errors.append("answer_scope_raw_prompt_public_mismatch")
+    if answer_scope.get("raw_generated_text_public") is not False:
+        errors.append("answer_scope_raw_generated_text_public_mismatch")
+    if answer_scope.get("generated_token_ids_public") is not False:
+        errors.append("answer_scope_generated_token_ids_public_mismatch")
+    if answer_scope.get("public_artifact_safe") is not True:
+        errors.append("answer_scope_public_artifact_safe_mismatch")
+    shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    for key in [
+        "saved_artifacts_public_safe",
+        "public_artifact_safe",
+    ]:
+        if shareable.get(key) is not True:
+            errors.append(f"shareable_{key}_mismatch")
+    for key in [
+        "raw_prompt_public",
+        "raw_generated_text_public",
+        "generated_token_ids_public",
+        "local_output_display_only",
+        "local_answer_terminal_only",
+    ]:
+        if shareable.get(key) is not False:
+            errors.append(f"shareable_{key}_mismatch")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        errors.append("shareable_answer_scope_state_mismatch")
     artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
     for name in ["public_swarm_live_preview_rc_json", "public_swarm_live_preview_rc_markdown", "support_bundle_json"]:
         artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
