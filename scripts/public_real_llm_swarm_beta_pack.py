@@ -35,6 +35,8 @@ from product_swarm_mvp_check import parse_prompt_texts_arg  # noqa: E402
 
 SCHEMA = "public_real_llm_swarm_beta_v1"
 SUPPORT_SCHEMA = "public_real_llm_swarm_beta_support_bundle_v1"
+ARTIFACT_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_artifact_summary_v1"
+REVIEW_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_review_summary_v1"
 PRODUCT_SCHEMA = "public_swarm_product_beta_v1"
 GPU_SCHEMA = "public_swarm_gpu_inference_beta_v1"
 P2P_SCHEMA = "petals_class_p2p_candidate_v1"
@@ -1536,6 +1538,77 @@ def shareable_summary() -> dict[str, Any]:
     }
 
 
+def artifact_path_summary(report: dict[str, Any], name: str, fallback: str) -> str:
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
+    return str(artifact.get("path") or fallback)
+
+
+def artifact_summary(report: dict[str, Any]) -> dict[str, Any]:
+    shareable_names = [
+        "public_real_llm_swarm_beta_json",
+        "public_real_llm_swarm_beta_markdown",
+        "support_bundle_json",
+    ]
+    shareable_paths = []
+    for name in shareable_names:
+        path = artifact_path_summary(report, name, "")
+        if path:
+            shareable_paths.append(path)
+    return {
+        "schema": ARTIFACT_SUMMARY_SCHEMA,
+        "inspect_first": artifact_path_summary(report, "public_real_llm_swarm_beta_markdown", "public_real_llm_swarm_beta.md"),
+        "machine_readable": artifact_path_summary(report, "public_real_llm_swarm_beta_json", "public_real_llm_swarm_beta.json"),
+        "support_bundle": artifact_path_summary(report, "support_bundle_json", "support_bundle.json"),
+        "runbook": artifact_path_summary(report, "runbook", "PUBLIC_REAL_LLM_SWARM_BETA.md"),
+        "shareable_artifacts": shareable_names,
+        "shareable_paths": shareable_paths,
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": "Review the Markdown first, use the JSON for automation, and attach the support bundle for diagnostics.",
+    }
+
+
+def review_summary(report: dict[str, Any]) -> dict[str, Any]:
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    not_completed = [str(item) for item in (report.get("not_completed") if isinstance(report.get("not_completed"), list) else [])]
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else artifact_summary(report)
+    ready = bool(report.get("ok") is True and beta.get("ready") is True and not not_completed)
+    next_step = "share_public_artifacts" if ready else ("review_not_completed" if not_completed else "review_diagnostics")
+    operator_action = [
+        str(item)
+        for item in (report.get("operator_action") if isinstance(report.get("operator_action"), list) else [])
+    ]
+    return {
+        "schema": REVIEW_SUMMARY_SCHEMA,
+        "state": "ready" if ready else "blocked",
+        "ready": ready,
+        "next_step": next_step,
+        "inspect_first": artifacts.get("inspect_first"),
+        "machine_readable": artifacts.get("machine_readable"),
+        "support_bundle": artifacts.get("support_bundle"),
+        "shareable_paths": artifacts.get("shareable_paths") or [],
+        "not_completed_count": len(not_completed),
+        "not_completed_preview": not_completed[:8],
+        "operator_action_preview": operator_action[:3],
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": (
+            "Ready: share the public Markdown, public JSON, and support bundle."
+            if ready
+            else (
+                "Blocked: review the Not Completed section, then rerun the Beta check after fixing the missing evidence."
+                if not_completed
+                else "Blocked: review diagnosis codes and safety errors, then rerun the Beta check after fixing the issue."
+            )
+        ),
+    }
+
+
 def output_request_text(summary: dict[str, Any]) -> str:
     return (
         f"include_output={bool(summary.get('include_output'))} "
@@ -2316,9 +2389,12 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
 def render_markdown(report: dict[str, Any]) -> str:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    artifact_overview = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    shareable_paths = artifact_overview.get("shareable_paths") if isinstance(artifact_overview.get("shareable_paths"), list) else []
     lines = [
         "# CrowdTensor Public Real-LLM Swarm Inference Beta v1",
         "",
@@ -2329,6 +2405,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- workload: `{beta.get('workload_type')}`",
         f"- model: `{beta.get('hf_model_id')}`",
         f"- output_dir: `{report.get('output_dir')}`",
+        "",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- support bundle: `{review.get('support_bundle')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
         "",
         "## Readiness",
         "",
@@ -2346,6 +2430,19 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
+        "",
+        "## Artifacts",
+        "",
+        f"- inspect first: `{artifact_overview.get('inspect_first')}`",
+        f"- machine readable: `{artifact_overview.get('machine_readable')}`",
+        f"- support bundle: `{artifact_overview.get('support_bundle')}`",
+        f"- runbook: `{artifact_overview.get('runbook')}`",
+    ])
+    if shareable_paths:
+        lines.extend(f"- shareable path: `{path}`" for path in shareable_paths)
+    else:
+        lines.append("- shareable path: `none`")
+    lines.extend([
         "",
         "## Diagnosis",
         "",
@@ -2380,6 +2477,7 @@ def print_human_summary(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
     print("CrowdTensor Public Real-LLM Swarm Inference Beta")
     print(f"  ok: {report.get('ok')}")
@@ -2398,6 +2496,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
     print(f"  stream ready: product={product_stream.get('stream_generation_ready')} p2p={beta.get('p2p_stream_ready')} v2={beta.get('public_swarm_v2_stream_ready')}")
     print(f"  kv_cache_ready: {beta.get('kv_cache_ready')}")
     print(f"  kv_cache hits: stage0={stage0.get('hit_count')} stage1={stage1.get('hit_count')}")
+    if review:
+        print(f"  review: state={review.get('state')} next_step={review.get('next_step')} inspect_first={review.get('inspect_first')}")
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -2507,6 +2607,26 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "path": "public_real_llm_swarm_beta.md",
         "present": True,
     })
+    artifacts.setdefault("support_bundle_json", {
+        "kind": "public_real_llm_swarm_beta_support_bundle",
+        "path": "support_bundle.json",
+        "present": True,
+        "schema": SUPPORT_SCHEMA,
+        "ok": report.get("ok"),
+    })
+    report["artifact_summary"] = artifact_summary(report)
+    report["review_summary"] = review_summary(report)
+    errors = validate_public_report(report)
+    if errors:
+        report["ok"] = False
+        report["diagnosis_codes"] = sorted(set(report.get("diagnosis_codes") or []) | {"public_report_safety_failed"})
+        report["safety_errors"] = errors
+        if isinstance(report.get("beta"), dict):
+            report["beta"]["ready"] = False
+        report["artifacts"]["public_real_llm_swarm_beta_json"]["ok"] = False
+        report["artifacts"]["support_bundle_json"]["ok"] = False
+        report["artifact_summary"] = artifact_summary(report)
+        report["review_summary"] = review_summary(report)
     write_json(output_dir / "public_real_llm_swarm_beta.json", report)
     (output_dir / "public_real_llm_swarm_beta.md").write_text(render_markdown(report), encoding="utf-8")
     bundle = support_bundle.sanitize({
@@ -2515,6 +2635,8 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "diagnosis_codes": report.get("diagnosis_codes"),
         "beta": report.get("beta"),
         "readiness": report.get("readiness"),
+        "artifact_summary": report.get("artifact_summary"),
+        "review_summary": report.get("review_summary"),
         "output_request": report.get("output_request"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
@@ -2522,13 +2644,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "limitations": report.get("limitations"),
     })
     write_json(output_dir / "support_bundle.json", bundle)
-    report["artifacts"]["support_bundle_json"] = {
-        "kind": "public_real_llm_swarm_beta_support_bundle",
-        "path": "support_bundle.json",
-        "present": True,
-        "schema": SUPPORT_SCHEMA,
-        "ok": bundle.get("ok"),
-    }
+    report["artifacts"]["support_bundle_json"]["ok"] = bundle.get("ok")
     write_json(output_dir / "public_real_llm_swarm_beta.json", report)
     return report
 

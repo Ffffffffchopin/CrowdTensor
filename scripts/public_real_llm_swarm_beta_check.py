@@ -785,6 +785,59 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         errors.append("shareable_local_answer_terminal_only_mismatch")
     if shareable.get("public_artifact_safe") is not True:
         errors.append("shareable_public_artifact_safe_mismatch")
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    if artifact_summary.get("schema") != pack.ARTIFACT_SUMMARY_SCHEMA:
+        errors.append("artifact_summary_schema_mismatch")
+    if artifact_summary.get("inspect_first") != "public_real_llm_swarm_beta.md":
+        errors.append("artifact_summary_inspect_first_mismatch")
+    if artifact_summary.get("machine_readable") != "public_real_llm_swarm_beta.json":
+        errors.append("artifact_summary_machine_readable_mismatch")
+    if artifact_summary.get("support_bundle") != "support_bundle.json":
+        errors.append("artifact_summary_support_bundle_mismatch")
+    if artifact_summary.get("runbook") != "PUBLIC_REAL_LLM_SWARM_BETA.md":
+        errors.append("artifact_summary_runbook_mismatch")
+    expected_shareable_paths = [
+        "public_real_llm_swarm_beta.json",
+        "public_real_llm_swarm_beta.md",
+        "support_bundle.json",
+    ]
+    if artifact_summary.get("shareable_paths") != expected_shareable_paths:
+        errors.append("artifact_summary_shareable_paths_mismatch")
+    if artifact_summary.get("public_artifact_safe") is not True:
+        errors.append("artifact_summary_public_artifact_safe_mismatch")
+    if artifact_summary.get("raw_prompt_public") is not False:
+        errors.append("artifact_summary_raw_prompt_public_mismatch")
+    if artifact_summary.get("raw_generated_text_public") is not False:
+        errors.append("artifact_summary_raw_generated_text_public_mismatch")
+    if artifact_summary.get("generated_token_ids_public") is not False:
+        errors.append("artifact_summary_generated_token_ids_public_mismatch")
+    review_summary = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    not_completed = payload.get("not_completed") if isinstance(payload.get("not_completed"), list) else []
+    if review_summary.get("schema") != pack.REVIEW_SUMMARY_SCHEMA:
+        errors.append("review_summary_schema_mismatch")
+    if review_summary.get("inspect_first") != artifact_summary.get("inspect_first"):
+        errors.append("review_summary_inspect_first_mismatch")
+    if review_summary.get("machine_readable") != artifact_summary.get("machine_readable"):
+        errors.append("review_summary_machine_readable_mismatch")
+    if review_summary.get("support_bundle") != artifact_summary.get("support_bundle"):
+        errors.append("review_summary_support_bundle_mismatch")
+    if review_summary.get("shareable_paths") != expected_shareable_paths:
+        errors.append("review_summary_shareable_paths_mismatch")
+    if review_summary.get("not_completed_count") != len(not_completed):
+        errors.append("review_summary_not_completed_count_mismatch")
+    if payload.get("ok") is True and beta.get("ready") is True and not not_completed:
+        if review_summary.get("state") != "ready" or review_summary.get("ready") is not True:
+            errors.append("review_summary_ready_state_mismatch")
+        if review_summary.get("next_step") != "share_public_artifacts":
+            errors.append("review_summary_next_step_mismatch")
+    if review_summary.get("public_artifact_safe") is not True:
+        errors.append("review_summary_public_artifact_safe_mismatch")
+    if review_summary.get("raw_prompt_public") is not False:
+        errors.append("review_summary_raw_prompt_public_mismatch")
+    if review_summary.get("raw_generated_text_public") is not False:
+        errors.append("review_summary_raw_generated_text_public_mismatch")
+    if review_summary.get("generated_token_ids_public") is not False:
+        errors.append("review_summary_generated_token_ids_public_mismatch")
     artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
     required_artifacts = [
         "public_real_llm_swarm_beta_json",
