@@ -1766,6 +1766,18 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("inspect_first", result["operator_action"])
         self.assertIn("support_bundle", result["operator_action"])
         self.assertIn("check_json", result["operator_action"])
+        self.assertFalse(result["output_request"]["include_output"])
+        self.assertFalse(result["output_request"]["raw_prompt_public"])
+        self.assertFalse(result["output_request"]["raw_generated_text_public"])
+        self.assertFalse(result["output_request"]["generated_token_ids_public"])
+        self.assertTrue(result["output_request"]["public_artifact_safe"])
+        self.assertEqual(result["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(result["answer_scope"]["saved_json_display"], "validation-only")
+        self.assertTrue(result["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(result["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(result["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(result["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(result["shareable_summary"]["generated_token_ids_public"])
         report_path = output_dir / "beta" / "public_real_llm_swarm_beta.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertEqual(report["beta"]["max_new_tokens"], 16)
@@ -1800,6 +1812,11 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         persisted_check = json.loads((output_dir / "public_real_llm_swarm_beta_check.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted_check["review_summary"]["next_step"], "review_checked_artifacts")
         self.assertTrue(persisted_check["artifact_summary"]["check_json"].endswith("public_real_llm_swarm_beta_check.json"))
+        encoded_check = json.dumps(persisted_check, sort_keys=True)
+        self.assertNotIn('"prompt_text":', encoded_check)
+        self.assertNotIn('"generated_text":', encoded_check)
+        self.assertNotIn('"generated_token_ids":', encoded_check)
+        self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN=", encoded_check)
 
     def test_check_validation_requires_markdown_operator_actions(self) -> None:
         output_dir = self._tmp_dir()
@@ -1944,6 +1961,15 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("errors=0", output)
         self.assertIn("  artifacts: inspect=", output)
         self.assertIn("check=", output)
+        self.assertIn(
+            "  output_request: include_output=False raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn("  answer_scope: state=no-local-answer saved_json=validation-only public_artifact_safe=True", output)
+        self.assertIn(
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer",
+            output,
+        )
         self.assertIn("  action: Open inspect_first for the checked Markdown", output)
         self.assertIn("check_json for the validation record", output)
         self.assertIn("  diagnosis: public_real_llm_swarm_beta_check_ready", output)
@@ -2012,6 +2038,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         result["artifact_summary"] = check.check_artifact_summary(result)
         result["review_summary"] = check.check_review_summary(result)
         result["operator_action"] = result["review_summary"]["operator_action"]
+        result["output_request"] = check.check_output_request_summary()
+        result["answer_scope"] = check.check_answer_scope_summary()
+        result["shareable_summary"] = check.check_shareable_summary()
 
         self.assertFalse(result["ok"], result)
         self.assertIn("public_real_llm_swarm_beta_check_blocked", result["diagnosis_codes"])
@@ -2029,6 +2058,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("Public Real-LLM Swarm Beta check ready: False", output)
         self.assertIn("  review: state=blocked next=fix_validation_errors", output)
+        self.assertIn("  output_request: include_output=", output)
+        self.assertIn("  answer_scope: state=", output)
+        self.assertIn("  shareable: saved_artifacts=", output)
         self.assertIn("  errors:", output)
         self.assertIn("    - beta_token_target_below_16", output)
 

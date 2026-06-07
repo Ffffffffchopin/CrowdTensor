@@ -1179,6 +1179,64 @@ def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def check_output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": "The check artifact records validation status and paths only; raw prompts, generated text, and token ids are excluded.",
+    }
+
+
+def check_answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "validation-only",
+        "public_artifact_safe": True,
+        "summary": "The check JSON is a validation record, not an answer transcript.",
+    }
+
+
+def check_shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "answer_scope_state": "no-local-answer",
+        "summary": "Share the checked Beta JSON/Markdown, support bundle, and this check JSON; keep private env and runtime state local.",
+    }
+
+
+def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
+    checked = {
+        key: result.get(key)
+        for key in [
+            "schema",
+            "ok",
+            "mode",
+            "max_new_tokens",
+            "output_dir",
+            "beta_schema",
+            "beta_ok",
+            "diagnosis_codes",
+            "artifacts",
+            "artifact_summary",
+            "review_summary",
+            "operator_action",
+            "output_request",
+            "answer_scope",
+            "shareable_summary",
+        ]
+    }
+    encoded = json.dumps(checked, sort_keys=True)
+    return [f"sensitive_check_json:{fragment}" for fragment in SECRET_FRAGMENTS if fragment in encoded]
+
+
 def run_check(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir) if args.output_dir else Path(tempfile.mkdtemp(prefix="crowdtensor_public_real_llm_beta_check_"))
     if args.mode == pack.MODE_LOCAL_MODEL_VARIANT:
@@ -1214,6 +1272,16 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
     result["artifact_summary"] = check_artifact_summary(result)
     result["review_summary"] = check_review_summary(result)
     result["operator_action"] = result["review_summary"]["operator_action"]
+    result["output_request"] = check_output_request_summary()
+    result["answer_scope"] = check_answer_scope_summary()
+    result["shareable_summary"] = check_shareable_summary()
+    check_json_errors = sensitive_check_json_errors(result)
+    if check_json_errors:
+        result["ok"] = False
+        result["errors"] = list(result.get("errors") or []) + check_json_errors
+        result["diagnosis_codes"] = ["public_real_llm_swarm_beta_check_blocked"]
+        result["review_summary"] = check_review_summary(result)
+        result["operator_action"] = result["review_summary"]["operator_action"]
     write(output_dir / "public_real_llm_swarm_beta_check.json", json.dumps(result, indent=2, sort_keys=True) + "\n")
     return result
 
@@ -1221,6 +1289,9 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
 def print_human_summary(result: dict[str, Any]) -> None:
     review = result.get("review_summary") if isinstance(result.get("review_summary"), dict) else {}
     artifact_summary = result.get("artifact_summary") if isinstance(result.get("artifact_summary"), dict) else {}
+    output_request = result.get("output_request") if isinstance(result.get("output_request"), dict) else {}
+    answer_scope = result.get("answer_scope") if isinstance(result.get("answer_scope"), dict) else {}
+    shareable = result.get("shareable_summary") if isinstance(result.get("shareable_summary"), dict) else {}
     print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
     print(f"  mode: {result.get('mode')}")
     print(f"  max_new_tokens: {result.get('max_new_tokens')}")
@@ -1240,6 +1311,31 @@ def print_human_summary(result: dict[str, Any]) -> None:
             f"json={artifact_summary.get('machine_readable')} "
             f"support={artifact_summary.get('support_bundle')} "
             f"check={artifact_summary.get('check_json')}"
+        )
+    if output_request:
+        print(
+            "  output_request: "
+            f"include_output={output_request.get('include_output')} "
+            f"raw_prompt_public={output_request.get('raw_prompt_public')} "
+            f"raw_generated_text_public={output_request.get('raw_generated_text_public')} "
+            f"generated_token_ids_public={output_request.get('generated_token_ids_public')} "
+            f"public_artifact_safe={output_request.get('public_artifact_safe')}"
+        )
+    if answer_scope:
+        print(
+            "  answer_scope: "
+            f"state={answer_scope.get('scope_state')} "
+            f"saved_json={answer_scope.get('saved_json_display')} "
+            f"public_artifact_safe={answer_scope.get('public_artifact_safe')}"
+        )
+    if shareable:
+        print(
+            "  shareable: "
+            f"saved_artifacts={shareable.get('saved_artifacts_public_safe')} "
+            f"raw_prompt_public={shareable.get('raw_prompt_public')} "
+            f"raw_generated_text_public={shareable.get('raw_generated_text_public')} "
+            f"generated_token_ids_public={shareable.get('generated_token_ids_public')} "
+            f"answer_scope_state={shareable.get('answer_scope_state')}"
         )
     if result.get("operator_action"):
         print(f"  action: {result.get('operator_action')}")
