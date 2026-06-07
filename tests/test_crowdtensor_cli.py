@@ -4467,7 +4467,6 @@ class CrowdTensorCliTests(unittest.TestCase):
             with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
                 cli.main([
                     "infer",
-                    prompt,
                     "--prompt-texts",
                     prompt_texts,
                     "--mode",
@@ -5301,7 +5300,6 @@ class CrowdTensorCliTests(unittest.TestCase):
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
             "infer",
-            "first private prompt",
             "--mode",
             "existing",
             "--coordinator-url",
@@ -5336,6 +5334,19 @@ class CrowdTensorCliTests(unittest.TestCase):
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
+
+    def test_infer_rejects_ambiguous_prompt_sources(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args([
+                "infer",
+                "positional prompt",
+                "--prompt-texts",
+                "first prompt,second prompt",
+            ])
+        self.assertEqual(
+            str(raised.exception),
+            "infer accepts one prompt source: positional prompt or --prompt-texts",
+        )
 
     def test_infer_existing_dry_run_with_observer_token_blocks_missing_stage_state(self) -> None:
         output_dir = Path(self._tmp_dir())

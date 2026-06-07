@@ -9476,7 +9476,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    infer.add_argument("prompt_text", nargs="?", default="CrowdTensor routes small models across home compute")
+    infer.add_argument("prompt_text", nargs="?", default=None)
     infer.add_argument("--mode", dest="infer_mode", choices=["local", "existing"], default="local")
     infer.add_argument("--output-dir", default="dist/infer")
     infer.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
@@ -11456,6 +11456,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if hasattr(args, "timeout_seconds") and args.timeout_seconds < 1:
             raise SystemExit("--timeout-seconds must be at least 1")
     if args.command == "infer":
+        if args.prompt_text and args.prompt_texts:
+            raise SystemExit("infer accepts one prompt source: positional prompt or --prompt-texts")
+        if args.prompt_text is None:
+            args.prompt_text = "CrowdTensor routes small models across home compute" if not args.prompt_texts else ""
         try:
             parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
         except ValueError as exc:
