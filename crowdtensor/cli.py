@@ -779,6 +779,17 @@ def review_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def review_next_command_text(summary: dict[str, Any]) -> str:
+    requires_env = summary.get("requires_env") if isinstance(summary.get("requires_env"), list) else []
+    suffix = f" requires={','.join(str(name) for name in requires_env)}" if requires_env else ""
+    return (
+        f"label={summary.get('recommended_label') or 'none'} "
+        f"reason={summary.get('recommended_reason') or 'none'} "
+        f"command={summary.get('next_command') or 'none'}"
+        f"{suffix}"
+    )
+
+
 def infer_user_status_text(status: dict[str, Any]) -> str:
     return (
         f"{status.get('state') or 'unknown'}: "
@@ -4123,6 +4134,9 @@ def _review_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[st
         "next_step": user_status.get("next_step") or issue_summary.get("next_step") or "none",
         "recommended_label": recommended_label,
         "recommended_reason": recommended.get("reason") or "",
+        "next_command": recommended.get("command_line") or "",
+        "source_index": recommended.get("source_index"),
+        "requires_env": recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else [],
         "primary_code": issue_summary.get("primary_code") or "",
         "attention": attention,
         "inspect_first": artifact_summary.get("inspect_first") or "",
@@ -4917,6 +4931,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Mode: `{summary.get('mode')}`",
         f"- Status: `{infer_user_status_text(user_status)}`",
         f"- Review: `{review_summary_text(review_summary)}`",
+        f"- Review next: `{review_next_command_text(review_summary)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         f"- Model: `{model.get('hf_model_id')}` backend=`{model.get('backend')}`",
@@ -7923,6 +7938,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Dry run: `{bool(summary.get('dry_run'))}`",
         f"- Status: `{infer_user_status_text(user_status)}`",
         f"- Review: `{review_summary_text(review_summary)}`",
+        f"- Review next: `{review_next_command_text(review_summary)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         (
@@ -9082,6 +9098,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
     review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
+        print(f"  review_next: {review_next_command_text(review_summary)}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
@@ -9309,6 +9326,7 @@ def print_infer(report: dict[str, Any]) -> None:
     review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
+        print(f"  review_next: {review_next_command_text(review_summary)}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
@@ -10947,7 +10965,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "redacted JSON/Markdown artifact paths without exposing prompts or generated text.\n\n"
             "Start with the review/review_summary line: it combines state, next step, first\n"
             "artifact to inspect, recommended command label, primary diagnosis code, and\n"
-            "attention warnings such as incomplete stream evidence.\n\n"
+            "attention warnings such as incomplete stream evidence. The review_next line\n"
+            "keeps the safe recommended command next to that first-screen summary.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -11120,7 +11139,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "redacted JSON/Markdown artifact paths without exposing prompts or generated text.\n\n"
             "Start with the review/review_summary line: it combines state, next step, first\n"
             "artifact to inspect, recommended command label, primary diagnosis code, and\n"
-            "attention warnings such as incomplete stream evidence.\n\n"
+            "attention warnings such as incomplete stream evidence. The review_next line\n"
+            "keeps the safe recommended command next to that first-screen summary.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),
