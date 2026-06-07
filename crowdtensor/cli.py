@@ -793,14 +793,14 @@ def print_local_output_block(report: dict[str, Any]) -> bool:
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
     has_output = bool(local_output.get("generated_text") or outputs)
-    if has_output:
-        print(f"  local_output: {local_output_text(local_output)}")
     if len(outputs) <= 1 and local_output.get("generated_text"):
         print(f"  answer: {local_output.get('generated_text')}")
     elif outputs:
         for index, item in enumerate(outputs, start=1):
             if isinstance(item, dict) and item.get("generated_text"):
                 print(f"  answer[{index}]: {item.get('generated_text')}")
+    if has_output:
+        print(f"  local_output: {local_output_text(local_output)}")
     return has_output
 
 
