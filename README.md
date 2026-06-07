@@ -109,7 +109,9 @@ Start by reading the `review` line, or JSON/Markdown `review_summary`: it
 combines the current state, next step, first artifact to inspect, recommended
 command label, primary diagnosis code, and an `attention` value for warnings
 such as incomplete stream evidence. The adjacent `review_next` line repeats the
-safe recommended command near that summary. Then use the `status` line or
+safe recommended command near that summary; human terminal output renders it
+with your current local prompt for copying, while JSON/Markdown artifacts keep
+prompt placeholders. Then use the `status` line or
 `user_status` for detail: `completed` means the request finished,
 `preflight-ready` means submit next, `preflight-partial` means run the
 recommended check first, and `blocked` means follow `action` /

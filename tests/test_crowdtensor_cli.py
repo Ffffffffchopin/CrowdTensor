@@ -186,6 +186,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("attention warnings such as incomplete stream evidence", rendered)
         self.assertIn("review_next line", rendered)
         self.assertIn("safe recommended command", rendered)
+        self.assertIn("terminal output renders your local prompt for copying", rendered)
+        self.assertIn("saved artifacts", rendered)
+        self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("existing mode only: check route/session readiness", rendered)
         self.assertIn("mutually exclusive with positional", rendered)
         self.assertIn("prompt and --prompt-texts", rendered)
@@ -232,6 +235,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("attention warnings such as incomplete stream evidence", rendered)
         self.assertIn("review_next line", rendered)
         self.assertIn("safe recommended command", rendered)
+        self.assertIn("terminal output renders your local prompt for copying", rendered)
+        self.assertIn("saved artifacts", rendered)
+        self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("redacted detail is available", rendered)
         self.assertIn("check route/session readiness without submitting a", rendered)
         self.assertIn("generation task", rendered)
@@ -567,6 +573,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("`attention` value for warnings", rendered)
             self.assertIn("`review_next` line", rendered)
             self.assertIn("safe recommended command", rendered)
+            self.assertIn("human terminal output renders it", rendered)
+            self.assertIn("with your current local prompt for copying", rendered)
+            self.assertIn("JSON/Markdown artifacts keep", rendered)
+            self.assertIn("prompt placeholders", rendered)
             self.assertIn("first Markdown summary to inspect", rendered)
             self.assertIn("accepted ledger rows", rendered)
             self.assertIn("primary diagnosis code", rendered)
@@ -1020,6 +1030,14 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "reason": "verify_stage_miners",
                     "source_index": 1,
                 },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check generation route",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run",
+                    "public_artifact_safe": True,
+                },
             }
 
         stdout = io.StringIO()
@@ -1036,6 +1054,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(
+            f"review_next: label=check generation route reason=verify_stage_miners command=crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run",
+            rendered,
+        )
         self.assertIn(
             f"recommended_next: check generation route reason=verify_stage_miners crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run",
             rendered,
@@ -1092,6 +1114,14 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "reason": "verify_stage_miners",
                     "source_index": 1,
                 },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check generation route",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --prompt-texts '<prompt-1>,<prompt-2>' --dry-run",
+                    "public_artifact_safe": True,
+                },
             }
 
         stdout = io.StringIO()
@@ -1108,6 +1138,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(
+            f"review_next: label=check generation route reason=verify_stage_miners command=crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-texts '{prompts}' --dry-run",
+            rendered,
+        )
         self.assertIn(f"recommended_next: check generation route reason=verify_stage_miners crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-texts '{prompts}' --dry-run", rendered)
         self.assertIn(f"--prompt-texts '{prompts}' --dry-run", rendered)
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
@@ -6125,6 +6159,14 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "reason": "verify_stage_miners",
                     "source_index": 1,
                 },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check existing swarm",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": f"crowdtensor infer '<prompt>' --mode existing --output-dir {output_dir} --dry-run",
+                    "public_artifact_safe": True,
+                },
                 "diagnosis_codes": ["crowdtensor_infer_ready"],
             }
 
@@ -6146,6 +6188,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(f"review_next: label=check existing swarm reason=verify_stage_miners command=crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertIn(f"recommended_next: check existing swarm reason=verify_stage_miners crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertIn(f"next[1] check existing swarm: crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
@@ -6207,6 +6250,14 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "reason": "verify_stage_miners",
                     "source_index": 1,
                 },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check existing swarm",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": f"crowdtensor infer '<prompt>' --mode existing --output-dir {output_dir} --prompt-text '<prompt>' --prompt-texts '<prompt-1>,<prompt-2>' --dry-run",
+                    "public_artifact_safe": True,
+                },
                 "diagnosis_codes": ["crowdtensor_infer_ready"],
             }
 
@@ -6229,6 +6280,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(
+            f"review_next: label=check existing swarm reason=verify_stage_miners command=crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '{prompt_texts}' --dry-run",
+            rendered,
+        )
         self.assertIn(
             f"recommended_next: check existing swarm reason=verify_stage_miners crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '{prompt_texts}' --dry-run",
             rendered,

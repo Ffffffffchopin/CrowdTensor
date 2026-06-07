@@ -790,6 +790,25 @@ def review_next_command_text(summary: dict[str, Any]) -> str:
     )
 
 
+def display_review_summary(
+    report: dict[str, Any],
+    command_line_renderer: Callable[[dict[str, Any], dict[str, Any]], str],
+) -> dict[str, Any]:
+    summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    if not summary:
+        return {}
+    local_prompt_present = bool(report.get("local_prompt_text") or report.get("local_prompt_texts"))
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    if not local_prompt_present or not recommended.get("command_line"):
+        return summary
+    rendered = command_line_renderer(recommended, report)
+    if not rendered:
+        return summary
+    display_summary = dict(summary)
+    display_summary["next_command"] = human_next_command_line(recommended, rendered)
+    return display_summary
+
+
 def infer_user_status_text(status: dict[str, Any]) -> str:
     return (
         f"{status.get('state') or 'unknown'}: "
@@ -9095,7 +9114,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     if user_status:
         print(f"  status: {infer_user_status_text(user_status)}")
-    review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    review_summary = display_review_summary(report, local_generate_command_line)
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
@@ -9323,7 +9342,7 @@ def print_infer(report: dict[str, Any]) -> None:
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     if user_status:
         print(f"  status: {infer_user_status_text(user_status)}")
-    review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    review_summary = display_review_summary(report, local_infer_command_line)
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
@@ -10966,7 +10985,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Start with the review/review_summary line: it combines state, next step, first\n"
             "artifact to inspect, recommended command label, primary diagnosis code, and\n"
             "attention warnings such as incomplete stream evidence. The review_next line\n"
-            "keeps the safe recommended command next to that first-screen summary.\n\n"
+            "keeps the safe recommended command next to that first-screen summary; human\n"
+            "terminal output renders your local prompt for copying, while saved artifacts\n"
+            "keep prompt placeholders.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -11140,7 +11161,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Start with the review/review_summary line: it combines state, next step, first\n"
             "artifact to inspect, recommended command label, primary diagnosis code, and\n"
             "attention warnings such as incomplete stream evidence. The review_next line\n"
-            "keeps the safe recommended command next to that first-screen summary.\n\n"
+            "keeps the safe recommended command next to that first-screen summary; human\n"
+            "terminal output renders your local prompt for copying, while saved artifacts\n"
+            "keep prompt placeholders.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),
