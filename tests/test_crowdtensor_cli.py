@@ -986,6 +986,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["shareable_summary"]["saved_artifacts_public_safe"])
         self.assertFalse(persisted["shareable_summary"]["raw_prompt_public"])
         self.assertNotIn("CrowdTensor prompt", json.dumps(persisted, sort_keys=True))
+        self.assertFalse(persisted["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(persisted["answer_scope"]["terminal_only"])
+        self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_NO_ANSWER_SCOPE_TEXT)
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("# CrowdTensor Generate Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
@@ -1006,7 +1009,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("- Requires env: `CROWDTENSOR_OBSERVER_TOKEN`", markdown)
         self.assertIn("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.", markdown)
-        self.assertIn(f"- Safety: saved Markdown keeps prompt placeholders and redacted generated output. {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Safety: saved Markdown keeps prompt placeholders and redacted generated output. {cli.SAVED_NO_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Answer scope note: {cli.SAVED_NO_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertNotIn("rerun without --json for local display", markdown)
         self.assertIn("## Details", markdown)
         self.assertIn(
             "- Status: `preflight-partial: Request shape is valid, but live readiness was skipped. next=run_live_preflight recommendation=check generation route public_artifact_safe=True`",
@@ -3324,7 +3329,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["answer_scope"]["saved_json_display"], "hash-only")
         self.assertEqual(persisted["answer_scope"]["saved_markdown_display"], "hash-only")
         self.assertTrue(persisted["answer_scope"]["public_artifact_safe"])
-        self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
+        self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_TERMINAL_ANSWER_SCOPE_TEXT)
         self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Result: `status=complete tokens=2/2 outputs=1 display=hash-only", markdown)
@@ -3340,7 +3345,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Answer scope: `terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True`",
             markdown,
         )
-        self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Answer scope note: {cli.SAVED_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertNotIn("rerun without --json for local display", markdown)
         self.assertIn(
             "- Local output note: Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only.",
             markdown,
@@ -6527,7 +6533,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["answer_scope"]["saved_json_display"], "hash-only")
         self.assertEqual(persisted["answer_scope"]["saved_markdown_display"], "hash-only")
         self.assertTrue(persisted["answer_scope"]["public_artifact_safe"])
-        self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
+        self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_TERMINAL_ANSWER_SCOPE_TEXT)
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Model: `sshleifer/tiny-gpt2` backend=`cpu`", markdown)
         self.assertIn("- Prompt: `count=1 hash=", markdown)
@@ -6546,7 +6552,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Answer scope: `terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True`",
             markdown,
         )
-        self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Answer scope note: {cli.SAVED_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertNotIn("rerun without --json for local display", markdown)
         self.assertIn(
             "- Local output note: Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
             markdown,
@@ -6841,7 +6848,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("- Requires env: `CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.", markdown)
-        self.assertIn(f"- Safety: saved Markdown keeps prompt placeholders and redacted generated output. {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Safety: saved Markdown keeps prompt placeholders and redacted generated output. {cli.SAVED_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
         self.assertIn("## Details", markdown)
         self.assertIn(
             "- Status: `completed: Inference completed. next=rerun_or_review_artifacts recommendation=submit inference public_artifact_safe=True`",

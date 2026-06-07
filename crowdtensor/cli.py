@@ -889,6 +889,8 @@ def print_answer_text(label: str, text: Any) -> None:
 
 LOCAL_ANSWER_SCOPE_TEXT = "terminal-only; saved JSON/Markdown keep hashes/redacted generated text."
 SAVED_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; rerun without --json for local display."
+SAVED_NO_ANSWER_SCOPE_TEXT = "no local answer text was available in this run; saved JSON/Markdown contain no generated text."
+SAVED_TERMINAL_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; the answer was shown only in local human output."
 
 
 def print_local_output_block(report: dict[str, Any]) -> bool:
@@ -4395,6 +4397,12 @@ def _answer_scope_from_report(report: dict[str, Any]) -> dict[str, Any]:
         local_output.get("generated_text")
         or any(isinstance(item, dict) and item.get("generated_text") for item in outputs)
     )
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    local_output_note = str(report.get("local_output_note") or local_output.get("note") or "")
+    json_suppressed = (
+        bool(output_request.get("include_output"))
+        and "suppressed in JSON/public output" in local_output_note
+    )
     return {
         "terminal_only": visible_in_terminal,
         "visible_in_terminal": visible_in_terminal,
@@ -4404,7 +4412,11 @@ def _answer_scope_from_report(report: dict[str, Any]) -> dict[str, Any]:
         "raw_generated_text_public": False,
         "generated_token_ids_public": False,
         "public_artifact_safe": True,
-        "summary": LOCAL_ANSWER_SCOPE_TEXT if visible_in_terminal else SAVED_ANSWER_SCOPE_TEXT,
+        "summary": (
+            LOCAL_ANSWER_SCOPE_TEXT
+            if visible_in_terminal
+            else (SAVED_ANSWER_SCOPE_TEXT if json_suppressed else SAVED_NO_ANSWER_SCOPE_TEXT)
+        ),
     }
 
 
@@ -4812,6 +4824,7 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         output_display["generated_token_ids_public"] = False
         output_display["public_artifact_safe"] = True
     answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
+    had_terminal_answer = bool(answer_scope.get("visible_in_terminal"))
     if answer_scope:
         answer_scope["visible_in_terminal"] = False
         answer_scope["terminal_only"] = False
@@ -4821,7 +4834,7 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         answer_scope["raw_generated_text_public"] = False
         answer_scope["generated_token_ids_public"] = False
         answer_scope["public_artifact_safe"] = True
-        answer_scope["summary"] = SAVED_ANSWER_SCOPE_TEXT
+        answer_scope["summary"] = SAVED_TERMINAL_ANSWER_SCOPE_TEXT if had_terminal_answer else SAVED_ANSWER_SCOPE_TEXT
     return summary
 
 
