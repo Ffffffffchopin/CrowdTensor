@@ -313,7 +313,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli._ready_to_submit_action("Generation", {"next_step": "run_live_preflight"}),
         )
         self.assertIn(
-            "inspect ready_to_submit",
+            "run the printed preflight next command",
             cli._ready_to_submit_action("Inference", {"next_step": "submit_with_caution"}),
         )
         self.assertIn(
@@ -836,7 +836,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
         self.assertIn(("GET", "http://127.0.0.1:8787", "/ready"), calls)
         self.assertIn(("GET", "http://127.0.0.1:8787", "/state"), calls)
-        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the generation request.")
+        self.assertEqual(report["operator_action"], "Dry-run is verified; run the printed submit generation next command.")
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
@@ -5188,7 +5188,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         self.assertEqual(
             report["operator_action"],
-            "Inference can be submitted, but stage0/stage1 were not fully verified; rerun --dry-run with --observer-token to check /state before submitting.",
+            "Inference can be submitted, but stage0/stage1 were not fully verified; run the printed stage-preflight next command with --observer-token before the submit next command.",
         )
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -5366,7 +5366,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["ready_to_submit"]["stage_verification"], "ready")
         self.assertEqual(report["ready_to_submit"]["warning_codes"], [])
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
-        self.assertEqual(report["operator_action"], "Rerun without --dry-run to submit the inference request.")
+        self.assertEqual(report["operator_action"], "Dry-run is verified; run the printed submit inference next command.")
         self.assertNotIn("observer-secret", json.dumps(report, sort_keys=True))
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

@@ -3716,15 +3716,15 @@ def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
     if next_step == "run_stage_preflight":
         return (
             f"{kind} can be submitted, but stage0/stage1 were not fully verified; "
-            "rerun --dry-run with --observer-token to check /state before submitting."
+            "run the printed stage-preflight next command with --observer-token before the submit next command."
         )
     if next_step == "run_live_preflight":
         return f"{kind} request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting."
     if next_step == "submit_with_caution":
         warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or [])) if isinstance(ready_to_submit, dict) else set()
         if "coordinator_preflight_skipped" in warnings:
-            return f"{kind} can be submitted, but Coordinator readiness was not fully verified; inspect ready_to_submit before submitting."
-        return f"{kind} can be submitted, but readiness was not fully verified; inspect ready_to_submit before submitting."
+            return f"{kind} can be submitted, but Coordinator readiness was not fully verified; run the printed preflight next command before the submit next command."
+        return f"{kind} can be submitted, but readiness was not fully verified; run the printed preflight next command before the submit next command."
     if next_step == "fix_blockers":
         return ""
     if ready_to_submit and ready_to_submit.get("ok") is True and not ready_to_submit.get("fully_verified"):
@@ -3732,9 +3732,9 @@ def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
         if stage_preflight_needs_verification(warnings):
             return (
                 f"{kind} can be submitted, but stage0/stage1 were not fully verified; "
-                "rerun --dry-run with --observer-token to check /state before submitting."
+                "run the printed stage-preflight next command with --observer-token before the submit next command."
             )
-        return f"{kind} can be submitted, but readiness was not fully verified; rerun --dry-run with live preflight before submitting."
+        return f"{kind} can be submitted, but readiness was not fully verified; run the printed preflight next command before the submit next command."
     if ready_to_submit and ready_to_submit.get("ok") is None:
         return f"{kind} request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting."
     return ""
@@ -3747,7 +3747,7 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
             action = _ready_to_submit_action("Inference", ready_to_submit)
             if action:
                 return action
-            return "Rerun without --dry-run to submit the inference request."
+            return "Dry-run is verified; run the printed submit inference next command."
         if getattr(args, "infer_mode", "local") == "local" and not getattr(args, "full_evidence", False):
             return "Run with --full-evidence for the broader Public Swarm v2 proof."
         return ""
@@ -6794,7 +6794,7 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
                 coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
                 if coordinator_ready and coordinator_ready.get("ok") is False:
                     return "Dry-run request shape is valid, but Coordinator /ready is not reachable; start the Coordinator before submitting."
-            return "Rerun without --dry-run to submit the generation request."
+            return "Dry-run is verified; run the printed submit generation next command."
         return ""
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
