@@ -11399,6 +11399,40 @@ def print_p2p_swarm_inference_v06(report: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_real_p2p_swarm_inference_core_rc(report: dict[str, Any]) -> None:
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    stage_assignment = report.get("stage_assignment") if isinstance(report.get("stage_assignment"), dict) else {}
+    external = report.get("external") if isinstance(report.get("external"), dict) else {}
+    requeue = report.get("live_requeue_summary") if isinstance(report.get("live_requeue_summary"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    print("CrowdTensor Real P2P Swarm Inference Core RC")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  model: {report.get('hf_model_id') or report.get('expected_hf_model_id')}")
+    print(f"  discovery: {p2p.get('discovery_backend')} providers={p2p.get('provider_count')}")
+    print(f"  route ready: {((p2p.get('route') or {}).get('usable_now') if isinstance(p2p.get('route'), dict) else None)}")
+    print(f"  generated tokens: {generation.get('generated_token_count')}/{generation.get('max_new_tokens')}")
+    print(f"  stage assignment: rows={stage_assignment.get('completed_rows')} distinct={stage_assignment.get('distinct_stage_miners')}")
+    print(f"  external verified: runtime={external.get('external_runtime_verified')} generate={external.get('external_generate_verified')}")
+    if requeue:
+        print(f"  requeue: enabled={requeue.get('enabled')} stage={requeue.get('target_stage')} rescue_used={requeue.get('rescue_miner_used')} accepted={requeue.get('accepted_result_after_requeue')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
@@ -15018,7 +15052,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.json:
             print(json.dumps(summary, sort_keys=True))
         else:
-            print(f"CrowdTensor Real P2P Swarm Inference Core RC ok={summary.get('ok')} diagnosis={','.join(summary.get('diagnosis_codes') or [])}")
+            print_real_p2p_swarm_inference_core_rc(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "petals-candidate":
         summary = build_petals_class_p2p_candidate(args)
