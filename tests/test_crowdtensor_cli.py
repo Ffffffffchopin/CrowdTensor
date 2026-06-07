@@ -7368,6 +7368,63 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  answer[1]:  first answer", rendered)
         self.assertIn("  answer[2]:  second answer", rendered)
 
+    def test_print_infer_multiline_answer_is_indented(self) -> None:
+        report = {
+            "ok": True,
+            "mode": "local",
+            "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+            "generation": {"generated_token_count": 2, "max_new_tokens": 2, "generated_text_hash": "sha256:answer"},
+            "route": {"route_source": "local-product-loopback", "route_ready": True, "distinct_stage_miners": True},
+            "stream": {},
+            "local_output": {
+                "generated_text": "first line\nsecond line",
+                "note": "local only",
+            },
+            "diagnosis_codes": ["crowdtensor_infer_ready"],
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+
+        rendered = stdout.getvalue()
+        self.assertIn("  answer: first line\n          second line\n", rendered)
+        self.assertNotIn("\nsecond line\n", rendered)
+        self.assertLess(rendered.index("  answer: first line"), rendered.index("  local_output: "))
+
+    def test_print_generate_multiline_batch_answers_are_indented(self) -> None:
+        report = {
+            "ok": True,
+            "diagnosis_codes": ["public_swarm_generate_ready"],
+            "result": {
+                "status": "complete",
+                "generated_token_count": 2,
+                "max_new_tokens": 2,
+                "output_count": 2,
+                "display": "local-private",
+                "generated_text_hash": "sha256:answer",
+                "public_artifact_safe": False,
+            },
+            "local_output": {
+                "outputs": [
+                    {"generated_text": "first one\nsecond one"},
+                    {"generated_text": "first two\nsecond two"},
+                ],
+                "display_only": True,
+                "public_artifact_safe": False,
+            },
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+
+        rendered = stdout.getvalue()
+        self.assertIn("  answer[1]: first one\n             second one\n", rendered)
+        self.assertIn("  answer[2]: first two\n             second two\n", rendered)
+        self.assertNotIn("\nsecond one\n", rendered)
+        self.assertNotIn("\nsecond two\n", rendered)
+
     def test_infer_failure_includes_operator_action(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([

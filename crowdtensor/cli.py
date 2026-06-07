@@ -789,16 +789,27 @@ def output_display_text(display: dict[str, Any]) -> str:
     )
 
 
+def print_answer_text(label: str, text: Any) -> None:
+    value = str(text)
+    lines = value.splitlines()
+    if not lines:
+        print(f"  {label}: ")
+        return
+    print(f"  {label}: {lines[0]}")
+    for line in lines[1:]:
+        print(f"  {' ' * len(label)}  {line}")
+
+
 def print_local_output_block(report: dict[str, Any]) -> bool:
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
     has_output = bool(local_output.get("generated_text") or outputs)
     if len(outputs) <= 1 and local_output.get("generated_text"):
-        print(f"  answer: {local_output.get('generated_text')}")
+        print_answer_text("answer", local_output.get("generated_text"))
     elif outputs:
         for index, item in enumerate(outputs, start=1):
             if isinstance(item, dict) and item.get("generated_text"):
-                print(f"  answer[{index}]: {item.get('generated_text')}")
+                print_answer_text(f"answer[{index}]", item.get("generated_text"))
     if has_output:
         print(f"  local_output: {local_output_text(local_output)}")
     return has_output
