@@ -5330,6 +5330,12 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Local output note: Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
             markdown,
         )
+        self.assertIn("## Artifacts", markdown)
+        self.assertIn("- `infer_summary`: path=`infer_summary.json` present=`True` kind=`crowdtensor_infer_summary`", markdown)
+        self.assertIn(
+            "- `product_swarm_mvp_report`: path=`product-swarm-mvp/product_swarm_mvp_check.json` present=`False` kind=`product_swarm_mvp_check`",
+            markdown,
+        )
         self.assertNotIn(generated_text, markdown)
         self.assertNotIn(prompt, markdown)
 
@@ -5479,6 +5485,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             f"- Source generate summary: json=`{output_dir / 'generate' / 'generate_summary.json'}` markdown=`{output_dir / 'generate' / 'generate_summary.md'}`",
+            markdown,
+        )
+        self.assertIn("## Artifacts", markdown)
+        self.assertIn("- `infer_summary_markdown`: path=`infer_summary.md` present=`True` kind=`crowdtensor_infer_summary_markdown`", markdown)
+        self.assertIn(
+            "- `source_generate_summary`: path=`generate/generate_summary.json` present=`False` kind=`crowdtensor_generate_summary`",
             markdown,
         )
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)

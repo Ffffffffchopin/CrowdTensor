@@ -4272,6 +4272,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
     stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
     wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
         "# CrowdTensor Infer Summary",
         "",
@@ -4350,6 +4351,22 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f" requires={','.join(str(name) for name in requires_env)}" if requires_env else ""
             lines.append(f"{index}. `{item.get('label')}`: `{item.get('command_line')}`{suffix}")
+    else:
+        lines.append("None.")
+    lines.extend([
+        "",
+        "## Artifacts",
+        "",
+    ])
+    if artifacts:
+        for name, artifact in sorted(artifacts.items()):
+            if not isinstance(artifact, dict):
+                continue
+            lines.append(
+                f"- `{name}`: path=`{artifact.get('path')}` "
+                f"present=`{artifact.get('present')}` "
+                f"kind=`{artifact.get('kind')}`"
+            )
     else:
         lines.append("None.")
     lines.extend([
