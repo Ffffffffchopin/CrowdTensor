@@ -5673,13 +5673,19 @@ def _infer_command_args(
     command = ["crowdtensor", "infer"]
     resolved_mode = mode or getattr(args, "infer_mode", "local")
     prompt_texts = str(getattr(args, "prompt_texts", "") or "")
-    if include_prompt and not prompt_texts:
+    prompt_file = str(getattr(args, "prompt_file", "") or "")
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if include_prompt and not prompt_texts and not prompt_file and not prompt_texts_file:
         command.append(INFER_PROMPT_PLACEHOLDER)
     command.extend(["--mode", resolved_mode])
     output_dir = str(getattr(args, "output_dir", "") or "")
     if output_dir:
         command.extend(["--output-dir", output_dir])
-    if prompt_texts:
+    if prompt_texts_file:
+        command.extend(["--prompt-texts-file", prompt_texts_file])
+    elif prompt_file:
+        command.extend(["--prompt-file", prompt_file])
+    elif prompt_texts:
         command.extend(["--prompt-texts", INFER_BATCH_PROMPTS_PLACEHOLDER])
     try:
         max_new_tokens = int(getattr(args, "max_new_tokens", 8) or 8)
@@ -6468,6 +6474,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
     if mode == "existing":
         generate_args = argparse.Namespace(
             prompt_text=args.prompt_text,
+            prompt_file=getattr(args, "prompt_file", ""),
             prompt_texts=args.prompt_texts,
             prompt_texts_file=getattr(args, "prompt_texts_file", ""),
             prompt_texts_list=list(getattr(args, "prompt_texts_list", []) or []),
@@ -8255,7 +8262,9 @@ def _product_cli_generate_command(
     max_new_tokens: int = 16,
     output_dir: str = "",
     prompt_text: str = "",
+    prompt_file: str = "",
     prompt_texts: str = "",
+    prompt_texts_file: str = "",
     swarm_id: str = "default",
     include_observer: bool = False,
     stream: bool = False,
@@ -8282,7 +8291,11 @@ def _product_cli_generate_command(
         command.extend(["--backend", backend])
     if hf_model_id != "sshleifer/tiny-gpt2":
         command.extend(["--hf-model-id", hf_model_id])
-    if prompt_texts:
+    if prompt_texts_file:
+        command.extend(["--prompt-texts-file", prompt_texts_file])
+    elif prompt_file:
+        command.extend(["--prompt-file", prompt_file])
+    elif prompt_texts:
         command.extend(["--prompt-texts", prompt_texts])
     elif prompt_text:
         command.extend(["--prompt-text", prompt_text])
@@ -9321,7 +9334,9 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         max_new_tokens=max_new_tokens,
         output_dir=output_dir,
         prompt_text=prompt_placeholder,
+        prompt_file=str(report.get("prompt_file") or session_request.get("prompt_file") or ""),
         prompt_texts=prompt_texts_placeholder,
+        prompt_texts_file=str(report.get("prompt_texts_file") or session_request.get("prompt_texts_file") or ""),
         swarm_id=swarm_id,
         include_observer=True,
         stream=stream_requested,
@@ -9347,7 +9362,9 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 max_new_tokens=max_new_tokens,
                 output_dir=output_dir,
                 prompt_text=prompt_placeholder,
+                prompt_file=str(report.get("prompt_file") or session_request.get("prompt_file") or ""),
                 prompt_texts=prompt_texts_placeholder,
+                prompt_texts_file=str(report.get("prompt_texts_file") or session_request.get("prompt_texts_file") or ""),
                 swarm_id=swarm_id,
                 stream=stream_requested,
                 include_output=include_output_requested,
@@ -9416,7 +9433,9 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 max_new_tokens=max_new_tokens,
                 output_dir=output_dir,
                 prompt_text=prompt_placeholder,
+                prompt_file=str(report.get("prompt_file") or session_request.get("prompt_file") or ""),
                 prompt_texts=prompt_texts_placeholder,
+                prompt_texts_file=str(report.get("prompt_texts_file") or session_request.get("prompt_texts_file") or ""),
                 swarm_id=swarm_id,
                 stream=stream_requested,
                 include_output=include_output_requested,
@@ -9885,6 +9904,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         route = route_lookup_payload["route"]
     effective_coordinator_url = str(route.get("coordinator_url") or coordinator_url or "")
     route_ready_code = "real_p2p_generate_route_ready" if p2p_backend == "real" else "p2p_generate_route_ready"
+    prompt_file_source = str(getattr(args, "prompt_file", "") or "")
+    prompt_texts_file_source = str(getattr(args, "prompt_texts_file", "") or "")
     if args.dry_run:
         report = {
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -9895,6 +9916,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
+            "prompt_file": prompt_file_source,
+            "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
             "stream": stream_request,
@@ -9939,6 +9962,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
+            "prompt_file": prompt_file_source,
+            "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
             "stream": stream_request,
@@ -9968,6 +9993,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
+            "prompt_file": prompt_file_source,
+            "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
             "stream": stream_request,
@@ -9983,6 +10010,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
+            "prompt_file": prompt_file_source,
+            "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
             "stream": stream_request,
@@ -10025,6 +10054,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
+            "prompt_file": prompt_file_source,
+            "prompt_texts_file": prompt_texts_file_source,
             "batch": session_request.get("batch"),
             "route": route,
             "stream": stream_request,
@@ -10206,6 +10237,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         "output_dir": str(output_dir),
         "output_dir_explicit": output_dir_explicit,
         "session_request": session_request,
+        "prompt_file": prompt_file_source,
+        "prompt_texts_file": prompt_texts_file_source,
         "batch": {
             "enabled": batch_enabled,
             "request_count": len(prompt_texts),

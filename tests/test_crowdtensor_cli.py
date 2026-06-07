@@ -1831,10 +1831,38 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertEqual(report["batch"]["request_count"], 2)
         self.assertEqual(report["session_request"]["prompt_char_counts"], [len(prompt) for prompt in prompts])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertTrue(any(f"--prompt-texts-file {prompt_file}" in line for line in next_lines))
+        self.assertFalse(any("--prompt-texts '<prompt-1>,<prompt-2>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
         self.assertIn("prompt_hashes", encoded)
+
+    def test_generate_prompt_file_next_commands_keep_file_source_without_prompt_text(self) -> None:
+        prompt = "Generate file prompt stays private"
+        prompt_file = Path(self._tmp_dir()) / "prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        args = cli.parse_args([
+            "generate",
+            "--prompt-file",
+            str(prompt_file),
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--json",
+        ])
+
+        report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertTrue(any(f"--prompt-file {prompt_file}" in line for line in next_lines))
+        self.assertFalse(any("'<prompt>'" in line for line in next_lines))
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(prompt, encoded)
+        self.assertIn(str(prompt_file), encoded)
 
     def test_generate_rejects_empty_prompt_stdin(self) -> None:
         with patch.object(cli.sys, "stdin", io.StringIO("")):
@@ -1990,9 +2018,39 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["prompt"]["raw_prompt_public"])
         self.assertEqual(report["prompt"]["prompt_count"], 2)
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertTrue(any(f"--prompt-texts-file {prompt_file}" in line for line in next_lines))
+        self.assertFalse(any("--prompt-texts '<prompt-1>,<prompt-2>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
+
+    def test_infer_prompt_file_next_commands_keep_file_source_without_prompt_text(self) -> None:
+        prompt = "Infer file prompt stays private"
+        prompt_file = Path(self._tmp_dir()) / "infer-prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        args = cli.parse_args([
+            "infer",
+            "--prompt-file",
+            str(prompt_file),
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--json",
+        ])
+
+        report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertTrue(any(f"--prompt-file {prompt_file}" in line for line in next_lines))
+        self.assertFalse(any("infer '<prompt>'" in line for line in next_lines))
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(prompt, encoded)
+        self.assertIn(str(prompt_file), encoded)
 
     def test_generate_rejects_ambiguous_prompt_sources(self) -> None:
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"
