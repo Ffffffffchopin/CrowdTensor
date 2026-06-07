@@ -7643,6 +7643,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             report["recommended_next_command"]["reason_detail"],
             "Optionally run the broader local evidence path for stronger proof.",
         )
+        self.assertEqual(
+            report["operator_action"],
+            "Inference completed; optionally rerun with --full-evidence for the broader Public Swarm v2 proof.",
+        )
         self.assertEqual(report["route"]["route_source"], "local-product-loopback")
         self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -7679,6 +7683,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             persisted["recommended_next_command"]["reason_detail"],
             "Optionally run the broader local evidence path for stronger proof.",
         )
+        self.assertEqual(
+            persisted["operator_action"],
+            "Inference completed; optionally rerun with --full-evidence for the broader Public Swarm v2 proof.",
+        )
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(
@@ -7690,12 +7698,20 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Local output note: Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display.",
             markdown,
         )
+        self.assertIn(
+            "- Action: Inference completed; optionally rerun with --full-evidence for the broader Public Swarm v2 proof.",
+            markdown,
+        )
         self.assertIn("- Answer scope: `state=json-suppressed ", markdown)
         self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
+        self.assertIn(
+            "  action: Inference completed; optionally rerun with --full-evidence for the broader Public Swarm v2 proof.",
+            rendered,
+        )
         self.assertIn("recommended_next: optional broader local evidence reason=collect_broader_evidence", rendered)
         self.assertIn("next[1] rerun local inference", rendered)
         self.assertIn("next[2] optional broader local evidence", rendered)

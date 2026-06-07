@@ -5738,7 +5738,7 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
         if stream_report.get("enabled") and not stream_ready and stream_issue:
             return f"Inference completed, but stream progress is incomplete ({stream_issue}); rerun with --stream if you need live token evidence."
         if getattr(args, "infer_mode", "local") == "local" and not getattr(args, "full_evidence", False):
-            return "Run with --full-evidence for the broader Public Swarm v2 proof."
+            return "Inference completed; optionally rerun with --full-evidence for the broader Public Swarm v2 proof."
         return ""
     codes = set(str(code) for code in (payload.get("diagnosis_codes") or []))
     step = payload.get("step") if isinstance(payload.get("step"), dict) else {}
