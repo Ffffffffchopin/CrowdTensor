@@ -105,6 +105,10 @@ The `issue` line and JSON/Markdown `issue_summary` object condense the current
 state, primary diagnosis code, next step, safe progress text, and whether a
 redacted detail is available, so blocked or timeout runs have one place to read
 first.
+The `artifacts` line and JSON/Markdown `artifact_summary` object point to the
+first Markdown summary to inspect, list the redacted JSON/Markdown paths, and
+keep prompts, generated text, token ids, credentials, and activations out of
+shareable files.
 Start by reading the `status` line in human output, or `user_status` in JSON and
 Markdown: `completed` means the request finished, `preflight-ready` means submit
 next, `preflight-partial` means run the recommended check first, and `blocked`

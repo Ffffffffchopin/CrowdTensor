@@ -101,6 +101,10 @@ The `issue` line and JSON/Markdown `issue_summary` object condense the current
 state, primary diagnosis code, next step, safe progress text, and whether a
 redacted detail is available, so blocked or timeout runs have one place to read
 first.
+The `artifacts` line and JSON/Markdown `artifact_summary` object point to the
+first Markdown summary to inspect, list the redacted JSON/Markdown paths, and
+keep prompts, generated text, token ids, credentials, and activations out of
+shareable files.
 Start by reading the `status` line in human output, or `user_status` in JSON and
 Markdown: `completed` means the request finished, `preflight-ready` means submit
 next, `preflight-partial` means run the recommended check first, and `blocked`
@@ -146,8 +150,9 @@ The manual `serve` and `join` commands also print `operator_action` and
 `next[...]`, so the five-process flow tells you whether to rerun with `--run`,
 start the missing stage Miner, or preflight with `generate --dry-run`.
 `generate` writes safe `generate_summary.json` and `generate_summary.md` files
-under `dist/generate` by default; raw prompts, generated text, token ids, and
-tokens stay out of those shareable artifacts.
+under `dist/generate` by default; the `artifacts` line tells you which Markdown
+file to open first, and raw prompts, generated text, token ids, and tokens stay
+out of those shareable artifacts.
 
 To check an already running Coordinator or P2P-discovered swarm before
 submitting a request, use `crowdtensor infer --mode existing --dry-run` or

@@ -755,6 +755,18 @@ def issue_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def artifact_summary_text(summary: dict[str, Any]) -> str:
+    artifact_count = _safe_int(summary.get("artifact_count"))
+    present_count = _safe_int(summary.get("present_artifact_count"))
+    return (
+        f"inspect={summary.get('inspect_first') or 'none'} "
+        f"json={summary.get('summary_json') or 'none'} "
+        f"markdown={summary.get('summary_markdown') or 'none'} "
+        f"present={present_count}/{artifact_count} "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
+    )
+
+
 def infer_user_status_text(status: dict[str, Any]) -> str:
     return (
         f"{status.get('state') or 'unknown'}: "
@@ -4042,6 +4054,34 @@ def _shareable_summary_from_report(report: dict[str, Any], *, kind: str) -> dict
     }
 
 
+def _artifact_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    saved_summary = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
+    source_report = report.get("source_report") if isinstance(report.get("source_report"), dict) else {}
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    artifact_values = [artifact for artifact in artifacts.values() if isinstance(artifact, dict)]
+    summary_json = str(saved_summary.get("path") or "")
+    summary_markdown = str(saved_summary.get("markdown_path") or "")
+    source_summary_json = str(source_report.get("summary_path") or "")
+    source_summary_markdown = str(source_report.get("summary_markdown_path") or "")
+    saved_safe = bool(saved_summary.get("public_artifact_safe", True))
+    source_safe = bool(source_report.get("public_artifact_safe", True)) if source_report else True
+    raw_redacted = bool(saved_summary.get("raw_generated_text_redacted", True))
+    return {
+        "kind": kind,
+        "output_dir": str(report.get("output_dir") or ""),
+        "inspect_first": summary_markdown or summary_json or source_summary_markdown or source_summary_json,
+        "summary_json": summary_json,
+        "summary_markdown": summary_markdown,
+        "source_summary_json": source_summary_json,
+        "source_summary_markdown": source_summary_markdown,
+        "artifact_count": len(artifact_values),
+        "present_artifact_count": sum(1 for artifact in artifact_values if bool(artifact.get("present"))),
+        "raw_generated_text_redacted": raw_redacted,
+        "public_artifact_safe": saved_safe and source_safe and raw_redacted,
+        "summary": "Open inspect_first for a human review; summary_json is the machine-readable redacted report.",
+    }
+
+
 def _issue_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
@@ -4797,6 +4837,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
+    artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -4884,6 +4925,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         )
     lines.extend([
         f"- Saved JSON: `{saved_summary.get('path')}`",
+        f"- Artifacts: `{artifact_summary_text(artifact_summary)}`",
         f"- Output request: `{output_request_text(output_request)}`",
         "",
         "## Next Commands",
@@ -5231,6 +5273,7 @@ def _infer_summary_from_payload(
             ok=payload.get("ok") if payload else None,
         )
     summary["artifacts"] = artifacts
+    summary["artifact_summary"] = _artifact_summary_from_report(summary, kind="infer")
     output_dir.mkdir(parents=True, exist_ok=True)
     persisted_summary = json.loads(json.dumps(summary))
     _strip_infer_local_output_text(persisted_summary)
@@ -7799,6 +7842,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
+    artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -7872,6 +7916,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         )
     lines.extend([
         f"- Saved JSON: `{saved_summary.get('path')}`",
+        f"- Artifacts: `{artifact_summary_text(artifact_summary)}`",
         f"- Output request: `{output_request_text(output_request)}`",
         "",
         "## Next Commands",
@@ -8181,6 +8226,7 @@ def _finalize_product_generate_report(
                 "present": True,
                 "ok": bool(report.get("ok")),
             })
+        report["artifact_summary"] = _artifact_summary_from_report(report, kind="generate")
         persisted_summary = copy.deepcopy(report)
         _strip_local_output_text(persisted_summary)
         safe_persisted = sanitize(redact_values(persisted_summary, [admin_token]))
@@ -8192,6 +8238,8 @@ def _finalize_product_generate_report(
             render_generate_summary_markdown(safe_persisted),
             encoding="utf-8",
         )
+    else:
+        report.setdefault("artifact_summary", _artifact_summary_from_report(report, kind="generate"))
     return sanitize(redact_values(report, [admin_token]))
 
 
@@ -9099,6 +9147,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"raw_generated_text_redacted={saved_summary.get('raw_generated_text_redacted')} "
             f"public_artifact_safe={saved_summary.get('public_artifact_safe')}"
         )
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary:
+        print(f"  artifacts: {artifact_summary_text(artifact_summary)}")
     if report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
     if report.get("operator_action"):
@@ -9306,6 +9357,9 @@ def print_infer(report: dict[str, Any]) -> None:
             f"markdown={source_report.get('summary_markdown_path')} "
             f"public_artifact_safe={source_report.get('public_artifact_safe')}"
         )
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary:
+        print(f"  artifacts: {artifact_summary_text(artifact_summary)}")
     print(f"  output_dir: {report.get('output_dir')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
@@ -10819,6 +10873,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "generated text, generated token ids, credentials, or activations.\n\n"
             "The issue line summarizes state, primary diagnosis, next step, safe progress,\n"
             "and whether a redacted detail is available for blocked or timeout runs.\n\n"
+            "The artifacts line points to the first Markdown summary to inspect and lists the\n"
+            "redacted JSON/Markdown artifact paths without exposing prompts or generated text.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -10987,6 +11043,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "generated text, generated token ids, credentials, or activations.\n\n"
             "The issue line summarizes state, primary diagnosis, next step, safe progress,\n"
             "and whether a redacted detail is available for blocked or timeout runs.\n\n"
+            "The artifacts line points to the first Markdown summary to inspect and lists the\n"
+            "redacted JSON/Markdown artifact paths without exposing prompts or generated text.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),
