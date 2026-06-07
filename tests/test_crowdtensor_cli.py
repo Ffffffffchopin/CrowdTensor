@@ -624,6 +624,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("`preflight-partial` means run the", rendered)
             self.assertIn("recommended check first", rendered)
             self.assertIn("crowdtensor public-real-llm-swarm-beta release", rendered)
+            self.assertIn("crowdtensor public-real-llm-swarm-beta check", rendered)
+            self.assertIn("public_real_llm_swarm_beta_check.json", rendered)
             self.assertIn("public_real_llm_swarm_beta.md", rendered)
             self.assertIn("support_bundle.json", rendered)
             self.assertIn("Safe shareable files", rendered)
@@ -681,6 +683,25 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("failure", rendered)
             self.assertIn("redacted", rendered)
             self.assertIn("prompt text", rendered)
+
+    def test_public_real_llm_swarm_beta_docs_prefer_cli_check(self) -> None:
+        readme = (cli.ROOT / "README.md").read_text(encoding="utf-8")
+        quickstart = (cli.ROOT / "docs" / "quickstart.md").read_text(encoding="utf-8")
+        operations = (cli.ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+        memory = (cli.ROOT / "docs" / "project-memory.md").read_text(encoding="utf-8")
+
+        for rendered in [readme, quickstart, operations, memory]:
+            self.assertIn("crowdtensor public-real-llm-swarm-beta check", rendered)
+            self.assertIn("public_real_llm_swarm_beta_check", rendered)
+        self.assertIn("official user-facing validation entry", readme)
+        self.assertIn("official user-facing validation entry", quickstart)
+        self.assertIn("official user-facing validation wrapper", operations)
+        self.assertIn("cli_mode: check", operations)
+        self.assertIn("cli_mode: check", memory)
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check --hf-model-id distilgpt2", operations)
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check --hf-model-id distilgpt2", memory)
+        self.assertNotIn("python scripts/public_real_llm_swarm_beta_check.py --json", operations)
+        self.assertNotIn("python scripts/public_real_llm_swarm_beta_check.py --mode local-model-variant", memory)
 
     def test_runtime_matrix_block_skips_demo_and_manifest(self) -> None:
         output_dir = Path(self._tmp_dir())

@@ -158,11 +158,19 @@ crowdtensor public-real-llm-swarm-beta release \
   --max-new-tokens 16 \
   --http-timeout 30 \
   --json
+
+crowdtensor public-real-llm-swarm-beta check \
+  --output-dir dist/public-real-llm-swarm-beta-check \
+  --max-new-tokens 16 \
+  --json
 ```
 
 This command starts local stand-ins for the public swarm route, runs a tiny real
 GPT split across stage 0 and stage 1, validates decoded tokens, checks evidence,
 and writes artifacts under `dist/`.
+The `check` command is the official user-facing validation entry for the final
+Beta contract; it writes `public_real_llm_swarm_beta_check.json` with a review
+summary, safe artifact paths, and no raw prompt or generated text.
 When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`
 first, then `dist/public-real-llm-swarm-beta/support_bundle.json` if you need
 diagnostics. The terminal also prints the final inference status: model and
@@ -174,8 +182,8 @@ private env files, registries, runtime state, raw task logs, prompts,
 generated text, generated token ids, credentials, activations, leases, or
 idempotency material. If `ok` is false, start with the Markdown
 `Not Completed` section and the printed `not_completed` lines; they map to the
-missing token target, KV-cache, route hardening, batch/stream, external
-runtime, or requeue evidence that must be rerun or imported.
+missing token target, KV-cache, route hardening, batch/stream, external runtime,
+or requeue evidence that must be rerun or imported.
 
 Useful readiness fields in the JSON output include:
 
