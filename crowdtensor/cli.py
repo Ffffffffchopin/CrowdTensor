@@ -11876,6 +11876,11 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
 def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    recommended_check = (
+        report.get("recommended_check_command")
+        if isinstance(report.get("recommended_check_command"), dict)
+        else review.get("recommended_check_command") if isinstance(review.get("recommended_check_command"), dict) else {}
+    )
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -11913,6 +11918,8 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
             f"check={artifact_summary.get('check_json') or 'none'} "
             f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
         )
+    if recommended_check:
+        print(f"  recommended_check: {recommended_check.get('command_line')}")
     if output_request:
         print(
             "  output_request: "

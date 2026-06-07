@@ -1208,12 +1208,49 @@ def check_artifact_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def recommended_check_command(result: dict[str, Any]) -> dict[str, Any]:
+    artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+    beta_report = str(result.get("checked_beta_report") or artifacts.get("public_real_llm_swarm_beta_json") or "").strip()
+    if not beta_report:
+        return {}
+    command = [
+        "crowdtensor",
+        "public-real-llm-swarm-beta",
+        "check",
+    ]
+    if str(result.get("mode") or "") == pack.MODE_LOCAL_MODEL_VARIANT:
+        command.extend(["--hf-model-id", str(result.get("hf_model_id") or pack.DEFAULT_HF_MODEL_ID)])
+    command.extend([
+        "--beta-report",
+        beta_report,
+        "--output-dir",
+        str(result.get("output_dir") or ""),
+        "--max-new-tokens",
+        str(result.get("max_new_tokens") or 16),
+        "--json",
+    ])
+    return {
+        "label": "rerun beta report check",
+        "reason": "rerun_current_beta_report_check",
+        "command_line": pack.shell_command(command),
+        "beta_report": beta_report,
+        "output_dir": str(result.get("output_dir") or ""),
+        "check_source": "beta-report",
+        "public_artifact_safe": True,
+    }
+
+
 def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
     errors = [str(error) for error in (result.get("errors") if isinstance(result.get("errors"), list) else [])]
     artifact_summary = (
         result.get("artifact_summary")
         if isinstance(result.get("artifact_summary"), dict)
         else check_artifact_summary(result)
+    )
+    recommended = (
+        result.get("recommended_check_command")
+        if isinstance(result.get("recommended_check_command"), dict)
+        else recommended_check_command(result)
     )
     ready = bool(result.get("ok") is True and not errors)
     return {
@@ -1225,12 +1262,13 @@ def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
         "machine_readable": artifact_summary.get("machine_readable"),
         "support_bundle": artifact_summary.get("support_bundle"),
         "check_json": artifact_summary.get("check_json"),
+        "recommended_check_command": recommended,
         "error_count": len(errors),
         "error_preview": errors[:8],
         "operator_action": (
             "Open inspect_first for the checked Markdown, support_bundle for diagnostics, and check_json for the validation record."
             if ready
-            else "Open check_json for the validation errors, inspect the checked Markdown Not Completed section, fix the listed items, then rerun crowdtensor public-real-llm-swarm-beta check --beta-report <public_real_llm_swarm_beta.json> --json."
+            else f"Open check_json for the validation errors, inspect the checked Markdown Not Completed section, fix the listed items, then rerun: {recommended.get('command_line') or 'crowdtensor public-real-llm-swarm-beta check --beta-report <public_real_llm_swarm_beta.json> --json'}"
         ),
         "public_artifact_safe": True,
         "raw_prompt_public": False,
@@ -1280,6 +1318,7 @@ def check_result_from_payload(
     expected_tokens: int,
     check_source: str,
     checked_beta_report: str = "",
+    hf_model_id: str = pack.DEFAULT_HF_MODEL_ID,
     load_errors: list[str] | None = None,
 ) -> dict[str, Any]:
     errors = list(load_errors or [])
@@ -1299,6 +1338,7 @@ def check_result_from_payload(
         "errors": errors,
         "beta_schema": payload.get("schema") if payload else None,
         "beta_ok": payload.get("ok") if payload else None,
+        "hf_model_id": str((payload.get("beta") if isinstance(payload.get("beta"), dict) else {}).get("hf_model_id") or hf_model_id or pack.DEFAULT_HF_MODEL_ID),
         "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"] if not errors else ["public_real_llm_swarm_beta_check_blocked"],
         "artifacts": {
             "public_real_llm_swarm_beta_json": artifact_path(
@@ -1316,6 +1356,7 @@ def check_result_from_payload(
         },
     }
     result["artifact_summary"] = check_artifact_summary(result)
+    result["recommended_check_command"] = recommended_check_command(result)
     result["review_summary"] = check_review_summary(result)
     result["operator_action"] = result["review_summary"]["operator_action"]
     result["output_request"] = check_output_request_summary()
@@ -1347,6 +1388,7 @@ def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
             "artifact_summary",
             "review_summary",
             "operator_action",
+            "recommended_check_command",
             "output_request",
             "answer_scope",
             "shareable_summary",
@@ -1376,6 +1418,7 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
             expected_tokens=args.max_new_tokens,
             check_source="beta-report",
             checked_beta_report=str(beta_report.resolve()),
+            hf_model_id=args.hf_model_id,
             load_errors=load_errors,
         )
     else:
@@ -1389,6 +1432,7 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
             mode=args.mode,
             expected_tokens=args.max_new_tokens,
             check_source="ci-fixture",
+            hf_model_id=args.hf_model_id,
         )
     write(output_dir / "public_real_llm_swarm_beta_check.json", json.dumps(result, indent=2, sort_keys=True) + "\n")
     return result
@@ -1397,6 +1441,11 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
 def print_human_summary(result: dict[str, Any]) -> None:
     review = result.get("review_summary") if isinstance(result.get("review_summary"), dict) else {}
     artifact_summary = result.get("artifact_summary") if isinstance(result.get("artifact_summary"), dict) else {}
+    recommended = (
+        result.get("recommended_check_command")
+        if isinstance(result.get("recommended_check_command"), dict)
+        else review.get("recommended_check_command") if isinstance(review.get("recommended_check_command"), dict) else {}
+    )
     output_request = result.get("output_request") if isinstance(result.get("output_request"), dict) else {}
     answer_scope = result.get("answer_scope") if isinstance(result.get("answer_scope"), dict) else {}
     shareable = result.get("shareable_summary") if isinstance(result.get("shareable_summary"), dict) else {}
@@ -1423,6 +1472,8 @@ def print_human_summary(result: dict[str, Any]) -> None:
             f"support={artifact_summary.get('support_bundle')} "
             f"check={artifact_summary.get('check_json')}"
         )
+    if recommended:
+        print(f"  recommended_check: {recommended.get('command_line')}")
     if output_request:
         print(
             "  output_request: "

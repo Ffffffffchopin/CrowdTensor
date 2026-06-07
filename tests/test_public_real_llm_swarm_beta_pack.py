@@ -1808,6 +1808,12 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(result["review_summary"]["state"], "ready")
         self.assertTrue(result["review_summary"]["ready"])
         self.assertEqual(result["review_summary"]["next_step"], "review_checked_artifacts")
+        self.assertEqual(result["review_summary"]["recommended_check_command"], result["recommended_check_command"])
+        self.assertEqual(result["recommended_check_command"]["check_source"], "beta-report")
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check", result["recommended_check_command"]["command_line"])
+        self.assertIn("--beta-report", result["recommended_check_command"]["command_line"])
+        self.assertIn("public_real_llm_swarm_beta.json", result["recommended_check_command"]["command_line"])
+        self.assertIn("--max-new-tokens 16", result["recommended_check_command"]["command_line"])
         self.assertEqual(result["review_summary"]["error_count"], 0)
         self.assertTrue(result["review_summary"]["public_artifact_safe"])
         self.assertIn("inspect_first", result["operator_action"])
@@ -1858,6 +1864,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertTrue(artifacts["runbook"].endswith("PUBLIC_REAL_LLM_SWARM_BETA.md"))
         persisted_check = json.loads((output_dir / "public_real_llm_swarm_beta_check.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted_check["review_summary"]["next_step"], "review_checked_artifacts")
+        self.assertEqual(persisted_check["recommended_check_command"], result["recommended_check_command"])
         self.assertTrue(persisted_check["artifact_summary"]["check_json"].endswith("public_real_llm_swarm_beta_check.json"))
         encoded_check = json.dumps(persisted_check, sort_keys=True)
         self.assertNotIn('"prompt_text":', encoded_check)
@@ -1891,6 +1898,38 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(persisted["check_source"], "beta-report")
         self.assertEqual(persisted["checked_beta_report"], str(beta_report.resolve()))
         self.assertEqual(payload["schema"], persisted["beta_schema"])
+        self.assertEqual(persisted["recommended_check_command"], result["recommended_check_command"])
+
+    def test_check_script_recommended_command_quotes_paths_with_spaces(self) -> None:
+        fixture_dir = self._tmp_dir() / "beta source"
+        check_dir = self._tmp_dir() / "check output"
+        check.build_fake_release(fixture_dir, tokens=16)
+        beta_report = fixture_dir / "beta" / "public_real_llm_swarm_beta.json"
+
+        result = check.run_check(check.parse_args([
+            "--beta-report",
+            str(beta_report),
+            "--output-dir",
+            str(check_dir),
+        ]))
+
+        command_line = result["recommended_check_command"]["command_line"]
+        self.assertIn("'", command_line)
+        self.assertEqual(
+            shlex.split(command_line),
+            [
+                "crowdtensor",
+                "public-real-llm-swarm-beta",
+                "check",
+                "--beta-report",
+                str(beta_report.resolve()),
+                "--output-dir",
+                str(check_dir),
+                "--max-new-tokens",
+                "16",
+                "--json",
+            ],
+        )
 
     def test_check_script_blocks_missing_existing_beta_report(self) -> None:
         output_dir = self._tmp_dir()
@@ -1908,7 +1947,31 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("beta_report_missing", result["errors"])
         self.assertIn("public_real_llm_swarm_beta_check_blocked", result["diagnosis_codes"])
         self.assertEqual(result["artifacts"]["public_real_llm_swarm_beta_json"], str(missing.resolve()))
+        self.assertIn(str(missing.resolve()), result["recommended_check_command"]["command_line"])
+        self.assertIn(result["recommended_check_command"]["command_line"], result["operator_action"])
         self.assertTrue((output_dir / "public_real_llm_swarm_beta_check.json").is_file())
+
+    def test_check_script_missing_local_model_variant_keeps_model_in_recommended_command(self) -> None:
+        output_dir = self._tmp_dir()
+        missing = output_dir / "missing_distilgpt2_beta.json"
+
+        result = check.run_check(check.parse_args([
+            "--mode",
+            "local-model-variant",
+            "--hf-model-id",
+            "distilgpt2",
+            "--beta-report",
+            str(missing),
+            "--output-dir",
+            str(output_dir),
+        ]))
+
+        command_line = result["recommended_check_command"]["command_line"]
+        self.assertFalse(result["ok"], result)
+        self.assertIn("beta_report_missing", result["errors"])
+        self.assertEqual(result["hf_model_id"], "distilgpt2")
+        self.assertIn("--hf-model-id distilgpt2", command_line)
+        self.assertIn(str(missing.resolve()), command_line)
 
     def test_check_validation_requires_markdown_operator_actions(self) -> None:
         output_dir = self._tmp_dir()
@@ -2056,6 +2119,8 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("errors=0", output)
         self.assertIn("  artifacts: inspect=", output)
         self.assertIn("check=", output)
+        self.assertIn("  recommended_check: crowdtensor public-real-llm-swarm-beta check", output)
+        self.assertIn("--beta-report", output)
         self.assertIn(
             "  output_request: include_output=False raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False public_artifact_safe=True",
             output,
@@ -2131,6 +2196,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
             },
         }
         result["artifact_summary"] = check.check_artifact_summary(result)
+        result["recommended_check_command"] = check.recommended_check_command(result)
         result["review_summary"] = check.check_review_summary(result)
         result["operator_action"] = result["review_summary"]["operator_action"]
         result["output_request"] = check.check_output_request_summary()
@@ -2153,6 +2219,8 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("Public Real-LLM Swarm Beta check ready: False", output)
         self.assertIn("  review: state=blocked next=fix_validation_errors", output)
+        self.assertIn("  recommended_check:", output)
+        self.assertIn("--beta-report", output)
         self.assertIn("  output_request: include_output=", output)
         self.assertIn("  answer_scope: state=", output)
         self.assertIn("  shareable: saved_artifacts=", output)
