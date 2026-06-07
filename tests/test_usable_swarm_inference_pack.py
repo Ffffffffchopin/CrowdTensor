@@ -55,9 +55,38 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertIn("usable_swarm_inference_ready", report["diagnosis_codes"])
         self.assertIn("usable_swarm_model_match_ready", report["diagnosis_codes"])
         self.assertIn("usable_real_llm_kv_cache_ready", report["diagnosis_codes"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         self.assertTrue((output_dir / "usable_swarm_inference.json").is_file())
+        self.assertTrue((output_dir / "usable_swarm_inference.md").is_file())
+        self.assertTrue((output_dir / "support_bundle.json").is_file())
         self.assertTrue((output_dir / "USABLE_SWARM_INFERENCE.md").is_file())
         self.assertTrue(calls)
+        markdown = (output_dir / "usable_swarm_inference.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn(
+            "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            markdown,
+        )
+        support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertNotIn('"generated_text":', encoded)
         self.assertNotIn('"generated_token_ids":', encoded)
 
@@ -476,6 +505,9 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertIn("Two-Machine/Public Rehearsal", text)
         self.assertIn("--i-understand-public-bind", text)
         self.assertIn("COORDINATOR_PUBLIC_HOST", text)
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
     def test_check_script_validates_local_contract(self) -> None:
         result = check.run_check(check.parse_args([
@@ -488,6 +520,23 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["schema"], check.SCHEMA)
         self.assertIn("usable_swarm_inference_check_ready", result["diagnosis_codes"])
+
+    def test_check_script_validates_package_contract(self) -> None:
+        output_dir = self._tmp_dir()
+        result = check.run_check(check.parse_args([
+            "--mode",
+            "package",
+            "--output-dir",
+            str(output_dir),
+        ]))
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["schema"], check.SCHEMA)
+        self.assertIn("usable_swarm_inference_check_ready", result["diagnosis_codes"])
+        report = json.loads((output_dir / "usable" / "usable_swarm_inference.json").read_text(encoding="utf-8"))
+        self.assertTrue(report["usable_swarm"]["package_only"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
     def test_check_script_validates_non_default_model_local_contract(self) -> None:
         output_dir = self._tmp_dir()

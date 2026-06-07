@@ -39,6 +39,16 @@ REQUIRED_CODES = {
     "not_hivemind_petals_production",
     "not_large_model_serving",
 }
+PACKAGE_REQUIRED_CODES = {
+    "usable_swarm_package_ready",
+    "usable_swarm_runbook_ready",
+    "serve_join_generate_p2p_primary_path",
+    "read_only_workload",
+    "not_production",
+    "not_coordinator_free",
+    "not_hivemind_petals_production",
+    "not_large_model_serving",
+}
 SECRET_FRAGMENTS = [
     "CROWDTENSOR_MINER_TOKEN=",
     "CROWDTENSOR_OBSERVER_TOKEN=",
@@ -205,41 +215,47 @@ def validate_report(
     usable = payload.get("usable_swarm") if isinstance(payload.get("usable_swarm"), dict) else {}
     if usable.get("ready") is not True:
         errors.append("usable_summary_not_ready")
-    readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
-    p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
-    for key in [
-        "route_ready",
-        "p2p_counts_ready",
-        "real_generate_ready",
-        "kv_cache_ready",
-        "generation_target_ready",
-        "accepted_rows_ready",
-        "distinct_stage_miners",
-        "stage_rescue_ready",
-        "real_stage_rescue_ready",
-    ]:
-        if p2p.get(key) is not True:
-            errors.append(f"p2p_{key}_missing")
-    if int(p2p.get("generated_token_count") or 0) < required_tokens:
-        errors.append(f"generated_token_count_below_{required_tokens}")
-    if int(p2p.get("accepted_rows") or 0) < required_tokens * 2:
-        errors.append(f"accepted_rows_below_{required_tokens * 2}")
-    if p2p.get("usable_evidence_source") not in {"source_gate", "nested_goal_evidence"}:
-        errors.append("usable_evidence_source_missing")
-    if p2p.get("route_source") != "p2p-discovery":
-        errors.append("usable_route_source_not_p2p_discovery")
-    model = p2p.get("model") if isinstance(p2p.get("model"), dict) else {}
-    if model.get("expected_hf_model_id") != expected_model_id:
-        errors.append("usable_expected_model_id_mismatch")
-    if model.get("observed_hf_model_id") != expected_model_id:
-        errors.append("usable_observed_model_id_mismatch")
-    if not model.get("observed_hf_model_id") or model.get("model_id_present") is not True:
-        errors.append("usable_model_id_missing")
-    if model.get("model_id_match") is not True or model.get("compatible") is not True:
-        errors.append("usable_model_id_mismatch")
     codes = set(payload.get("diagnosis_codes") or [])
-    for code in sorted(REQUIRED_CODES - codes):
-        errors.append(f"missing_code:{code}")
+    if mode == pack.MODE_PACKAGE:
+        if usable.get("package_only") is not True:
+            errors.append("usable_package_only_missing")
+        for code in sorted(PACKAGE_REQUIRED_CODES - codes):
+            errors.append(f"missing_code:{code}")
+    else:
+        readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
+        p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
+        for key in [
+            "route_ready",
+            "p2p_counts_ready",
+            "real_generate_ready",
+            "kv_cache_ready",
+            "generation_target_ready",
+            "accepted_rows_ready",
+            "distinct_stage_miners",
+            "stage_rescue_ready",
+            "real_stage_rescue_ready",
+        ]:
+            if p2p.get(key) is not True:
+                errors.append(f"p2p_{key}_missing")
+        if int(p2p.get("generated_token_count") or 0) < required_tokens:
+            errors.append(f"generated_token_count_below_{required_tokens}")
+        if int(p2p.get("accepted_rows") or 0) < required_tokens * 2:
+            errors.append(f"accepted_rows_below_{required_tokens * 2}")
+        if p2p.get("usable_evidence_source") not in {"source_gate", "nested_goal_evidence"}:
+            errors.append("usable_evidence_source_missing")
+        if p2p.get("route_source") != "p2p-discovery":
+            errors.append("usable_route_source_not_p2p_discovery")
+        model = p2p.get("model") if isinstance(p2p.get("model"), dict) else {}
+        if model.get("expected_hf_model_id") != expected_model_id:
+            errors.append("usable_expected_model_id_mismatch")
+        if model.get("observed_hf_model_id") != expected_model_id:
+            errors.append("usable_observed_model_id_mismatch")
+        if not model.get("observed_hf_model_id") or model.get("model_id_present") is not True:
+            errors.append("usable_model_id_missing")
+        if model.get("model_id_match") is not True or model.get("compatible") is not True:
+            errors.append("usable_model_id_mismatch")
+        for code in sorted(REQUIRED_CODES - codes):
+            errors.append(f"missing_code:{code}")
     safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
     for key in [
         "p2p_discovery_primary_path",
@@ -257,6 +273,45 @@ def validate_report(
             errors.append(f"safety_{key}_mismatch")
     if safety.get("read_only_workload") != pack.WORKLOAD_TYPE:
         errors.append("safety_read_only_workload_mismatch")
+    output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    if output_request.get("include_output") is not False:
+        errors.append("output_request_include_output_mismatch")
+    if output_request.get("raw_prompt_public") is not False:
+        errors.append("output_request_raw_prompt_public_mismatch")
+    if output_request.get("raw_generated_text_public") is not False:
+        errors.append("output_request_raw_generated_text_public_mismatch")
+    if output_request.get("generated_token_ids_public") is not False:
+        errors.append("output_request_generated_token_ids_public_mismatch")
+    if output_request.get("public_artifact_safe") is not True:
+        errors.append("output_request_public_artifact_safe_mismatch")
+    answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    if answer_scope.get("scope_state") != "no-local-answer":
+        errors.append("answer_scope_state_mismatch")
+    if answer_scope.get("visible_in_terminal") is not False:
+        errors.append("answer_scope_visible_in_terminal_mismatch")
+    if answer_scope.get("terminal_only") is not False:
+        errors.append("answer_scope_terminal_only_mismatch")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        errors.append("answer_scope_saved_json_display_mismatch")
+    if answer_scope.get("saved_markdown_display") != "hash-only":
+        errors.append("answer_scope_saved_markdown_display_mismatch")
+    if answer_scope.get("public_artifact_safe") is not True:
+        errors.append("answer_scope_public_artifact_safe_mismatch")
+    shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    if shareable.get("saved_artifacts_public_safe") is not True:
+        errors.append("shareable_saved_artifacts_public_safe_mismatch")
+    if shareable.get("raw_prompt_public") is not False:
+        errors.append("shareable_raw_prompt_public_mismatch")
+    if shareable.get("raw_generated_text_public") is not False:
+        errors.append("shareable_raw_generated_text_public_mismatch")
+    if shareable.get("generated_token_ids_public") is not False:
+        errors.append("shareable_generated_token_ids_public_mismatch")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        errors.append("shareable_answer_scope_state_mismatch")
+    if shareable.get("local_answer_terminal_only") is not False:
+        errors.append("shareable_local_answer_terminal_only_mismatch")
+    if shareable.get("public_artifact_safe") is not True:
+        errors.append("shareable_public_artifact_safe_mismatch")
     encoded = json.dumps(payload, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment in encoded:

@@ -5807,6 +5807,69 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_schema"], "usable_swarm_inference_cli_v1")
         self.assertTrue(calls)
 
+    def test_usable_swarm_prints_output_scope(self) -> None:
+        report = {
+            "schema": "usable_swarm_inference_v1",
+            "cli_schema": "usable_swarm_inference_cli_v1",
+            "ok": True,
+            "mode": "local",
+            "output_dir": "dist/usable",
+            "usable_swarm": {"ready": True},
+            "readiness": {
+                "p2p_product_path": {
+                    "route_ready": True,
+                    "real_generate_ready": True,
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "distinct_stage_miners": True,
+                    "stage_rescue_ready": True,
+                    "real_stage_rescue_ready": True,
+                }
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "diagnosis_codes": ["usable_swarm_inference_ready"],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_usable_swarm_inference(report)
+
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn(
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            rendered,
+        )
+
     def test_usable_swarm_cli_forwards_bounded_prompt_batch(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([

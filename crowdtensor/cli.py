@@ -11384,6 +11384,9 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     usable = report.get("usable_swarm") if isinstance(report.get("usable_swarm"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
     p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Usable Swarm Inference v1")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -11395,6 +11398,12 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     print(f"  generated tokens: {p2p.get('generated_token_count')}/{p2p.get('max_new_tokens')}")
     print(f"  distinct stage miners: {p2p.get('distinct_stage_miners')}")
     print(f"  stage rescue ready: {p2p.get('stage_rescue_ready') and p2p.get('real_stage_rescue_ready')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):

@@ -642,6 +642,53 @@ def safety_block() -> dict[str, Any]:
     }
 
 
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Usable Swarm artifacts summarize generation readiness with counts and hashes only. "
+            "Run the printed `crowdtensor generate --p2p` command in human mode to see a local answer."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This top-level Usable Swarm report is shareable evidence, not a local answer transcript; "
+            "raw prompts, generated text, and token ids are excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": "Share usable_swarm_inference.json/md and support_bundle.json; they contain hashes/counts, not raw prompts or answers.",
+    }
+
+
 def limitations() -> list[str]:
     return [
         "Usable Swarm Inference v1 is a user-facing, Coordinator-backed product path.",
@@ -854,6 +901,9 @@ def build_common_report(
                 ok=p2p_payload.get("ok") if p2p_payload else None,
             ),
         },
+        "output_request": output_request_summary(),
+        "answer_scope": answer_scope_summary(),
+        "shareable_summary": shareable_summary(),
         "safety": safety_block(),
         "limitations": limitations(),
         "operator_action": [
@@ -907,9 +957,13 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
             "read_only_workload",
             "not_production",
             "not_coordinator_free",
+            "not_hivemind_petals_production",
             "not_large_model_serving",
         ],
         "artifacts": {"runbook": runbook},
+        "output_request": output_request_summary(),
+        "answer_scope": answer_scope_summary(),
+        "shareable_summary": shareable_summary(),
         "safety": safety_block(),
         "limitations": limitations(),
         "operator_action": ["Run local mode to execute the real local P2P product path."],
@@ -927,6 +981,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     usable = report.get("usable_swarm") if isinstance(report.get("usable_swarm"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
     p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
         "# CrowdTensor Usable Swarm Inference v1",
         "",
@@ -950,6 +1007,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- distinct stage miners: `{p2p.get('distinct_stage_miners')}`",
         f"- stage rescue ready: `{p2p.get('stage_rescue_ready')}`",
         f"- real stage rescue ready: `{p2p.get('real_stage_rescue_ready')}`",
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
         "## Diagnosis",
         "",
@@ -1006,6 +1071,9 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "diagnosis_codes": report.get("diagnosis_codes"),
         "usable_swarm": report.get("usable_swarm"),
         "readiness": report.get("readiness"),
+        "output_request": report.get("output_request"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),
         "limitations": report.get("limitations"),
     })
