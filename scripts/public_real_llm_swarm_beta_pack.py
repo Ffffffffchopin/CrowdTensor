@@ -2492,6 +2492,13 @@ def print_human_summary(report: dict[str, Any]) -> None:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    raw_operator_actions = report.get("operator_action")
+    if isinstance(raw_operator_actions, list):
+        operator_actions = [str(item) for item in raw_operator_actions]
+    elif raw_operator_actions:
+        operator_actions = [str(raw_operator_actions)]
+    else:
+        operator_actions = []
     not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
     print("CrowdTensor Public Real-LLM Swarm Inference Beta")
     print(f"  ok: {report.get('ok')}")
@@ -2512,6 +2519,12 @@ def print_human_summary(report: dict[str, Any]) -> None:
     print(f"  kv_cache hits: stage0={stage0.get('hit_count')} stage1={stage1.get('hit_count')}")
     if review:
         print(f"  review: state={review.get('state')} next_step={review.get('next_step')} inspect_first={review.get('inspect_first')}")
+    if operator_actions:
+        print("  operator_action:")
+        for item in operator_actions[:4]:
+            print(f"    - {item}")
+        if len(operator_actions) > 4:
+            print(f"    - ... {len(operator_actions) - 4} more")
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:

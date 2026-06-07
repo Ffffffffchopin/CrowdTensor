@@ -5817,6 +5817,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("  inspect_first: public_real_llm_swarm_beta.md", rendered)
+        self.assertIn("  operator_action:", rendered)
+        self.assertIn("    - Inspect the CLI step payload, then rerun public-real-llm-swarm-beta with --json after fixing the pack failure.", rendered)
         self.assertIn("  not_completed:", rendered)
 
     def test_public_real_llm_swarm_beta_cli_rejects_unbounded_prompt_batch(self) -> None:
@@ -5838,6 +5840,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("Build or verify the top-level Public Real-LLM Swarm Inference Beta evidence.", rendered)
         self.assertIn("Default release mode runs the product serve/join/generate path", rendered)
+        self.assertIn("operator actions, and not_completed blockers", rendered)
         self.assertIn("Modes:", rendered)
         self.assertIn("release             run the full final 16-token aggregate gate", rendered)
         self.assertIn("local-smoke         run only a local product-path smoke", rendered)
@@ -5947,6 +5950,10 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "not_completed_count": 0,
                 "public_artifact_safe": True,
             },
+            "operator_action": [
+                "Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.",
+                "Share this top-level JSON/Markdown artifact; raw prompts, generated text, token ids, activations, and credentials are excluded.",
+            ],
             "diagnosis_codes": ["public_real_llm_swarm_beta_ready"],
             "artifacts": {},
         }
@@ -5986,6 +5993,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             output,
         )
+        self.assertIn("  operator_action:", output)
+        self.assertIn("    - Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.", output)
 
     def test_public_real_llm_swarm_beta_prints_blockers(self) -> None:
         report = {
@@ -6032,6 +6041,10 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "not_completed_count": 3,
                 "public_artifact_safe": True,
             },
+            "operator_action": [
+                "Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.",
+                "Review the Not Completed list, then rerun the Beta gate after fixing missing evidence.",
+            ],
             "artifacts": {},
         }
         stdout = io.StringIO()
@@ -6047,6 +6060,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("  public_swarm_v2 tokens: 8/16 accepted_rows=16/32", output)
         self.assertIn("  kv_cache hits: stage0=7 stage1=7", output)
+        self.assertIn("  operator_action:", output)
+        self.assertIn("    - Review the Not Completed list, then rerun the Beta gate after fixing missing evidence.", output)
         self.assertIn("  not_completed:", output)
         self.assertIn("    - external Kaggle two-stage real LLM proof", output)
         self.assertIn("    - Public Swarm v2 generated token target", output)

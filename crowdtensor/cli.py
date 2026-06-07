@@ -11689,6 +11689,13 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    raw_operator_actions = report.get("operator_action")
+    if isinstance(raw_operator_actions, list):
+        operator_actions = [str(item) for item in raw_operator_actions]
+    elif raw_operator_actions:
+        operator_actions = [str(raw_operator_actions)]
+    else:
+        operator_actions = []
     not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
     product_batch = beta.get("batch") if isinstance(beta.get("batch"), dict) else {}
     product_stream = beta.get("stream") if isinstance(beta.get("stream"), dict) else {}
@@ -11734,6 +11741,12 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    if operator_actions:
+        print("  operator_action:")
+        for item in operator_actions[:4]:
+            print(f"    - {item}")
+        if len(operator_actions) > 4:
+            print(f"    - ... {len(operator_actions) - 4} more")
     if not_completed:
         print("  not_completed:")
         for item in not_completed[:8]:
@@ -13146,7 +13159,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "P2P route proof, Petals-class P2P candidate smoke, optional CUDA fail-closed smoke,\n"
             "and retained external evidence checks for the tiny real GPT split route. The CLI\n"
             "prints model/token counts, accepted stage rows, batch/stream readiness, KV-cache hit\n"
-            "counts, and not_completed blockers before listing artifacts.\n\n"
+            "counts, operator actions, and not_completed blockers before listing artifacts.\n\n"
             "Modes:\n"
             "  release             run the full final 16-token aggregate gate\n"
             "  local-smoke         run only a local product-path smoke\n"

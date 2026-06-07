@@ -1814,6 +1814,8 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("  stream ready: product=False p2p=True v2=True", output)
         self.assertIn("  kv_cache_ready: True", output)
         self.assertIn("  kv_cache hits: stage0=15 stage1=15", output)
+        self.assertIn("  operator_action:", output)
+        self.assertIn("    - Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.", output)
         self.assertIn("  artifact public_real_llm_swarm_beta_markdown: public_real_llm_swarm_beta.md present=True", output)
         self.assertIn("  artifact support_bundle_json: support_bundle.json present=True", output)
         self.assertNotIn("  not_completed:", output)
@@ -1837,6 +1839,8 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
 
         self.assertIn("  ready: False", output)
         self.assertIn("  public_swarm_v2 tokens: 8/16 accepted_rows=16/32", output)
+        self.assertIn("  operator_action:", output)
+        self.assertIn("    - Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.", output)
         self.assertIn("  not_completed:", output)
         self.assertIn("    - external generated token target", output)
         self.assertIn("    - Public Swarm v2 generated token target", output)
