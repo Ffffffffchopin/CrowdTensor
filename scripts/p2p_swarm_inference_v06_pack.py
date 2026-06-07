@@ -300,6 +300,62 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     return entry
 
 
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "P2P Swarm Inference v0.6 public artifacts summarize discovery, routing, "
+            "safe generation hashes/counts, batch/stream readiness, KV-cache evidence, "
+            "and stage rescue proof only. Run `crowdtensor generate --p2p` in local "
+            "human mode to display answer text."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This P2P Swarm Inference v0.6 report is shareable route and readiness "
+            "evidence, not an answer transcript. Raw prompts, generated text, generated "
+            "token ids, activations, lease tokens, peer secrets, private env files, "
+            "Kaggle kernel payloads, and runtime state are excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share `p2p_swarm_inference_v06.json`, `p2p_swarm_inference_v06.md`, "
+            "and `support_bundle.json`; they contain P2P route evidence, hashes, "
+            "counts, and readiness summaries, not raw prompts or answers."
+        ),
+    }
+
+
 def request_json(base_url: str, path: str, *, timeout: float = 5.0, bearer_token: str = "") -> dict[str, Any]:
     request = Request(f"{base_url.rstrip('/')}{path}", method="GET")
     if bearer_token:
@@ -3277,6 +3333,9 @@ def build_common_report(
         },
         "diagnosis_codes": sorted(codes),
         "artifacts": artifacts,
+        "output_request": output_request_summary(),
+        "answer_scope": answer_scope_summary(),
+        "shareable_summary": shareable_summary(),
         "safety": {
             "p2p_discovery_routing_prototype": True,
             "coordinator_result_fallback": True,
@@ -3406,6 +3465,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- external stage requeue ready: `{(report.get('inference') or {}).get('external_stage_requeue_ready')}`",
         f"- tiny-gpt2 multi-token ready: `{(report.get('inference') or {}).get('tiny_gpt2_multi_token_ready')}`",
         "",
+        "## Output Scope",
+        "",
+        f"- output request: `include_output={bool((report.get('output_request') or {}).get('include_output'))} raw_prompt_public={bool((report.get('output_request') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('output_request') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('output_request') or {}).get('generated_token_ids_public'))} public_artifact_safe={bool((report.get('output_request') or {}).get('public_artifact_safe'))}`",
+        f"- answer scope: `state={(report.get('answer_scope') or {}).get('scope_state')} terminal_only={bool((report.get('answer_scope') or {}).get('terminal_only'))} visible_in_terminal={bool((report.get('answer_scope') or {}).get('visible_in_terminal'))} saved_json={(report.get('answer_scope') or {}).get('saved_json_display')} saved_markdown={(report.get('answer_scope') or {}).get('saved_markdown_display')} public_artifact_safe={bool((report.get('answer_scope') or {}).get('public_artifact_safe'))}`",
+        f"- shareable: `saved_artifacts={bool((report.get('shareable_summary') or {}).get('saved_artifacts_public_safe'))} raw_prompt_public={bool((report.get('shareable_summary') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('shareable_summary') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('shareable_summary') or {}).get('generated_token_ids_public'))} answer_scope_state={(report.get('shareable_summary') or {}).get('answer_scope_state')} local_answer_terminal_only={bool((report.get('shareable_summary') or {}).get('local_answer_terminal_only'))}`",
+        f"- note: {(report.get('answer_scope') or {}).get('summary')}",
+        "",
         "## Diagnosis",
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
@@ -3436,6 +3502,9 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
 
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
     errors = validate_public_report(report)
     if errors:
         report["ok"] = False
@@ -3451,6 +3520,9 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "p2p": report.get("p2p"),
         "inference": report.get("inference"),
         "artifacts": report.get("artifacts"),
+        "output_request": report.get("output_request"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),
     })
     write_json(output_dir / "support_bundle.json", bundle)

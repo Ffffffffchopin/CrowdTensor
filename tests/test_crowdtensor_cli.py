@@ -10910,6 +10910,73 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(calls)
         self.assertEqual(calls[0][calls[0].index("--hf-cache-dir") + 1], "/tmp/hf-cache")
 
+    def test_p2p_swarm_v06_prints_output_scope(self) -> None:
+        report = {
+            "schema": "p2p_swarm_inference_v06_v1",
+            "cli_schema": "p2p_swarm_inference_v06_cli_v1",
+            "ok": True,
+            "mode": "evidence-import",
+            "output_dir": "dist/p2p-v06",
+            "p2p": {
+                "ready": True,
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "observed_hf_model_id": "sshleifer/tiny-gpt2",
+                "model_id_match": True,
+                "generate_route": {"usable_now": True},
+                "real_generate_ready": True,
+                "stage_rescue_ready": True,
+                "real_stage_rescue_ready": True,
+            },
+            "inference": {
+                "workload_type": "real_llm_sharded_infer",
+                "max_new_tokens": 16,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "diagnosis_codes": ["p2p_swarm_inference_v06_ready"],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_p2p_swarm_inference_v06(report)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            output,
+        )
+
     def test_p2p_swarm_v06_forwards_bounded_prompt_batch(self) -> None:
         calls: list[list[str]] = []
 
