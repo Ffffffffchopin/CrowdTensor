@@ -126,8 +126,10 @@ prompt text, generated text, generated token ids, credentials, or activations.
 The `result` line and JSON/Markdown `result` object summarize completion state,
 token count, output count, generated-text hash, and display safety:
 `local-private` for terminal-only generated text, `hash-only` for redacted
-summaries, and `hash-only-json` for JSON stdout, without exposing generated text
-in shareable artifacts.
+summaries, `hash-only-json` for JSON stdout, and `saved-terminal-redacted` when
+a saved JSON/Markdown file records that local terminal text existed but has
+already been removed from the saved artifact. These states do not expose
+generated text in shareable artifacts.
 The `issue` line and JSON/Markdown `issue_summary` object condense the current
 state, primary diagnosis code, next step, safe progress text, and whether a
 redacted detail is available, so blocked or timeout runs have one place to read
