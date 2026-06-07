@@ -4045,6 +4045,11 @@ def _infer_summary_from_payload(
     if not generated_text and display_outputs:
         first_output = display_outputs[0]
         generated_text = str(first_output.get("generated_text") or "")
+    local_output_note = str(local_output.get("note") or "")
+    if (generated_text or display_outputs) and not local_output_note:
+        local_output_note = "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only."
+    elif getattr(args, "include_output", False) and getattr(args, "json", False):
+        local_output_note = "Raw generated text is suppressed in JSON/public output; rerun without --json for local display."
     generated_tokens = int(generation.get("generated_token_count") or 0)
     max_new_tokens = int(generation.get("max_new_tokens") or getattr(args, "max_new_tokens", 0) or 0)
     try:
@@ -4129,10 +4134,11 @@ def _infer_summary_from_payload(
             "outputs": display_outputs,
             "output_count": len(display_outputs) if display_outputs else (1 if generated_text else 0),
             "source": local_output.get("source") or "",
-            "note": local_output.get("note") or "",
+            "note": local_output_note,
             "display_only": bool(generated_text or display_outputs),
             "public_artifact_safe": False,
         },
+        "local_output_note": local_output_note,
         "source_report": {
             "schema": payload.get("schema"),
             "mode": payload.get("mode"),
@@ -7975,6 +7981,8 @@ def print_infer(report: dict[str, Any]) -> None:
                 print(f"  output[{index}]: {item.get('generated_text')}")
     if local_output.get("note"):
         print(f"  note: {local_output.get('note')}")
+    elif report.get("local_output_note"):
+        print(f"  note: {report.get('local_output_note')}")
     print(f"  output_dir: {report.get('output_dir')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")

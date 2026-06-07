@@ -4295,6 +4295,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["local_output"]["generated_text"], generated_text)
         self.assertEqual(report["local_output"]["source"], "local-private-task-state")
         self.assertEqual(report["local_output"]["outputs"][0]["generated_text"], generated_text)
+        self.assertEqual(
+            report["local_output_note"],
+            "Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
+        )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
@@ -4351,6 +4355,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False", stdout.getvalue())
+        self.assertIn("Raw generated text is shown only in local human output", stdout.getvalue())
         self.assertIn("next[1] check existing swarm", stdout.getvalue())
         self.assertIn("next[2] submit inference", stdout.getvalue())
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer", stdout.getvalue())
@@ -4366,10 +4371,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn("CrowdTensor user prompt", json.dumps(report["next_commands"], sort_keys=True))
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
+        self.assertEqual(
+            report["local_output_note"],
+            "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
+        )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["wait_progress"]["max_observed_token_count"], 16)
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["display_only"])
+        self.assertEqual(
+            persisted["local_output_note"],
+            "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
+        )
 
     def test_infer_main_prints_copyable_local_prompt_without_persisting_it(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -4492,7 +4505,6 @@ class CrowdTensorCliTests(unittest.TestCase):
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
             "infer",
-            "first prompt",
             "--prompt-texts",
             "first prompt,second prompt",
             "--mode",
@@ -4691,6 +4703,15 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["local_output"]["generated_text"], "")
+        self.assertEqual(
+            report["local_output_note"],
+            "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
+        )
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted["local_output_note"],
+            "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
+        )
 
     def test_print_infer_batch_outputs_are_not_duplicated(self) -> None:
         report = {
