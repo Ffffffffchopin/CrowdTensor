@@ -7564,6 +7564,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["result"]["max_new_tokens"], 8)
         self.assertEqual(report["result"]["display"], "hash-only-json")
         self.assertTrue(report["result"]["public_artifact_safe"])
+        self.assertEqual(report["local_output"]["output_count"], 1)
+        self.assertEqual(
+            report["local_output_note"],
+            "Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display.",
+        )
         self.assertEqual(report["answer_scope"]["scope_state"], "json-suppressed")
         self.assertEqual(report["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "json-suppressed")
@@ -7587,12 +7592,25 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["status"], "complete")
         self.assertEqual(persisted["result"]["display"], "hash-only-json")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
+        self.assertEqual(persisted["local_output"]["output_count"], 1)
+        self.assertEqual(
+            persisted["local_output_note"],
+            "Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display.",
+        )
         self.assertEqual(persisted["answer_scope"]["scope_state"], "json-suppressed")
         self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "json-suppressed")
         self.assertEqual(persisted["recommended_next_command"]["label"], "run broader local evidence")
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True` count=`1` source=``",
+            markdown,
+        )
+        self.assertIn(
+            "- Local output note: Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display.",
+            markdown,
+        )
         self.assertIn("- Answer scope: `state=json-suppressed ", markdown)
         self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
         self.assertTrue(calls)
@@ -9669,6 +9687,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["output_request"]["include_output"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertTrue(persisted["local_output"]["public_artifact_safe"])
+        self.assertEqual(persisted["local_output"]["output_count"], 1)
         self.assertFalse(persisted["answer_scope"]["visible_in_terminal"])
         self.assertFalse(persisted["answer_scope"]["terminal_only"])
         self.assertEqual(persisted["answer_scope"]["scope_state"], "json-suppressed")
@@ -9679,7 +9698,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(
-            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`0` source=``",
+            "- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True` count=`1` source=``",
             markdown,
         )
         self.assertIn(

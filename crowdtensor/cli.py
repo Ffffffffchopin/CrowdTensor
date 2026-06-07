@@ -6362,6 +6362,16 @@ def _infer_summary_from_payload(
         "generated_token_ids_public": False,
         "public_artifact_safe": not has_local_display_output,
     }
+    local_output_count = display_output_count
+    if local_output_count <= 0 and result_output_count > 0 and result_status == "complete":
+        local_output_count = result_output_count
+    if (
+        local_output_count > 0
+        and not has_local_display_output
+        and getattr(args, "json", False)
+        and not local_output_note
+    ):
+        local_output_note = "Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display."
     recommended_next_command = _infer_recommended_next_command(
         next_commands,
         ok=ok,
@@ -6457,7 +6467,7 @@ def _infer_summary_from_payload(
             "available": has_local_display_output,
             "generated_text": generated_text if generated_text else "",
             "outputs": display_outputs,
-            "output_count": len(display_outputs) if display_outputs else (1 if generated_text else 0),
+            "output_count": local_output_count,
             "source": local_output.get("source") or "",
             "note": local_output_note,
             "display_only": has_local_display_output,
