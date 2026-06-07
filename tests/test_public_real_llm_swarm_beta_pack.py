@@ -316,6 +316,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         support = json.loads((output_dir / "beta" / "support_bundle.json").read_text(encoding="utf-8"))
         self.assertEqual(support["artifact_summary"]["inspect_first"], "public_real_llm_swarm_beta.md")
         self.assertEqual(support["review_summary"]["next_step"], "share_public_artifacts")
+        self.assertEqual(support["operator_action"], report["operator_action"])
+        self.assertEqual(support["not_completed"], report["not_completed"])
+        self.assertTrue(support["release_private_artifact_cleanup"]["private_artifacts_cleaned"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertNotIn('"generated_text":', encoded)
@@ -530,6 +533,11 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("- next step: `review_not_completed`", markdown)
         self.assertIn("## Not Completed", markdown)
         self.assertIn("- persistent dual-stage KV-cache reuse", markdown)
+        support = json.loads((output_dir / "beta" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["review_summary"]["next_step"], "review_not_completed")
+        self.assertEqual(support["not_completed"], report["not_completed"])
+        self.assertIn("persistent dual-stage KV-cache reuse", support["not_completed"])
+        self.assertEqual(support["operator_action"], report["operator_action"])
 
     def test_evidence_import_blocks_when_public_swarm_v2_report_missing(self) -> None:
         output_dir = self._tmp_dir()
