@@ -121,7 +121,8 @@ shareable files.
 Start by reading the `review` line, or JSON/Markdown `review_summary`: it
 combines the current state, next step, first artifact to inspect, recommended
 command label, primary diagnosis code, and an `attention` value for warnings
-such as incomplete stream evidence. The adjacent `inspect_first` line points to
+such as incomplete stream evidence or skipped preflights; Markdown explains
+those warnings in `What To Do Next`. The adjacent `inspect_first` line points to
 the Markdown summary to open first. The adjacent `review_next` line repeats the
 safe recommended command near that summary; human terminal output renders it
 with your current local prompt for copying, while JSON/Markdown artifacts keep

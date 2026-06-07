@@ -474,6 +474,32 @@ def markdown_prompt_input_hint(command_text: str) -> str:
     )
 
 
+ATTENTION_EXPLANATIONS = {
+    "coordinator_preflight_skipped": "Coordinator live readiness was skipped; rerun the printed dry-run/live preflight before submitting",
+    "stage_preflight_skipped": "stage0/stage1 Miner readiness was skipped; rerun the printed stage preflight with an observer token",
+    "stage_preflight_unknown": "stage0/stage1 Miner readiness did not return a clear result; rerun the stage preflight",
+    "stage_preflight_not_checked": "stage readiness was not checked because route or Coordinator readiness failed first",
+    "stage_preflight_failed": "stage0/stage1 Miner readiness failed; start or fix the missing stage Miners before submitting",
+    "coordinator_not_ready": "Coordinator readiness failed; start or restart the Coordinator and rerun preflight",
+    "route_not_ready": "no usable Coordinator route was found; start discovery/Coordinator or pass a reachable --coordinator-url",
+    "redacted_detail_available": "a redacted failure detail is available in the saved summary",
+    "operator_action": "follow the printed action before retrying",
+}
+
+
+def attention_display_text(attention: str) -> str:
+    raw = str(attention or "").strip()
+    if not raw:
+        return ""
+    codes = [part.strip() for part in raw.split(",") if part.strip()]
+    if codes and all(code in ATTENTION_EXPLANATIONS for code in codes):
+        explanations = "; ".join(ATTENTION_EXPLANATIONS[code] for code in codes)
+        return f"{raw} - {explanations}."
+    if raw.startswith("request[") or raw.startswith("missing_requests="):
+        return f"{raw} - stream progress is incomplete; rerun with --stream if you need live token evidence."
+    return raw
+
+
 def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
@@ -500,7 +526,7 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     if headline:
         lines.append(f"- Meaning: {headline}")
     if attention:
-        lines.append(f"- Attention: `{attention}`")
+        lines.append(f"- Attention: `{attention_display_text(attention)}`")
     if inspect_first:
         lines.append(f"- Inspect first: `{inspect_first}`")
     if recommended_label:
