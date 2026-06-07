@@ -1132,9 +1132,9 @@ def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
         "error_count": len(errors),
         "error_preview": errors[:8],
         "operator_action": (
-            "Open the checked Markdown and support bundle."
+            "Open inspect_first for the checked Markdown, support_bundle for diagnostics, and check_json for the validation record."
             if ready
-            else "Fix the listed validation errors, then rerun scripts/public_real_llm_swarm_beta_check.py."
+            else "Open check_json for the validation errors, inspect the checked Markdown Not Completed section, fix the listed items, then rerun scripts/public_real_llm_swarm_beta_check.py."
         ),
         "public_artifact_safe": True,
         "raw_prompt_public": False,
