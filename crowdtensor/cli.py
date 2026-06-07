@@ -7095,9 +7095,17 @@ def _product_generate_dry_run_preflight(
     final_ok = bool(report.get("ok") and (live_ready is not False))
     if skip_live_preflight:
         codes.discard("generate_dry_run_ready")
+        codes.discard("generate_dry_run_partial")
         codes.add("generate_request_shape_ready")
     elif not final_ok:
         codes.discard("generate_dry_run_ready")
+        codes.discard("generate_dry_run_partial")
+    elif ready_to_submit.get("fully_verified"):
+        codes.discard("generate_dry_run_partial")
+        codes.add("generate_dry_run_ready")
+    else:
+        codes.discard("generate_dry_run_ready")
+        codes.add("generate_dry_run_partial")
     report.update({
         "ok": final_ok,
         "coordinator_ready": coordinator_ready,
@@ -7289,7 +7297,7 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
         "stage_preflight_skipped",
         "stage_preflight_not_checked",
     }
-    generate_only_codes = {"generate_dry_run_ready", "generate_request_shape_ready"}
+    generate_only_codes = {"generate_dry_run_ready", "generate_dry_run_partial", "generate_request_shape_ready"}
     codes = [
         str(code)
         for code in (payload.get("diagnosis_codes") or [])

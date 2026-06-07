@@ -96,8 +96,9 @@ replaced with placeholders. When `ready_to_submit` is present, read
 
 - `verified` means the route, Coordinator, and distinct stage Miners were
   checked.
-- `partial` means the request can be submitted, but rerun the printed dry-run
-  command with `CROWDTENSOR_OBSERVER_TOKEN` to verify stage Miners first.
+- `partial` means the request can be submitted, but at least one live check
+  still needs the printed follow-up command first. Machine-readable
+  `generate_dry_run_partial` has the same meaning for `generate --dry-run`.
 - `blocked` means follow `operator_action` before submitting.
 - `skipped` means only the request shape was checked, usually because live
   preflight was intentionally skipped.

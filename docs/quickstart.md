@@ -202,7 +202,8 @@ capabilities. Treat `label=verified` as the normal submit-ready state;
 `label=partial` needs an observer-token preflight; `label=blocked` needs the
 printed action first. A false `coordinator_ready` line includes `error=...`
 for failed probes or `reason=...` for skipped checks. For
-`infer --mode existing --dry-run`, JSON uses
+`generate --dry-run`, JSON uses `generate_dry_run_partial` for any partial
+readiness state. For `infer --mode existing --dry-run`, JSON uses
 `crowdtensor_infer_preflight_partial` until the stage Miner check is fully
 verified. If the command is being used only for CI-safe packaging or offline
 request-shape checks, add `--skip-live-preflight` and expect `label=skipped`.

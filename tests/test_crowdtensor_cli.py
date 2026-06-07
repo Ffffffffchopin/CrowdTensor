@@ -919,6 +919,78 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# requires CROWDTENSOR_OBSERVER_TOKEN", rendered)
         self.assertIn("  next[2] submit generation: CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'  # requires CROWDTENSOR_ADMIN_TOKEN", rendered)
 
+    def test_product_generate_dry_run_without_observer_token_is_partial_stage_preflight(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--dry-run",
+            "--json",
+        ])
+        calls: list[tuple[str, str, str]] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            observer_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del payload, admin_token, observer_token, timeout
+            calls.append((method, base_url, path))
+            if path == "/ready":
+                return {"schema": "ready_v1", "service": "crowdtensord", "protocol": "runtime_contract_v1"}
+            raise AssertionError(path)
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(calls, [("GET", "http://127.0.0.1:8787", "/ready")])
+        self.assertTrue(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["ready_to_submit"]["fully_verified"])
+        self.assertEqual(report["ready_to_submit"]["readiness_label"], "partial")
+        self.assertEqual(report["ready_to_submit"]["next_step"], "run_stage_preflight")
+        self.assertEqual(report["ready_to_submit"]["stage_verification"], "skipped")
+        self.assertEqual(report["ready_to_submit"]["warning_codes"], ["stage_preflight_skipped"])
+        self.assertFalse(report["ready_to_submit"]["stage_preflight_required"])
+        self.assertFalse(report["stage_preflight"]["checked"])
+        self.assertEqual(report["stage_preflight"]["reason"], "observer_token_missing")
+        self.assertEqual(report["stage_preflight"]["source"], "not-checked")
+        self.assertIn("coordinator_ready_preflight_ready", report["diagnosis_codes"])
+        self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
+        self.assertIn("generate_dry_run_partial", report["diagnosis_codes"])
+        self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
+        self.assertEqual(
+            report["operator_action"],
+            "Generation can be submitted, but stage0/stage1 were not fully verified; run the printed stage-preflight next command with --observer-token before the submit next command.",
+        )
+        labels = [item["label"] for item in report["next_commands"]]
+        self.assertIn("check generation route", labels)
+        self.assertIn("submit generation after stage preflight", labels)
+        stage_check = next(item for item in report["next_commands"] if item["label"] == "check generation route")
+        self.assertEqual(stage_check["requires_env"], ["CROWDTENSOR_OBSERVER_TOKEN"])
+        submit = next(item for item in report["next_commands"] if item["label"] == "submit generation after stage preflight")
+        self.assertEqual(submit["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  stage_preflight: checked=False ok=None matched_miners=None missing=not_checked reason=observer_token_missing source=not-checked",
+            rendered,
+        )
+        self.assertIn(
+            "  ready_to_submit: True label=partial fully_verified=False route=True coordinator=True stage=skipped stage_verification=skipped next_step=run_stage_preflight warnings=stage_preflight_skipped",
+            rendered,
+        )
+        self.assertIn("next[2] submit generation after stage preflight:", rendered)
+
     def test_product_generate_dry_run_can_skip_live_preflight_for_ci(self) -> None:
         args = cli.parse_args([
             "generate",
@@ -5361,6 +5433,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
+        self.assertNotIn("generate_dry_run_partial", report["diagnosis_codes"])
         self.assertNotIn("generate_request_shape_ready", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_preflight_partial", report["diagnosis_codes"])
         self.assertIn("user_friendly_infer_preflight_partial", report["diagnosis_codes"])
