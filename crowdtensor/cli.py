@@ -4128,6 +4128,11 @@ def _infer_summary_from_payload(
             "generated_token_ids_public": False,
         },
         "wait_progress": wait_progress,
+        "output_request": {
+            "include_output": bool(getattr(args, "include_output", False)),
+            "raw_generated_text_public": False,
+            "public_artifact_safe": True,
+        },
         "local_output": {
             "available": bool(generated_text or display_outputs),
             "generated_text": generated_text if generated_text else "",

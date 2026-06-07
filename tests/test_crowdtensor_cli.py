@@ -4370,6 +4370,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
         self.assertNotIn("CrowdTensor user prompt", json.dumps(report["next_commands"], sort_keys=True))
+        self.assertTrue(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
         self.assertEqual(
             report["local_output_note"],
@@ -4377,6 +4380,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["wait_progress"]["max_observed_token_count"], 16)
+        self.assertTrue(persisted["output_request"]["include_output"])
+        self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["display_only"])
         self.assertEqual(
@@ -4702,12 +4707,16 @@ class CrowdTensorCliTests(unittest.TestCase):
             report = cli.build_infer(args)
 
         self.assertTrue(report["ok"], report)
+        self.assertTrue(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertEqual(report["local_output"]["generated_text"], "")
         self.assertEqual(
             report["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(persisted["output_request"]["include_output"])
+        self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertEqual(
             persisted["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
@@ -5091,6 +5100,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["dry_run"])
         self.assertTrue(report["stream"]["enabled"])
+        self.assertFalse(report["output_request"]["include_output"])
         self.assertEqual(report["route"]["route_source"], "coordinator-url")
         self.assertTrue(report["coordinator_ready"]["ok"])
         self.assertEqual(report["coordinator_ready"]["protocol"], "runtime_contract_v1")
