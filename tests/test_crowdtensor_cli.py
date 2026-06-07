@@ -4430,6 +4430,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(retry["command"].count("--timeout-seconds"), 1)
         self.assertEqual(retry["command"][retry["command"].index("--timeout-seconds") + 1], "120")
         self.assertNotIn("--timeout-seconds 1 --timeout-seconds 120", retry["command_line"])
+        self.assertEqual(
+            report["recommended_next_command"]["reason_detail"],
+            "Retry the same request with a longer timeout after incomplete or partial progress.",
+        )
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn("CrowdTensor prompt", encoded)
         self.assertNotIn("admin-secret", encoded)
@@ -4592,6 +4596,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["wait_progress"]["expected_request_count"], 2)
         self.assertEqual(report["wait_progress"]["observed_request_count"], 0)
         self.assertEqual(report["batch"]["observed_request_count"], 0)
+        self.assertEqual(
+            report["recommended_next_command"]["reason_detail"],
+            "Retry the same request with a longer timeout after incomplete or partial progress.",
+        )
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
@@ -10203,6 +10211,10 @@ class CrowdTensorCliTests(unittest.TestCase):
                 self.assertEqual(retry["command"].count("--timeout-seconds"), 1)
                 self.assertEqual(retry["command"][retry["command"].index("--timeout-seconds") + 1], expected_retry_timeout)
                 self.assertNotIn("--timeout-seconds 90 --timeout-seconds 180", retry["command_line"])
+                self.assertEqual(
+                    report["recommended_next_command"]["reason_detail"],
+                    "Retry the same request with a longer timeout after incomplete or partial progress.",
+                )
                 self.assertNotIn("CrowdTensor user prompt", json.dumps(report["next_commands"], sort_keys=True))
                 self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
                 persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))

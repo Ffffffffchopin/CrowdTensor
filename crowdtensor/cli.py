@@ -754,7 +754,7 @@ def _pick_next_command(
 NEXT_REASON_DETAILS = {
     "install_missing_runtime": "Install the optional Hugging Face runtime before retrying inference.",
     "start_discovery": "Start discovery so the client can find the Coordinator route.",
-    "retry_timeout": "Retry the same request with a longer timeout after partial progress.",
+    "retry_timeout": "Retry the same request with a longer timeout after incomplete or partial progress.",
     "submit_verified_inference": "Preflight passed; submit the inference request next.",
     "submit_verified_generation": "Preflight passed; submit the generation request next.",
     "verify_stage_miners": "Verify distinct stage0/stage1 Miners before submitting.",
