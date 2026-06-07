@@ -1081,7 +1081,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Reason: Run live preflight before submitting because readiness was skipped.", markdown)
         self.assertIn("- Copy command: `crowdtensor generate --max-new-tokens 16", markdown)
         self.assertIn(
-            "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render your local prompt for copy/paste when available.",
+            "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render your local prompt for copy/paste when available, or a `printf` pipe placeholder for `--prompt-stdin`.",
             markdown,
         )
         self.assertIn("- Requires env: `CROWDTENSOR_OBSERVER_TOKEN`", markdown)
@@ -1589,6 +1589,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
+        self.assertIn("printf %s '<prompt>' | crowdtensor generate", rendered)
         self.assertIn("--prompt-stdin", rendered)
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
@@ -8461,7 +8462,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Reason: Rerun the inference request.", markdown)
         self.assertIn("- Copy command: `CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing", markdown)
         self.assertIn(
-            "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render your local prompt for copy/paste when available.",
+            "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render your local prompt for copy/paste when available, or a `printf` pipe placeholder for `--prompt-stdin`.",
             markdown,
         )
         self.assertIn("- Requires env: `CROWDTENSOR_ADMIN_TOKEN`", markdown)
@@ -8884,6 +8885,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
+        self.assertIn("printf %s '<prompt>' | crowdtensor infer", rendered)
         self.assertIn("--prompt-stdin", rendered)
         self.assertNotIn("infer '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
@@ -9257,7 +9259,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Stream issue: `request[2]=req-2:1/2`", markdown)
         self.assertIn("Inference completed, but stream progress is incomplete", markdown)
         self.assertIn(
-            "- Prompt input: saved Markdown keeps `<prompt-1>,<prompt-2>` placeholders; terminal `review_next` / `recommended_next` render your local prompts for copy/paste when available.",
+            "- Prompt input: saved Markdown keeps `<prompt-1>,<prompt-2>` placeholders; terminal `review_next` / `recommended_next` render your local prompts for copy/paste when available, or a `printf` pipe placeholder for `--prompt-stdin`.",
             markdown,
         )
         self.assertIn("Replace `<prompt-1>,<prompt-2>` with your comma-separated local prompts before running saved commands.", markdown)

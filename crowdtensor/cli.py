@@ -457,6 +457,7 @@ def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> st
         rendered = [str(part) for part in command]
         if prompt_stdin:
             rendered = replace_single_prompt_with_stdin(rendered)
+            return pipe_prompt_placeholder_for_stdin(command_line(rendered))
         elif prompt_file:
             rendered = replace_single_prompt_with_file(rendered, prompt_file)
         elif prompt_texts_file:
@@ -493,6 +494,7 @@ def local_generate_command_line(item: dict[str, Any], report: dict[str, Any]) ->
     rendered = [str(part) for part in command]
     if prompt_stdin:
         rendered = replace_single_prompt_with_stdin(rendered)
+        return pipe_prompt_placeholder_for_stdin(command_line(rendered))
     elif prompt_file:
         rendered = replace_single_prompt_with_file(rendered, prompt_file)
     elif prompt_texts_file:
@@ -562,6 +564,13 @@ def replace_single_prompt_with_stdin(command: list[str]) -> list[str]:
     return rendered
 
 
+def pipe_prompt_placeholder_for_stdin(command_line: str) -> str:
+    command_line = str(command_line or "")
+    if not command_line:
+        return ""
+    return f"printf %s {shlex.quote(INFER_PROMPT_PLACEHOLDER)} | {command_line}"
+
+
 def replace_batch_prompt_with_file(command: list[str], prompt_texts_file: str) -> list[str]:
     rendered: list[str] = []
     replaced = False
@@ -628,7 +637,8 @@ def markdown_prompt_input_hint(command_text: str) -> str:
         noun = "local prompt"
     return (
         f"- Prompt input: saved Markdown keeps {placeholders} placeholders; "
-        f"terminal `review_next` / `recommended_next` render your {noun} for copy/paste when available."
+        f"terminal `review_next` / `recommended_next` render your {noun} for copy/paste when available, "
+        "or a `printf` pipe placeholder for `--prompt-stdin`."
     )
 
 
