@@ -1200,6 +1200,8 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertEqual(report["issue_summary"]["primary_code"], "coordinator_route_missing")
+        self.assertEqual(report["review_summary"]["primary_code"], "coordinator_route_missing")
         self.assertEqual(report["session_request"]["prompt_chars"], len(prompt))
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -2047,6 +2049,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertEqual(report["issue_summary"]["primary_code"], "p2p_discovery_unreachable")
+        self.assertEqual(report["review_summary"]["primary_code"], "p2p_discovery_unreachable")
         self.assertEqual(report["p2p"]["discovery"]["error"], "OSError")
         self.assertIn("P2P discovery daemon", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -2499,6 +2503,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertEqual(report["issue_summary"]["primary_code"], "p2p_discovery_unreachable")
+        self.assertEqual(report["review_summary"]["primary_code"], "p2p_discovery_unreachable")
         self.assertEqual(report["p2p"]["discovery"]["error"], "OSError")
         self.assertIn("P2P discovery daemon", report["operator_action"])
         stdout = io.StringIO()
@@ -2532,6 +2538,8 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
+        self.assertEqual(report["issue_summary"]["primary_code"], "coordinator_route_missing")
+        self.assertEqual(report["review_summary"]["primary_code"], "coordinator_route_missing")
         self.assertTrue(report["stream"]["enabled"])
         self.assertTrue(report["stream"]["requested"])
         self.assertTrue(report["output_request"]["include_output"])
@@ -6863,6 +6871,8 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertIn("Start a Coordinator", report["operator_action"])
+        self.assertEqual(report["issue_summary"]["primary_code"], "coordinator_route_missing")
+        self.assertEqual(report["review_summary"]["primary_code"], "coordinator_route_missing")
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run", next_lines)
         self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run", next_lines)
@@ -7033,6 +7043,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+        self.assertEqual(report["issue_summary"]["primary_code"], "coordinator_route_missing")
+        self.assertEqual(report["review_summary"]["primary_code"], "coordinator_route_missing")
         self.assertEqual(
             report["operator_action"],
             "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm.",

@@ -4238,7 +4238,7 @@ def _issue_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
     state = str(user_status.get("state") or ("completed" if report.get("ok") else "blocked"))
-    primary_code = codes[0] if codes else ("ok" if report.get("ok") else "unknown")
+    primary_code = _primary_diagnosis_code(codes, ok=bool(report.get("ok")), state=state)
     progress = wait_progress_text(wait_progress) if wait_progress else ""
     safe_detail_present = bool(
         report.get("detail")
@@ -4257,6 +4257,31 @@ def _issue_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str
         "safe_detail_present": safe_detail_present,
         "public_artifact_safe": True,
     }
+
+
+def _primary_diagnosis_code(codes: list[str], *, ok: bool, state: str) -> str:
+    if not codes:
+        return "ok" if ok else "unknown"
+    if ok or state in {"completed", "preflight-ready", "preflight-partial", "preflight"}:
+        return codes[0]
+    priorities = [
+        "hf_dependencies_missing",
+        "product_swarm_mvp_hf_runtime_missing",
+        "p2p_discovery_unreachable",
+        "coordinator_route_missing",
+        "generate_route_unavailable",
+        "coordinator_ready_failed",
+        "stage_preflight_failed",
+        "stage_preflight_not_checked",
+        "admin_token_required",
+        "generation_timeout",
+        "crowdtensor_infer_source_report_missing",
+    ]
+    code_set = set(codes)
+    for code in priorities:
+        if code in code_set:
+            return code
+    return codes[0]
 
 
 def _user_inference_status(
