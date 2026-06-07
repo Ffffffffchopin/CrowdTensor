@@ -899,6 +899,32 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
         if artifact.get("present") is not True:
             errors.append(f"missing_artifact:{name}")
+    machine_text = artifact_text(
+        payload,
+        "public_real_llm_swarm_beta_json",
+        "public_real_llm_swarm_beta.json",
+    )
+    if machine_text:
+        append_sensitive_artifact_errors(errors, artifact_name="public_real_llm_swarm_beta_json", text=machine_text)
+    machine = artifact_json(
+        payload,
+        "public_real_llm_swarm_beta_json",
+        "public_real_llm_swarm_beta.json",
+    )
+    if not machine:
+        errors.append("machine_readable_artifact_unreadable")
+    else:
+        if machine.get("schema") != payload.get("schema"):
+            errors.append("machine_readable_schema_mismatch")
+        if machine.get("ok") != payload.get("ok"):
+            errors.append("machine_readable_ok_mismatch")
+        if machine.get("operator_action") != payload.get("operator_action"):
+            errors.append("machine_readable_operator_action_mismatch")
+        if machine.get("not_completed") != payload.get("not_completed"):
+            errors.append("machine_readable_not_completed_mismatch")
+        machine_review = machine.get("review_summary") if isinstance(machine.get("review_summary"), dict) else {}
+        if machine_review.get("next_step") != review_summary.get("next_step"):
+            errors.append("machine_readable_review_next_step_mismatch")
     markdown = artifact_text(
         payload,
         "public_real_llm_swarm_beta_markdown",

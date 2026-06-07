@@ -1829,6 +1829,32 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("support_bundle_operator_action_mismatch", errors)
         self.assertIn("support_bundle_not_completed_mismatch", errors)
 
+    def test_check_validation_requires_machine_readable_artifact_consistency(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+        report_path = output_dir / "beta" / "public_real_llm_swarm_beta.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["operator_action"] = ["stale machine-readable action"]
+        report["not_completed"] = ["stale machine-readable blocker"]
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+
+        self.assertIn("machine_readable_operator_action_mismatch", errors)
+        self.assertIn("machine_readable_not_completed_mismatch", errors)
+
+    def test_check_validation_rejects_sensitive_machine_readable_artifact(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+        report_path = output_dir / "beta" / "public_real_llm_swarm_beta.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["prompt_text"] = "leaked"
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+
+        self.assertIn('sensitive_artifact:public_real_llm_swarm_beta_json:"prompt_text":', errors)
+
     def test_check_validation_rejects_sensitive_markdown_artifact(self) -> None:
         output_dir = self._tmp_dir()
         payload = check.build_fake_release(output_dir, tokens=16)
