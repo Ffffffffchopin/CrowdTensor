@@ -93,10 +93,17 @@ Markdown contain no generated text. `local_output`
 adds safe output `count` and `source` fields such as
 `local-private-task-state` or `coordinator-validation`.
 Pick one prompt source per command: positional prompt,
-`--prompt-text`/`--prompt`, or `--prompt-texts` for a bounded
-batch. The CLI rejects mixed prompt sources instead of guessing. Reports expose
+`--prompt-text`/`--prompt`, `--prompt-file prompt.txt` for a UTF-8 single
+prompt file, or `--prompt-texts` for a bounded batch. The CLI rejects
+mixed prompt sources instead of guessing. Reports expose
 `output_request.include_output` while keeping
 `output_request.raw_generated_text_public` false in JSON and saved artifacts.
+
+```bash
+crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8
+crowdtensor generate --prompt-file prompt.txt --coordinator-url http://127.0.0.1:8787 --dry-run
+```
+
 Existing-swarm reports include `wait_progress` with poll count, accepted rows,
 endpoint readiness, observed token progress, batch request progress, and safe
 last-error type for timeout debugging; `infer` and `generate` turn that progress
