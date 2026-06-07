@@ -4985,7 +4985,7 @@ def _answer_scope_from_report(report: dict[str, Any]) -> dict[str, Any]:
     json_suppressed = (
         (bool(output_request.get("include_output")) and "suppressed in JSON/public output" in local_output_note)
         or (
-            report.get("schema") == INFER_CLI_SCHEMA
+            report.get("schema") in {INFER_CLI_SCHEMA, PUBLIC_SWARM_PRODUCT_CLI_SCHEMA}
             and bool(report.get("json_mode"))
             and generated_output_available
             and not visible_in_terminal
@@ -9217,6 +9217,29 @@ def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]
     }
 
 
+def _fill_hidden_generate_local_output(report: dict[str, Any]) -> None:
+    if not bool(report.get("json_mode")):
+        return
+    if isinstance(report.get("local_output"), dict):
+        return
+    result = report.get("result") if isinstance(report.get("result"), dict) else {}
+    output_count = _safe_int(result.get("output_count"))
+    if output_count <= 0 or result.get("status") != "complete":
+        return
+    note = "Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display."
+    report["local_output"] = {
+        "available": False,
+        "generated_text": "",
+        "outputs": [],
+        "output_count": output_count,
+        "source": "",
+        "note": note,
+        "display_only": False,
+        "public_artifact_safe": True,
+    }
+    report.setdefault("local_output_note", note)
+
+
 def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
     result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
@@ -9627,6 +9650,7 @@ def _finalize_product_generate_report(
     ))
     report.setdefault("trace", _generate_trace_from_report(report))
     report.setdefault("result", _generate_result_from_report(report))
+    _fill_hidden_generate_local_output(report)
     report.setdefault("output_display", _output_display_from_report(report))
     report.setdefault("answer_scope", _answer_scope_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))

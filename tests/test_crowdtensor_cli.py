@@ -1044,6 +1044,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_output_display_only"])
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        self.assertNotIn("local_output", report)
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(
             report["operator_action"],
             "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
@@ -3882,8 +3884,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         self.assertFalse(report["shareable_summary"]["local_output_display_only"])
-        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "json-suppressed")
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        self.assertEqual(report["local_output"]["output_count"], 1)
+        self.assertFalse(report["local_output"]["available"])
+        self.assertTrue(report["local_output"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "json-suppressed")
+        self.assertEqual(
+            report["local_output_note"],
+            "Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display.",
+        )
         self.assertEqual(report["issue_summary"]["state"], "completed")
         self.assertEqual(report["issue_summary"]["primary_code"], "public_swarm_generate_ready")
         self.assertEqual(report["issue_summary"]["next_step"], "rerun_or_review_artifacts")
@@ -3922,8 +3932,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["result"]["public_artifact_safe"])
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertTrue(persisted["shareable_summary"]["saved_artifacts_public_safe"])
-        self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "json-suppressed")
         self.assertFalse(persisted["shareable_summary"]["local_answer_terminal_only"])
+        self.assertEqual(persisted["local_output"]["output_count"], 1)
+        self.assertFalse(persisted["local_output"]["available"])
+        self.assertTrue(persisted["local_output"]["public_artifact_safe"])
+        self.assertEqual(persisted["answer_scope"]["scope_state"], "json-suppressed")
+        self.assertEqual(
+            persisted["local_output_note"],
+            "Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display.",
+        )
         self.assertEqual(persisted["issue_summary"]["state"], "completed")
         self.assertEqual(persisted["artifact_summary"]["inspect_first"], str(output_dir / "generate_summary.md"))
         self.assertTrue(persisted["artifact_summary"]["public_artifact_safe"])
@@ -3965,7 +3983,19 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            "- Shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=json-suppressed local_answer_terminal_only=False`",
+            markdown,
+        )
+        self.assertIn(
+            "- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True` count=`1` source=``",
+            markdown,
+        )
+        self.assertIn(
+            "- Answer scope: `state=json-suppressed terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn(
+            "- Local output note: Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display.",
             markdown,
         )
         self.assertIn(
@@ -4008,7 +4038,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=json-suppressed local_answer_terminal_only=False",
             rendered,
         )
         self.assertIn(
@@ -6210,11 +6240,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(json_report["answer_scope"]["terminal_only"])
         self.assertEqual(json_report["answer_scope"]["scope_state"], "json-suppressed")
         self.assertEqual(json_report["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
+        self.assertEqual(json_report["local_output"]["output_count"], 1)
+        self.assertFalse(json_report["local_output"]["available"])
+        self.assertTrue(json_report["local_output"]["public_artifact_safe"])
         self.assertEqual(
             json_report["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
         )
-        self.assertNotIn("local_output", json_report)
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
             [item["command_line"] for item in json_report["next_commands"]],
@@ -6286,7 +6318,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(json_report["output_display"]["terminal_display"], "hash-only-json")
         self.assertFalse(json_report["output_display"]["terminal_text_available"])
         self.assertFalse(json_report["output_display"]["include_output_requested"])
-        self.assertNotIn("local_output", json_report)
+        self.assertEqual(json_report["local_output"]["output_count"], 1)
+        self.assertFalse(json_report["local_output"]["available"])
+        self.assertTrue(json_report["local_output"]["public_artifact_safe"])
+        self.assertEqual(json_report["answer_scope"]["scope_state"], "json-suppressed")
         self.assertNotIn("default human output", json.dumps(json_report, sort_keys=True))
 
     def test_product_generate_human_batch_outputs_are_display_only(self) -> None:
@@ -6378,7 +6413,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(json_report["result"]["display"], "hash-only-json")
         self.assertEqual(json_report["result"]["output_count"], 2)
         self.assertTrue(json_report["result"]["public_artifact_safe"])
-        self.assertNotIn("local_output", json_report)
+        self.assertEqual(json_report["local_output"]["output_count"], 2)
+        self.assertFalse(json_report["local_output"]["available"])
+        self.assertTrue(json_report["local_output"]["public_artifact_safe"])
+        self.assertEqual(json_report["answer_scope"]["scope_state"], "json-suppressed")
         encoded = json.dumps(json_report, sort_keys=True)
         self.assertNotIn("raw one", encoded)
         self.assertNotIn("raw two", encoded)
