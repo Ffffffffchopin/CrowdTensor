@@ -12328,6 +12328,55 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "real_llm_internet_beta_v1")
 
+    def test_print_real_llm_internet_beta_outputs_scope_summary(self) -> None:
+        report = {
+            "schema": "real_llm_internet_beta_v1",
+            "cli_schema": "real_llm_internet_beta_cli_v1",
+            "ok": True,
+            "mode": "kaggle-auto",
+            "coordinator_url": "http://127.0.0.1:9190",
+            "output_dir": "/tmp/real-llm-internet-beta",
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "runtime_classification": {"kaggle_auto": True, "external_runtime_verified": True},
+            "kaggle_lifecycle": {"kernels_deleted": True},
+            "diagnosis_codes": ["real_llm_internet_beta_ready"],
+            "artifacts": {},
+        }
+
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            cli.print_real_llm_internet_beta(report)
+
+        output = stream.getvalue()
+        self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
+        self.assertIn("answer_scope: state=no-local-answer", output)
+        self.assertIn("saved_json=hash-only", output)
+        self.assertIn("shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False", output)
+        self.assertIn("generated_token_ids_public=False", output)
+
     def test_release_ready_wraps_readiness_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []

@@ -121,6 +121,33 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertIs(report["live_requeue_summary"]["lease_expired"], True)
         self.assertIn("real_llm_internet_beta_evidence_import_ready", report["diagnosis_codes"])
         self.assertIn("external_generated_token_target_ready", report["diagnosis_codes"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertFalse(report["answer_scope"]["raw_prompt_public"])
+        self.assertFalse(report["answer_scope"]["raw_generated_text_public"])
+        self.assertFalse(report["answer_scope"]["generated_token_ids_public"])
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (output_dir / "import" / "real_llm_internet_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn(
+            "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            markdown,
+        )
 
     def test_evidence_import_blocks_when_generation_token_count_missing(self) -> None:
         output_dir = self._tmp_dir()
@@ -223,6 +250,15 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         )
         self.assertTrue(report["kaggle_lifecycle"]["kernels_deleted"])
         self.assertTrue(report["artifacts"]["external_remote_real_llm_sharded_beta_json"]["present"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        markdown = (output_dir / "real_llm_internet_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
 
     def test_cleanup_failure_blocks_ready_claim(self) -> None:
         output_dir = self._tmp_dir()
@@ -291,6 +327,9 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertNotIn("miner.private.env", serialized)
         self.assertNotIn("operator.private.env", serialized)
         self.assertNotIn("miner_registry.json", serialized)
+        self.assertNotIn('"output_text":', serialized)
+        self.assertNotIn('"generated_text":', serialized)
+        self.assertNotIn('"generated_token_ids":', serialized)
 
     def test_kaggle_auto_cuda_backend_uses_gpu_runtime_contract(self) -> None:
         output_dir = self._tmp_dir()
@@ -456,6 +495,20 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertEqual(
             set(report["kaggle_lifecycle"]["pushed_refs"]),
             {"stage0", "stage1-victim", "stage1-rescue"},
+        )
+
+    def test_check_contract_requires_output_scope(self) -> None:
+        output_dir = self._tmp_dir()
+        report = beta_check.build_check(beta_check.parse_args(["--output-dir", str(output_dir)]))
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["output_scope_errors"], [])
+
+        broken = pack.output_request_summary()
+        broken["include_output"] = True
+        self.assertIn(
+            "broken:output_request_include_output",
+            beta_check.output_scope_errors("broken", {"output_request": broken}),
         )
 
 

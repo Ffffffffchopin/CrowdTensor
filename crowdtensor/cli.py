@@ -11267,6 +11267,9 @@ def print_real_llm_internet_alpha(report: dict[str, Any]) -> None:
 
 
 def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor real Internet Swarm Inference Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -11274,6 +11277,12 @@ def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  coordinator: {report.get('coordinator_url')}")
     print(f"  output: {report.get('output_dir')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     runtime = report.get("runtime_classification") or {}
     lifecycle = report.get("kaggle_lifecycle") or {}

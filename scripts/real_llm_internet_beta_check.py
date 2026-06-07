@@ -117,6 +117,54 @@ def write_external_alpha(output_dir: Path) -> None:
     (output_dir / "real_llm_internet_alpha.md").write_text("# External Alpha\n", encoding="utf-8")
 
 
+def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    if output_request.get("include_output") is not False:
+        errors.append(f"{label}:output_request_include_output")
+    if output_request.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:output_request_raw_prompt_public")
+    if output_request.get("raw_generated_text_public") is not False:
+        errors.append(f"{label}:output_request_raw_generated_text_public")
+    if output_request.get("generated_token_ids_public") is not False:
+        errors.append(f"{label}:output_request_generated_token_ids_public")
+    if output_request.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:output_request_public_artifact_safe")
+    if answer_scope.get("scope_state") != "no-local-answer":
+        errors.append(f"{label}:answer_scope_state")
+    if answer_scope.get("visible_in_terminal") is not False:
+        errors.append(f"{label}:answer_visible_in_terminal")
+    if answer_scope.get("terminal_only") is not False:
+        errors.append(f"{label}:answer_terminal_only")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        errors.append(f"{label}:answer_saved_json_display")
+    if answer_scope.get("saved_markdown_display") != "hash-only":
+        errors.append(f"{label}:answer_saved_markdown_display")
+    if answer_scope.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:answer_raw_prompt_public")
+    if answer_scope.get("raw_generated_text_public") is not False:
+        errors.append(f"{label}:answer_raw_generated_text_public")
+    if answer_scope.get("generated_token_ids_public") is not False:
+        errors.append(f"{label}:answer_generated_token_ids_public")
+    if answer_scope.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:answer_public_artifact_safe")
+    if shareable.get("saved_artifacts_public_safe") is not True:
+        errors.append(f"{label}:shareable_saved_artifacts")
+    if shareable.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:shareable_raw_prompt_public")
+    if shareable.get("raw_generated_text_public") is not False:
+        errors.append(f"{label}:shareable_raw_generated_text_public")
+    if shareable.get("generated_token_ids_public") is not False:
+        errors.append(f"{label}:shareable_generated_token_ids_public")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        errors.append(f"{label}:shareable_answer_scope_state")
+    if shareable.get("local_answer_terminal_only") is not False:
+        errors.append(f"{label}:shareable_local_answer_terminal_only")
+    return errors
+
+
 def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
     joined = " ".join(command)
     if "real_llm_internet_alpha_pack.py" in joined and option_value(command, "--mode") == "package":
@@ -325,7 +373,8 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
     ]
     missing = sorted(required_codes - set(report.get("diagnosis_codes") or []))
     leaks = [item for item in forbidden if item in serialized]
-    ok = bool(report.get("ok") and not missing and not leaks)
+    scope_errors = output_scope_errors("report", report)
+    ok = bool(report.get("ok") and not missing and not leaks and not scope_errors)
     return {
         "schema": SCHEMA,
         "ok": ok,
@@ -334,6 +383,7 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
         "report_ok": report.get("ok"),
         "missing_codes": missing,
         "sensitive_leaks": leaks,
+        "output_scope_errors": scope_errors,
         "diagnosis_codes": sorted(set(report.get("diagnosis_codes") or []) | (set() if ok else {"real_llm_internet_beta_check_failed"})),
         "artifacts": {
             "real_llm_internet_beta_json": pack.artifact_entry(
