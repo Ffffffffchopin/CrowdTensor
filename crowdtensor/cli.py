@@ -11399,6 +11399,35 @@ def print_p2p_swarm_inference_v06(report: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_public_p2p_swarm_inference_v1_rc(report: dict[str, Any]) -> None:
+    rc = report.get("rc") if isinstance(report.get("rc"), dict) else {}
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    inference = report.get("inference") if isinstance(report.get("inference"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    print("CrowdTensor Public P2P Swarm Inference v1.0 RC")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  ready: signed_local={rc.get('signed_local_ready')} external={rc.get('external_runtime_ready')} generation={rc.get('generation_ready')}")
+    print(f"  model: {p2p.get('hf_model_id')} metadata_ready={rc.get('model_metadata_ready')}")
+    print(f"  signed peers: required={p2p.get('signed_announcement_required')} signed={p2p.get('signed_peer_count')} healthy={p2p.get('healthy_peer_count')}")
+    print(f"  rescue ready: {rc.get('stage_rescue_ready')}")
+    print(f"  tokens: {inference.get('max_new_tokens')} workload={inference.get('workload_type')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_real_p2p_swarm_inference_core_rc(report: dict[str, Any]) -> None:
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
@@ -15075,7 +15104,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.json:
             print(json.dumps(summary, sort_keys=True))
         else:
-            print(f"CrowdTensor Public P2P Swarm Inference v1.0 RC ok={summary.get('ok')} diagnosis={','.join(summary.get('diagnosis_codes') or [])}")
+            print_public_p2p_swarm_inference_v1_rc(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "real-p2p-rc":
         summary = build_real_p2p_swarm_inference_core_rc(args)
