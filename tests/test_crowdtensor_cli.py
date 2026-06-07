@@ -3296,6 +3296,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["output_display"]["saved_artifact_display"], "hash-only")
         self.assertEqual(report["output_display"]["json_stdout_display"], "hash-only-json")
         self.assertFalse(report["output_display"]["include_output_requested"])
+        self.assertTrue(report["answer_scope"]["terminal_only"])
+        self.assertTrue(report["answer_scope"]["visible_in_terminal"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
         persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
@@ -3309,6 +3314,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["output_display"]["saved_artifact_display"], "hash-only")
         self.assertEqual(persisted["output_display"]["json_stdout_display"], "hash-only-json")
         self.assertFalse(persisted["output_display"]["include_output_requested"])
+        self.assertFalse(persisted["answer_scope"]["terminal_only"])
+        self.assertFalse(persisted["answer_scope"]["visible_in_terminal"])
+        self.assertEqual(persisted["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(persisted["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(persisted["answer_scope"]["public_artifact_safe"])
         self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Result: `status=complete tokens=2/2 outputs=1 display=hash-only", markdown)
@@ -3318,6 +3328,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=`coordinator-validation`",
+            markdown,
+        )
+        self.assertIn(
+            "- Answer scope: `terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -6472,6 +6486,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["output_display"]["include_output_requested"])
         self.assertFalse(report["output_display"]["raw_generated_text_public"])
         self.assertTrue(report["output_display"]["public_artifact_safe"])
+        self.assertTrue(report["answer_scope"]["terminal_only"])
+        self.assertTrue(report["answer_scope"]["visible_in_terminal"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
         self.assertEqual(
             report["local_output_note"],
             "Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
@@ -6492,6 +6511,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["output_display"]["json_stdout_display"], "hash-only-json")
         self.assertFalse(persisted["output_display"]["raw_generated_text_public"])
         self.assertTrue(persisted["output_display"]["public_artifact_safe"])
+        self.assertFalse(persisted["answer_scope"]["terminal_only"])
+        self.assertFalse(persisted["answer_scope"]["visible_in_terminal"])
+        self.assertEqual(persisted["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(persisted["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(persisted["answer_scope"]["public_artifact_safe"])
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Model: `sshleifer/tiny-gpt2` backend=`cpu`", markdown)
         self.assertIn("- Prompt: `count=1 hash=", markdown)
@@ -6504,6 +6528,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=`local-private-task-state`",
+            markdown,
+        )
+        self.assertIn(
+            "- Answer scope: `terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(

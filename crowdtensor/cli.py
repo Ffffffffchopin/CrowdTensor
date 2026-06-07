@@ -1068,6 +1068,16 @@ def local_output_terminal_text(local_output: dict[str, Any]) -> str:
     return f"{local_output_text(local_output)} count={output_count} source={source}"
 
 
+def answer_scope_text(answer_scope: dict[str, Any]) -> str:
+    return (
+        f"terminal_only={bool(answer_scope.get('terminal_only'))} "
+        f"visible_in_terminal={bool(answer_scope.get('visible_in_terminal'))} "
+        f"saved_json={answer_scope.get('saved_json_display')} "
+        f"saved_markdown={answer_scope.get('saved_markdown_display')} "
+        f"public_artifact_safe={bool(answer_scope.get('public_artifact_safe'))}"
+    )
+
+
 def batch_status_text(batch: dict[str, Any]) -> str:
     return (
         f"requests={batch.get('request_count') or batch.get('expected_request_count')} "
@@ -4372,6 +4382,27 @@ def _output_display_from_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _answer_scope_from_report(report: dict[str, Any]) -> dict[str, Any]:
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
+    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    visible_in_terminal = bool(
+        local_output.get("generated_text")
+        or any(isinstance(item, dict) and item.get("generated_text") for item in outputs)
+    )
+    return {
+        "terminal_only": visible_in_terminal,
+        "visible_in_terminal": visible_in_terminal,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": output_display.get("json_stdout_display") or "hash-only-json",
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": LOCAL_ANSWER_SCOPE_TEXT,
+    }
+
+
 def _shareable_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
     saved_summary = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
@@ -4775,6 +4806,16 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         output_display["raw_generated_text_public"] = False
         output_display["generated_token_ids_public"] = False
         output_display["public_artifact_safe"] = True
+    answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
+    if answer_scope:
+        answer_scope["visible_in_terminal"] = False
+        answer_scope["terminal_only"] = False
+        answer_scope["saved_json_display"] = "hash-only"
+        answer_scope["saved_markdown_display"] = "hash-only"
+        answer_scope["json_stdout_display"] = "hash-only-json"
+        answer_scope["raw_generated_text_public"] = False
+        answer_scope["generated_token_ids_public"] = False
+        answer_scope["public_artifact_safe"] = True
     return summary
 
 
@@ -5332,6 +5373,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
     output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
+    answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
     source_report = summary.get("source_report") if isinstance(summary.get("source_report"), dict) else {}
     ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
@@ -5399,6 +5441,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             f"count=`{local_output.get('output_count')}` "
             f"source=`{local_output.get('source')}`"
         )
+    if answer_scope:
+        lines.append(f"- Answer scope: `{answer_scope_text(answer_scope)}`")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if stream.get("issue_summary"):
@@ -5721,6 +5765,7 @@ def _infer_summary_from_payload(
         ],
     }
     summary["output_display"] = _output_display_from_report(summary)
+    summary["answer_scope"] = _answer_scope_from_report(summary)
     summary["shareable_summary"] = _shareable_summary_from_report(summary, kind="infer")
     summary["issue_summary"] = _issue_summary_from_report(summary, kind="infer")
     artifacts = {
@@ -8377,6 +8422,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
     output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
+    answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
     ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
     coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
@@ -8440,6 +8486,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             f"count=`{local_output.get('output_count')}` "
             f"source=`{local_output.get('source')}`"
         )
+    if answer_scope:
+        lines.append(f"- Answer scope: `{answer_scope_text(answer_scope)}`")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if summary.get("operator_action"):
@@ -8759,6 +8807,7 @@ def _finalize_product_generate_report(
     report.setdefault("trace", _generate_trace_from_report(report))
     report.setdefault("result", _generate_result_from_report(report))
     report.setdefault("output_display", _output_display_from_report(report))
+    report.setdefault("answer_scope", _answer_scope_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
     if output_dir is not None:
