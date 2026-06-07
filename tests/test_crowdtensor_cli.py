@@ -273,7 +273,23 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(caution_status["fully_verified"])
         self.assertEqual(caution_status["readiness_label"], "partial")
         self.assertEqual(caution_status["warning_codes"], ["coordinator_preflight_skipped"])
+        self.assertEqual(
+            caution_status["readiness_summary"],
+            "Request can be submitted, but Coordinator readiness is not fully verified.",
+        )
         self.assertEqual(caution_status["next_step"], "submit_with_caution")
+        self.assertEqual(
+            cli._ready_to_submit_status(
+                submit_ok=True,
+                route_ready=True,
+                coordinator_ok=None,
+                coordinator_preflight_required=False,
+                stage_preflight_ok=None,
+                stage_preflight_required=False,
+                source="unit",
+            )["readiness_summary"],
+            "Request can be submitted, but live readiness is not fully verified.",
+        )
         for blocked_status in [
             cli._ready_to_submit_status(
                 submit_ok=True,
@@ -955,6 +971,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ready_to_submit"]["ok"])
         self.assertFalse(report["ready_to_submit"]["fully_verified"])
         self.assertEqual(report["ready_to_submit"]["readiness_label"], "partial")
+        self.assertEqual(
+            report["ready_to_submit"]["readiness_summary"],
+            "Request can be submitted, but stage Miner readiness is not fully verified.",
+        )
         self.assertEqual(report["ready_to_submit"]["next_step"], "run_stage_preflight")
         self.assertEqual(report["ready_to_submit"]["stage_verification"], "skipped")
         self.assertEqual(report["ready_to_submit"]["warning_codes"], ["stage_preflight_skipped"])
@@ -1559,6 +1579,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["route"]["route_source"], "p2p-discovery")
         self.assertIn("p2p_generate_route_ready", report["diagnosis_codes"])
         self.assertTrue(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["ready_to_submit"]["fully_verified"])
+        self.assertEqual(report["ready_to_submit"]["readiness_label"], "partial")
+        self.assertEqual(
+            report["ready_to_submit"]["readiness_summary"],
+            "Request can be submitted, but Coordinator readiness is not fully verified.",
+        )
+        self.assertEqual(report["ready_to_submit"]["next_step"], "submit_with_caution")
         self.assertTrue(report["stage_preflight"]["ok"])
         self.assertEqual(report["stage_preflight"]["source"], "p2p-route")
         self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])

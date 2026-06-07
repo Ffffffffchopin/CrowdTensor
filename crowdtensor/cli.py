@@ -3654,7 +3654,7 @@ def _ready_to_submit_status(
         next_step = "submit"
     elif submit_ok is True and not blocked_by_checks:
         readiness_label = "partial"
-        readiness_summary = "Request can be submitted, but stage Miner readiness is not fully verified."
+        readiness_summary = _ready_to_submit_partial_summary(set(warning_codes))
         next_step = (
             "run_stage_preflight"
             if stage_preflight_needs_verification(set(warning_codes))
@@ -3684,6 +3684,16 @@ def _ready_to_submit_status(
         "source": source,
         "public_artifact_safe": True,
     }
+
+
+def _ready_to_submit_partial_summary(warnings: set[str]) -> str:
+    if "coordinator_preflight_skipped" in warnings and stage_preflight_needs_verification(warnings):
+        return "Request can be submitted, but live readiness is not fully verified."
+    if "coordinator_preflight_skipped" in warnings:
+        return "Request can be submitted, but Coordinator readiness is not fully verified."
+    if stage_preflight_needs_verification(warnings):
+        return "Request can be submitted, but stage Miner readiness is not fully verified."
+    return "Request can be submitted, but readiness is not fully verified."
 
 
 def ready_to_submit_stage_text(ready_to_submit: dict[str, Any]) -> str:
