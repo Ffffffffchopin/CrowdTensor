@@ -5447,6 +5447,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn(
+            "  status: completed: Inference completed. next=rerun_or_review_artifacts recommendation=submit inference public_artifact_safe=True",
+            stdout.getvalue(),
+        )
+        self.assertIn(
             "  trace: session=real-llm-session-infer requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True",
             stdout.getvalue(),
         )
@@ -5525,6 +5529,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["output_count"], 1)
         self.assertEqual(persisted["result"]["display"], "hash-only")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
+        self.assertEqual(persisted["user_status"]["state"], "completed")
+        self.assertEqual(persisted["user_status"]["headline"], "Inference completed.")
+        self.assertEqual(persisted["user_status"]["next_step"], "rerun_or_review_artifacts")
+        self.assertEqual(persisted["user_status"]["recommended_label"], "submit inference")
+        self.assertTrue(persisted["user_status"]["public_artifact_safe"])
         self.assertEqual(persisted["trace"]["session_id"], "real-llm-session-infer")
         self.assertEqual(persisted["trace"]["workload_type"], "real_llm_sharded_infer")
         self.assertEqual(persisted["trace"]["accepted_rows_seen"], 1)
@@ -5548,6 +5557,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Infer Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Mode: `existing`", markdown)
+        self.assertIn(
+            "- Status: `completed: Inference completed. next=rerun_or_review_artifacts recommendation=submit inference public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("- Model: `sshleifer/tiny-gpt2` backend=`cpu`", markdown)
         self.assertIn("- Prompt: `count=1 hash=", markdown)
         self.assertIn("raw_public=False`", markdown)
@@ -6163,6 +6176,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertIn("pip install -e '.[hf]'", report["operator_action"])
+        self.assertEqual(report["user_status"]["state"], "blocked")
+        self.assertIn("pip install -e '.[hf]'", report["user_status"]["headline"])
+        self.assertEqual(report["user_status"]["next_step"], "fix_blockers")
+        self.assertEqual(report["user_status"]["recommended_label"], "install Hugging Face runtime")
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("python -m pip install -e '.[hf]'", next_lines)
         self.assertIn(
@@ -6171,6 +6188,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertIn("pip install -e '.[hf]'", persisted["operator_action"])
+        self.assertEqual(persisted["user_status"]["state"], "blocked")
+        self.assertEqual(persisted["user_status"]["recommended_label"], "install Hugging Face runtime")
         self.assertIn("python -m pip install -e '.[hf]'", [item["command_line"] for item in persisted["next_commands"]])
 
     def test_infer_existing_route_failure_includes_startup_next_commands(self) -> None:
@@ -6542,9 +6561,20 @@ class CrowdTensorCliTests(unittest.TestCase):
             report["operator_action"],
             "Inference can be submitted, but stage0/stage1 were not fully verified; run the printed stage-preflight next command with --observer-token before the submit next command.",
         )
+        self.assertEqual(report["user_status"]["state"], "preflight-partial")
+        self.assertEqual(
+            report["user_status"]["headline"],
+            "Request can be submitted, but stage Miner readiness is not fully verified.",
+        )
+        self.assertEqual(report["user_status"]["next_step"], "run_stage_preflight")
+        self.assertEqual(report["user_status"]["recommended_label"], "check existing swarm")
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
+        self.assertIn(
+            "  status: preflight-partial: Request can be submitted, but stage Miner readiness is not fully verified. next=run_stage_preflight recommendation=check existing swarm public_artifact_safe=True",
+            stdout.getvalue(),
+        )
         self.assertIn(
             "  stage_preflight: checked=False ok=None matched_miners=None missing=not_checked reason=observer_token_missing source=not-checked",
             stdout.getvalue(),
@@ -6580,7 +6610,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["local_output"]["available"])
         self.assertEqual(persisted["recommended_next_command"]["label"], "check existing swarm")
         self.assertEqual(persisted["recommended_next_command"]["reason"], "verify_stage_miners")
+        self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
+        self.assertEqual(persisted["user_status"]["next_step"], "run_stage_preflight")
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Status: `preflight-partial: Request can be submitted, but stage Miner readiness is not fully verified. next=run_stage_preflight recommendation=check existing swarm public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn(
             "- Ready to submit: label=`partial` next_step=`run_stage_preflight` fully_verified=`False`",
             markdown,
@@ -6745,11 +6781,19 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["recommended_next_command"]["label"], "submit inference")
         self.assertEqual(report["recommended_next_command"]["reason"], "submit_verified_inference")
         self.assertEqual(report["recommended_next_command"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
+        self.assertEqual(report["user_status"]["state"], "preflight-ready")
+        self.assertEqual(report["user_status"]["headline"], "Preflight passed; submit inference next.")
+        self.assertEqual(report["user_status"]["next_step"], "submit")
+        self.assertEqual(report["user_status"]["recommended_label"], "submit inference")
         self.assertNotIn("observer-secret", json.dumps(report, sort_keys=True))
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
+        self.assertIn(
+            "  status: preflight-ready: Preflight passed; submit inference next. next=submit recommendation=submit inference public_artifact_safe=True",
+            rendered,
+        )
         self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready next_step=submit warnings=none", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
         self.assertIn("recommended_next: submit inference reason=submit_verified_inference", rendered)
@@ -6760,8 +6804,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["ready_to_submit"]["readiness_label"], "verified")
         self.assertEqual(persisted["recommended_next_command"]["label"], "submit inference")
         self.assertEqual(persisted["recommended_next_command"]["reason"], "submit_verified_inference")
+        self.assertEqual(persisted["user_status"]["state"], "preflight-ready")
+        self.assertEqual(persisted["user_status"]["next_step"], "submit")
         self.assertNotIn("observer-secret", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Status: `preflight-ready: Preflight passed; submit inference next. next=submit recommendation=submit inference public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn(
             "- Ready to submit: label=`verified` next_step=`submit` fully_verified=`True`",
             markdown,

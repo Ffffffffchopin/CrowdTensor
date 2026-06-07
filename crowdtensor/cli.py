@@ -666,6 +666,16 @@ def infer_trace_text(trace: dict[str, Any]) -> str:
     )
 
 
+def infer_user_status_text(status: dict[str, Any]) -> str:
+    return (
+        f"{status.get('state') or 'unknown'}: "
+        f"{status.get('headline') or 'No status'} "
+        f"next={status.get('next_step') or 'none'} "
+        f"recommendation={status.get('recommended_label') or 'none'} "
+        f"public_artifact_safe={bool(status.get('public_artifact_safe'))}"
+    )
+
+
 def local_output_text(local_output: dict[str, Any]) -> str:
     available = (
         bool(local_output.get("available"))
@@ -3862,6 +3872,49 @@ def _infer_trace_from_payload(
     }
 
 
+def _infer_user_status(
+    *,
+    ok: bool,
+    dry_run: bool,
+    result: dict[str, Any],
+    ready_to_submit: dict[str, Any],
+    operator_action: str,
+    recommended_next_command: dict[str, Any],
+) -> dict[str, Any]:
+    next_step = str(ready_to_submit.get("next_step") or "")
+    readiness_label = str(ready_to_submit.get("readiness_label") or "")
+    recommended_label = str(recommended_next_command.get("label") or "")
+    if ok and not dry_run:
+        state = "completed"
+        headline = "Inference completed."
+        next_step = "rerun_or_review_artifacts"
+    elif ok and dry_run and next_step == "submit":
+        state = "preflight-ready"
+        headline = "Preflight passed; submit inference next."
+    elif ok and dry_run and next_step:
+        state = "preflight-partial"
+        headline = str(ready_to_submit.get("readiness_summary") or "Preflight is partial; run the recommended check next.")
+    elif ok and dry_run:
+        state = "preflight"
+        headline = "Dry-run completed; follow the recommended next command."
+    else:
+        state = "blocked"
+        headline = operator_action or "Inference is blocked; inspect infer_summary.json and the child report."
+        if not next_step:
+            next_step = "fix_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step or "none",
+        "readiness_label": readiness_label,
+        "result_status": result.get("status"),
+        "recommended_label": recommended_label,
+        "recommended_reason": recommended_next_command.get("reason") or "",
+        "has_operator_action": bool(operator_action),
+        "public_artifact_safe": True,
+    }
+
+
 def _iter_infer_generated_text_candidates(value: Any, *, _seen: set[int] | None = None) -> list[dict[str, Any]]:
     seen = _seen if _seen is not None else set()
     candidates: list[dict[str, Any]] = []
@@ -4496,6 +4549,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     prompt = summary.get("prompt") if isinstance(summary.get("prompt"), dict) else {}
     model = summary.get("model") if isinstance(summary.get("model"), dict) else {}
     result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
+    user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
@@ -4516,6 +4570,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         "",
         f"- OK: `{bool(summary.get('ok'))}`",
         f"- Mode: `{summary.get('mode')}`",
+        f"- Status: `{infer_user_status_text(user_status)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         f"- Model: `{model.get('hf_model_id')}` backend=`{model.get('backend')}`",
         f"- Prompt: `{prompt_summary_text(prompt)}`",
@@ -4739,6 +4794,17 @@ def _infer_summary_from_payload(
         if has_local_display_output
         else ("hash-only-json" if getattr(args, "json", False) else "hash-only")
     )
+    result = {
+        "status": result_status,
+        "generated_token_count": generated_tokens,
+        "max_new_tokens": max_new_tokens,
+        "generated_text_hash": generation.get("generated_text_hash"),
+        "output_count": result_output_count,
+        "display": result_display,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": not has_local_display_output,
+    }
     recommended_next_command = _infer_recommended_next_command(
         next_commands,
         ok=ok,
@@ -4758,6 +4824,14 @@ def _infer_summary_from_payload(
         wait_progress=wait_progress,
         local_output=local_output,
         expected_request_count=expected_request_count,
+    )
+    user_status = _infer_user_status(
+        ok=ok,
+        dry_run=dry_run,
+        result=result,
+        ready_to_submit=ready_to_submit,
+        operator_action=operator_action,
+        recommended_next_command=recommended_next_command,
     )
     source_saved_summary = payload.get("saved_summary") if isinstance(payload.get("saved_summary"), dict) else {}
     summary = {
@@ -4784,17 +4858,8 @@ def _infer_summary_from_payload(
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
         },
-        "result": {
-            "status": result_status,
-            "generated_token_count": generated_tokens,
-            "max_new_tokens": max_new_tokens,
-            "generated_text_hash": generation.get("generated_text_hash"),
-            "output_count": result_output_count,
-            "display": result_display,
-            "raw_generated_text_public": False,
-            "generated_token_ids_public": False,
-            "public_artifact_safe": not has_local_display_output,
-        },
+        "result": result,
+        "user_status": user_status,
         "trace": trace,
         "route": route,
         "p2p": payload.get("p2p") if isinstance(payload.get("p2p"), dict) else {},
@@ -8787,6 +8852,9 @@ def print_infer(report: dict[str, Any]) -> None:
     print("CrowdTensor infer")
     print(f"  ok: {report.get('ok')}")
     print(f"  mode: {report.get('mode')}")
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
