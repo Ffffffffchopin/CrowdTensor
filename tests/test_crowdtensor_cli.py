@@ -194,6 +194,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             "submit inference after stage preflight",
         )
         self.assertEqual(
+            cli.guarded_submit_label(
+                "submit inference",
+                {"readiness_label": "partial", "warning_codes": ["stage_preflight_not_checked"]},
+            ),
+            "submit inference after stage preflight",
+        )
+        self.assertEqual(
             cli.guarded_submit_label("submit inference", {"readiness_label": "verified"}),
             "submit inference",
         )
@@ -295,6 +302,17 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "ok": True,
                     "fully_verified": False,
                     "warning_codes": ["stage_preflight_unknown"],
+                },
+            ),
+        )
+        self.assertIn(
+            "stage0/stage1 were not fully verified",
+            cli._ready_to_submit_action(
+                "Inference",
+                {
+                    "ok": True,
+                    "fully_verified": False,
+                    "warning_codes": ["stage_preflight_not_checked"],
                 },
             ),
         )

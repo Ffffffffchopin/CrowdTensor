@@ -3608,7 +3608,7 @@ def _ready_to_submit_status(
         readiness_summary = "Request can be submitted, but stage Miner readiness is not fully verified."
         next_step = (
             "run_stage_preflight"
-            if "stage_preflight_skipped" in warning_codes or stage_verification == "unknown"
+            if stage_preflight_needs_verification(set(warning_codes))
             else "submit_with_caution"
         )
     elif submit_ok is False:
@@ -3654,6 +3654,14 @@ def ready_to_submit_warning_text(ready_to_submit: dict[str, Any]) -> str:
     return ",".join(str(code) for code in warnings) if warnings else "none"
 
 
+def stage_preflight_needs_verification(warnings: set[str]) -> bool:
+    return bool(warnings.intersection({
+        "stage_preflight_skipped",
+        "stage_preflight_unknown",
+        "stage_preflight_not_checked",
+    }))
+
+
 def guarded_submit_label(label: str, ready_to_submit: dict[str, Any]) -> str:
     if not isinstance(ready_to_submit, dict):
         return label
@@ -3666,7 +3674,7 @@ def guarded_submit_label(label: str, ready_to_submit: dict[str, Any]) -> str:
         return f"{label} after live preflight"
     if next_step == "run_stage_preflight" or (
         readiness_label == "partial"
-        and ("stage_preflight_skipped" in warnings or "stage_preflight_unknown" in warnings)
+        and stage_preflight_needs_verification(warnings)
     ):
         return f"{label} after stage preflight"
     if next_step == "submit_with_caution":
@@ -3692,7 +3700,7 @@ def _ready_to_submit_action(kind: str, ready_to_submit: dict[str, Any]) -> str:
         return ""
     if ready_to_submit and ready_to_submit.get("ok") is True and not ready_to_submit.get("fully_verified"):
         warnings = set(str(code) for code in (ready_to_submit.get("warning_codes") or []))
-        if "stage_preflight_skipped" in warnings or "stage_preflight_unknown" in warnings:
+        if stage_preflight_needs_verification(warnings):
             return (
                 f"{kind} can be submitted, but stage0/stage1 were not fully verified; "
                 "rerun --dry-run with --observer-token to check /state before submitting."
