@@ -121,6 +121,58 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     return entry
 
 
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "GPU Sharded Generation Beta artifacts summarize multi-token CUDA split generation "
+            "with counts, hashes, wrapper evidence, and diagnostics only. "
+            "Run `crowdtensor generate` in human mode to see a local answer."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This GPU Sharded Generation Beta report is shareable generation evidence, not a local "
+            "answer transcript; raw prompts, generated text, generated token ids, activations, "
+            "leases, credentials, private env files, Kaggle kernel payloads, and runtime state are excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share gpu_sharded_generation_beta_*.json/md artifacts; they contain "
+            "hashes/counts and readiness evidence, not raw prompts or answers."
+        ),
+    }
+
+
 def run_json_step(name: str, command: list[str], *, runner: Runner, timeout_seconds: float) -> tuple[dict[str, Any], dict[str, Any]]:
     started = time.monotonic()
     try:
@@ -411,6 +463,9 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
 
 def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
     encoded = json.dumps(report, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in encoded]
     if leaks:
@@ -443,6 +498,9 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str) -> di
 def render_markdown(report: dict[str, Any]) -> str:
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     gpu = report.get("gpu") if isinstance(report.get("gpu"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
         "# CrowdTensor GPU Sharded Generation Beta",
         "",
@@ -453,6 +511,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- model: `{gpu.get('model_id')}`",
         f"- generated_token_count: `{generation.get('generated_token_count')}`",
         f"- max_new_tokens: `{generation.get('max_new_tokens')}`",
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
         "## Diagnosis",
         "",

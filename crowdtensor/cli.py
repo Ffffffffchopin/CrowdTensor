@@ -11592,6 +11592,9 @@ def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
 
 def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Public Swarm GPU Inference Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -11599,6 +11602,12 @@ def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {beta.get('ready')}")
     print(f"  backend: {beta.get('backend')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -11608,6 +11617,9 @@ def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
 def print_gpu_sharded_generation_beta(report: dict[str, Any]) -> None:
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     gpu = report.get("gpu") if isinstance(report.get("gpu"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor GPU sharded generation Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -11616,6 +11628,12 @@ def print_gpu_sharded_generation_beta(report: dict[str, Any]) -> None:
     print(f"  backend: {gpu.get('backend')}")
     print(f"  model: {gpu.get('model_id')}")
     print(f"  generated_tokens: {generation.get('generated_token_count')}/{generation.get('max_new_tokens')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):

@@ -11427,6 +11427,58 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "public_swarm_gpu_inference_beta_v1")
 
+    def test_public_swarm_gpu_beta_prints_output_scope(self) -> None:
+        report = {
+            "schema": "public_swarm_gpu_inference_beta_v1",
+            "cli_schema": "public_swarm_gpu_inference_beta_cli_v1",
+            "ok": True,
+            "mode": "local-smoke",
+            "output_dir": "dist/public-swarm-gpu-beta",
+            "beta": {"ready": True, "backend": "hf_transformers_cuda"},
+            "output_request": {
+                "include_output": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "diagnosis_codes": ["public_swarm_gpu_beta_smoke_ready"],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_swarm_gpu_inference_beta(report)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            output,
+        )
+
     def test_main_gpu_generate_json_outputs_summary(self) -> None:
         summary = {"schema": "gpu_sharded_generation_beta_v1", "ok": True}
         with patch.object(cli, "build_gpu_sharded_generation_beta", return_value=summary), patch("builtins.print") as mocked_print:
@@ -11436,6 +11488,59 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "gpu_sharded_generation_beta_v1")
+
+    def test_gpu_generate_prints_output_scope(self) -> None:
+        report = {
+            "schema": "gpu_sharded_generation_beta_v1",
+            "cli_schema": "gpu_sharded_generation_beta_cli_v1",
+            "ok": True,
+            "mode": "evidence-import",
+            "output_dir": "dist/gpu-generate",
+            "generation": {"generated_token_count": 4, "max_new_tokens": 4},
+            "gpu": {"backend": "hf_transformers_cuda", "model_id": "sshleifer/tiny-gpt2"},
+            "output_request": {
+                "include_output": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "diagnosis_codes": ["gpu_sharded_generation_ready"],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_gpu_sharded_generation_beta(report)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            output,
+        )
 
 
     def test_micro_llm_live_rc_wraps_rc_pack(self) -> None:

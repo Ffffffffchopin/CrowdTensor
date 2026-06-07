@@ -14,6 +14,28 @@ class GpuShardedGenerationBetaPackTests(unittest.TestCase):
     def _tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="crowdtensor_gpu_generation_beta_test_"))
 
+    def _assert_output_scope(self, report: dict, output_dir: Path, mode: str) -> None:
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (output_dir / f"gpu_sharded_generation_beta_{mode.replace('-', '_')}.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+
     def test_evidence_import_requires_multi_token_generation_ready(self) -> None:
         output_dir = self._tmp_dir()
         source = output_dir / "source.json"
@@ -58,6 +80,7 @@ class GpuShardedGenerationBetaPackTests(unittest.TestCase):
         self.assertIn("gpu_sharded_generation_ready", report["diagnosis_codes"])
         self.assertEqual(report["generation"]["generated_token_count"], 4)
         self.assertTrue(report["generation"]["raw_generated_text_public"] is False)
+        self._assert_output_scope(report, output_dir, "evidence-import")
 
     def test_local_loopback_wraps_public_gpu_pack_with_generation_limit(self) -> None:
         output_dir = self._tmp_dir()
@@ -111,6 +134,7 @@ class GpuShardedGenerationBetaPackTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertIn("gpu_loopback_generation_ready", report["diagnosis_codes"])
+        self._assert_output_scope(report, output_dir, "local-loopback")
         self.assertTrue(calls)
 
     def test_report_blocks_plain_generated_text_leak(self) -> None:
@@ -188,6 +212,7 @@ class GpuShardedGenerationBetaPackTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["generation"]["generated_token_count"], 5)
         self.assertEqual(report["generation"]["generated_text_hash"], "sha256:nested")
+        self._assert_output_scope(report, output_dir, "evidence-import")
 
     def test_prefers_nested_generation_hash_over_partial_top_level_summary(self) -> None:
         output_dir = self._tmp_dir()

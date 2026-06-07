@@ -13,11 +13,34 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
     def _tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="crowdtensor_public_swarm_gpu_beta_test_"))
 
+    def _assert_output_scope(self, report: dict, output_dir: Path, mode: str) -> None:
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (output_dir / f"public_swarm_gpu_inference_beta_{mode.replace('-', '_')}.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+
     def test_local_smoke_is_ci_safe_without_gpu_claim(self) -> None:
+        output_dir = self._tmp_dir()
         report = pack.build_report(pack.parse_args([
             "local-smoke",
             "--output-dir",
-            str(self._tmp_dir()),
+            str(output_dir),
         ]))
 
         self.assertTrue(report["ok"], report)
@@ -26,6 +49,7 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("public_swarm_gpu_beta_smoke_ready", report["diagnosis_codes"])
         self.assertIn("gpu_runtime_smoke_ready", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_gpu_beta_ready", report["diagnosis_codes"])
+        self._assert_output_scope(report, output_dir, "local-smoke")
 
     def test_local_loopback_wraps_cuda_real_llm_route(self) -> None:
         output_dir = self._tmp_dir()
@@ -98,6 +122,7 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("public_swarm_gpu_beta_ready", report["diagnosis_codes"])
         self.assertIn("gpu_stage0_ready", report["diagnosis_codes"])
         self.assertIn("gpu_stage1_ready", report["diagnosis_codes"])
+        self._assert_output_scope(report, output_dir, "local-loopback")
         self.assertTrue(calls)
 
     def test_kaggle_package_writes_private_gpu_runbook(self) -> None:
@@ -115,6 +140,7 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         serialized = json.dumps(report, sort_keys=True)
         self.assertNotIn("<stage0-token>", serialized)
         self.assertNotIn("<stage1-token>", serialized)
+        self._assert_output_scope(report, output_dir, "kaggle-package")
 
     def test_evidence_import_requires_gpu_ready_codes(self) -> None:
         output_dir = self._tmp_dir()
@@ -139,6 +165,7 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertIn("public_swarm_gpu_beta_evidence_import_ready", report["diagnosis_codes"])
         self.assertIn("external_gpu_runtime_verified", report["diagnosis_codes"])
+        self._assert_output_scope(report, output_dir, "evidence-import")
 
     def test_kaggle_auto_wraps_cuda_internet_beta_and_requires_cleanup(self) -> None:
         output_dir = self._tmp_dir()
@@ -218,6 +245,7 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertTrue(report["safety"]["cuda_torch_wheel_pinned"])
         self.assertEqual(report["beta"]["torch_spec"], "torch==2.7.1+cu118 torchvision==0.22.1+cu118")
         self.assertEqual(report["beta"]["transformers_spec"], "transformers==4.40.2")
+        self._assert_output_scope(report, output_dir, "kaggle-auto")
         self.assertTrue(calls)
 
 

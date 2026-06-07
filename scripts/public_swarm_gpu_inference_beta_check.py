@@ -32,8 +32,8 @@ SECRET_FRAGMENTS = [
     "logits",
     "activation_results",
     "real_llm_sharded_result",
-    "generated_text",
-    "generated_token_ids",
+    '"generated_text":',
+    '"generated_token_ids":',
 ]
 SMOKE_REQUIRED_CODES = {
     "public_swarm_gpu_beta_smoke_ready",
@@ -200,6 +200,39 @@ def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[
     safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
     if safety.get("read_only_workload") != "real_llm_sharded_infer" or safety.get("not_production") is not True:
         raise SystemExit(f"unexpected safety summary: {safety}")
+    output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    if output_request.get("include_output") is not False:
+        raise SystemExit(f"unexpected output_request.include_output: {output_request}")
+    if output_request.get("raw_prompt_public") is not False:
+        raise SystemExit(f"unexpected output_request.raw_prompt_public: {output_request}")
+    if output_request.get("raw_generated_text_public") is not False:
+        raise SystemExit(f"unexpected output_request.raw_generated_text_public: {output_request}")
+    if output_request.get("generated_token_ids_public") is not False:
+        raise SystemExit(f"unexpected output_request.generated_token_ids_public: {output_request}")
+    if output_request.get("public_artifact_safe") is not True:
+        raise SystemExit(f"unexpected output_request.public_artifact_safe: {output_request}")
+    answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    if answer_scope.get("scope_state") != "no-local-answer":
+        raise SystemExit(f"unexpected answer_scope.scope_state: {answer_scope}")
+    if answer_scope.get("visible_in_terminal") is not False or answer_scope.get("terminal_only") is not False:
+        raise SystemExit(f"unexpected answer_scope terminal visibility: {answer_scope}")
+    if answer_scope.get("saved_json_display") != "hash-only" or answer_scope.get("saved_markdown_display") != "hash-only":
+        raise SystemExit(f"unexpected answer_scope saved display: {answer_scope}")
+    if answer_scope.get("public_artifact_safe") is not True:
+        raise SystemExit(f"unexpected answer_scope.public_artifact_safe: {answer_scope}")
+    shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    if shareable.get("saved_artifacts_public_safe") is not True:
+        raise SystemExit(f"unexpected shareable saved artifact safety: {shareable}")
+    if shareable.get("raw_prompt_public") is not False:
+        raise SystemExit(f"unexpected shareable raw_prompt_public: {shareable}")
+    if shareable.get("raw_generated_text_public") is not False:
+        raise SystemExit(f"unexpected shareable raw_generated_text_public: {shareable}")
+    if shareable.get("generated_token_ids_public") is not False:
+        raise SystemExit(f"unexpected shareable generated_token_ids_public: {shareable}")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        raise SystemExit(f"unexpected shareable answer_scope_state: {shareable}")
+    if shareable.get("local_answer_terminal_only") is not False:
+        raise SystemExit(f"unexpected shareable local_answer_terminal_only: {shareable}")
     encoded = json.dumps(payload, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment in encoded:
