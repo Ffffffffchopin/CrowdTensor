@@ -2366,6 +2366,57 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def print_human_summary(report: dict[str, Any]) -> None:
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    external = readiness.get("external_kaggle") if isinstance(readiness.get("external_kaggle"), dict) else {}
+    p2p = readiness.get("p2p_candidate") if isinstance(readiness.get("p2p_candidate"), dict) else {}
+    public_swarm_v2 = readiness.get("public_swarm_v2") if isinstance(readiness.get("public_swarm_v2"), dict) else {}
+    kv_cache = readiness.get("usable_p2p_kv_cache") if isinstance(readiness.get("usable_p2p_kv_cache"), dict) else {}
+    stage0 = kv_cache.get("stage0") if isinstance(kv_cache.get("stage0"), dict) else {}
+    stage1 = kv_cache.get("stage1") if isinstance(kv_cache.get("stage1"), dict) else {}
+    product_batch = beta.get("batch") if isinstance(beta.get("batch"), dict) else {}
+    product_stream = beta.get("stream") if isinstance(beta.get("stream"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
+    print("CrowdTensor Public Real-LLM Swarm Inference Beta")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  ready: {beta.get('ready')}")
+    print(f"  model: {beta.get('hf_model_id')} tokens={beta.get('max_new_tokens')}")
+    print(f"  external tokens: {external.get('generated_token_count')}/{external.get('required_generated_token_count')}")
+    print(f"  p2p tokens: {p2p.get('generated_token_count')}/{p2p.get('required_generated_token_count')}")
+    print(
+        "  public_swarm_v2 tokens: "
+        f"{public_swarm_v2.get('generated_token_count')}/{public_swarm_v2.get('required_generated_token_count')} "
+        f"accepted_rows={public_swarm_v2.get('accepted_rows')}/{public_swarm_v2.get('required_stage_rows')}"
+    )
+    print(f"  public_swarm_v2 real_p2p_local: route={beta.get('public_swarm_v2_real_p2p_local_ready')} requeue={beta.get('public_swarm_v2_real_p2p_local_requeue_ready')}")
+    print(f"  batch ready: product={product_batch.get('batch_generation_ready')} p2p={beta.get('p2p_batch_ready')} v2={beta.get('public_swarm_v2_batch_ready')}")
+    print(f"  stream ready: product={product_stream.get('stream_generation_ready')} p2p={beta.get('p2p_stream_ready')} v2={beta.get('public_swarm_v2_stream_ready')}")
+    print(f"  kv_cache_ready: {beta.get('kv_cache_ready')}")
+    print(f"  kv_cache hits: stage0={stage0.get('hit_count')} stage1={stage1.get('hit_count')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable:
+        print(f"  shareable: {shareable_summary_text(shareable)}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    if not_completed:
+        print("  not_completed:")
+        for item in not_completed[:8]:
+            print(f"    - {item}")
+        if len(not_completed) > 8:
+            print(f"    - ... {len(not_completed) - 8} more")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def validate_public_report(report: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     encoded = json.dumps(report, sort_keys=True)
@@ -2588,22 +2639,7 @@ def main() -> None:
     if args.json:
         print(json.dumps(report, sort_keys=True))
     else:
-        beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
-        output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
-        answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
-        shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
-        print("CrowdTensor Public Real-LLM Swarm Inference Beta")
-        print(f"  ok: {report.get('ok')}")
-        print(f"  mode: {report.get('mode')}")
-        print(f"  ready: {beta.get('ready')}")
-        if output_request:
-            print(f"  output_request: {output_request_text(output_request)}")
-        if answer_scope:
-            print(f"  answer_scope: {answer_scope_text(answer_scope)}")
-        if shareable:
-            print(f"  shareable: {shareable_summary_text(shareable)}")
-        print(f"  output: {report.get('output_dir')}")
-        print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+        print_human_summary(report)
     raise SystemExit(0 if report.get("ok") else 1)
 
 

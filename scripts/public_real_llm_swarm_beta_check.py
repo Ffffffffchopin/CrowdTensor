@@ -963,6 +963,24 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def print_human_summary(result: dict[str, Any]) -> None:
+    print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
+    print(f"  mode: {result.get('mode')}")
+    print(f"  max_new_tokens: {result.get('max_new_tokens')}")
+    print(f"  output: {result.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(result.get('diagnosis_codes') or [])}")
+    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+    if errors:
+        print("  errors:")
+        for error in errors[:12]:
+            print(f"    - {error}")
+        if len(errors) > 12:
+            print(f"    - ... {len(errors) - 12} more")
+    for name, path in sorted((result.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {path}")
+    print(f"  artifact public_real_llm_swarm_beta_check_json: {Path(str(result.get('output_dir') or '')) / 'public_real_llm_swarm_beta_check.json'}")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check Public Real-LLM Swarm Inference Beta v1.")
     parser.add_argument("--mode", choices=["release", pack.MODE_LOCAL_MODEL_VARIANT], default="release")
@@ -982,9 +1000,7 @@ def main() -> None:
     if args.json:
         print(json.dumps(result, sort_keys=True))
     else:
-        print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
-        if result.get("errors"):
-            print("Errors: " + ", ".join(result["errors"]))
+        print_human_summary(result)
     raise SystemExit(0 if result.get("ok") else 1)
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import subprocess
 import tempfile
@@ -1720,6 +1722,71 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertTrue(artifacts["public_real_llm_swarm_beta_markdown"].endswith("public_real_llm_swarm_beta.md"))
         self.assertTrue(artifacts["support_bundle_json"].endswith("support_bundle.json"))
         self.assertTrue(artifacts["runbook"].endswith("PUBLIC_REAL_LLM_SWARM_BETA.md"))
+
+    def test_pack_human_summary_shows_final_status_and_artifacts(self) -> None:
+        output_dir = self._tmp_dir()
+
+        report = check.build_fake_release(output_dir, tokens=16)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            pack.print_human_summary(report)
+        output = stdout.getvalue()
+
+        self.assertIn("CrowdTensor Public Real-LLM Swarm Inference Beta", output)
+        self.assertIn("  model: sshleifer/tiny-gpt2 tokens=16", output)
+        self.assertIn("  external tokens: 16/16", output)
+        self.assertIn("  p2p tokens: 16/16", output)
+        self.assertIn("  public_swarm_v2 tokens: 16/16 accepted_rows=32/32", output)
+        self.assertIn("  batch ready: product=False p2p=True v2=True", output)
+        self.assertIn("  stream ready: product=False p2p=True v2=True", output)
+        self.assertIn("  kv_cache_ready: True", output)
+        self.assertIn("  kv_cache hits: stage0=15 stage1=15", output)
+        self.assertIn("  artifact public_real_llm_swarm_beta_markdown: public_real_llm_swarm_beta.md present=True", output)
+        self.assertIn("  artifact support_bundle_json: support_bundle.json present=True", output)
+        self.assertNotIn("  not_completed:", output)
+
+    def test_pack_human_summary_shows_blockers(self) -> None:
+        output_dir = self._tmp_dir()
+
+        report = check.build_fake_release(output_dir, tokens=16)
+        report["ok"] = False
+        report["beta"]["ready"] = False
+        report["readiness"]["public_swarm_v2"]["generated_token_count"] = 8
+        report["readiness"]["public_swarm_v2"]["accepted_rows"] = 16
+        report["not_completed"] = [
+            "external generated token target",
+            "Public Swarm v2 generated token target",
+        ]
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            pack.print_human_summary(report)
+        output = stdout.getvalue()
+
+        self.assertIn("  ready: False", output)
+        self.assertIn("  public_swarm_v2 tokens: 8/16 accepted_rows=16/32", output)
+        self.assertIn("  not_completed:", output)
+        self.assertIn("    - external generated token target", output)
+        self.assertIn("    - Public Swarm v2 generated token target", output)
+
+    def test_check_human_summary_shows_artifacts(self) -> None:
+        output_dir = self._tmp_dir()
+
+        result = check.run_check(check.parse_args(["--output-dir", str(output_dir)]))
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            check.print_human_summary(result)
+        output = stdout.getvalue()
+
+        self.assertIn("Public Real-LLM Swarm Beta check ready: True", output)
+        self.assertIn("  max_new_tokens: 16", output)
+        self.assertIn("  diagnosis: public_real_llm_swarm_beta_check_ready", output)
+        self.assertIn("  artifact public_real_llm_swarm_beta_markdown:", output)
+        self.assertIn("public_real_llm_swarm_beta.md", output)
+        self.assertIn("  artifact support_bundle_json:", output)
+        self.assertIn("support_bundle.json", output)
+        self.assertIn("  artifact runbook:", output)
+        self.assertIn("PUBLIC_REAL_LLM_SWARM_BETA.md", output)
+        self.assertIn("  artifact public_real_llm_swarm_beta_check_json:", output)
 
     def test_pack_cli_and_check_default_to_final_16_token_contract(self) -> None:
         pack_args = pack.parse_args(["release"])
