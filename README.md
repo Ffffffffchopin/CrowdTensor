@@ -105,14 +105,17 @@ The `artifacts` line and JSON/Markdown `artifact_summary` object point to the
 first Markdown summary to inspect, list the redacted JSON/Markdown paths, and
 keep prompts, generated text, token ids, credentials, and activations out of
 shareable files.
-Start by reading the `status` line in human output, or `user_status` in JSON and
-Markdown: `completed` means the request finished, `preflight-ready` means submit
-next, `preflight-partial` means run the recommended check first, and `blocked`
-means follow `action` / `recommended_next`. Human `infer` and `generate` output
-use your current local prompt so the next command is directly copyable; JSON
-reports and saved artifacts keep raw prompts and token values replaced with
-placeholders. Coordinator/session failure `detail` fields are redacted the same
-way, even if a remote endpoint echoes prompt text or tokens.
+Start by reading the `review` line, or JSON/Markdown `review_summary`: it
+combines the current state, next step, first artifact to inspect, recommended
+command label, and primary diagnosis code. Then use the `status` line or
+`user_status` for detail: `completed` means the request finished,
+`preflight-ready` means submit next, `preflight-partial` means run the
+recommended check first, and `blocked` means follow `action` /
+`recommended_next`. Human `infer` and `generate` output use your current local
+prompt so the next command is directly copyable; JSON reports and saved
+artifacts keep raw prompts and token values replaced with placeholders.
+Coordinator/session failure `detail` fields are redacted the same way, even if
+a remote endpoint echoes prompt text or tokens.
 When `ready_to_submit` is present, read
 `readiness_label` and `next_step` first:
 

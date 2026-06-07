@@ -109,12 +109,15 @@ The `artifacts` line and JSON/Markdown `artifact_summary` object point to the
 first Markdown summary to inspect, list the redacted JSON/Markdown paths, and
 keep prompts, generated text, token ids, credentials, and activations out of
 shareable files.
-Start by reading the `status` line in human output, or `user_status` in JSON and
-Markdown: `completed` means the request finished, `preflight-ready` means submit
-next, `preflight-partial` means run the recommended check first, and `blocked`
-means follow `action` / `recommended_next`. Human `infer` and `generate` output
-use your current local prompt in those next commands; JSON reports and saved
-artifacts keep raw prompts and token values represented as placeholders.
+Start by reading the `review` line, or JSON/Markdown `review_summary`: it
+combines the current state, next step, first artifact to inspect, recommended
+command label, and primary diagnosis code. Then use the `status` line or
+`user_status` for detail: `completed` means the request finished,
+`preflight-ready` means submit next, `preflight-partial` means run the
+recommended check first, and `blocked` means follow `action` /
+`recommended_next`. Human `infer` and `generate` output use your current local
+prompt in those next commands; JSON reports and saved artifacts keep raw prompts
+and token values represented as placeholders.
 If `ready_to_submit` is printed, use its `label` and `next_step` before submitting:
 `verified` means route, Coordinator, and distinct stage Miners were checked;
 `partial` means the request shape can submit but stage Miners still need

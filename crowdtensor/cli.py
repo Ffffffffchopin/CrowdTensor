@@ -767,6 +767,17 @@ def artifact_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def review_summary_text(summary: dict[str, Any]) -> str:
+    return (
+        f"state={summary.get('state') or 'unknown'} "
+        f"next={summary.get('next_step') or 'none'} "
+        f"inspect={summary.get('inspect_first') or 'none'} "
+        f"recommended={summary.get('recommended_label') or 'none'} "
+        f"primary={summary.get('primary_code') or 'none'} "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
+    )
+
+
 def infer_user_status_text(status: dict[str, Any]) -> str:
     return (
         f"{status.get('state') or 'unknown'}: "
@@ -4082,6 +4093,40 @@ def _artifact_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[
     }
 
 
+def _review_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    next_commands = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
+    command_count = len([item for item in next_commands if isinstance(item, dict) and item.get("command_line")])
+    recommended_label = str(
+        recommended.get("label")
+        or user_status.get("recommended_label")
+        or ""
+    )
+    return {
+        "kind": kind,
+        "state": user_status.get("state") or ("completed" if report.get("ok") else "blocked"),
+        "headline": user_status.get("headline") or "",
+        "next_step": user_status.get("next_step") or issue_summary.get("next_step") or "none",
+        "recommended_label": recommended_label,
+        "recommended_reason": recommended.get("reason") or "",
+        "primary_code": issue_summary.get("primary_code") or "",
+        "inspect_first": artifact_summary.get("inspect_first") or "",
+        "summary_json": artifact_summary.get("summary_json") or "",
+        "summary_markdown": artifact_summary.get("summary_markdown") or "",
+        "next_command_count": command_count,
+        "has_recommended_command": bool(recommended.get("command_line")),
+        "public_artifact_safe": bool(
+            user_status.get("public_artifact_safe", True)
+            and issue_summary.get("public_artifact_safe", True)
+            and artifact_summary.get("public_artifact_safe", True)
+        ),
+        "summary": "Read this first: outcome, artifact to inspect, and safe next command label.",
+    }
+
+
 def _issue_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
@@ -4835,6 +4880,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
+    review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
@@ -4858,6 +4904,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- OK: `{bool(summary.get('ok'))}`",
         f"- Mode: `{summary.get('mode')}`",
         f"- Status: `{infer_user_status_text(user_status)}`",
+        f"- Review: `{review_summary_text(review_summary)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         f"- Model: `{model.get('hf_model_id')}` backend=`{model.get('backend')}`",
@@ -5274,6 +5321,7 @@ def _infer_summary_from_payload(
         )
     summary["artifacts"] = artifacts
     summary["artifact_summary"] = _artifact_summary_from_report(summary, kind="infer")
+    summary["review_summary"] = _review_summary_from_report(summary, kind="infer")
     output_dir.mkdir(parents=True, exist_ok=True)
     persisted_summary = json.loads(json.dumps(summary))
     _strip_infer_local_output_text(persisted_summary)
@@ -7840,6 +7888,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
+    review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
@@ -7861,6 +7910,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- OK: `{bool(summary.get('ok'))}`",
         f"- Dry run: `{bool(summary.get('dry_run'))}`",
         f"- Status: `{infer_user_status_text(user_status)}`",
+        f"- Review: `{review_summary_text(review_summary)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         (
@@ -8227,6 +8277,7 @@ def _finalize_product_generate_report(
                 "ok": bool(report.get("ok")),
             })
         report["artifact_summary"] = _artifact_summary_from_report(report, kind="generate")
+        report["review_summary"] = _review_summary_from_report(report, kind="generate")
         persisted_summary = copy.deepcopy(report)
         _strip_local_output_text(persisted_summary)
         safe_persisted = sanitize(redact_values(persisted_summary, [admin_token]))
@@ -8240,6 +8291,7 @@ def _finalize_product_generate_report(
         )
     else:
         report.setdefault("artifact_summary", _artifact_summary_from_report(report, kind="generate"))
+        report.setdefault("review_summary", _review_summary_from_report(report, kind="generate"))
     return sanitize(redact_values(report, [admin_token]))
 
 
@@ -9015,6 +9067,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     if user_status:
         print(f"  status: {infer_user_status_text(user_status)}")
+    review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    if review_summary:
+        print(f"  review: {review_summary_text(review_summary)}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
@@ -9239,6 +9294,9 @@ def print_infer(report: dict[str, Any]) -> None:
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     if user_status:
         print(f"  status: {infer_user_status_text(user_status)}")
+    review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    if review_summary:
+        print(f"  review: {review_summary_text(review_summary)}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
@@ -10875,6 +10933,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "and whether a redacted detail is available for blocked or timeout runs.\n\n"
             "The artifacts line points to the first Markdown summary to inspect and lists the\n"
             "redacted JSON/Markdown artifact paths without exposing prompts or generated text.\n\n"
+            "Start with the review/review_summary line: it combines state, next step, first\n"
+            "artifact to inspect, recommended command label, and primary diagnosis code.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -11045,6 +11105,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "and whether a redacted detail is available for blocked or timeout runs.\n\n"
             "The artifacts line points to the first Markdown summary to inspect and lists the\n"
             "redacted JSON/Markdown artifact paths without exposing prompts or generated text.\n\n"
+            "Start with the review/review_summary line: it combines state, next step, first\n"
+            "artifact to inspect, recommended command label, and primary diagnosis code.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),
