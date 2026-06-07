@@ -9492,6 +9492,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
@@ -9625,8 +9627,6 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  output_dir: {report.get('output_dir')}")
     if report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
-    if report.get("operator_action"):
-        print(f"  action: {report.get('operator_action')}")
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     if recommended and recommended.get("command_line"):
         requirements = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
@@ -9785,6 +9785,8 @@ def print_infer(report: dict[str, Any]) -> None:
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
@@ -9899,8 +9901,6 @@ def print_infer(report: dict[str, Any]) -> None:
     if artifact_summary:
         print(f"  artifacts: {artifact_summary_text(artifact_summary)}")
     print(f"  output_dir: {report.get('output_dir')}")
-    if report.get("operator_action"):
-        print(f"  action: {report.get('operator_action')}")
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     if recommended and recommended.get("command_line"):
         requirements = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
