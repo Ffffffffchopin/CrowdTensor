@@ -5875,6 +5875,15 @@ def _infer_command_args(
     timeout_seconds = float(getattr(args, "timeout_seconds", 420.0) or 420.0)
     if timeout_seconds != 420.0:
         command.extend(["--timeout-seconds", str(timeout_seconds)])
+    poll_interval = float(getattr(args, "poll_interval", 1.0) or 1.0)
+    if poll_interval != 1.0:
+        command.extend(["--poll-interval", str(poll_interval)])
+    http_timeout = float(getattr(args, "http_timeout", 30.0) or 30.0)
+    if http_timeout != 30.0:
+        command.extend(["--http-timeout", str(http_timeout)])
+    admin_results_limit = int(getattr(args, "admin_results_limit", 50) or 50)
+    if admin_results_limit != 50:
+        command.extend(["--admin-results-limit", str(admin_results_limit)])
     return command
 
 
@@ -8452,6 +8461,10 @@ def _product_cli_generate_command(
     include_observer: bool = False,
     stream: bool = False,
     include_output: bool = False,
+    timeout_seconds: float = 120.0,
+    poll_interval: float = 1.0,
+    http_timeout: float = 30.0,
+    admin_results_limit: int = 50,
 ) -> list[str]:
     command = [
         "crowdtensor",
@@ -8492,6 +8505,14 @@ def _product_cli_generate_command(
         command.append("--stream")
     if include_output:
         command.append("--include-output")
+    if float(timeout_seconds) != 120.0:
+        command.extend(["--timeout-seconds", str(timeout_seconds)])
+    if float(poll_interval) != 1.0:
+        command.extend(["--poll-interval", str(poll_interval)])
+    if float(http_timeout) != 30.0:
+        command.extend(["--http-timeout", str(http_timeout)])
+    if int(admin_results_limit) != 50:
+        command.extend(["--admin-results-limit", str(admin_results_limit)])
     return command
 
 
@@ -9251,6 +9272,16 @@ def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]
     }
 
 
+def _generate_runtime_options(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "timeout_seconds": float(getattr(args, "timeout_seconds", 120.0) or 120.0),
+        "poll_interval": float(getattr(args, "poll_interval", 1.0) or 1.0),
+        "http_timeout": float(getattr(args, "http_timeout", 30.0) or 30.0),
+        "admin_results_limit": int(getattr(args, "admin_results_limit", 50) or 50),
+        "public_artifact_safe": True,
+    }
+
+
 def _fill_hidden_generate_local_output(report: dict[str, Any]) -> None:
     if not bool(report.get("json_mode")):
         return
@@ -9495,6 +9526,11 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
     stream_requested = bool(stream_report.get("enabled") or stream_report.get("requested"))
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     include_output_requested = bool(output_request.get("include_output"))
+    runtime_options = report.get("runtime_options") if isinstance(report.get("runtime_options"), dict) else {}
+    timeout_seconds = float(runtime_options.get("timeout_seconds", 120.0) or 120.0)
+    poll_interval = float(runtime_options.get("poll_interval", 1.0) or 1.0)
+    http_timeout = float(runtime_options.get("http_timeout", 30.0) or 30.0)
+    admin_results_limit = int(runtime_options.get("admin_results_limit", 50) or 50)
     commands: list[dict[str, Any]] = []
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
@@ -9550,6 +9586,10 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         include_observer=True,
         stream=stream_requested,
         include_output=include_output_requested,
+        timeout_seconds=timeout_seconds,
+        poll_interval=poll_interval,
+        http_timeout=http_timeout,
+        admin_results_limit=admin_results_limit,
     )
     check_command = (
         command_entry("check generation route", route_command, requires_env=["CROWDTENSOR_OBSERVER_TOKEN"])
@@ -9583,6 +9623,10 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 swarm_id=swarm_id,
                 stream=stream_requested,
                 include_output=include_output_requested,
+                timeout_seconds=timeout_seconds,
+                poll_interval=poll_interval,
+                http_timeout=http_timeout,
+                admin_results_limit=admin_results_limit,
             ),
             requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
         )
@@ -9655,6 +9699,10 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 swarm_id=swarm_id,
                 stream=stream_requested,
                 include_output=include_output_requested,
+                timeout_seconds=timeout_seconds,
+                poll_interval=poll_interval,
+                http_timeout=http_timeout,
+                admin_results_limit=admin_results_limit,
             )
         )
         wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
@@ -10073,6 +10121,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     p2p_backend = _p2p_backend(args)
     stream_request = _generate_stream_request_summary(args)
     output_request = _generate_output_request_summary(args)
+    runtime_options = _generate_runtime_options(args)
     stream_enabled = bool(stream_request.get("enabled"))
     session_request = build_session_request(
         prompt_text=prompt_text,
@@ -10141,6 +10190,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "route": route,
             "stream": stream_request,
             "output_request": output_request,
+            "runtime_options": runtime_options,
             "p2p": {
                 "enabled": bool(args.p2p),
                 "backend": p2p_backend if args.p2p else "",
@@ -10188,6 +10238,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "route": route,
             "stream": stream_request,
             "output_request": output_request,
+            "runtime_options": runtime_options,
             "p2p": {
                 "enabled": True,
                 "backend": p2p_backend,
@@ -10220,6 +10271,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "route": route,
             "stream": stream_request,
             "output_request": output_request,
+            "runtime_options": runtime_options,
             "diagnosis_codes": ["coordinator_route_missing"],
         }, output_dir=output_dir)
     if not args.admin_token:
@@ -10238,6 +10290,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "route": route,
             "stream": stream_request,
             "output_request": output_request,
+            "runtime_options": runtime_options,
             "diagnosis_codes": ["admin_token_required"],
         }, output_dir=output_dir)
     private_payload = coordinator_payload_for_request(session_request, prompt_text=prompt_text, prompt_texts=prompt_texts)
@@ -10283,6 +10336,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "route": route,
             "stream": stream_request,
             "output_request": output_request,
+            "runtime_options": runtime_options,
             "diagnosis_codes": diagnosis,
             "error": type(exc).__name__,
             "detail": detail,
@@ -10511,6 +10565,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "generated_token_ids_public": False,
         },
         "output_request": output_request,
+        "runtime_options": runtime_options,
         "diagnosis_codes": (
             ["public_swarm_generate_ready"]
             + (["public_swarm_generate_batch_ready"] if batch_ready and batch_enabled else [])

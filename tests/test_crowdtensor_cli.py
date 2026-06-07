@@ -4316,6 +4316,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             "1",
             "--poll-interval",
             "0.01",
+            "--http-timeout",
+            "7",
+            "--admin-results-limit",
+            "9",
             "--stream",
             "--json",
         ])
@@ -4414,22 +4418,31 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("admin-secret", json.dumps(report["issue_summary"], sort_keys=True))
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --timeout-seconds 120",
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --timeout-seconds 120 --poll-interval 0.01 --http-timeout 7.0 --admin-results-limit 9",
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream",
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --timeout-seconds 1.0 --poll-interval 0.01 --http-timeout 7.0 --admin-results-limit 9",
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream",
+            "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --timeout-seconds 1.0 --poll-interval 0.01 --http-timeout 7.0 --admin-results-limit 9",
             next_lines,
         )
         retry = next(item for item in report["next_commands"] if item["label"] == "retry generation with longer timeout")
         self.assertEqual(retry["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
         self.assertEqual(retry["command"].count("--timeout-seconds"), 1)
         self.assertEqual(retry["command"][retry["command"].index("--timeout-seconds") + 1], "120")
+        self.assertEqual(retry["command"].count("--poll-interval"), 1)
+        self.assertEqual(retry["command"][retry["command"].index("--poll-interval") + 1], "0.01")
+        self.assertEqual(retry["command"].count("--http-timeout"), 1)
+        self.assertEqual(retry["command"][retry["command"].index("--http-timeout") + 1], "7.0")
+        self.assertEqual(retry["command"].count("--admin-results-limit"), 1)
+        self.assertEqual(retry["command"][retry["command"].index("--admin-results-limit") + 1], "9")
         self.assertNotIn("--timeout-seconds 1 --timeout-seconds 120", retry["command_line"])
+        self.assertEqual(report["runtime_options"]["poll_interval"], 0.01)
+        self.assertEqual(report["runtime_options"]["http_timeout"], 7.0)
+        self.assertEqual(report["runtime_options"]["admin_results_limit"], 9)
         self.assertEqual(
             report["recommended_next_command"]["reason_detail"],
             "Retry the same request with a longer timeout after incomplete or partial progress.",
@@ -10182,7 +10195,16 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "--json",
                 ]
                 if case_index == 0:
-                    argv.extend(["--timeout-seconds", "90"])
+                    argv.extend([
+                        "--timeout-seconds",
+                        "90",
+                        "--poll-interval",
+                        "0.5",
+                        "--http-timeout",
+                        "8",
+                        "--admin-results-limit",
+                        "7",
+                    ])
                     wait_progress = {**wait_progress, "timeout_seconds": 90}
                 args = cli.parse_args(argv)
                 payload = {
@@ -10202,14 +10224,30 @@ class CrowdTensorCliTests(unittest.TestCase):
                 self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
                 next_lines = [item["command_line"] for item in report["next_commands"]]
                 expected_retry_timeout = "180" if case_index == 0 else "240"
+                expected_extra = (
+                    " --poll-interval 0.5 --http-timeout 8.0 --admin-results-limit 7"
+                    if case_index == 0
+                    else ""
+                )
                 self.assertIn(
-                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds {expected_retry_timeout}",
+                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds {expected_retry_timeout}{expected_extra}",
                     next_lines,
                 )
                 retry = next(item for item in report["next_commands"] if item["label"] == "retry inference with longer timeout")
                 self.assertEqual(retry["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
                 self.assertEqual(retry["command"].count("--timeout-seconds"), 1)
                 self.assertEqual(retry["command"][retry["command"].index("--timeout-seconds") + 1], expected_retry_timeout)
+                if case_index == 0:
+                    self.assertEqual(retry["command"].count("--poll-interval"), 1)
+                    self.assertEqual(retry["command"][retry["command"].index("--poll-interval") + 1], "0.5")
+                    self.assertEqual(retry["command"].count("--http-timeout"), 1)
+                    self.assertEqual(retry["command"][retry["command"].index("--http-timeout") + 1], "8.0")
+                    self.assertEqual(retry["command"].count("--admin-results-limit"), 1)
+                    self.assertEqual(retry["command"][retry["command"].index("--admin-results-limit") + 1], "7")
+                else:
+                    self.assertNotIn("--poll-interval", retry["command"])
+                    self.assertNotIn("--http-timeout", retry["command"])
+                    self.assertNotIn("--admin-results-limit", retry["command"])
                 self.assertNotIn("--timeout-seconds 90 --timeout-seconds 180", retry["command_line"])
                 self.assertEqual(
                     report["recommended_next_command"]["reason_detail"],
@@ -10220,7 +10258,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
                 self.assertIn(expected, persisted["operator_action"])
                 self.assertIn(
-                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds {expected_retry_timeout}",
+                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds {expected_retry_timeout}{expected_extra}",
                     [item["command_line"] for item in persisted["next_commands"]],
                 )
 
