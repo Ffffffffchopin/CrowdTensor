@@ -210,7 +210,8 @@ submitting a request, use `crowdtensor infer --mode existing --dry-run` or
 Coordinator `/ready` when live preflight is enabled, and visible stage0/stage1
 Miner capability coverage when discovery or `--observer-token` makes that
 safe. CI/package checks can add `--skip-live-preflight` to keep `generate
---dry-run` as an offline request-shape check.
+--dry-run` or `infer --mode existing --dry-run` as an offline request-shape
+check.
 
 For maintainer-grade release evidence, run the full public swarm beta gate:
 

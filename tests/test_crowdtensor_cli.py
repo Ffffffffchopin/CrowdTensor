@@ -218,6 +218,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("saved artifacts", rendered)
         self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("existing mode only: check route/session readiness", rendered)
+        self.assertIn("--skip-live-preflight", rendered)
+        self.assertIn("existing dry-run only: skip Coordinator /ready", rendered)
         self.assertIn("optional single prompt text; mutually exclusive with", rendered)
         self.assertIn("single prompt text; mutually exclusive with other", rendered)
         self.assertIn("other prompt sources", rendered)
@@ -10080,7 +10082,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "stage_preflight_required": False,
             "stage_verification": "skipped",
             "warning_codes": ["stage_preflight_skipped"],
-            "source": "infer-existing-preflight",
+            "source": "dry-run-preflight",
             "public_artifact_safe": True,
         })
         self.assertIn("coordinator_ready_preflight_ready", report["diagnosis_codes"])
@@ -10169,6 +10171,67 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Recommended next: `check existing swarm` reason=`verify_stage_miners` command=`crowdtensor infer '<prompt>' --mode existing",
             markdown,
         )
+        self.assertNotIn("CrowdTensor user prompt", markdown)
+
+    def test_infer_existing_dry_run_can_skip_live_preflight_for_ci(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("skip-live-preflight should not touch live Coordinator endpoints"),
+        ):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["dry_run"])
+        self.assertIsNone(report["ready_to_submit"]["ok"])
+        self.assertFalse(report["ready_to_submit"]["fully_verified"])
+        self.assertEqual(report["ready_to_submit"]["readiness_label"], "skipped")
+        self.assertEqual(report["ready_to_submit"]["next_step"], "run_live_preflight")
+        self.assertEqual(report["coordinator_ready"]["reason"], "live_preflight_skipped")
+        self.assertEqual(report["stage_preflight"]["reason"], "live_preflight_skipped")
+        self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
+        self.assertIn("stage_preflight_skipped", report["diagnosis_codes"])
+        self.assertIn("crowdtensor_infer_preflight_partial", report["diagnosis_codes"])
+        self.assertNotIn("crowdtensor_infer_preflight_ready", report["diagnosis_codes"])
+        self.assertEqual(
+            report["operator_action"],
+            "Inference request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
+        )
+        self.assertEqual(report["recommended_next_command"]["label"], "check existing swarm")
+        self.assertEqual(report["recommended_next_command"]["reason"], "confirm_live_preflight")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --skip-live-preflight --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --coordinator-url http://127.0.0.1:8787",
+            next_lines,
+        )
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["ready_to_submit"]["readiness_label"], "skipped")
+        self.assertEqual(persisted["ready_to_submit"]["next_step"], "run_live_preflight")
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- State: `preflight-partial`", markdown)
+        self.assertIn("- Next step: `run_live_preflight`", markdown)
+        self.assertIn("- Recommended: `check existing swarm` reason=`confirm_live_preflight`", markdown)
+        self.assertIn("live readiness was skipped", markdown)
         self.assertNotIn("CrowdTensor user prompt", markdown)
 
     def test_infer_existing_p2p_preserves_swarm_id_in_next_commands(self) -> None:

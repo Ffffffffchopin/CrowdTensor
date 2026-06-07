@@ -797,7 +797,7 @@ def _infer_recommended_next_command(
             found = _pick_next_command(next_commands, equals("check existing swarm"), reason="verify_stage_miners")
             if found:
                 return found
-        if next_step == "submit_with_caution":
+        if next_step in {"run_live_preflight", "submit_with_caution"}:
             found = _pick_next_command(next_commands, equals("check existing swarm"), reason="confirm_live_preflight")
             if found:
                 return found
@@ -5717,6 +5717,8 @@ def _infer_command_args(
     use_dry_run = bool(getattr(args, "dry_run", False)) if dry_run is None else bool(dry_run)
     if use_dry_run:
         command.append("--dry-run")
+        if bool(getattr(args, "skip_live_preflight", False)):
+            command.append("--skip-live-preflight")
     coordinator_url = coordinator_url_override or str(getattr(args, "coordinator_url", "") or "")
     peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "")
     p2p = bool(getattr(args, "p2p", False) or (resolved_mode == "existing" and peer_bootstrap))
@@ -5922,22 +5924,28 @@ def _infer_ready_to_submit(
     stage_checked = bool(stage_preflight.get("checked"))
     stage_ok = bool(stage_preflight.get("ok")) if stage_checked else None
     route_ready = bool(source.get("route_ready")) if "route_ready" in source else bool(route.get("route_ready"))
-    coordinator_ok = (
-        bool(source.get("coordinator_ready"))
-        if source.get("coordinator_ready") is not None
-        else (
-            bool(coordinator_ready.get("ok"))
-            if "ok" in coordinator_ready
-            else None
-        )
-    )
+    if source.get("coordinator_ready") is not None:
+        coordinator_ok = bool(source.get("coordinator_ready"))
+    elif "ok" in coordinator_ready:
+        coordinator_ready_ok = coordinator_ready.get("ok")
+        coordinator_ok = None if coordinator_ready_ok is None else bool(coordinator_ready_ok)
+    else:
+        coordinator_ok = None
     stage_preflight_ok = source.get("stage_preflight_ok") if source.get("stage_preflight_ok") is not None else stage_ok
     stage_preflight_required = (
         bool(source.get("stage_preflight_required"))
         if "stage_preflight_required" in source
         else stage_checked
     )
-    submit_ok = bool(source.get("ok")) if source.get("ok") is not None else (bool(ok) if dry_run else None)
+    if source.get("ok") is not None:
+        submit_ok = bool(source.get("ok"))
+    elif source and (
+        str(source.get("readiness_label") or "") == "skipped"
+        or str(source.get("next_step") or "") == "run_live_preflight"
+    ):
+        submit_ok = None
+    else:
+        submit_ok = bool(ok) if dry_run else None
     return _ready_to_submit_status(
         submit_ok=submit_ok,
         route_ready=route_ready,
@@ -6184,6 +6192,11 @@ def _infer_summary_from_payload(
     else:
         ok = bool(payload.get("ok") and generated_tokens >= max_new_tokens and max_new_tokens > 0)
     codes = set(payload.get("diagnosis_codes") or [])
+    codes.difference_update({
+        "generate_dry_run_ready",
+        "generate_dry_run_partial",
+        "generate_request_shape_ready",
+    })
     if ok:
         if dry_run:
             codes.add("crowdtensor_infer_preflight_ready")
@@ -6469,13 +6482,13 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             http_timeout=args.http_timeout,
             admin_results_limit=args.admin_results_limit,
             dry_run=args.dry_run,
-            skip_live_preflight=bool(args.dry_run),
+            skip_live_preflight=bool(getattr(args, "skip_live_preflight", False)),
             include_output=args.include_output,
             stream=args.stream,
             json=args.json,
         )
         payload = build_product_generate(generate_args)
-        if args.dry_run:
+        if args.dry_run and _infer_existing_should_attach_preflight(payload, args):
             payload = _attach_infer_existing_preflight(payload, args)
         return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir)
     if not args.full_evidence:
@@ -9797,6 +9810,16 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
     return merged
 
 
+def _infer_existing_should_attach_preflight(payload: dict[str, Any], args: argparse.Namespace) -> bool:
+    if bool(getattr(args, "skip_live_preflight", False)):
+        return False
+    coordinator_ready = payload.get("coordinator_ready") if isinstance(payload.get("coordinator_ready"), dict) else {}
+    if not coordinator_ready:
+        return True
+    reason = str(coordinator_ready.get("reason") or "")
+    return reason in {"not_checked_for_discovered_remote_coordinator", "coordinator_url_missing"}
+
+
 def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir_explicit = bool(getattr(args, "output_dir_explicit", False))
@@ -12716,6 +12739,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--stream", action="store_true", help="request safe stream-progress evidence")
     infer.add_argument("--include-output", action="store_true", help="request local human display of generated text; JSON and saved artifacts still suppress it")
     infer.add_argument("--dry-run", action="store_true", help="existing mode only: check route/session readiness without submitting an inference task")
+    infer.add_argument("--skip-live-preflight", action="store_true", help="existing dry-run only: skip Coordinator /ready and /state checks for CI-safe request-shape checks")
     infer.add_argument("--full-evidence", action="store_true", help="use the full local Public Swarm v2 gate instead of the faster product loopback path")
     infer.add_argument("--coordinator-url", default="")
     infer.add_argument("--peer-bootstrap", default="")

@@ -297,10 +297,11 @@ for failed probes or `reason=...` for skipped checks. For
 `generate --dry-run`, JSON uses `generate_dry_run_partial` for any partial
 readiness state. For `infer --mode existing --dry-run`, JSON uses
 `crowdtensor_infer_preflight_partial` until the stage Miner check is fully
-verified. If the command is being used only for CI-safe packaging or offline
-request-shape checks, add `--skip-live-preflight` and expect `label=skipped`.
-Those skipped checks emit `generate_request_shape_ready`, not
-`generate_dry_run_ready`, because the route has not been proven submit-ready.
+verified. If `generate --dry-run` or `infer --mode existing --dry-run` is being
+used only for CI-safe packaging or offline request-shape checks, add
+`--skip-live-preflight` and expect `label=skipped`. Those skipped checks emit
+request-shape readiness, not submit readiness, because the route has not been
+proven submit-ready.
 Submit command labels also reflect this state: `after live preflight`,
 `after stage preflight`, or `after checks pass` means run the printed check
 command before submitting; `with caution` means the request can run but not
