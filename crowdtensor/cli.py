@@ -888,7 +888,7 @@ def print_answer_text(label: str, text: Any) -> None:
 
 
 LOCAL_ANSWER_SCOPE_TEXT = "terminal-only; saved JSON/Markdown keep hashes/redacted generated text."
-SAVED_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; inspect terminal output for any local answer."
+SAVED_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; rerun without --json for local display."
 
 
 def print_local_output_block(report: dict[str, Any]) -> bool:

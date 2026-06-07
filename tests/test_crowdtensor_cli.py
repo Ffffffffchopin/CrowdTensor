@@ -5332,6 +5332,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(json_report["output_display"]["json_stdout_display"], "hash-only-json")
         self.assertTrue(json_report["output_display"]["include_output_requested"])
         self.assertFalse(json_report["output_display"]["raw_generated_text_public"])
+        self.assertFalse(json_report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(json_report["answer_scope"]["terminal_only"])
+        self.assertEqual(json_report["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         self.assertEqual(
             json_report["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
@@ -7483,6 +7486,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertEqual(report["local_output"]["generated_text"], "")
         self.assertTrue(report["local_output"]["public_artifact_safe"])
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         self.assertEqual(
             report["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
@@ -7495,6 +7501,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["output_request"]["include_output"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertTrue(persisted["local_output"]["public_artifact_safe"])
+        self.assertFalse(persisted["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(persisted["answer_scope"]["terminal_only"])
+        self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         self.assertEqual(
             persisted["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
@@ -7508,6 +7517,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Local output note: Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
             markdown,
         )
+        self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Safety: saved Markdown keeps prompt placeholders and redacted generated output. {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertNotIn("inspect terminal output for any local answer", markdown)
         self.assertNotIn("must not be returned in json", markdown)
 
     def test_print_infer_batch_outputs_are_not_duplicated(self) -> None:
