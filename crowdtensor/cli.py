@@ -1010,6 +1010,8 @@ def review_summary_text(summary: dict[str, Any]) -> str:
 
 def release_review_summary_text(summary: dict[str, Any]) -> str:
     recommended = summary.get("recommended_check_command") if isinstance(summary.get("recommended_check_command"), dict) else {}
+    if not recommended:
+        recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     return (
         f"state={summary.get('state') or 'unknown'} "
         f"next={summary.get('next_step') or 'none'} "
@@ -1019,6 +1021,79 @@ def release_review_summary_text(summary: dict[str, Any]) -> str:
         f"not_completed={_safe_int(summary.get('not_completed_count'))} "
         f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
     )
+
+
+def public_real_llm_beta_rerun_command(args: argparse.Namespace, mode: str, output_dir: Path) -> dict[str, Any]:
+    command = [
+        "crowdtensor",
+        "public-real-llm-swarm-beta",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--hf-model-id",
+        str(args.hf_model_id),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--http-timeout",
+        str(args.http_timeout),
+        "--json",
+    ]
+    if str(getattr(args, "hf_cache_dir", "") or ""):
+        command.extend(["--hf-cache-dir", str(args.hf_cache_dir)])
+    if getattr(args, "stream_generation", False):
+        command.append("--stream-generation")
+    for flag, attr in [
+        ("--product-report", "product_report"),
+        ("--external-report", "external_report"),
+        ("--p2p-report", "p2p_report"),
+        ("--usable-report", "usable_report"),
+        ("--public-swarm-v2-report", "public_swarm_v2_report"),
+        ("--public-swarm-v2-preview-report", "public_swarm_v2_preview_report"),
+        ("--public-swarm-v2-real-p2p-report", "public_swarm_v2_real_p2p_report"),
+        ("--p2p-runtime-smoke-report", "p2p_runtime_smoke_report"),
+        ("--p2p-external-report", "p2p_external_report"),
+        ("--p2p-requeue-report", "p2p_requeue_report"),
+        ("--p2p-batch-stream-report", "p2p_batch_stream_report"),
+        ("--gpu-report", "gpu_report"),
+    ]:
+        value = str(getattr(args, attr, "") or "")
+        if value:
+            command.extend([flag, value])
+    for flag, attr in [
+        ("--public-host", "public_host"),
+        ("--bind-host", "bind_host"),
+        ("--base-port", "base_port"),
+        ("--port", "port"),
+        ("--p2p-port", "p2p_port"),
+        ("--p2p-libp2p-port", "p2p_libp2p_port"),
+        ("--public-swarm-v2-p2p-port", "public_swarm_v2_p2p_port"),
+        ("--public-swarm-v2-coordinator-port", "public_swarm_v2_coordinator_port"),
+        ("--public-swarm-v2-real-p2p-port", "public_swarm_v2_real_p2p_port"),
+        ("--public-swarm-v2-real-p2p-coordinator-port", "public_swarm_v2_real_p2p_coordinator_port"),
+        ("--public-swarm-v2-real-p2p-libp2p-port", "public_swarm_v2_real_p2p_libp2p_port"),
+        ("--public-swarm-v2-real-p2p-discovery-backend", "public_swarm_v2_real_p2p_discovery_backend"),
+        ("--public-swarm-v2-backend", "public_swarm_v2_backend"),
+        ("--request-count", "request_count"),
+        ("--cpu-request-count", "cpu_request_count"),
+        ("--external-llm-request-count", "external_llm_request_count"),
+        ("--timeout-seconds", "timeout_seconds"),
+        ("--public-swarm-v2-timeout-seconds", "public_swarm_v2_timeout_seconds"),
+        ("--remote-timeout-seconds", "remote_timeout_seconds"),
+        ("--cpu-timeout-seconds", "cpu_timeout_seconds"),
+        ("--startup-timeout", "startup_timeout"),
+        ("--process-exit-timeout", "process_exit_timeout"),
+        ("--poll-interval", "poll_interval"),
+    ]:
+        command.extend([flag, str(getattr(args, attr))])
+    return {
+        "label": "rerun public real LLM beta",
+        "reason": "rerun_public_real_llm_beta_pack",
+        "command_line": command_line(command),
+        "output_dir": str(output_dir),
+        "mode": mode,
+        "prompt_public": False,
+        "public_artifact_safe": True,
+    }
 
 
 def release_artifact_summary_text(summary: dict[str, Any]) -> str:
@@ -3896,6 +3971,7 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
         payload = sanitize(redact_values(payload))
         payload.setdefault("cli_schema", PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA)
         return payload
+    recommended_next = public_real_llm_beta_rerun_command(args, mode, output_dir)
     artifact_summary = {
         "schema": "public_real_llm_swarm_beta_artifact_summary_v1",
         "inspect_first": "public_real_llm_swarm_beta.md",
@@ -3927,10 +4003,11 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
         "machine_readable": artifact_summary["machine_readable"],
         "support_bundle": artifact_summary["support_bundle"],
         "shareable_paths": artifact_summary["shareable_paths"],
+        "recommended_next_command": recommended_next,
         "not_completed_count": 1,
         "not_completed_preview": ["public real LLM swarm beta pack command returned no JSON report"],
         "operator_action_preview": [
-            "Inspect the CLI step payload, then rerun public-real-llm-swarm-beta with --json after fixing the pack failure.",
+            f"Inspect the CLI step payload, then rerun: {recommended_next['command_line']}",
         ],
         "public_artifact_safe": True,
         "raw_prompt_public": False,
@@ -3949,8 +4026,9 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
         "not_completed": ["public real LLM swarm beta pack command returned no JSON report"],
         "artifact_summary": artifact_summary,
         "review_summary": review_summary,
+        "recommended_next_command": recommended_next,
         "operator_action": [
-            "Inspect the CLI step payload, then rerun public-real-llm-swarm-beta with --json after fixing the pack failure.",
+            f"Inspect the CLI step payload, then rerun: {recommended_next['command_line']}",
         ],
         "output_request": {
             "include_output": False,
@@ -11825,6 +11903,11 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
         if isinstance(report.get("recommended_check_command"), dict)
         else review_summary.get("recommended_check_command") if isinstance(review_summary.get("recommended_check_command"), dict) else {}
     )
+    recommended_next = (
+        report.get("recommended_next_command")
+        if isinstance(report.get("recommended_next_command"), dict)
+        else review_summary.get("recommended_next_command") if isinstance(review_summary.get("recommended_next_command"), dict) else {}
+    )
     raw_operator_actions = report.get("operator_action")
     if isinstance(raw_operator_actions, list):
         operator_actions = [str(item) for item in raw_operator_actions]
@@ -11848,6 +11931,8 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
         print(f"  review: {release_review_summary_text(review_summary)}")
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")
+    if recommended_next and not recommended_check:
+        print(f"  recommended_next: {recommended_next.get('command_line')}")
     if review_summary.get("inspect_first"):
         print(f"  inspect_first: {review_summary.get('inspect_first')}")
     if artifact_summary:

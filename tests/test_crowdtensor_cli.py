@@ -6145,10 +6145,25 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["next_step"], "review_diagnostics")
         self.assertEqual(report["review_summary"]["inspect_first"], "public_real_llm_swarm_beta.md")
         self.assertEqual(report["review_summary"]["not_completed_count"], 1)
+        self.assertEqual(report["review_summary"]["recommended_next_command"], report["recommended_next_command"])
         self.assertEqual(report["artifact_summary"]["support_bundle"], "support_bundle.json")
         self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
         self.assertIn("public real LLM swarm beta pack command returned no JSON report", report["not_completed"])
         self.assertIn("Inspect the CLI step payload", report["operator_action"][0])
+        self.assertIn(report["recommended_next_command"]["command_line"], report["operator_action"][0])
+        self.assertEqual(report["recommended_next_command"]["reason"], "rerun_public_real_llm_beta_pack")
+        self.assertFalse(report["recommended_next_command"]["prompt_public"])
+        self.assertEqual(
+            shlex.split(report["recommended_next_command"]["command_line"])[:6],
+            [
+                "crowdtensor",
+                "public-real-llm-swarm-beta",
+                "release",
+                "--output-dir",
+                str(output_dir.resolve()),
+                "--hf-model-id",
+            ],
+        )
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
@@ -6160,13 +6175,62 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_real_llm_swarm_beta(report)
         rendered = stdout.getvalue()
         self.assertIn(
-            "  review: state=blocked next=review_diagnostics inspect=public_real_llm_swarm_beta.md support=support_bundle.json recommended=none not_completed=1 public_artifact_safe=True",
+            "  review: state=blocked next=review_diagnostics inspect=public_real_llm_swarm_beta.md support=support_bundle.json recommended=rerun public real LLM beta not_completed=1 public_artifact_safe=True",
             rendered,
         )
+        self.assertIn("  recommended_next: crowdtensor public-real-llm-swarm-beta release", rendered)
         self.assertIn("  inspect_first: public_real_llm_swarm_beta.md", rendered)
         self.assertIn("  operator_action:", rendered)
-        self.assertIn("    - Inspect the CLI step payload, then rerun public-real-llm-swarm-beta with --json after fixing the pack failure.", rendered)
+        self.assertIn("    - Inspect the CLI step payload, then rerun: crowdtensor public-real-llm-swarm-beta release", rendered)
         self.assertIn("  not_completed:", rendered)
+
+    def test_public_real_llm_swarm_beta_cli_failure_quotes_rerun_context_without_prompt(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "beta output"
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "local-model-variant",
+            "--output-dir",
+            str(output_dir),
+            "--hf-model-id",
+            "distilgpt2",
+            "--prompt-text",
+            "private prompt text",
+            "--stream-generation",
+            "--max-new-tokens",
+            "24",
+            "--http-timeout",
+            "12.5",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            return subprocess.CompletedProcess(command, 1, stdout="not json\n", stderr="pack crashed\n")
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+        command_line = report["recommended_next_command"]["command_line"]
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("'", command_line)
+        self.assertNotIn("private prompt text", json.dumps(report, sort_keys=True))
+        self.assertEqual(
+            shlex.split(command_line)[:11],
+            [
+                "crowdtensor",
+                "public-real-llm-swarm-beta",
+                "local-model-variant",
+                "--output-dir",
+                str(output_dir.resolve()),
+                "--hf-model-id",
+                "distilgpt2",
+                "--max-new-tokens",
+                "24",
+                "--http-timeout",
+                "12.5",
+            ],
+        )
+        self.assertIn("--stream-generation", shlex.split(command_line))
+        self.assertIn(command_line, report["operator_action"][0])
 
     def test_public_real_llm_swarm_beta_cli_rejects_unbounded_prompt_batch(self) -> None:
         with self.assertRaises(SystemExit):
