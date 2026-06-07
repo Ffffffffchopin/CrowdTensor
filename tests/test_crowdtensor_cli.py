@@ -5890,6 +5890,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("CrowdTensor Public Real-LLM Swarm Beta Check", rendered)
         self.assertIn("  cli_mode: check", rendered)
+        self.assertIn("  check_source: unknown", rendered)
         self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
         self.assertIn("  artifacts: inspect=", rendered)
         self.assertIn("  output_request: include_output=False raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False public_artifact_safe=True", rendered)
@@ -5960,6 +5961,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_mode"], "check")
         self.assertEqual(report["check_source"], "beta-report")
         self.assertEqual(report["checked_beta_report"], str(beta_report.resolve()))
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_real_llm_swarm_beta_check(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  check_source: beta-report", rendered)
+        self.assertIn(f"  checked_beta_report: {beta_report.resolve()}", rendered)
 
     def test_public_real_llm_swarm_beta_check_failure_includes_review_guidance(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -6002,6 +6009,39 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  errors:", rendered)
         self.assertIn("    - public real LLM swarm beta check command returned no JSON report", rendered)
         self.assertNotIn("  model: None", rendered)
+
+    def test_public_real_llm_swarm_beta_check_failure_preserves_beta_report_context(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        beta_report = output_dir / "beta" / "public_real_llm_swarm_beta.json"
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "check",
+            "--beta-report",
+            str(beta_report),
+            "--output-dir",
+            str(output_dir / "check"),
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("--beta-report", command)
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="check crashed\n")
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["check_source"], "beta-report")
+        self.assertEqual(report["checked_beta_report"], str(beta_report.resolve()))
+        self.assertEqual(report["artifact_summary"]["machine_readable"], str(beta_report.resolve()))
+        self.assertIn("--beta-report", report["operator_action"])
+        self.assertIn(str(beta_report.resolve()), report["operator_action"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_real_llm_swarm_beta_check(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  check_source: beta-report", rendered)
+        self.assertIn(f"  checked_beta_report: {beta_report.resolve()}", rendered)
+        self.assertIn("public_real_llm_swarm_beta.json", rendered)
 
     def test_public_real_llm_swarm_beta_cli_failure_includes_review_guidance(self) -> None:
         output_dir = Path(self._tmp_dir())

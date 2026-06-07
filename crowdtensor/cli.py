@@ -4014,21 +4014,33 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
         payload.setdefault("cli_mode", "check")
         payload.setdefault("mode", "check")
         return payload
+    check_source = "beta-report" if beta_report else "ci-fixture"
+    beta_report_path = Path(beta_report).expanduser().resolve() if beta_report else output_dir / "beta" / "public_real_llm_swarm_beta.json"
+    beta_report_dir = beta_report_path.parent
+    inspect_first = beta_report_dir / "public_real_llm_swarm_beta.md"
+    support_bundle = beta_report_dir / "support_bundle.json"
+    rerun_hint = (
+        f"public-real-llm-swarm-beta check --beta-report {beta_report_path} --json"
+        if beta_report
+        else "public-real-llm-swarm-beta check --json"
+    )
     return sanitize({
         "schema": "public_real_llm_swarm_beta_check_v1",
         "cli_schema": PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA,
         "cli_mode": "check",
         "ok": False,
         "mode": "check",
+        "check_source": check_source,
+        "checked_beta_report": str(beta_report_path) if beta_report else "",
         "output_dir": str(output_dir),
         "step": step,
         "errors": ["public real LLM swarm beta check command returned no JSON report"],
         "diagnosis_codes": ["public_real_llm_swarm_beta_check_failed"],
         "artifact_summary": {
             "schema": "public_real_llm_swarm_beta_check_artifact_summary_v1",
-            "inspect_first": str(output_dir / "beta" / "public_real_llm_swarm_beta.md"),
-            "machine_readable": str(output_dir / "beta" / "public_real_llm_swarm_beta.json"),
-            "support_bundle": str(output_dir / "beta" / "support_bundle.json"),
+            "inspect_first": str(inspect_first),
+            "machine_readable": str(beta_report_path),
+            "support_bundle": str(support_bundle),
             "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
             "public_artifact_safe": True,
             "raw_prompt_public": False,
@@ -4040,7 +4052,7 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
             "state": "blocked",
             "ready": False,
             "next_step": "review_diagnostics",
-            "inspect_first": str(output_dir / "beta" / "public_real_llm_swarm_beta.md"),
+            "inspect_first": str(inspect_first),
             "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
             "error_count": 1,
             "error_preview": ["public real LLM swarm beta check command returned no JSON report"],
@@ -4049,7 +4061,7 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
         },
-        "operator_action": "Inspect the CLI step payload, then rerun public-real-llm-swarm-beta check with --json after fixing the check failure.",
+        "operator_action": f"Inspect the CLI step payload, then rerun {rerun_hint} after fixing the check failure.",
         "output_request": {
             "include_output": False,
             "raw_prompt_public": False,
@@ -11870,6 +11882,9 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  cli_mode: {report.get('cli_mode') or 'check'}")
     print(f"  max_new_tokens: {report.get('max_new_tokens')}")
+    print(f"  check_source: {report.get('check_source') or 'unknown'}")
+    if report.get("checked_beta_report"):
+        print(f"  checked_beta_report: {report.get('checked_beta_report')}")
     if review:
         print(
             "  review: "
