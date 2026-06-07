@@ -745,6 +745,16 @@ def shareable_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def issue_summary_text(summary: dict[str, Any]) -> str:
+    return (
+        f"state={summary.get('state') or 'unknown'} "
+        f"primary={summary.get('primary_code') or 'none'} "
+        f"next={summary.get('next_step') or 'none'} "
+        f"progress=`{summary.get('progress') or 'none'}` "
+        f"safe_detail={bool(summary.get('safe_detail_present'))}"
+    )
+
+
 def infer_user_status_text(status: dict[str, Any]) -> str:
     return (
         f"{status.get('state') or 'unknown'}: "
@@ -4032,6 +4042,32 @@ def _shareable_summary_from_report(report: dict[str, Any], *, kind: str) -> dict
     }
 
 
+def _issue_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    state = str(user_status.get("state") or ("completed" if report.get("ok") else "blocked"))
+    primary_code = codes[0] if codes else ("ok" if report.get("ok") else "unknown")
+    progress = wait_progress_text(wait_progress) if wait_progress else ""
+    safe_detail_present = bool(
+        report.get("detail")
+        or report.get("error")
+        or wait_progress.get("last_error_type")
+        or wait_progress.get("last_error_detail")
+    )
+    return {
+        "kind": kind,
+        "state": state,
+        "primary_code": primary_code,
+        "next_step": user_status.get("next_step") or ("rerun_or_review_artifacts" if report.get("ok") else "fix_blockers"),
+        "headline": user_status.get("headline") or report.get("operator_action") or "",
+        "operator_action": report.get("operator_action") or "",
+        "progress": progress,
+        "safe_detail_present": safe_detail_present,
+        "public_artifact_safe": True,
+    }
+
+
 def _user_inference_status(
     *,
     kind: str,
@@ -4758,6 +4794,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     model = summary.get("model") if isinstance(summary.get("model"), dict) else {}
     result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
+    issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
@@ -4780,6 +4817,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- OK: `{bool(summary.get('ok'))}`",
         f"- Mode: `{summary.get('mode')}`",
         f"- Status: `{infer_user_status_text(user_status)}`",
+        f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         f"- Model: `{model.get('hf_model_id')}` backend=`{model.get('backend')}`",
         f"- Prompt: `{prompt_summary_text(prompt)}`",
@@ -5143,6 +5181,7 @@ def _infer_summary_from_payload(
         ],
     }
     summary["shareable_summary"] = _shareable_summary_from_report(summary, kind="infer")
+    summary["issue_summary"] = _issue_summary_from_report(summary, kind="infer")
     artifacts = {
         "infer_summary": {
             "kind": "crowdtensor_infer_summary",
@@ -7757,6 +7796,7 @@ def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]
 def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
+    issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
@@ -7777,6 +7817,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- OK: `{bool(summary.get('ok'))}`",
         f"- Dry run: `{bool(summary.get('dry_run'))}`",
         f"- Status: `{infer_user_status_text(user_status)}`",
+        f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         (
             "- Generation: "
@@ -8116,6 +8157,7 @@ def _finalize_product_generate_report(
     ))
     report.setdefault("trace", _generate_trace_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
+    report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
         report.setdefault("saved_summary", {
@@ -8925,6 +8967,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     if user_status:
         print(f"  status: {infer_user_status_text(user_status)}")
+    issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
+    if issue_summary:
+        print(f"  issue: {issue_summary_text(issue_summary)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
@@ -9143,6 +9188,9 @@ def print_infer(report: dict[str, Any]) -> None:
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     if user_status:
         print(f"  status: {infer_user_status_text(user_status)}")
+    issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
+    if issue_summary:
+        print(f"  issue: {issue_summary_text(issue_summary)}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}

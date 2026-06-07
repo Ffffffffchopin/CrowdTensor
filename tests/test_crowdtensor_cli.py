@@ -2603,6 +2603,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         self.assertFalse(report["shareable_summary"]["local_output_display_only"])
+        self.assertEqual(report["issue_summary"]["state"], "completed")
+        self.assertEqual(report["issue_summary"]["primary_code"], "public_swarm_generate_ready")
+        self.assertEqual(report["issue_summary"]["next_step"], "rerun_or_review_artifacts")
+        self.assertIn("accepted_rows=1", report["issue_summary"]["progress"])
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
         self.assertTrue(report["artifacts"]["generate_summary_markdown"]["present"])
         self.assertNotIn("admin-secret", encoded)
@@ -2614,10 +2618,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["trace"]["request_count"], 1)
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertTrue(persisted["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertEqual(persisted["issue_summary"]["state"], "completed")
         self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn(
             "- Status: `completed: Generation completed. next=rerun_or_review_artifacts recommendation=submit generation public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn(
+            "- Issue: `state=completed primary=public_swarm_generate_ready next=rerun_or_review_artifacts progress=`",
             markdown,
         )
         self.assertIn(
@@ -2647,6 +2656,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn(
             "  status: completed: Generation completed. next=rerun_or_review_artifacts recommendation=submit generation public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn(
+            "  issue: state=completed primary=public_swarm_generate_ready next=rerun_or_review_artifacts progress=`polls=",
             rendered,
         )
         self.assertIn(
@@ -2840,6 +2853,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("CrowdTensor prompt", report["wait_progress"]["last_error_detail"])
         self.assertNotIn("admin-secret", report["wait_progress"]["last_error_detail"])
         self.assertIn("Generation reached 1/4 tokens", report["operator_action"])
+        self.assertEqual(report["issue_summary"]["state"], "blocked")
+        self.assertEqual(report["issue_summary"]["primary_code"], "generation_timeout")
+        self.assertEqual(report["issue_summary"]["next_step"], "fix_blockers")
+        self.assertIn("tokens=1/4", report["issue_summary"]["progress"])
+        self.assertTrue(report["issue_summary"]["safe_detail_present"])
+        self.assertNotIn("CrowdTensor prompt", json.dumps(report["issue_summary"], sort_keys=True))
+        self.assertNotIn("admin-secret", json.dumps(report["issue_summary"], sort_keys=True))
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor generate --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --timeout-seconds 120",
@@ -2863,6 +2883,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
+        self.assertIn(
+            "  issue: state=blocked primary=generation_timeout next=fix_blockers progress=`polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=False last_error=HTTPError` safe_detail=True",
+            rendered,
+        )
         self.assertIn("  stream_events: 1 source=admin-results-ledger-fallback complete=False", rendered)
         self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=False last_error=HTTPError", rendered)
         self.assertNotIn("stream echoed CrowdTensor prompt", rendered)
@@ -5693,6 +5717,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn(
+            "  issue: state=completed primary=crowdtensor_infer_ready next=rerun_or_review_artifacts progress=`polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False` safe_detail=False",
+            stdout.getvalue(),
+        )
+        self.assertIn(
             "  trace: session=real-llm-session-infer requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True",
             stdout.getvalue(),
         )
@@ -5790,6 +5818,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["user_status"]["next_step"], "rerun_or_review_artifacts")
         self.assertEqual(persisted["user_status"]["recommended_label"], "submit inference")
         self.assertTrue(persisted["user_status"]["public_artifact_safe"])
+        self.assertEqual(persisted["issue_summary"]["state"], "completed")
+        self.assertEqual(persisted["issue_summary"]["primary_code"], "crowdtensor_infer_ready")
+        self.assertEqual(persisted["issue_summary"]["next_step"], "rerun_or_review_artifacts")
+        self.assertFalse(persisted["issue_summary"]["safe_detail_present"])
         self.assertEqual(persisted["trace"]["session_id"], "real-llm-session-infer")
         self.assertEqual(persisted["trace"]["workload_type"], "real_llm_sharded_infer")
         self.assertEqual(persisted["trace"]["accepted_rows_seen"], 1)
@@ -5815,6 +5847,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Mode: `existing`", markdown)
         self.assertIn(
             "- Status: `completed: Inference completed. next=rerun_or_review_artifacts recommendation=submit inference public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn(
+            "- Issue: `state=completed primary=crowdtensor_infer_ready next=rerun_or_review_artifacts progress=`",
             markdown,
         )
         self.assertIn("- Model: `sshleifer/tiny-gpt2` backend=`cpu`", markdown)
