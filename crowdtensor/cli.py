@@ -4259,6 +4259,8 @@ def _infer_ready_to_submit(
 
 def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
+    prompt = summary.get("prompt") if isinstance(summary.get("prompt"), dict) else {}
+    model = summary.get("model") if isinstance(summary.get("model"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -4276,6 +4278,13 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- OK: `{bool(summary.get('ok'))}`",
         f"- Mode: `{summary.get('mode')}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
+        f"- Model: `{model.get('hf_model_id')}` backend=`{model.get('backend')}`",
+        (
+            "- Prompt: "
+            f"count=`{prompt.get('prompt_count')}` "
+            f"hash=`{prompt.get('prompt_hash')}` "
+            f"raw_public=`{bool(prompt.get('raw_prompt_public'))}`"
+        ),
         (
             "- Generation: "
             f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
