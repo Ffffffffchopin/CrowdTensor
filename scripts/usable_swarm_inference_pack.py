@@ -585,8 +585,6 @@ def run_p2p_local(args: argparse.Namespace, *, output_dir: Path, runner: Runner)
         args.backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
         "--max-new-tokens",
         str(args.max_new_tokens),
         "--startup-timeout",
@@ -605,6 +603,8 @@ def run_p2p_local(args: argparse.Namespace, *, output_dir: Path, runner: Runner)
     ]
     if args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if args.stream_generation:
         command.append("--stream-generation")
     if args.hf_cache_dir:

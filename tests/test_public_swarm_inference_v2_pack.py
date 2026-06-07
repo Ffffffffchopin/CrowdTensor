@@ -370,6 +370,7 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         real_p2p_command = next(command for command in calls if "real_p2p_swarm_inference_core_rc_pack.py" in " ".join(command))
         self.assertIn("--prompt-texts", usable_command)
         self.assertEqual(usable_command[usable_command.index("--prompt-texts") + 1], "first prompt,second prompt")
+        self.assertNotIn("--prompt-text", usable_command)
         self.assertNotIn("--prompt-texts", real_p2p_command)
         local = report["readiness"]["local_p2p_generate"]
         self.assertTrue(local["batch_ready"])
@@ -774,6 +775,7 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
                 self.assertIn("--stream-generation", command)
                 self.assertIn("--prompt-texts", command)
                 self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+                self.assertNotIn("--prompt-text", command)
                 payload = check.fake_usable_report(tokens)
                 child_dir = Path(command[command.index("--output-dir") + 1])
                 child_dir.mkdir(parents=True, exist_ok=True)

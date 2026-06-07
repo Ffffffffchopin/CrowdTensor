@@ -131,6 +131,7 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
             calls.append(command)
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-text", command)
             return completed(payload)
 
         report = pack.build_report(pack.parse_args([
@@ -525,6 +526,7 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
             self.assertIn("--stream-generation", command)
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-text", command)
             payload = check.fake_p2p_v06_payload(generated_tokens=4, accepted_rows=8)
             payload["payload_summaries"]["local_p2p_discovery"]["real_generate_probe"]["batch"] = {
                 "enabled": True,
