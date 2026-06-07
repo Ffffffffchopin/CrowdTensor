@@ -296,6 +296,18 @@ def read_prompt_file(path_value: str) -> str:
     return text
 
 
+def read_prompt_stdin(stream: Any | None = None) -> str:
+    input_stream = stream or sys.stdin
+    try:
+        text = input_stream.read()
+    except OSError as exc:
+        raise ValueError(f"could not read prompt stdin: {exc}") from exc
+    text = str(text or "").strip()
+    if not text:
+        raise ValueError("prompt_stdin is empty")
+    return text
+
+
 def redacted_command(command: list[str], sensitive_flags: set[str]) -> list[str]:
     result: list[str] = []
     redact_next = False
@@ -398,9 +410,12 @@ def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> st
     prompt = str(report.get("local_prompt_text") or "")
     prompt_texts = str(report.get("local_prompt_texts") or "")
     prompt_file = str(report.get("local_prompt_file") or "")
+    prompt_stdin = bool(report.get("local_prompt_stdin"))
     if command:
         rendered = [str(part) for part in command]
-        if prompt_file:
+        if prompt_stdin:
+            rendered = replace_single_prompt_with_stdin(rendered)
+        elif prompt_file:
             rendered = replace_single_prompt_with_file(rendered, prompt_file)
         elif prompt_texts:
             filtered: list[str] = []
@@ -429,8 +444,11 @@ def local_generate_command_line(item: dict[str, Any], report: dict[str, Any]) ->
     prompt = str(report.get("local_prompt_text") or "")
     prompt_texts = str(report.get("local_prompt_texts") or "")
     prompt_file = str(report.get("local_prompt_file") or "")
+    prompt_stdin = bool(report.get("local_prompt_stdin"))
     rendered = [str(part) for part in command]
-    if prompt_file:
+    if prompt_stdin:
+        rendered = replace_single_prompt_with_stdin(rendered)
+    elif prompt_file:
         rendered = replace_single_prompt_with_file(rendered, prompt_file)
     elif prompt_texts:
         filtered: list[str] = []
@@ -471,6 +489,29 @@ def replace_single_prompt_with_file(command: list[str], prompt_file: str) -> lis
         rendered.append(part)
     if not replaced:
         rendered.extend(["--prompt-file", prompt_file])
+    return rendered
+
+
+def replace_single_prompt_with_stdin(command: list[str]) -> list[str]:
+    rendered: list[str] = []
+    replaced = False
+    skip_next = False
+    for part in command:
+        if skip_next:
+            skip_next = False
+            continue
+        if part == "--prompt-text":
+            rendered.append("--prompt-stdin")
+            replaced = True
+            skip_next = True
+            continue
+        if part == INFER_PROMPT_PLACEHOLDER:
+            rendered.append("--prompt-stdin")
+            replaced = True
+            continue
+        rendered.append(part)
+    if not replaced:
+        rendered.append("--prompt-stdin")
     return rendered
 
 
@@ -1189,6 +1230,7 @@ def display_review_summary(
         report.get("local_prompt_text")
         or report.get("local_prompt_texts")
         or report.get("local_prompt_file")
+        or report.get("local_prompt_stdin")
     )
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     if not local_prompt_present or not recommended.get("command_line"):
@@ -12525,7 +12567,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "or fix_blockers. stage_preflight_unknown means rerun the stage preflight;\n"
             "stage_preflight_not_checked means fix route/Coordinator, then rerun with observer token.\n\n"
             "Use one prompt source at a time: positional prompt, --prompt-text/--prompt,\n"
-            "--prompt-file for a UTF-8 single prompt file, or --prompt-texts for a bounded batch;\n"
+            "--prompt-file for a UTF-8 single prompt file, --prompt-stdin for an explicit\n"
+            "stdin single prompt, or --prompt-texts for a bounded batch;\n"
             "ambiguous mixes are rejected. Reports include\n"
             "output_request.include_output and keep output_request.raw_generated_text_public false.\n\n"
             "The trace line summarizes session, request count, ledger rows, stream events,\n"
@@ -12562,6 +12605,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  crowdtensor infer \"CrowdTensor routes small models across home compute\"\n"
             "  crowdtensor infer \"your prompt\" --max-new-tokens 8 --stream\n"
             "  crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8\n"
+            "  echo \"your prompt\" | crowdtensor infer --prompt-stdin --max-new-tokens 8\n"
             "  crowdtensor infer \"your prompt\" --mode existing --coordinator-url http://127.0.0.1:8787 --dry-run\n"
             "  CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer \"your prompt\" --mode existing --coordinator-url http://127.0.0.1:8787\n"
         ),
@@ -12572,6 +12616,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--output-dir", default="dist/infer")
     infer.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with positional prompt and --prompt-texts")
     infer.add_argument("--prompt-file", default="", help="read a single prompt from a UTF-8 text file; mutually exclusive with other prompt sources")
+    infer.add_argument("--prompt-stdin", action="store_true", help="read a single prompt from stdin; mutually exclusive with other prompt sources")
     infer.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; mutually exclusive with single-prompt sources")
     infer.add_argument("--max-new-tokens", type=int, default=8)
     infer.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
@@ -12719,7 +12764,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "run_live_preflight, submit_with_caution, or fix_blockers. stage_preflight_unknown\n"
             "means rerun the stage preflight; stage_preflight_not_checked means fix route/Coordinator, then rerun with observer token.\n\n"
             "Use one prompt source at a time: positional prompt, --prompt-text/--prompt,\n"
-            "--prompt-file for a UTF-8 single prompt file, or --prompt-texts for a bounded batch;\n"
+            "--prompt-file for a UTF-8 single prompt file, --prompt-stdin for an explicit\n"
+            "stdin single prompt, or --prompt-texts for a bounded batch;\n"
             "ambiguous mixes are rejected. Reports include\n"
             "output_request.include_output and keep output_request.raw_generated_text_public false.\n\n"
             "The trace line summarizes session, request count, ledger rows, stream events,\n"
@@ -12755,6 +12801,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "examples:\n"
             "  crowdtensor generate \"your prompt\"\n"
             "  crowdtensor generate --prompt-file prompt.txt\n"
+            "  echo \"your prompt\" | crowdtensor generate --prompt-stdin --coordinator-url http://127.0.0.1:8787 --dry-run\n"
             "  crowdtensor generate \"your prompt\" --coordinator-url http://127.0.0.1:8787 --dry-run\n"
             "  CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate \"your prompt\" --coordinator-url http://127.0.0.1:8787\n"
             "  crowdtensor generate --prompt-texts \"first prompt,second prompt\" --coordinator-url http://127.0.0.1:8787 --dry-run\n"
@@ -12765,6 +12812,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     generate.add_argument("--output-dir", default="dist/generate")
     generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with positional prompt and --prompt-texts")
     generate.add_argument("--prompt-file", default="", help="read a single prompt from a UTF-8 text file; mutually exclusive with other prompt sources")
+    generate.add_argument("--prompt-stdin", action="store_true", help="read a single prompt from stdin; mutually exclusive with other prompt sources")
     generate.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; mutually exclusive with single-prompt sources")
     generate.add_argument("--scenario-id", default="public-swarm-product-rc")
     generate.add_argument("--max-new-tokens", type=int, default=16)
@@ -14634,17 +14682,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 ("positional prompt", args.prompt_text_arg),
                 ("--prompt-text/--prompt", args.prompt_text),
                 ("--prompt-file", args.prompt_file),
+                ("--prompt-stdin", "1" if args.prompt_stdin else ""),
                 ("--prompt-texts", args.prompt_texts),
             ]
             if str(value or "").strip()
         ]
         if len(prompt_sources) > 1:
-            raise SystemExit("infer accepts one prompt source: positional prompt, --prompt-text/--prompt, --prompt-file, or --prompt-texts")
+            raise SystemExit("infer accepts one prompt source: positional prompt, --prompt-text/--prompt, --prompt-file, --prompt-stdin, or --prompt-texts")
         if args.prompt_text_arg:
             args.prompt_text = args.prompt_text_arg
         elif args.prompt_file:
             try:
                 args.prompt_text = read_prompt_file(args.prompt_file)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+        elif args.prompt_stdin:
+            try:
+                args.prompt_text = read_prompt_stdin()
             except ValueError as exc:
                 raise SystemExit(str(exc)) from exc
         elif args.prompt_text is None:
@@ -14704,17 +14758,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 ("positional prompt", args.prompt_text_arg),
                 ("--prompt-text", args.prompt_text),
                 ("--prompt-file", args.prompt_file),
+                ("--prompt-stdin", "1" if args.prompt_stdin else ""),
                 ("--prompt-texts", args.prompt_texts),
             ]
             if str(value or "").strip()
         ]
         if len(prompt_sources) > 1:
-            raise SystemExit("generate accepts one prompt source: positional prompt, --prompt-text, --prompt-file, or --prompt-texts")
+            raise SystemExit("generate accepts one prompt source: positional prompt, --prompt-text, --prompt-file, --prompt-stdin, or --prompt-texts")
         if args.prompt_text_arg:
             args.prompt_text = args.prompt_text_arg
         elif args.prompt_file:
             try:
                 args.prompt_text = read_prompt_file(args.prompt_file)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+        elif args.prompt_stdin:
+            try:
+                args.prompt_text = read_prompt_stdin()
             except ValueError as exc:
                 raise SystemExit(str(exc)) from exc
         elif not args.prompt_texts and args.prompt_text is None:
@@ -15574,7 +15634,9 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             local_report = dict(report)
-            if str(getattr(args, "prompt_file", "") or ""):
+            if bool(getattr(args, "prompt_stdin", False)):
+                local_report["local_prompt_stdin"] = True
+            elif str(getattr(args, "prompt_file", "") or ""):
                 local_report["local_prompt_file"] = str(getattr(args, "prompt_file", "") or "")
             else:
                 local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
@@ -15603,7 +15665,9 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             local_report = dict(report)
-            if str(getattr(args, "prompt_file", "") or ""):
+            if bool(getattr(args, "prompt_stdin", False)):
+                local_report["local_prompt_stdin"] = True
+            elif str(getattr(args, "prompt_file", "") or ""):
                 local_report["local_prompt_file"] = str(getattr(args, "prompt_file", "") or "")
             else:
                 local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
