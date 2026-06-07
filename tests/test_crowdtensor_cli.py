@@ -260,6 +260,38 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(caution_status["readiness_label"], "partial")
         self.assertEqual(caution_status["warning_codes"], ["coordinator_preflight_skipped"])
         self.assertEqual(caution_status["next_step"], "submit_with_caution")
+        for blocked_status in [
+            cli._ready_to_submit_status(
+                submit_ok=True,
+                route_ready=False,
+                coordinator_ok=None,
+                coordinator_preflight_required=False,
+                stage_preflight_ok=None,
+                stage_preflight_required=False,
+                source="unit",
+            ),
+            cli._ready_to_submit_status(
+                submit_ok=True,
+                route_ready=True,
+                coordinator_ok=False,
+                coordinator_preflight_required=True,
+                stage_preflight_ok=None,
+                stage_preflight_required=False,
+                source="unit",
+            ),
+            cli._ready_to_submit_status(
+                submit_ok=True,
+                route_ready=True,
+                coordinator_ok=True,
+                coordinator_preflight_required=True,
+                stage_preflight_ok=False,
+                stage_preflight_required=True,
+                source="unit",
+            ),
+        ]:
+            self.assertFalse(blocked_status["fully_verified"])
+            self.assertEqual(blocked_status["readiness_label"], "blocked")
+            self.assertEqual(blocked_status["next_step"], "fix_blockers")
         self.assertIn(
             "stage0/stage1 were not fully verified",
             cli._ready_to_submit_action("Inference", {"next_step": "run_stage_preflight"}),

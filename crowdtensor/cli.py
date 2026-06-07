@@ -3599,11 +3599,12 @@ def _ready_to_submit_status(
     elif stage_verification == "not_checked":
         warning_codes.append("stage_preflight_not_checked")
     fully_verified = bool(submit_ok and route_ready and coordinator_ok is True and stage_verification == "ready")
+    blocked_by_checks = bool(not route_ready or coordinator_ok is False or stage_verification == "failed")
     if submit_ok is True and fully_verified:
         readiness_label = "verified"
         readiness_summary = "Route, Coordinator, and distinct stage Miners are verified."
         next_step = "submit"
-    elif submit_ok is True:
+    elif submit_ok is True and not blocked_by_checks:
         readiness_label = "partial"
         readiness_summary = "Request can be submitted, but stage Miner readiness is not fully verified."
         next_step = (
@@ -3611,7 +3612,7 @@ def _ready_to_submit_status(
             if stage_preflight_needs_verification(set(warning_codes))
             else "submit_with_caution"
         )
-    elif submit_ok is False:
+    elif submit_ok is False or blocked_by_checks:
         readiness_label = "blocked"
         readiness_summary = "Request is not ready to submit; follow operator_action and rerun preflight."
         next_step = "fix_blockers"
