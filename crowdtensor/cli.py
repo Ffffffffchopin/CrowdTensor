@@ -454,6 +454,45 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
     return notes
 
 
+def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
+    user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
+    review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
+    issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
+    artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
+    state = str(user_status.get("state") or review_summary.get("state") or issue_summary.get("state") or "unknown")
+    headline = str(user_status.get("headline") or issue_summary.get("headline") or "")
+    next_step = str(user_status.get("next_step") or review_summary.get("next_step") or issue_summary.get("next_step") or "none")
+    inspect_first = str(review_summary.get("inspect_first") or artifact_summary.get("inspect_first") or "")
+    recommended_label = str(recommended.get("label") or review_summary.get("recommended_label") or "")
+    recommended_reason = str(recommended.get("reason") or review_summary.get("recommended_reason") or "")
+    command = markdown_command_line(recommended) if recommended.get("command_line") else ""
+    requires_env = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
+    operator_action = str(summary.get("operator_action") or issue_summary.get("operator_action") or "")
+    lines = [
+        "",
+        "## What To Do Next",
+        "",
+        f"- State: `{state}`",
+        f"- Next step: `{next_step}`",
+    ]
+    if headline:
+        lines.append(f"- Meaning: {headline}")
+    if inspect_first:
+        lines.append(f"- Inspect first: `{inspect_first}`")
+    if recommended_label:
+        reason = f" reason=`{recommended_reason}`" if recommended_reason else ""
+        lines.append(f"- Recommended: `{recommended_label}`{reason}")
+    if command:
+        lines.append(f"- Copy command: `{command}`")
+    if requires_env:
+        lines.append(f"- Requires env: `{', '.join(str(name) for name in requires_env)}`")
+    if operator_action:
+        lines.append(f"- Action: {operator_action}")
+    lines.append("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.")
+    return lines
+
+
 def _pick_next_command(
     next_commands: list[dict[str, Any]],
     predicate: Callable[[dict[str, Any]], bool],
@@ -5139,6 +5178,12 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
     ]
+    lines.extend(markdown_next_step_section(summary))
+    lines.extend([
+        "",
+        "## Details",
+        "",
+    ])
     if ready_to_submit:
         lines.append(
             "- Ready to submit: "
@@ -8170,6 +8215,12 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('batch_generation_ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('stream_generation_ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
     ]
+    lines.extend(markdown_next_step_section(summary))
+    lines.extend([
+        "",
+        "## Details",
+        "",
+    ])
     if ready_to_submit:
         lines.append(
             "- Ready to submit: "

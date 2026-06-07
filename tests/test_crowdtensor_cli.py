@@ -925,6 +925,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Generate Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Dry run: `True`", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("- State: `preflight-partial`", markdown)
+        self.assertIn("- Next step: `run_live_preflight`", markdown)
+        self.assertIn("- Recommended: `check generation route` reason=`confirm_live_preflight`", markdown)
+        self.assertIn("- Copy command: `crowdtensor generate --max-new-tokens 16", markdown)
+        self.assertIn("- Requires env: `CROWDTENSOR_OBSERVER_TOKEN`", markdown)
+        self.assertIn("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.", markdown)
+        self.assertIn("## Details", markdown)
         self.assertIn(
             "- Status: `preflight-partial: Request shape is valid, but live readiness was skipped. next=run_live_preflight recommendation=check generation route public_artifact_safe=True`",
             markdown,
@@ -2879,6 +2887,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("CrowdTensor prompt", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("- OK: `False`", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("- State: `blocked`", markdown)
+        self.assertIn("- Next step: `fix_blockers`", markdown)
+        self.assertIn("- Recommended: `submit generation` reason=`set_admin_token`", markdown)
+        self.assertIn("- Requires env: `CROWDTENSOR_ADMIN_TOKEN`", markdown)
+        self.assertIn("- Action: Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.", markdown)
+        self.assertIn("## Details", markdown)
         self.assertIn(
             "- Status: `blocked: Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN. next=fix_blockers recommendation=submit generation public_artifact_safe=True`",
             markdown,
@@ -6581,6 +6596,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Infer Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Mode: `existing`", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("- State: `completed`", markdown)
+        self.assertIn("- Next step: `rerun_or_review_artifacts`", markdown)
+        self.assertIn("- Recommended: `submit inference` reason=`rerun_inference`", markdown)
+        self.assertIn("- Copy command: `CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing", markdown)
+        self.assertIn("- Requires env: `CROWDTENSOR_ADMIN_TOKEN`", markdown)
+        self.assertIn("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.", markdown)
+        self.assertIn("## Details", markdown)
         self.assertIn(
             "- Status: `completed: Inference completed. next=rerun_or_review_artifacts recommendation=submit inference public_artifact_safe=True`",
             markdown,
