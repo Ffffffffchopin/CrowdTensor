@@ -209,7 +209,57 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
     missing = sorted(required - codes)
     serialized = json.dumps(report, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in serialized]
-    ok = bool(report.get("ok") and not missing and not leaks)
+    scope_errors: list[str] = []
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    if output_request.get("include_output") is not False:
+        scope_errors.append("output_request_include_output_mismatch")
+    if output_request.get("raw_prompt_public") is not False:
+        scope_errors.append("output_request_raw_prompt_public_mismatch")
+    if output_request.get("raw_generation_public") is not False:
+        scope_errors.append("output_request_raw_generation_public_mismatch")
+    if output_request.get("generation_ids_public") is not False:
+        scope_errors.append("output_request_generation_ids_public_mismatch")
+    if output_request.get("local_output_display_only") is not False:
+        scope_errors.append("output_request_local_output_display_only_mismatch")
+    if output_request.get("public_artifact_safe") is not True:
+        scope_errors.append("output_request_public_artifact_safe_mismatch")
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    if answer_scope.get("scope_state") != "no-local-answer":
+        scope_errors.append("answer_scope_state_mismatch")
+    if answer_scope.get("visible_in_terminal") is not False:
+        scope_errors.append("answer_scope_visible_in_terminal_mismatch")
+    if answer_scope.get("terminal_only") is not False:
+        scope_errors.append("answer_scope_terminal_only_mismatch")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        scope_errors.append("answer_scope_saved_json_display_mismatch")
+    if answer_scope.get("saved_markdown_display") != "hash-only":
+        scope_errors.append("answer_scope_saved_markdown_display_mismatch")
+    if answer_scope.get("raw_prompt_public") is not False:
+        scope_errors.append("answer_scope_raw_prompt_public_mismatch")
+    if answer_scope.get("raw_generation_public") is not False:
+        scope_errors.append("answer_scope_raw_generation_public_mismatch")
+    if answer_scope.get("generation_ids_public") is not False:
+        scope_errors.append("answer_scope_generation_ids_public_mismatch")
+    if answer_scope.get("public_artifact_safe") is not True:
+        scope_errors.append("answer_scope_public_artifact_safe_mismatch")
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    if shareable.get("saved_artifacts_public_safe") is not True:
+        scope_errors.append("shareable_saved_artifacts_public_safe_mismatch")
+    if shareable.get("raw_prompt_public") is not False:
+        scope_errors.append("shareable_raw_prompt_public_mismatch")
+    if shareable.get("raw_generation_public") is not False:
+        scope_errors.append("shareable_raw_generation_public_mismatch")
+    if shareable.get("generation_ids_public") is not False:
+        scope_errors.append("shareable_generation_ids_public_mismatch")
+    if shareable.get("local_output_display_only") is not False:
+        scope_errors.append("shareable_local_output_display_only_mismatch")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        scope_errors.append("shareable_answer_scope_state_mismatch")
+    if shareable.get("local_answer_terminal_only") is not False:
+        scope_errors.append("shareable_local_answer_terminal_only_mismatch")
+    if shareable.get("public_artifact_safe") is not True:
+        scope_errors.append("shareable_public_artifact_safe_mismatch")
+    ok = bool(report.get("ok") and not missing and not leaks and not scope_errors)
     return {
         "schema": SCHEMA,
         "ok": ok,
@@ -218,6 +268,7 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
         "report_ok": report.get("ok"),
         "missing_codes": missing,
         "sensitive_leaks": leaks,
+        "scope_errors": scope_errors,
         "diagnosis_codes": sorted(codes | ({"public_swarm_inference_alpha_check_ready"} if ok else {"public_swarm_inference_alpha_check_failed"})),
         "artifacts": {
             "public_swarm_inference_alpha_json": pack.artifact_entry(

@@ -59,10 +59,38 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
         self.assertFalse(report["artifacts"]["local_requeue_json"]["present"])
         self.assertFalse(report["artifacts"]["live_swarm_beta_json"]["present"])
         self.assertTrue(report["artifact_cleanup"]["child_artifacts_pruned"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generation_public"])
+        self.assertFalse(report["output_request"]["generation_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertFalse(report["answer_scope"]["raw_prompt_public"])
+        self.assertFalse(report["answer_scope"]["raw_generation_public"])
+        self.assertFalse(report["answer_scope"]["generation_ids_public"])
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generation_public"])
+        self.assertFalse(report["shareable_summary"]["generation_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (output_dir / "public_swarm_inference_alpha.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn(
+            "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generation_public=False generation_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            markdown,
+        )
         self.assertNotIn("operator-secret", serialized)
         self.assertNotIn("stage0-secret", serialized)
         self.assertNotIn("hidden_state", serialized)
         self.assertNotIn("generated_text", serialized)
+        self.assertNotIn("generated_token_ids", serialized)
 
     def test_local_generated_requires_requeue(self) -> None:
         output_dir = self._tmp_dir()
@@ -80,6 +108,9 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
         self.assertIn("local_stage_requeue_ready", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_live_kaggle_ready", report["diagnosis_codes"])
         self.assertFalse(report["safety"]["live_kaggle_required"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
     def test_keep_child_artifacts_preserves_child_reports_for_debugging(self) -> None:
         output_dir = self._tmp_dir()
@@ -123,6 +154,7 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
         self.assertEqual(report["schema"], "public_swarm_inference_alpha_check_v1")
         self.assertEqual(report["missing_codes"], [])
         self.assertEqual(report["sensitive_leaks"], [])
+        self.assertEqual(report["scope_errors"], [])
         self.assertIn("public_swarm_inference_alpha_check_ready", report["diagnosis_codes"])
 
 
