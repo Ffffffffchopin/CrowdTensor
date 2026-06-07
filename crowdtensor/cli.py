@@ -735,10 +735,14 @@ def _pick_next_command(
     predicate: Callable[[dict[str, Any]], bool],
     *,
     reason: str,
+    label_override: str = "",
 ) -> dict[str, Any]:
     for index, item in enumerate(next_commands, start=1):
         if predicate(item):
             recommended = dict(item)
+            if label_override:
+                recommended["source_label"] = recommended.get("label") or ""
+                recommended["label"] = label_override
             recommended["source_index"] = index
             recommended["reason"] = reason
             recommended["reason_detail"] = next_reason_detail(reason)
@@ -846,7 +850,12 @@ def _infer_recommended_next_command(
         found = _pick_next_command(next_commands, equals("run local inference"), reason="rerun_local_inference")
         if found:
             return found
-    found = _pick_next_command(next_commands, starts("submit inference"), reason="rerun_inference")
+    found = _pick_next_command(
+        next_commands,
+        starts("submit inference"),
+        reason="rerun_inference",
+        label_override="rerun inference",
+    )
     if found:
         return found
     return _pick_next_command(next_commands, lambda item: True, reason="next_available_command")
@@ -915,7 +924,12 @@ def _generate_recommended_next_command(
         found = _pick_next_command(next_commands, lambda item: True, reason="follow_operator_action")
         if found:
             return found
-    found = _pick_next_command(next_commands, starts("submit generation"), reason="rerun_generation")
+    found = _pick_next_command(
+        next_commands,
+        starts("submit generation"),
+        reason="rerun_generation",
+        label_override="rerun generation",
+    )
     if found:
         return found
     return _pick_next_command(next_commands, lambda item: True, reason="next_available_command")
