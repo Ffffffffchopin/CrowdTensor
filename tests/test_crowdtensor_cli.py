@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+import shlex
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -5991,8 +5992,23 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["state"], "blocked")
         self.assertEqual(report["review_summary"]["next_step"], "review_diagnostics")
         self.assertEqual(report["review_summary"]["error_count"], 1)
+        self.assertEqual(report["review_summary"]["recommended_check_command"], report["recommended_check_command"])
         self.assertIn("public real LLM swarm beta check command returned no JSON report", report["errors"])
         self.assertIn("public-real-llm-swarm-beta check", report["operator_action"])
+        self.assertIn(report["recommended_check_command"]["command_line"], report["operator_action"])
+        self.assertEqual(
+            shlex.split(report["recommended_check_command"]["command_line"]),
+            [
+                "crowdtensor",
+                "public-real-llm-swarm-beta",
+                "check",
+                "--output-dir",
+                str(output_dir.resolve()),
+                "--max-new-tokens",
+                "16",
+                "--json",
+            ],
+        )
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
@@ -6006,6 +6022,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("CrowdTensor Public Real-LLM Swarm Beta Check", rendered)
         self.assertIn("  review: state=blocked next=review_diagnostics", rendered)
+        self.assertIn("  recommended_check: crowdtensor public-real-llm-swarm-beta check", rendered)
         self.assertIn("  errors:", rendered)
         self.assertIn("    - public real LLM swarm beta check command returned no JSON report", rendered)
         self.assertNotIn("  model: None", rendered)
@@ -6033,15 +6050,78 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["check_source"], "beta-report")
         self.assertEqual(report["checked_beta_report"], str(beta_report.resolve()))
         self.assertEqual(report["artifact_summary"]["machine_readable"], str(beta_report.resolve()))
+        self.assertEqual(report["review_summary"]["recommended_check_command"], report["recommended_check_command"])
+        self.assertEqual(report["recommended_check_command"]["check_source"], "beta-report")
         self.assertIn("--beta-report", report["operator_action"])
         self.assertIn(str(beta_report.resolve()), report["operator_action"])
+        self.assertEqual(
+            shlex.split(report["recommended_check_command"]["command_line"]),
+            [
+                "crowdtensor",
+                "public-real-llm-swarm-beta",
+                "check",
+                "--beta-report",
+                str(beta_report.resolve()),
+                "--output-dir",
+                str((output_dir / "check").resolve()),
+                "--max-new-tokens",
+                "16",
+                "--json",
+            ],
+        )
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_public_real_llm_swarm_beta_check(report)
         rendered = stdout.getvalue()
         self.assertIn("  check_source: beta-report", rendered)
+        self.assertIn("  recommended_check: crowdtensor public-real-llm-swarm-beta check", rendered)
         self.assertIn(f"  checked_beta_report: {beta_report.resolve()}", rendered)
         self.assertIn("public_real_llm_swarm_beta.json", rendered)
+
+    def test_public_real_llm_swarm_beta_check_failure_quotes_context_and_model(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "check output"
+        beta_report = Path(self._tmp_dir()) / "beta source" / "public_real_llm_swarm_beta.json"
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "check",
+            "--hf-model-id",
+            "distilgpt2",
+            "--beta-report",
+            str(beta_report),
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "24",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("--hf-model-id", command)
+            return subprocess.CompletedProcess(command, 1, stdout="not json\n", stderr="check crashed\n")
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+        command_line = report["recommended_check_command"]["command_line"]
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("'", command_line)
+        self.assertIn(command_line, report["operator_action"])
+        self.assertEqual(
+            shlex.split(command_line),
+            [
+                "crowdtensor",
+                "public-real-llm-swarm-beta",
+                "check",
+                "--hf-model-id",
+                "distilgpt2",
+                "--beta-report",
+                str(beta_report.resolve()),
+                "--output-dir",
+                str(output_dir.resolve()),
+                "--max-new-tokens",
+                "24",
+                "--json",
+            ],
+        )
 
     def test_public_real_llm_swarm_beta_cli_failure_includes_review_guidance(self) -> None:
         output_dir = Path(self._tmp_dir())

@@ -4021,11 +4021,31 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
     beta_report_dir = beta_report_path.parent
     inspect_first = beta_report_dir / "public_real_llm_swarm_beta.md"
     support_bundle = beta_report_dir / "support_bundle.json"
-    rerun_hint = (
-        f"public-real-llm-swarm-beta check --beta-report {beta_report_path} --json"
-        if beta_report
-        else "public-real-llm-swarm-beta check --json"
-    )
+    fallback_check_command = [
+        "crowdtensor",
+        "public-real-llm-swarm-beta",
+        "check",
+    ]
+    if getattr(args, "hf_model_id", "") != "sshleifer/tiny-gpt2":
+        fallback_check_command.extend(["--hf-model-id", args.hf_model_id])
+    if beta_report:
+        fallback_check_command.extend(["--beta-report", str(beta_report_path)])
+    fallback_check_command.extend([
+        "--output-dir",
+        str(output_dir),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--json",
+    ])
+    recommended_check = {
+        "label": "rerun beta report check",
+        "reason": "rerun_current_beta_report_check",
+        "command_line": command_line(fallback_check_command),
+        "beta_report": str(beta_report_path) if beta_report else str(beta_report_path),
+        "output_dir": str(output_dir),
+        "check_source": "beta-report" if beta_report else "ci-fixture",
+        "public_artifact_safe": True,
+    }
     return sanitize({
         "schema": "public_real_llm_swarm_beta_check_v1",
         "cli_schema": PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA,
@@ -4056,6 +4076,7 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
             "next_step": "review_diagnostics",
             "inspect_first": str(inspect_first),
             "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
+            "recommended_check_command": recommended_check,
             "error_count": 1,
             "error_preview": ["public real LLM swarm beta check command returned no JSON report"],
             "public_artifact_safe": True,
@@ -4063,7 +4084,8 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
         },
-        "operator_action": f"Inspect the CLI step payload, then rerun {rerun_hint} after fixing the check failure.",
+        "recommended_check_command": recommended_check,
+        "operator_action": f"Inspect the CLI step payload, then rerun: {recommended_check['command_line']} after fixing the check failure.",
         "output_request": {
             "include_output": False,
             "raw_prompt_public": False,
