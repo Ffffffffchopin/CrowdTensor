@@ -436,6 +436,19 @@ def _infer_prompt_redaction_values(args: argparse.Namespace) -> list[str]:
     return unique_redaction_values(values)
 
 
+def _artifact_entry_from_report_path(
+    path_value: Any,
+    output_dir: Path,
+    *,
+    kind: str,
+    schema: str,
+    ok: bool | None = None,
+) -> dict[str, Any]:
+    path_text = str(path_value or "")
+    path = Path(path_text) if path_text else output_dir / "__missing__"
+    return artifact_entry(path, output_dir, kind=kind, schema=schema, ok=ok)
+
+
 def stage_preflight_missing_text(stage_preflight: dict[str, Any]) -> str:
     missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
     if missing:
@@ -4246,6 +4259,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
+    source_report = summary.get("source_report") if isinstance(summary.get("source_report"), dict) else {}
     ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
     coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
     stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
@@ -4287,6 +4301,12 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
     if summary.get("operator_action"):
         lines.append(f"- Action: {summary.get('operator_action')}")
+    if source_report.get("summary_path") or source_report.get("summary_markdown_path"):
+        lines.append(
+            "- Source generate summary: "
+            f"json=`{source_report.get('summary_path')}` "
+            f"markdown=`{source_report.get('summary_markdown_path')}`"
+        )
     lines.extend([
         f"- Saved JSON: `{saved_summary.get('path')}`",
         f"- Output request: `{output_request_text(output_request)}`",
@@ -4414,6 +4434,7 @@ def _infer_summary_from_payload(
     operator_action = _infer_operator_action(args, action_payload, ok=ok)
     next_commands = _infer_next_commands(args, payload, ok=ok, mode=mode)
     has_local_display_output = bool(generated_text or display_outputs)
+    source_saved_summary = payload.get("saved_summary") if isinstance(payload.get("saved_summary"), dict) else {}
     summary = {
         "schema": INFER_CLI_SCHEMA,
         "generated_at": utc_now(),
@@ -4487,6 +4508,9 @@ def _infer_summary_from_payload(
             "schema": payload.get("schema"),
             "mode": payload.get("mode"),
             "ok": payload.get("ok"),
+            "summary_path": source_saved_summary.get("path") or "",
+            "summary_markdown_path": source_saved_summary.get("markdown_path") or "",
+            "public_artifact_safe": bool(source_saved_summary.get("public_artifact_safe", True)) if source_saved_summary else True,
         },
         "operator_action": operator_action,
         "next_commands": next_commands,
@@ -4537,6 +4561,22 @@ def _infer_summary_from_payload(
                 schema="public_swarm_inference_v2",
                 ok=payload.get("ok") if payload else None,
             )
+    if source_saved_summary.get("path"):
+        artifacts["source_generate_summary"] = _artifact_entry_from_report_path(
+            source_saved_summary.get("path"),
+            output_dir,
+            kind="crowdtensor_generate_summary",
+            schema=PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
+            ok=payload.get("ok") if payload else None,
+        )
+    if source_saved_summary.get("markdown_path"):
+        artifacts["source_generate_summary_markdown"] = _artifact_entry_from_report_path(
+            source_saved_summary.get("markdown_path"),
+            output_dir,
+            kind="crowdtensor_generate_summary_markdown",
+            schema=PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
+            ok=payload.get("ok") if payload else None,
+        )
     summary["artifacts"] = artifacts
     output_dir.mkdir(parents=True, exist_ok=True)
     persisted_summary = json.loads(json.dumps(summary))
@@ -8500,6 +8540,14 @@ def print_infer(report: dict[str, Any]) -> None:
             f"markdown={saved_summary.get('markdown_path')} "
             f"raw_generated_text_redacted={saved_summary.get('raw_generated_text_redacted')} "
             f"public_artifact_safe={saved_summary.get('public_artifact_safe')}"
+        )
+    source_report = report.get("source_report") if isinstance(report.get("source_report"), dict) else {}
+    if source_report.get("summary_path") or source_report.get("summary_markdown_path"):
+        print(
+            "  source_summary: "
+            f"{source_report.get('summary_path')} "
+            f"markdown={source_report.get('summary_markdown_path')} "
+            f"public_artifact_safe={source_report.get('public_artifact_safe')}"
         )
     print(f"  output_dir: {report.get('output_dir')}")
     if report.get("operator_action"):

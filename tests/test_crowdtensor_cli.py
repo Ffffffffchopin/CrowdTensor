@@ -5356,6 +5356,12 @@ class CrowdTensorCliTests(unittest.TestCase):
             },
             "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
             "local_output": {"generated_text": "local text only"},
+            "saved_summary": {
+                "path": str(output_dir / "generate" / "generate_summary.json"),
+                "markdown_path": str(output_dir / "generate" / "generate_summary.md"),
+                "raw_generated_text_redacted": True,
+                "public_artifact_safe": True,
+            },
             "diagnosis_codes": ["public_swarm_generate_ready"],
         }
 
@@ -5381,6 +5387,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"  saved_summary: {output_dir / 'infer_summary.json'} markdown={output_dir / 'infer_summary.md'} raw_generated_text_redacted=True public_artifact_safe=True",
             stdout.getvalue(),
         )
+        self.assertIn(
+            f"  source_summary: {output_dir / 'generate' / 'generate_summary.json'} markdown={output_dir / 'generate' / 'generate_summary.md'} public_artifact_safe=True",
+            stdout.getvalue(),
+        )
         self.assertIn("Raw generated text is shown only in local human output", stdout.getvalue())
         self.assertIn("next[1] check existing swarm", stdout.getvalue())
         self.assertIn("next[2] submit inference", stdout.getvalue())
@@ -5404,6 +5414,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["saved_summary"]["raw_generated_text_redacted"])
         self.assertTrue(report["saved_summary"]["public_artifact_safe"])
         self.assertTrue(report["artifacts"]["infer_summary_markdown"]["present"])
+        self.assertEqual(report["source_report"]["summary_path"], str(output_dir / "generate" / "generate_summary.json"))
+        self.assertEqual(report["source_report"]["summary_markdown_path"], str(output_dir / "generate" / "generate_summary.md"))
+        self.assertTrue(report["source_report"]["public_artifact_safe"])
+        self.assertEqual(report["artifacts"]["source_generate_summary"]["path"], "generate/generate_summary.json")
+        self.assertTrue(report["artifacts"]["source_generate_summary"]["present"] is False)
+        self.assertEqual(report["artifacts"]["source_generate_summary_markdown"]["path"], "generate/generate_summary.md")
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
         self.assertFalse(report["local_output"]["public_artifact_safe"])
         self.assertEqual(
@@ -5417,6 +5433,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["saved_summary"]["raw_generated_text_redacted"])
         self.assertTrue(persisted["saved_summary"]["public_artifact_safe"])
         self.assertTrue(persisted["artifacts"]["infer_summary_markdown"]["present"])
+        self.assertEqual(persisted["source_report"]["summary_path"], str(output_dir / "generate" / "generate_summary.json"))
+        self.assertEqual(persisted["source_report"]["summary_markdown_path"], str(output_dir / "generate" / "generate_summary.md"))
+        self.assertEqual(persisted["artifacts"]["source_generate_summary"]["path"], "generate/generate_summary.json")
+        self.assertEqual(persisted["artifacts"]["source_generate_summary_markdown"]["path"], "generate/generate_summary.md")
         self.assertTrue(persisted["output_request"]["include_output"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertEqual(persisted["local_output"]["generated_text"], "")
@@ -5432,6 +5452,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Mode: `existing`", markdown)
         self.assertIn("- Generation: `16/16` hash=`sha256:generated`", markdown)
         self.assertIn("- Wait: `polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False`", markdown)
+        self.assertIn(
+            f"- Source generate summary: json=`{output_dir / 'generate' / 'generate_summary.json'}` markdown=`{output_dir / 'generate' / 'generate_summary.md'}`",
+            markdown,
+        )
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertIn("`submit inference`", markdown)
         self.assertIn("Replace `<prompt>` with your local prompt before running saved commands.", markdown)
