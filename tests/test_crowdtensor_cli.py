@@ -323,6 +323,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             "stream progress is incomplete",
             cli.attention_display_text("request[2]=req-2:1/2"),
         )
+        self.assertEqual(
+            cli.next_reason_detail("confirm_live_preflight"),
+            "Run live preflight before submitting because readiness was skipped.",
+        )
+        self.assertEqual(
+            cli.next_reason_detail("rerun_inference"),
+            "Rerun the inference request.",
+        )
         self.assertEqual(cli.route_catalog_missing_text({"route_source": "coordinator-url"}), "not_used")
         self.assertEqual(
             cli.route_catalog_missing_text({
@@ -902,6 +910,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["attention"], "coordinator_preflight_skipped,stage_preflight_skipped")
         self.assertIn("Coordinator live readiness was skipped", report["review_summary"]["attention_detail"])
         self.assertIn("stage0/stage1 Miner readiness was skipped", report["review_summary"]["attention_detail"])
+        self.assertEqual(report["recommended_next_command"]["reason_detail"], "Run live preflight before submitting because readiness was skipped.")
         self.assertIn("<prompt>", report["review_summary"]["next_command"])
         self.assertIn("--dry-run", report["review_summary"]["next_command"])
         self.assertEqual(report["review_summary"]["requires_env"], ["CROWDTENSOR_OBSERVER_TOKEN"])
@@ -953,6 +962,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["review_summary"]["recommended_label"], "check generation route")
         self.assertIn("Coordinator live readiness was skipped", persisted["review_summary"]["attention_detail"])
         self.assertIn("stage0/stage1 Miner readiness was skipped", persisted["review_summary"]["attention_detail"])
+        self.assertEqual(persisted["recommended_next_command"]["reason_detail"], "Run live preflight before submitting because readiness was skipped.")
         self.assertIn("<prompt>", persisted["review_summary"]["next_command"])
         self.assertNotIn("CrowdTensor prompt", persisted["review_summary"]["next_command"])
         self.assertTrue(persisted["review_summary"]["public_artifact_safe"])
@@ -3093,6 +3103,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["primary_code"], "public_swarm_generate_ready")
         self.assertEqual(report["review_summary"]["attention"], "")
         self.assertEqual(report["review_summary"]["attention_detail"], "")
+        self.assertEqual(report["recommended_next_command"]["reason_detail"], "Rerun the generation request.")
         self.assertIn("<prompt>", report["review_summary"]["next_command"])
         self.assertEqual(report["review_summary"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
         self.assertTrue(report["review_summary"]["has_recommended_command"])
@@ -3118,6 +3129,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["review_summary"]["state"], "completed")
         self.assertEqual(persisted["review_summary"]["inspect_first"], str(output_dir / "generate_summary.md"))
         self.assertEqual(persisted["review_summary"]["attention_detail"], "")
+        self.assertEqual(persisted["recommended_next_command"]["reason_detail"], "Rerun the generation request.")
         self.assertIn("<prompt>", persisted["review_summary"]["next_command"])
         self.assertNotIn("CrowdTensor prompt", persisted["review_summary"]["next_command"])
         self.assertTrue(persisted["review_summary"]["public_artifact_safe"])
@@ -6658,6 +6670,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["primary_code"], "crowdtensor_infer_ready")
         self.assertEqual(report["review_summary"]["attention"], "")
         self.assertEqual(report["review_summary"]["attention_detail"], "")
+        self.assertEqual(report["recommended_next_command"]["reason_detail"], "Rerun the inference request.")
         self.assertIn(cli.INFER_PROMPT_PLACEHOLDER, report["review_summary"]["next_command"])
         self.assertEqual(report["review_summary"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
         self.assertTrue(report["review_summary"]["has_recommended_command"])
@@ -6691,6 +6704,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["review_summary"]["state"], "completed")
         self.assertEqual(persisted["review_summary"]["inspect_first"], str(output_dir / "infer_summary.md"))
         self.assertEqual(persisted["review_summary"]["attention_detail"], "")
+        self.assertEqual(persisted["recommended_next_command"]["reason_detail"], "Rerun the inference request.")
         self.assertIn(cli.INFER_PROMPT_PLACEHOLDER, persisted["review_summary"]["next_command"])
         self.assertNotIn("CrowdTensor user prompt", persisted["review_summary"]["next_command"])
         self.assertTrue(persisted["review_summary"]["public_artifact_safe"])

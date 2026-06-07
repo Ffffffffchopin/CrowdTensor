@@ -557,9 +557,36 @@ def _pick_next_command(
             recommended = dict(item)
             recommended["source_index"] = index
             recommended["reason"] = reason
+            recommended["reason_detail"] = next_reason_detail(reason)
             recommended["public_artifact_safe"] = True
             return recommended
     return {}
+
+
+NEXT_REASON_DETAILS = {
+    "install_missing_runtime": "Install the optional Hugging Face runtime before retrying inference.",
+    "start_discovery": "Start discovery so the client can find the Coordinator route.",
+    "retry_timeout": "Retry the same request with a longer timeout after partial progress.",
+    "submit_verified_inference": "Preflight passed; submit the inference request next.",
+    "submit_verified_generation": "Preflight passed; submit the generation request next.",
+    "verify_stage_miners": "Verify distinct stage0/stage1 Miners before submitting.",
+    "confirm_live_preflight": "Run live preflight before submitting because readiness was skipped.",
+    "start_coordinator": "Start the Coordinator before retrying the preflight.",
+    "start_stage0_miner": "Start the stage0 Miner before retrying the preflight.",
+    "check_existing_swarm": "Check the existing inference swarm before submitting.",
+    "check_generation_route": "Check the generation route before submitting.",
+    "set_admin_token": "Set the admin token before submitting.",
+    "follow_operator_action": "Follow the printed action before retrying.",
+    "collect_broader_evidence": "Run the broader local evidence path for stronger proof.",
+    "rerun_local_inference": "Rerun the local inference path.",
+    "rerun_inference": "Rerun the inference request.",
+    "rerun_generation": "Rerun the generation request.",
+    "next_available_command": "Use the first available safe next command.",
+}
+
+
+def next_reason_detail(reason: str) -> str:
+    return NEXT_REASON_DETAILS.get(str(reason or ""), str(reason or ""))
 
 
 def _infer_recommended_next_command(
