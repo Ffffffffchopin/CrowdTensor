@@ -217,6 +217,33 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertIn("public_swarm_v2_model_match_ready", report["diagnosis_codes"])
         self.assertIn("public_swarm_v2_fresh_external_runtime_verified", report["diagnosis_codes"])
         self.assertIn("public_swarm_v2_external_stage_rows_ready", report["diagnosis_codes"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (output_dir / "v2" / "public_swarm_inference_v2.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn(
+            "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            markdown,
+        )
+        support = json.loads((output_dir / "v2" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
     def test_fresh_external_blocks_when_stage_rows_below_token_target(self) -> None:
         output_dir = self._tmp_dir()

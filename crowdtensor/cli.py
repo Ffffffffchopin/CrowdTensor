@@ -11418,6 +11418,9 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     p2p = readiness.get("p2p_route_hardening") if isinstance(readiness.get("p2p_route_hardening"), dict) else {}
     cuda = readiness.get("cuda_optional") if isinstance(readiness.get("cuda_optional"), dict) else {}
     perf = readiness.get("performance") if isinstance(readiness.get("performance"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Public Swarm Inference v2")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -11434,6 +11437,12 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     print(f"  model match: local={((local.get('model') or {}).get('compatible') if isinstance(local.get('model'), dict) else None)} external={((external.get('model') or {}).get('compatible') if isinstance(external.get('model'), dict) else None)} p2p={((p2p.get('model') or {}).get('compatible') if isinstance(p2p.get('model'), dict) else None)}")
     print(f"  cuda fail-closed: {cuda.get('fail_closed_ready')}")
     print(f"  performance: latency={perf.get('stage_latency_ready')} throughput={perf.get('throughput_summary_ready')} memory={perf.get('memory_or_vram_summary_ready')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
