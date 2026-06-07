@@ -735,6 +735,16 @@ def infer_trace_text(trace: dict[str, Any]) -> str:
     )
 
 
+def shareable_summary_text(summary: dict[str, Any]) -> str:
+    return (
+        f"saved_artifacts={bool(summary.get('saved_artifacts_public_safe'))} "
+        f"raw_prompt_public={bool(summary.get('raw_prompt_public'))} "
+        f"raw_generated_text_public={bool(summary.get('raw_generated_text_public'))} "
+        f"generated_token_ids_public={bool(summary.get('generated_token_ids_public'))} "
+        f"local_output_display_only={bool(summary.get('local_output_display_only'))}"
+    )
+
+
 def infer_user_status_text(status: dict[str, Any]) -> str:
     return (
         f"{status.get('state') or 'unknown'}: "
@@ -3979,6 +3989,49 @@ def _generate_trace_from_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _shareable_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    saved_summary = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
+    prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    raw_prompt_public = bool(
+        prompt.get("raw_prompt_public")
+        or safety.get("raw_prompt_public")
+        or trace.get("raw_prompt_public")
+    )
+    raw_generated_text_public = bool(
+        output_request.get("raw_generated_text_public")
+        or generation.get("raw_generated_text_public")
+        or safety.get("raw_generated_text_public")
+        or trace.get("raw_generated_text_public")
+    )
+    generated_token_ids_public = bool(
+        generation.get("generated_token_ids_public")
+        or safety.get("generated_token_ids_public")
+        or trace.get("generated_token_ids_public")
+    )
+    local_display_only = bool(local_output.get("display_only") or local_output.get("generated_text") or local_output.get("outputs"))
+    saved_safe = bool(saved_summary.get("public_artifact_safe", True)) and not (
+        raw_prompt_public or raw_generated_text_public or generated_token_ids_public
+    )
+    return {
+        "kind": kind,
+        "saved_artifacts_public_safe": saved_safe,
+        "raw_prompt_public": raw_prompt_public,
+        "raw_generated_text_public": raw_generated_text_public,
+        "generated_token_ids_public": generated_token_ids_public,
+        "local_output_display_only": local_display_only,
+        "public_artifact_safe": saved_safe,
+        "summary": (
+            "Saved JSON/Markdown are shareable redacted summaries; local generated text, "
+            "when shown, is display-only and removed from saved artifacts."
+        ),
+    }
+
+
 def _user_inference_status(
     *,
     kind: str,
@@ -4706,6 +4759,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
+    shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -4736,6 +4790,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         ),
         f"- Result: `{infer_result_text(result)}`",
         f"- Trace: `{infer_trace_text(trace)}`",
+        f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{route.get('route_ready')}`",
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
@@ -5087,6 +5142,7 @@ def _infer_summary_from_payload(
             "Coordinator-backed, read-only, tiny/small-model scoped; not production Hivemind/Petals parity or large-model serving.",
         ],
     }
+    summary["shareable_summary"] = _shareable_summary_from_report(summary, kind="infer")
     artifacts = {
         "infer_summary": {
             "kind": "crowdtensor_infer_summary",
@@ -7702,6 +7758,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
+    shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -7727,6 +7784,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             f"hash=`{generation.get('generated_text_hash')}`"
         ),
         f"- Trace: `{infer_trace_text(trace)}`",
+        f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{bool(route.get('usable_now') or route.get('coordinator_url_present'))}`",
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('batch_generation_ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('stream_generation_ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
@@ -8057,6 +8115,7 @@ def _finalize_product_generate_report(
         recommended_next_command=recommended_next_command,
     ))
     report.setdefault("trace", _generate_trace_from_report(report))
+    report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
         report.setdefault("saved_summary", {
@@ -8885,6 +8944,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
     if batch.get("enabled"):
         print(f"  batch: {batch_status_text(batch)}")
@@ -9098,6 +9160,9 @@ def print_infer(report: dict[str, Any]) -> None:
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
     if batch.get("enabled"):
         print(f"  batch: {batch_status_text(batch)}")
