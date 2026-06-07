@@ -5526,6 +5526,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertFalse(report["stream"]["ready"])
         self.assertEqual(report["stream"]["issue_summary"], "request[2]=req-2:1/2")
+        self.assertEqual(
+            report["operator_action"],
+            "Inference completed, but stream progress is incomplete (request[2]=req-2:1/2); rerun with --stream if you need live token evidence.",
+        )
         self.assertEqual(report["stream"]["progress"]["expected_request_count"], 2)
         self.assertEqual(
             cli.stream_progress_issue_summary(report["stream"]["progress"]),
@@ -5542,11 +5546,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  stream[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
         self.assertIn("  stream[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False", rendered)
         self.assertIn("  stream_issue: request[2]=req-2:1/2", rendered)
+        self.assertIn("  action: Inference completed, but stream progress is incomplete (request[2]=req-2:1/2); rerun with --stream if you need live token evidence.", rendered)
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["stream"]["issue_summary"], "request[2]=req-2:1/2")
+        self.assertEqual(
+            persisted["operator_action"],
+            "Inference completed, but stream progress is incomplete (request[2]=req-2:1/2); rerun with --stream if you need live token evidence.",
+        )
         self.assertNotIn("must not leak", json.dumps(persisted, sort_keys=True))
 
     def test_infer_existing_recomputes_missing_stream_issue_summary(self) -> None:
@@ -5608,12 +5617,22 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["stream"]["issue_summary"], "missing_requests=1/2 request[2]=missing")
+        self.assertEqual(
+            report["operator_action"],
+            "Inference completed, but stream progress is incomplete (missing_requests=1/2 request[2]=missing); rerun with --stream if you need live token evidence.",
+        )
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
-        self.assertIn("  stream_issue: missing_requests=1/2 request[2]=missing", stdout.getvalue())
+        rendered = stdout.getvalue()
+        self.assertIn("  stream_issue: missing_requests=1/2 request[2]=missing", rendered)
+        self.assertIn("  action: Inference completed, but stream progress is incomplete (missing_requests=1/2 request[2]=missing); rerun with --stream if you need live token evidence.", rendered)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["stream"]["issue_summary"], "missing_requests=1/2 request[2]=missing")
+        self.assertEqual(
+            persisted["operator_action"],
+            "Inference completed, but stream progress is incomplete (missing_requests=1/2 request[2]=missing); rerun with --stream if you need live token evidence.",
+        )
 
     def test_infer_json_suppresses_raw_text_in_returned_payload(self) -> None:
         output_dir = Path(self._tmp_dir())

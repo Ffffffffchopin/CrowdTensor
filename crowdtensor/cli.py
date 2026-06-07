@@ -3901,6 +3901,11 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
             if action:
                 return action
             return "Dry-run is verified; run the printed submit inference next command."
+        stream_report = payload.get("stream") if isinstance(payload.get("stream"), dict) else {}
+        stream_issue = str(stream_report.get("issue_summary") or "").strip()
+        stream_ready = bool(stream_report.get("ready") or stream_report.get("stream_generation_ready"))
+        if stream_report.get("enabled") and not stream_ready and stream_issue:
+            return f"Inference completed, but stream progress is incomplete ({stream_issue}); rerun with --stream if you need live token evidence."
         if getattr(args, "infer_mode", "local") == "local" and not getattr(args, "full_evidence", False):
             return "Run with --full-evidence for the broader Public Swarm v2 proof."
         return ""
@@ -4274,7 +4279,15 @@ def _infer_summary_from_payload(
         else:
             codes.add("crowdtensor_infer_preflight_partial")
             codes.add("user_friendly_infer_preflight_partial")
-    operator_action = _infer_operator_action(args, payload, ok=ok)
+    action_payload = {
+        **payload,
+        "stream": {
+            **stream,
+            "ready": bool(stream.get("stream_generation_ready")),
+            "issue_summary": stream_issue,
+        },
+    }
+    operator_action = _infer_operator_action(args, action_payload, ok=ok)
     next_commands = _infer_next_commands(args, payload, ok=ok, mode=mode)
     has_local_display_output = bool(generated_text or display_outputs)
     summary = {
