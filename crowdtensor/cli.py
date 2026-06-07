@@ -850,6 +850,9 @@ def _infer_recommended_next_command(
         found = _pick_next_command(next_commands, equals("run local inference"), reason="rerun_local_inference")
         if found:
             return found
+    found = _pick_next_command(next_commands, equals("rerun inference"), reason="rerun_inference")
+    if found:
+        return found
     found = _pick_next_command(
         next_commands,
         starts("submit inference"),
@@ -924,6 +927,9 @@ def _generate_recommended_next_command(
         found = _pick_next_command(next_commands, lambda item: True, reason="follow_operator_action")
         if found:
             return found
+    found = _pick_next_command(next_commands, equals("rerun generation"), reason="rerun_generation")
+    if found:
+        return found
     found = _pick_next_command(
         next_commands,
         starts("submit generation"),
@@ -5968,8 +5974,13 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
     )
     ready_to_submit = payload.get("ready_to_submit") if isinstance(payload.get("ready_to_submit"), dict) else {}
+    submit_label = (
+        "rerun inference"
+        if ok and not bool(getattr(args, "dry_run", False))
+        else guarded_submit_label("submit inference", ready_to_submit)
+    )
     submit_command_entry = command_entry(
-        guarded_submit_label("submit inference", ready_to_submit),
+        submit_label,
         submit_command,
         requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
     )
@@ -9539,9 +9550,14 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         else None
     )
     ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
+    submit_label = (
+        "rerun generation"
+        if bool(report.get("ok")) and not bool(report.get("dry_run"))
+        else guarded_submit_label("submit generation", ready_to_submit)
+    )
     submit_command = (
         command_entry(
-            guarded_submit_label("submit generation", ready_to_submit),
+            submit_label,
             _product_cli_generate_command(
                 p2p=p2p_enabled,
                 coordinator_url=suggested_coordinator_url or coordinator_url,

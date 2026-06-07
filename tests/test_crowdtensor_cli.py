@@ -3927,7 +3927,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["attention"], "")
         self.assertEqual(report["review_summary"]["attention_detail"], "")
         self.assertEqual(report["recommended_next_command"]["label"], "rerun generation")
-        self.assertEqual(report["recommended_next_command"]["source_label"], "submit generation")
+        self.assertNotIn("source_label", report["recommended_next_command"])
         self.assertEqual(report["recommended_next_command"]["reason_detail"], "Rerun the generation request.")
         self.assertIn("<prompt>", report["review_summary"]["next_command"])
         self.assertEqual(report["review_summary"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
@@ -3988,6 +3988,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "- Recommended next: `rerun generation` reason=`rerun_generation` command=`CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
+            markdown,
+        )
+        self.assertIn(
+            "2. `rerun generation`: `CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
             markdown,
         )
         self.assertIn("- Reason: Rerun the generation request.", markdown)
@@ -4066,6 +4070,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"  artifacts: inspect={output_dir / 'generate_summary.md'} json={output_dir / 'generate_summary.json'} markdown={output_dir / 'generate_summary.md'} present=2/2 public_artifact_safe=True",
             rendered,
         )
+        self.assertIn("next[1] check generation route", rendered)
+        self.assertIn("next[2] rerun generation", rendered)
         self.assertIn(f"  output_dir: {output_dir}", rendered)
         self.assertIn("  recommended_reason: Rerun the generation request.", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
@@ -8615,7 +8621,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("Raw generated text is shown only in local human output", stdout.getvalue())
         self.assertIn("next[1] check existing swarm", stdout.getvalue())
-        self.assertIn("next[2] submit inference", stdout.getvalue())
+        self.assertIn("next[2] rerun inference", stdout.getvalue())
         self.assertIn(
             "recommended_next: rerun inference reason=rerun_inference CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
             stdout.getvalue(),
@@ -8665,7 +8671,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["attention"], "")
         self.assertEqual(report["review_summary"]["attention_detail"], "")
         self.assertEqual(report["recommended_next_command"]["label"], "rerun inference")
-        self.assertEqual(report["recommended_next_command"]["source_label"], "submit inference")
+        self.assertNotIn("source_label", report["recommended_next_command"])
         self.assertEqual(report["recommended_next_command"]["reason_detail"], "Rerun the inference request.")
         self.assertIn(cli.INFER_PROMPT_PLACEHOLDER, report["review_summary"]["next_command"])
         self.assertEqual(report["review_summary"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
@@ -8747,7 +8753,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["trace"]["raw_generated_text_public"])
         self.assertTrue(persisted["trace"]["public_artifact_safe"])
         self.assertEqual(persisted["recommended_next_command"]["label"], "rerun inference")
-        self.assertEqual(persisted["recommended_next_command"]["source_label"], "submit inference")
+        self.assertNotIn("source_label", persisted["recommended_next_command"])
         self.assertEqual(persisted["recommended_next_command"]["reason"], "rerun_inference")
         self.assertEqual(persisted["recommended_next_command"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
         self.assertIn(cli.INFER_PROMPT_PLACEHOLDER, persisted["recommended_next_command"]["command_line"])
@@ -8841,7 +8847,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
-        self.assertIn("`submit inference`", markdown)
+        self.assertIn("`rerun inference`", markdown)
+        self.assertNotIn("`submit inference`", markdown)
         self.assertIn("Prompt placeholder `<prompt>` is redacted. To rerun safely", markdown)
         self.assertIn("replace the placeholder with `--prompt-file prompt.txt`", markdown)
         self.assertIn("`printf %s '<prompt>' | ... --prompt-stdin`", markdown)
