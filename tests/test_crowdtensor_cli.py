@@ -625,6 +625,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("recommended check first", rendered)
             self.assertIn("crowdtensor public-real-llm-swarm-beta release", rendered)
             self.assertIn("crowdtensor public-real-llm-swarm-beta check", rendered)
+            self.assertIn("--beta-report", rendered)
             self.assertIn("public_real_llm_swarm_beta_check.json", rendered)
             self.assertIn("public_real_llm_swarm_beta.md", rendered)
             self.assertIn("support_bundle.json", rendered)
@@ -692,14 +693,18 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         for rendered in [readme, quickstart, operations, memory]:
             self.assertIn("crowdtensor public-real-llm-swarm-beta check", rendered)
+            self.assertIn("--beta-report", rendered)
             self.assertIn("public_real_llm_swarm_beta_check", rendered)
+            self.assertIn("public_real_llm_swarm_beta.json", rendered)
         self.assertIn("official user-facing validation entry", readme)
         self.assertIn("official user-facing validation entry", quickstart)
         self.assertIn("official user-facing validation wrapper", operations)
+        self.assertIn("check_source: beta-report", operations)
+        self.assertIn("check_source: beta-report", memory)
         self.assertIn("cli_mode: check", operations)
         self.assertIn("cli_mode: check", memory)
-        self.assertIn("crowdtensor public-real-llm-swarm-beta check --hf-model-id distilgpt2", operations)
-        self.assertIn("crowdtensor public-real-llm-swarm-beta check --hf-model-id distilgpt2", memory)
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check --hf-model-id distilgpt2 --beta-report", operations)
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check --hf-model-id distilgpt2 --beta-report", memory)
         self.assertNotIn("python scripts/public_real_llm_swarm_beta_check.py --json", operations)
         self.assertNotIn("python scripts/public_real_llm_swarm_beta_check.py --mode local-model-variant", memory)
 
@@ -5923,6 +5928,39 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_mode"], "check")
         self.assertEqual(report["mode"], "local-model-variant")
 
+    def test_public_real_llm_swarm_beta_check_forwards_beta_report(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        beta_report = output_dir / "public_real_llm_swarm_beta.json"
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "check",
+            "--beta-report",
+            str(beta_report),
+            "--output-dir",
+            str(output_dir / "check"),
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_check.py", command[1])
+            self.assertIn("--beta-report", command)
+            self.assertEqual(command[command.index("--beta-report") + 1], str(beta_report))
+            return completed({
+                "schema": "public_real_llm_swarm_beta_check_v1",
+                "ok": True,
+                "mode": "release",
+                "check_source": "beta-report",
+                "checked_beta_report": str(beta_report.resolve()),
+                "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_mode"], "check")
+        self.assertEqual(report["check_source"], "beta-report")
+        self.assertEqual(report["checked_beta_report"], str(beta_report.resolve()))
+
     def test_public_real_llm_swarm_beta_check_failure_includes_review_guidance(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
@@ -6055,7 +6093,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("If ok is false, start with the Not Completed section", rendered)
         self.assertIn("printed not_completed lines", rendered)
         self.assertIn("crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16", rendered)
-        self.assertIn("crowdtensor public-real-llm-swarm-beta check --output-dir", rendered)
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check --beta-report", rendered)
         self.assertIn("not production", rendered)
         self.assertIn("not Coordinator-free P2P", rendered)
         self.assertIn("not large-model serving", rendered)

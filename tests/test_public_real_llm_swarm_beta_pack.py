@@ -251,6 +251,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("## Verify The Full Beta Contract", runbook)
         self.assertIn("crowdtensor public-real-llm-swarm-beta release", runbook)
         self.assertIn("crowdtensor public-real-llm-swarm-beta check", runbook)
+        self.assertIn("--beta-report", runbook)
+        self.assertIn("public_real_llm_swarm_beta.json", runbook)
+        self.assertIn("check_source: beta-report", runbook)
         self.assertIn("public_real_llm_swarm_beta_check.json", runbook)
         self.assertNotIn("python scripts/public_real_llm_swarm_beta_check.py", runbook)
         self.assertIn("## Review The Result", runbook)
@@ -1748,6 +1751,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["schema"], check.SCHEMA)
+        self.assertEqual(result["check_source"], "ci-fixture")
         self.assertEqual(result["max_new_tokens"], 16)
         self.assertIn("public_real_llm_swarm_beta_check_ready", result["diagnosis_codes"])
         self.assertEqual(result["artifact_summary"]["schema"], check.ARTIFACT_SUMMARY_SCHEMA)
@@ -1819,6 +1823,51 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertNotIn('"generated_text":', encoded_check)
         self.assertNotIn('"generated_token_ids":', encoded_check)
         self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN=", encoded_check)
+
+    def test_check_script_validates_existing_beta_report(self) -> None:
+        fixture_dir = self._tmp_dir()
+        payload = check.build_fake_release(fixture_dir, tokens=16)
+        beta_report = fixture_dir / "beta" / "public_real_llm_swarm_beta.json"
+        check_dir = self._tmp_dir()
+
+        result = check.run_check(check.parse_args([
+            "--beta-report",
+            str(beta_report),
+            "--output-dir",
+            str(check_dir),
+        ]))
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["check_source"], "beta-report")
+        self.assertEqual(result["checked_beta_report"], str(beta_report.resolve()))
+        self.assertEqual(result["beta_output_dir"], str(beta_report.resolve().parent))
+        self.assertEqual(result["beta_schema"], pack.SCHEMA)
+        self.assertTrue(result["artifacts"]["public_real_llm_swarm_beta_json"].endswith("public_real_llm_swarm_beta.json"))
+        self.assertEqual(Path(result["artifacts"]["public_real_llm_swarm_beta_json"]), beta_report.resolve())
+        self.assertTrue(Path(result["artifacts"]["public_real_llm_swarm_beta_markdown"]).is_file())
+        self.assertTrue((check_dir / "public_real_llm_swarm_beta_check.json").is_file())
+        persisted = json.loads((check_dir / "public_real_llm_swarm_beta_check.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["check_source"], "beta-report")
+        self.assertEqual(persisted["checked_beta_report"], str(beta_report.resolve()))
+        self.assertEqual(payload["schema"], persisted["beta_schema"])
+
+    def test_check_script_blocks_missing_existing_beta_report(self) -> None:
+        output_dir = self._tmp_dir()
+        missing = output_dir / "missing_public_real_llm_swarm_beta.json"
+
+        result = check.run_check(check.parse_args([
+            "--beta-report",
+            str(missing),
+            "--output-dir",
+            str(output_dir),
+        ]))
+
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["check_source"], "beta-report")
+        self.assertIn("beta_report_missing", result["errors"])
+        self.assertIn("public_real_llm_swarm_beta_check_blocked", result["diagnosis_codes"])
+        self.assertEqual(result["artifacts"]["public_real_llm_swarm_beta_json"], str(missing.resolve()))
+        self.assertTrue((output_dir / "public_real_llm_swarm_beta_check.json").is_file())
 
     def test_check_validation_requires_markdown_operator_actions(self) -> None:
         output_dir = self._tmp_dir()

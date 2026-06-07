@@ -204,6 +204,7 @@ crowdtensor public-real-llm-swarm-beta release \
   --json
 
 crowdtensor public-real-llm-swarm-beta check \
+  --beta-report dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.json \
   --output-dir dist/public-real-llm-swarm-beta-check \
   --max-new-tokens 16 \
   --json
@@ -213,7 +214,9 @@ This runs the stricter release aggregate and checks retained external evidence,
 route hardening, failure requeue, KV-cache readiness, and artifact safety.
 The `check` command is the official user-facing validation entry for the final
 Beta contract; it writes `public_real_llm_swarm_beta_check.json` plus checked
-Markdown, machine-readable, and support-bundle artifact paths.
+Markdown, machine-readable, and support-bundle artifact paths. Pass
+`--beta-report` to validate the release artifact you just generated; omitting
+it keeps the CI-safe fixture check path.
 When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`
 first, then `dist/public-real-llm-swarm-beta/support_bundle.json` if you need
 diagnostics. The terminal also prints the final inference status: model and
@@ -331,7 +334,7 @@ crowdtensor public-swarm-beta product-beta --json
 
 # Public Real-LLM Swarm Inference Beta
 crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16 --json
-crowdtensor public-real-llm-swarm-beta check --output-dir dist/public-real-llm-swarm-beta-check --json
+crowdtensor public-real-llm-swarm-beta check --beta-report dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.json --output-dir dist/public-real-llm-swarm-beta-check --json
 
 # Package a two-machine style public real-LLM swarm run
 crowdtensor public-real-llm-swarm-beta package --output-dir dist/public-real-llm-package --json

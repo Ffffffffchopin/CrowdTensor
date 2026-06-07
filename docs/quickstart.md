@@ -160,6 +160,7 @@ crowdtensor public-real-llm-swarm-beta release \
   --json
 
 crowdtensor public-real-llm-swarm-beta check \
+  --beta-report dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.json \
   --output-dir dist/public-real-llm-swarm-beta-check \
   --max-new-tokens 16 \
   --json
@@ -170,7 +171,9 @@ GPT split across stage 0 and stage 1, validates decoded tokens, checks evidence,
 and writes artifacts under `dist/`.
 The `check` command is the official user-facing validation entry for the final
 Beta contract; it writes `public_real_llm_swarm_beta_check.json` with a review
-summary, safe artifact paths, and no raw prompt or generated text.
+summary, safe artifact paths, and no raw prompt or generated text. Pass
+`--beta-report` to validate the release artifact you just generated; omitting
+it keeps the CI-safe fixture check path.
 When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`
 first, then `dist/public-real-llm-swarm-beta/support_bundle.json` if you need
 diagnostics. The terminal also prints the final inference status: model and

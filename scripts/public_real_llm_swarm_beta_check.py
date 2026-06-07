@@ -176,6 +176,40 @@ def artifact_json(payload: dict[str, Any], name: str, fallback: str) -> dict[str
     return loaded if isinstance(loaded, dict) else {}
 
 
+def read_json_file(path: Path) -> tuple[dict[str, Any], list[str]]:
+    if not path.is_file():
+        return {}, ["beta_report_missing"]
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["beta_report_invalid_json"]
+    except OSError:
+        return {}, ["beta_report_unreadable"]
+    if not isinstance(loaded, dict):
+        return {}, ["beta_report_not_object"]
+    return loaded, []
+
+
+def payload_for_existing_beta_report(report_path: Path) -> tuple[dict[str, Any], list[str]]:
+    payload, errors = read_json_file(report_path)
+    if errors:
+        return {}, errors
+    resolved_report = report_path.resolve()
+    report_dir = resolved_report.parent
+    payload = dict(payload)
+    payload["output_dir"] = str(report_dir)
+    artifacts = dict(payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {})
+    artifacts["public_real_llm_swarm_beta_json"] = {
+        "kind": "public_real_llm_swarm_beta",
+        "path": str(resolved_report),
+        "present": True,
+        "schema": pack.SCHEMA,
+        "ok": payload.get("ok"),
+    }
+    payload["artifacts"] = artifacts
+    return payload, []
+
+
 def append_sensitive_artifact_errors(errors: list[str], *, artifact_name: str, text: str) -> None:
     for fragment in SECRET_FRAGMENTS:
         if fragment in text:
@@ -1170,7 +1204,7 @@ def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
         "operator_action": (
             "Open inspect_first for the checked Markdown, support_bundle for diagnostics, and check_json for the validation record."
             if ready
-            else "Open check_json for the validation errors, inspect the checked Markdown Not Completed section, fix the listed items, then rerun scripts/public_real_llm_swarm_beta_check.py."
+            else "Open check_json for the validation errors, inspect the checked Markdown Not Completed section, fix the listed items, then rerun crowdtensor public-real-llm-swarm-beta check --beta-report <public_real_llm_swarm_beta.json> --json."
         ),
         "public_artifact_safe": True,
         "raw_prompt_public": False,
@@ -1212,6 +1246,65 @@ def check_shareable_summary() -> dict[str, Any]:
     }
 
 
+def check_result_from_payload(
+    payload: dict[str, Any],
+    *,
+    output_dir: Path,
+    mode: str,
+    expected_tokens: int,
+    check_source: str,
+    checked_beta_report: str = "",
+    load_errors: list[str] | None = None,
+) -> dict[str, Any]:
+    errors = list(load_errors or [])
+    if payload:
+        errors.extend(validate_report(payload, mode=mode, expected_tokens=expected_tokens))
+    elif not errors:
+        errors.append("beta_report_empty")
+    result = {
+        "schema": SCHEMA,
+        "ok": not errors,
+        "mode": mode,
+        "max_new_tokens": expected_tokens,
+        "output_dir": str(output_dir),
+        "check_source": check_source,
+        "checked_beta_report": checked_beta_report,
+        "beta_output_dir": str(payload.get("output_dir") or "") if payload else "",
+        "errors": errors,
+        "beta_schema": payload.get("schema") if payload else None,
+        "beta_ok": payload.get("ok") if payload else None,
+        "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"] if not errors else ["public_real_llm_swarm_beta_check_blocked"],
+        "artifacts": {
+            "public_real_llm_swarm_beta_json": artifact_path(
+                payload,
+                "public_real_llm_swarm_beta_json",
+                "public_real_llm_swarm_beta.json",
+            ) if payload else checked_beta_report,
+            "public_real_llm_swarm_beta_markdown": artifact_path(
+                payload,
+                "public_real_llm_swarm_beta_markdown",
+                "public_real_llm_swarm_beta.md",
+            ) if payload else "",
+            "support_bundle_json": artifact_path(payload, "support_bundle_json", "support_bundle.json") if payload else "",
+            "runbook": artifact_path(payload, "runbook", "PUBLIC_REAL_LLM_SWARM_BETA.md") if payload else "",
+        },
+    }
+    result["artifact_summary"] = check_artifact_summary(result)
+    result["review_summary"] = check_review_summary(result)
+    result["operator_action"] = result["review_summary"]["operator_action"]
+    result["output_request"] = check_output_request_summary()
+    result["answer_scope"] = check_answer_scope_summary()
+    result["shareable_summary"] = check_shareable_summary()
+    check_json_errors = sensitive_check_json_errors(result)
+    if check_json_errors:
+        result["ok"] = False
+        result["errors"] = list(result.get("errors") or []) + check_json_errors
+        result["diagnosis_codes"] = ["public_real_llm_swarm_beta_check_blocked"]
+        result["review_summary"] = check_review_summary(result)
+        result["operator_action"] = result["review_summary"]["operator_action"]
+    return result
+
+
 def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
     checked = {
         key: result.get(key)
@@ -1231,6 +1324,9 @@ def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
             "output_request",
             "answer_scope",
             "shareable_summary",
+            "check_source",
+            "checked_beta_report",
+            "beta_output_dir",
         ]
     }
     encoded = json.dumps(checked, sort_keys=True)
@@ -1238,50 +1334,36 @@ def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
 
 
 def run_check(args: argparse.Namespace) -> dict[str, Any]:
-    output_dir = Path(args.output_dir) if args.output_dir else Path(tempfile.mkdtemp(prefix="crowdtensor_public_real_llm_beta_check_"))
-    if args.mode == pack.MODE_LOCAL_MODEL_VARIANT:
-        payload = build_fake_local_model_variant(output_dir, model_id=args.hf_model_id, tokens=args.max_new_tokens)
+    beta_report = Path(args.beta_report).expanduser() if args.beta_report else None
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    elif beta_report:
+        output_dir = beta_report.resolve().parent
     else:
-        payload = build_fake_release(output_dir, tokens=args.max_new_tokens)
-    errors = validate_report(payload, mode=args.mode, expected_tokens=args.max_new_tokens)
-    result = {
-        "schema": SCHEMA,
-        "ok": not errors,
-        "mode": args.mode,
-        "max_new_tokens": args.max_new_tokens,
-        "output_dir": str(output_dir),
-        "errors": errors,
-        "beta_schema": payload.get("schema"),
-        "beta_ok": payload.get("ok"),
-        "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"] if not errors else ["public_real_llm_swarm_beta_check_blocked"],
-        "artifacts": {
-            "public_real_llm_swarm_beta_json": artifact_path(
-                payload,
-                "public_real_llm_swarm_beta_json",
-                "public_real_llm_swarm_beta.json",
-            ),
-            "public_real_llm_swarm_beta_markdown": artifact_path(
-                payload,
-                "public_real_llm_swarm_beta_markdown",
-                "public_real_llm_swarm_beta.md",
-            ),
-            "support_bundle_json": artifact_path(payload, "support_bundle_json", "support_bundle.json"),
-            "runbook": artifact_path(payload, "runbook", "PUBLIC_REAL_LLM_SWARM_BETA.md"),
-        },
-    }
-    result["artifact_summary"] = check_artifact_summary(result)
-    result["review_summary"] = check_review_summary(result)
-    result["operator_action"] = result["review_summary"]["operator_action"]
-    result["output_request"] = check_output_request_summary()
-    result["answer_scope"] = check_answer_scope_summary()
-    result["shareable_summary"] = check_shareable_summary()
-    check_json_errors = sensitive_check_json_errors(result)
-    if check_json_errors:
-        result["ok"] = False
-        result["errors"] = list(result.get("errors") or []) + check_json_errors
-        result["diagnosis_codes"] = ["public_real_llm_swarm_beta_check_blocked"]
-        result["review_summary"] = check_review_summary(result)
-        result["operator_action"] = result["review_summary"]["operator_action"]
+        output_dir = Path(tempfile.mkdtemp(prefix="crowdtensor_public_real_llm_beta_check_"))
+    if beta_report:
+        payload, load_errors = payload_for_existing_beta_report(beta_report)
+        result = check_result_from_payload(
+            payload,
+            output_dir=output_dir,
+            mode=args.mode,
+            expected_tokens=args.max_new_tokens,
+            check_source="beta-report",
+            checked_beta_report=str(beta_report.resolve()),
+            load_errors=load_errors,
+        )
+    else:
+        if args.mode == pack.MODE_LOCAL_MODEL_VARIANT:
+            payload = build_fake_local_model_variant(output_dir, model_id=args.hf_model_id, tokens=args.max_new_tokens)
+        else:
+            payload = build_fake_release(output_dir, tokens=args.max_new_tokens)
+        result = check_result_from_payload(
+            payload,
+            output_dir=output_dir,
+            mode=args.mode,
+            expected_tokens=args.max_new_tokens,
+            check_source="ci-fixture",
+        )
     write(output_dir / "public_real_llm_swarm_beta_check.json", json.dumps(result, indent=2, sort_keys=True) + "\n")
     return result
 
@@ -1295,6 +1377,9 @@ def print_human_summary(result: dict[str, Any]) -> None:
     print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
     print(f"  mode: {result.get('mode')}")
     print(f"  max_new_tokens: {result.get('max_new_tokens')}")
+    print(f"  check_source: {result.get('check_source')}")
+    if result.get("checked_beta_report"):
+        print(f"  checked_beta_report: {result.get('checked_beta_report')}")
     if review:
         print(
             "  review: "
@@ -1357,6 +1442,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check Public Real-LLM Swarm Inference Beta v1.")
     parser.add_argument("--mode", choices=["release", pack.MODE_LOCAL_MODEL_VARIANT], default="release")
     parser.add_argument("--output-dir", default="")
+    parser.add_argument("--beta-report", default="", help="Validate an existing public_real_llm_swarm_beta.json instead of building the CI-safe fixture.")
     parser.add_argument("--hf-model-id", default=pack.DEFAULT_HF_MODEL_ID)
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--json", action="store_true")

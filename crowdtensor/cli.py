@@ -3998,6 +3998,9 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
         args.hf_model_id,
         "--json",
     ]
+    beta_report = str(getattr(args, "beta_report", "") or "")
+    if beta_report:
+        command.extend(["--beta-report", beta_report])
     step, payload = run_json_step(
         "public_real_llm_swarm_beta_check",
         command,
@@ -13347,7 +13350,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         epilog=(
             "examples:\n"
             "  crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16 --http-timeout 30 --json\n"
-            "  crowdtensor public-real-llm-swarm-beta check --output-dir dist/public-real-llm-swarm-beta-check --json\n"
+            "  crowdtensor public-real-llm-swarm-beta check --beta-report dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.json --output-dir dist/public-real-llm-swarm-beta-check --json\n"
             "  crowdtensor public-real-llm-swarm-beta package --output-dir dist/public-real-llm-package --json\n"
             "  crowdtensor public-real-llm-swarm-beta evidence-import --public-swarm-v2-report dist/v2.json --json\n"
             "\n"
@@ -13363,6 +13366,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="release",
     )
     public_real_llm_swarm_beta.add_argument("--output-dir", default="dist/public-real-llm-swarm-beta")
+    public_real_llm_swarm_beta.add_argument(
+        "--beta-report",
+        default="",
+        help="For check mode, validate an existing public_real_llm_swarm_beta.json instead of building the CI-safe fixture.",
+    )
     public_real_llm_swarm_beta.add_argument("--product-report", default="dist/public-swarm-product-beta/public_swarm_product_beta.json")
     public_real_llm_swarm_beta.add_argument(
         "--external-report",
