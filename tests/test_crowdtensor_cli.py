@@ -954,6 +954,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         self.assertFalse(report["shareable_summary"]["local_output_display_only"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         self.assertEqual(
             report["operator_action"],
             "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
@@ -994,6 +996,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertTrue(persisted["shareable_summary"]["saved_artifacts_public_safe"])
         self.assertFalse(persisted["shareable_summary"]["raw_prompt_public"])
+        self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(persisted["shareable_summary"]["local_answer_terminal_only"])
         self.assertNotIn("CrowdTensor prompt", json.dumps(persisted, sort_keys=True))
         self.assertFalse(persisted["answer_scope"]["visible_in_terminal"])
         self.assertFalse(persisted["answer_scope"]["terminal_only"])
@@ -1041,7 +1045,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False`",
+            "- Shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
         self.assertIn(
@@ -1099,7 +1103,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False",
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             rendered,
         )
         self.assertIn("  stream: requested=True events=0 dry_run=True", rendered)
@@ -3119,6 +3123,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         self.assertFalse(report["shareable_summary"]["local_output_display_only"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         self.assertEqual(report["issue_summary"]["state"], "completed")
         self.assertEqual(report["issue_summary"]["primary_code"], "public_swarm_generate_ready")
         self.assertEqual(report["issue_summary"]["next_step"], "rerun_or_review_artifacts")
@@ -3157,6 +3163,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["result"]["public_artifact_safe"])
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertTrue(persisted["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(persisted["shareable_summary"]["local_answer_terminal_only"])
         self.assertEqual(persisted["issue_summary"]["state"], "completed")
         self.assertEqual(persisted["artifact_summary"]["inspect_first"], str(output_dir / "generate_summary.md"))
         self.assertTrue(persisted["artifact_summary"]["public_artifact_safe"])
@@ -3198,7 +3206,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False`",
+            "- Shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
         self.assertIn(
@@ -3241,7 +3249,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False",
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             rendered,
         )
         self.assertIn(
@@ -6685,7 +6693,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn(
-            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=True",
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=True answer_scope_state=terminal-visible local_answer_terminal_only=True",
             stdout.getvalue(),
         )
         self.assertIn(
@@ -6774,6 +6782,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         self.assertTrue(report["shareable_summary"]["local_output_display_only"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "terminal-visible")
+        self.assertTrue(report["shareable_summary"]["local_answer_terminal_only"])
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
         self.assertFalse(report["local_output"]["public_artifact_safe"])
         self.assertEqual(
@@ -6806,6 +6816,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["shareable_summary"]["raw_generated_text_public"])
         self.assertFalse(persisted["shareable_summary"]["generated_token_ids_public"])
         self.assertTrue(persisted["shareable_summary"]["local_output_display_only"])
+        self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "saved-terminal-redacted")
+        self.assertFalse(persisted["shareable_summary"]["local_answer_terminal_only"])
         self.assertTrue(persisted["output_request"]["include_output"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertEqual(persisted["local_output"]["generated_text"], "")
@@ -6899,7 +6911,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=True`",
+            "- Shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=True answer_scope_state=saved-terminal-redacted local_answer_terminal_only=False`",
             markdown,
         )
         self.assertIn(

@@ -959,7 +959,9 @@ def shareable_summary_text(summary: dict[str, Any]) -> str:
         f"raw_prompt_public={bool(summary.get('raw_prompt_public'))} "
         f"raw_generated_text_public={bool(summary.get('raw_generated_text_public'))} "
         f"generated_token_ids_public={bool(summary.get('generated_token_ids_public'))} "
-        f"local_output_display_only={bool(summary.get('local_output_display_only'))}"
+        f"local_output_display_only={bool(summary.get('local_output_display_only'))} "
+        f"answer_scope_state={summary.get('answer_scope_state') or 'unknown'} "
+        f"local_answer_terminal_only={bool(summary.get('local_answer_terminal_only'))}"
     )
 
 
@@ -4445,6 +4447,7 @@ def _shareable_summary_from_report(report: dict[str, Any], *, kind: str) -> dict
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     raw_prompt_public = bool(
         prompt.get("raw_prompt_public")
         or safety.get("raw_prompt_public")
@@ -4472,6 +4475,8 @@ def _shareable_summary_from_report(report: dict[str, Any], *, kind: str) -> dict
         "raw_generated_text_public": raw_generated_text_public,
         "generated_token_ids_public": generated_token_ids_public,
         "local_output_display_only": local_display_only,
+        "answer_scope_state": answer_scope.get("scope_state") or "unknown",
+        "local_answer_terminal_only": bool(answer_scope.get("visible_in_terminal")),
         "public_artifact_safe": saved_safe,
         "summary": (
             "Saved JSON/Markdown are shareable redacted summaries; local generated text, "
@@ -4858,6 +4863,10 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         answer_scope["generated_token_ids_public"] = False
         answer_scope["public_artifact_safe"] = True
         answer_scope["summary"] = SAVED_TERMINAL_ANSWER_SCOPE_TEXT if had_terminal_answer else SAVED_ANSWER_SCOPE_TEXT
+    shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
+    if shareable_summary and answer_scope:
+        shareable_summary["answer_scope_state"] = answer_scope.get("scope_state") or "unknown"
+        shareable_summary["local_answer_terminal_only"] = False
     return summary
 
 
