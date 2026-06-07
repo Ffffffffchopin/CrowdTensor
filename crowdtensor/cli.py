@@ -13035,6 +13035,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     public_real_llm_swarm_beta = subparsers.add_parser(
         "public-real-llm-swarm-beta",
         help="Build the top-level Public Real-LLM Swarm Inference Beta v1 artifact.",
+        description=(
+            "Build or verify the top-level Public Real-LLM Swarm Inference Beta evidence.\n\n"
+            "Default release mode runs the product serve/join/generate path, local Public Swarm v2\n"
+            "P2P route proof, Petals-class P2P candidate smoke, optional CUDA fail-closed smoke,\n"
+            "and retained external evidence checks for the tiny real GPT split route. The CLI\n"
+            "prints model/token counts, accepted stage rows, batch/stream readiness, KV-cache hit\n"
+            "counts, and not_completed blockers before listing artifacts.\n\n"
+            "Modes:\n"
+            "  release             run the full final 16-token aggregate gate\n"
+            "  local-smoke         run only a local product-path smoke\n"
+            "  local-model-variant prove the local model variant without external validation claims\n"
+            "  package             generate the runbook/package without proving live readiness\n"
+            "  evidence-import     aggregate retained reports from --*-report inputs\n\n"
+            "Review path: open public_real_llm_swarm_beta.md first, then support_bundle.json for\n"
+            "diagnostics. Safe shareable files are public_real_llm_swarm_beta.json,\n"
+            "public_real_llm_swarm_beta.md, and support_bundle.json. Do not share private env\n"
+            "files, registries, runtime state, raw prompts, generated text, generated token ids,\n"
+            "credentials, activations, leases, or idempotency material.\n\n"
+            "If ok is false, start with the Not Completed section and printed not_completed lines;\n"
+            "they map to missing token target, KV-cache, route hardening, batch/stream, external\n"
+            "runtime, or requeue evidence."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16 --http-timeout 30 --json\n"
+            "  crowdtensor public-real-llm-swarm-beta package --output-dir dist/public-real-llm-package --json\n"
+            "  crowdtensor public-real-llm-swarm-beta evidence-import --public-swarm-v2-report dist/v2.json --json\n"
+            "\n"
+            "Boundary: Coordinator-backed, read-only tiny/small-model evidence; not production\n"
+            "Swarm Inference, not Coordinator-free P2P, and not large-model serving."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     public_real_llm_swarm_beta.add_argument(
         "public_real_llm_swarm_beta_mode",

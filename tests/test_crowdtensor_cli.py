@@ -5785,6 +5785,34 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "one,two,three,four,five",
             ])
 
+    def test_public_real_llm_swarm_beta_help_shows_modes_artifacts_and_boundaries(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["public-real-llm-swarm-beta", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Build or verify the top-level Public Real-LLM Swarm Inference Beta evidence.", rendered)
+        self.assertIn("Default release mode runs the product serve/join/generate path", rendered)
+        self.assertIn("Modes:", rendered)
+        self.assertIn("release             run the full final 16-token aggregate gate", rendered)
+        self.assertIn("local-smoke         run only a local product-path smoke", rendered)
+        self.assertIn("local-model-variant prove the local model variant", rendered)
+        self.assertIn("package             generate the runbook/package", rendered)
+        self.assertIn("evidence-import     aggregate retained reports", rendered)
+        self.assertIn("Review path: open public_real_llm_swarm_beta.md first", rendered)
+        self.assertIn("support_bundle.json", rendered)
+        self.assertIn("Safe shareable files", rendered)
+        self.assertIn("Do not share private env", rendered)
+        self.assertIn("generated token ids", rendered)
+        self.assertIn("If ok is false, start with the Not Completed section", rendered)
+        self.assertIn("printed not_completed lines", rendered)
+        self.assertIn("crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16", rendered)
+        self.assertIn("not production", rendered)
+        self.assertIn("not Coordinator-free P2P", rendered)
+        self.assertIn("not large-model serving", rendered)
+
     def test_public_real_llm_swarm_beta_prints_output_scope(self) -> None:
         report = {
             "schema": "public_real_llm_swarm_beta_v1",
