@@ -10817,6 +10817,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The trace line summarizes session, request count, ledger rows, stream events,\n"
             "and safe per-request ids or prompt hashes; it never exposes raw prompt text,\n"
             "generated text, generated token ids, credentials, or activations.\n\n"
+            "The issue line summarizes state, primary diagnosis, next step, safe progress,\n"
+            "and whether a redacted detail is available for blocked or timeout runs.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -10983,6 +10985,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The trace line summarizes session, request count, ledger rows, stream events,\n"
             "and safe per-request ids or prompt hashes; it never exposes raw prompt text,\n"
             "generated text, generated token ids, credentials, or activations.\n\n"
+            "The issue line summarizes state, primary diagnosis, next step, safe progress,\n"
+            "and whether a redacted detail is available for blocked or timeout runs.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),

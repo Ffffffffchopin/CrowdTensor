@@ -97,6 +97,10 @@ The `trace` line in human output and the `trace` object in JSON/Markdown give a
 safe troubleshooting summary: session id, request count, accepted ledger rows,
 stream event count, and per-request ids or prompt hashes. It never includes raw
 prompt text, generated text, generated token ids, credentials, or activations.
+The `issue` line and JSON/Markdown `issue_summary` object condense the current
+state, primary diagnosis code, next step, safe progress text, and whether a
+redacted detail is available, so blocked or timeout runs have one place to read
+first.
 Start by reading the `status` line in human output, or `user_status` in JSON and
 Markdown: `completed` means the request finished, `preflight-ready` means submit
 next, `preflight-partial` means run the recommended check first, and `blocked`
