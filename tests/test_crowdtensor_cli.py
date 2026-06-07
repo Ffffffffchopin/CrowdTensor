@@ -4094,7 +4094,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["output_count"], 1)
         self.assertEqual(persisted["result"]["display"], "hash-only")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
-        self.assertEqual(persisted["output_display"]["terminal_display"], "local-private")
+        self.assertEqual(persisted["output_display"]["terminal_display"], "saved-terminal-redacted")
         self.assertFalse(persisted["output_display"]["terminal_text_available"])
         self.assertEqual(persisted["output_display"]["saved_artifact_display"], "hash-only")
         self.assertEqual(persisted["output_display"]["json_stdout_display"], "hash-only-json")
@@ -4110,7 +4110,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Result: `status=complete tokens=2/2 outputs=1 display=hash-only", markdown)
         self.assertIn(
-            "- Output display: `terminal=local-private terminal_text=False saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True`",
+            "- Output display: `terminal=saved-terminal-redacted terminal_text=False saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -8268,7 +8268,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["output_count"], 1)
         self.assertEqual(persisted["result"]["display"], "hash-only")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
-        self.assertEqual(persisted["output_display"]["terminal_display"], "local-private")
+        self.assertEqual(persisted["output_display"]["terminal_display"], "saved-terminal-redacted")
         self.assertFalse(persisted["output_display"]["terminal_text_available"])
         self.assertEqual(persisted["output_display"]["saved_artifact_display"], "hash-only")
         self.assertEqual(persisted["output_display"]["json_stdout_display"], "hash-only-json")
@@ -8288,7 +8288,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Result: `status=complete tokens=8/8 outputs=1 display=hash-only hash=", markdown)
         self.assertIn("public_artifact_safe=True`", markdown)
         self.assertIn(
-            "- Output display: `terminal=local-private terminal_text=False saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True`",
+            "- Output display: `terminal=saved-terminal-redacted terminal_text=False saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -8630,7 +8630,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["output_count"], 1)
         self.assertEqual(persisted["result"]["display"], "hash-only")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
-        self.assertEqual(persisted["output_display"]["terminal_display"], "local-private")
+        self.assertEqual(persisted["output_display"]["terminal_display"], "saved-terminal-redacted")
         self.assertFalse(persisted["output_display"]["terminal_text_available"])
         self.assertTrue(persisted["output_display"]["include_output_requested"])
         self.assertFalse(persisted["output_display"]["raw_generated_text_public"])
@@ -8706,7 +8706,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Output display: `terminal=local-private terminal_text=False saved=hash-only json_stdout=hash-only-json include_output=True raw_public=False public_artifact_safe=True`",
+            "- Output display: `terminal=saved-terminal-redacted terminal_text=False saved=hash-only json_stdout=hash-only-json include_output=True raw_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
