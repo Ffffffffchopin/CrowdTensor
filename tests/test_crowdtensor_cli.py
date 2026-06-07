@@ -1040,9 +1040,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  review_next: label=check generation route reason=confirm_live_preflight command=crowdtensor generate --max-new-tokens 16",
             rendered,
         )
+        self.assertIn(
+            "  attention: coordinator_preflight_skipped,stage_preflight_skipped - Coordinator live readiness was skipped; rerun the printed dry-run/live preflight before submitting; stage0/stage1 Miner readiness was skipped; rerun the printed stage preflight with an observer token.",
+            rendered,
+        )
         self.assertIn("  action: Generation request shape is valid, but live readiness was skipped", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
         self.assertIn(f"  inspect_first: {output_dir / 'generate_summary.md'}", rendered)
+        self.assertLess(rendered.index("  attention: "), rendered.index("  action: "))
         self.assertLess(rendered.index("  action: "), rendered.index("  diagnosis: "))
         self.assertLess(rendered.index("  inspect_first: "), rendered.index("  diagnosis: "))
         self.assertIn(
@@ -7222,12 +7227,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  review: state=completed", rendered)
         self.assertIn("  review_next: label=submit inference reason=rerun_inference", rendered)
         self.assertIn("attention=request[2]=req-2:1/2", rendered)
+        self.assertIn(
+            "  attention: request[2]=req-2:1/2 - stream progress is incomplete; rerun with --stream if you need live token evidence.",
+            rendered,
+        )
         self.assertIn("  stream[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
         self.assertIn("  stream[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False", rendered)
         self.assertIn("  stream_issue: request[2]=req-2:1/2", rendered)
         self.assertIn("  action: Inference completed, but stream progress is incomplete (request[2]=req-2:1/2); rerun with --stream if you need live token evidence.", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
         self.assertIn(f"  inspect_first: {output_dir / 'infer_summary.md'}", rendered)
+        self.assertLess(rendered.index("  attention: "), rendered.index("  action: "))
         self.assertLess(rendered.index("  action: "), rendered.index("  model: "))
         self.assertLess(rendered.index("  inspect_first: "), rendered.index("  model: "))
         encoded = json.dumps(report, sort_keys=True)

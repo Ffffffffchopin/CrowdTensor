@@ -9541,6 +9541,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
+        attention_text = attention_display_text(str(review_summary.get("attention") or ""))
+        if attention_text:
+            print(f"  attention: {attention_text}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
@@ -9836,6 +9839,9 @@ def print_infer(report: dict[str, Any]) -> None:
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
+        attention_text = attention_display_text(str(review_summary.get("attention") or ""))
+        if attention_text:
+            print(f"  attention: {attention_text}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
