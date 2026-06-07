@@ -1347,6 +1347,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         progress = stderr.getvalue()
         self.assertIn("checking route and stage readiness", progress)
         self.assertIn("status, action, recommended_next", progress)
+        self.assertIn("answer_scope, runtime_options", progress)
+        self.assertIn("redacted JSON/Markdown artifacts", progress)
         self.assertNotIn(prompt, progress)
         self.assertIn(
             f"review_next: label=check generation route reason=verify_stage_miners command=crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run",
@@ -7849,6 +7851,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("CrowdTensor infer", rendered)
         self.assertIn("starting local two-stage tiny-model proof", progress)
         self.assertIn("status, action, recommended_next", progress)
+        self.assertIn("answer_scope, runtime_options", progress)
+        self.assertIn("redacted JSON/Markdown artifacts", progress)
         self.assertNotIn(prompt, progress)
 
     def test_infer_json_suppresses_start_hint(self) -> None:
