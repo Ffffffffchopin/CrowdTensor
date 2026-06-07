@@ -40,11 +40,85 @@ SECRET_FRAGMENTS = {
     '"generated_token_ids":',
     '"prompt_text":',
 }
+SAFE_PUBLIC_LEAK_PATH_PARTS = (
+    ".output_request.",
+    ".answer_scope.",
+    ".shareable_summary.",
+)
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "", ok: bool | None = None) -> dict[str, Any]:
+    try:
+        relative = path.resolve().relative_to(output_dir.resolve()).as_posix()
+    except ValueError:
+        relative = str(path)
+    entry: dict[str, Any] = {"kind": kind, "path": relative, "present": path.is_file()}
+    if schema:
+        entry["schema"] = schema
+    if ok is not None:
+        entry["ok"] = bool(ok)
+    return entry
+
+
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Public Swarm Product RC artifacts summarize Coordinator product "
+            "surface readiness, session protocol status, P2P-lite discovery, "
+            "GPU generation import hashes/counts, and diagnostics only. They "
+            "do not include answer text."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Product RC report is shareable operator evidence, not a "
+            "local answer transcript; raw prompts, generated text, token ids, "
+            "activations, leases, credentials, and private runtime state are "
+            "excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share public_swarm_product_rc*.json/md artifacts; they contain "
+            "readiness evidence, route status, hashes, counts, and diagnostics, "
+            "not raw prompts or answers."
+        ),
+    }
 
 
 def run_cli_builds(output_dir: Path) -> dict[str, Any]:
@@ -135,10 +209,101 @@ def validate_public_artifact(report: dict[str, Any]) -> list[str]:
     for path in public_leak_paths(report):
         # The artifact stores schema names and safety field names containing
         # prompt/generated words, but it must not contain raw payload keys.
-        if path.endswith(".session_request.prompt_hash") or ".safety." in path:
+        if (
+            path.endswith(".session_request.prompt_hash")
+            or ".safety." in path
+            or any(part in path for part in SAFE_PUBLIC_LEAK_PATH_PARTS)
+        ):
             continue
         errors.append(f"public_leak:{path}")
     return sorted(set(errors))
+
+
+def render_markdown(report: dict[str, Any]) -> str:
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    lines = [
+        "# CrowdTensor Public Swarm Product RC",
+        "",
+        f"- schema: `{report.get('schema')}`",
+        f"- ok: `{report.get('ok')}`",
+        f"- output_dir: `{report.get('output_dir')}`",
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} local_output_display_only={shareable.get('local_output_display_only')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
+        "",
+        "## Readiness",
+        "",
+        f"- product surface ready: `{report.get('product_surface_ready')}`",
+        f"- session protocol ready: `{(report.get('session_protocol') or {}).get('ok')}`",
+        f"- P2P-lite ready: `{(report.get('p2p_lite') or {}).get('ok')}`",
+        f"- GPU generation import ready: `{(report.get('gpu_generation_import') or {}).get('ok')}`",
+        "",
+        "## Diagnosis",
+        "",
+        ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
+        "",
+    ]
+    if report.get("artifacts"):
+        lines.extend(["## Artifacts", ""])
+        for name, artifact in sorted((report.get("artifacts") or {}).items()):
+            if isinstance(artifact, dict):
+                lines.append(f"- `{name}`: `{artifact.get('path')}` present=`{artifact.get('present')}`")
+            else:
+                lines.append(f"- `{name}`: `{artifact}`")
+        lines.append("")
+    lines.extend(["## Boundaries", ""])
+    for item in report.get("limitations") or []:
+        lines.append(f"- {item}")
+    return "\n".join(lines) + "\n"
+
+
+def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
+    report.setdefault("artifacts", {})
+    json_path = output_dir / "public_swarm_product_rc.json"
+    markdown_path = output_dir / "public_swarm_product_rc.md"
+    report["artifacts"]["public_swarm_product_rc_json"] = artifact_entry(
+        json_path,
+        output_dir,
+        kind="public_swarm_product_rc",
+        schema=SCHEMA,
+        ok=report.get("ok"),
+    )
+    report["artifacts"]["public_swarm_product_rc_markdown"] = artifact_entry(
+        markdown_path,
+        output_dir,
+        kind="public_swarm_product_rc_markdown",
+        ok=report.get("ok"),
+    )
+    report["artifacts"]["gpu_generation_import"] = artifact_entry(
+        output_dir / "gpu-generation-import" / "gpu_sharded_generation_beta_evidence_import.json",
+        output_dir,
+        kind="gpu_sharded_generation_beta_evidence_import",
+        schema="gpu_sharded_generation_beta_v1",
+    )
+    safety_errors = validate_public_artifact(report)
+    if safety_errors:
+        report["ok"] = False
+        report["diagnosis_codes"] = sorted(set(report["diagnosis_codes"]) | {"public_artifact_safety_failed"})
+        report["safety_errors"] = safety_errors
+        for artifact in report["artifacts"].values():
+            if isinstance(artifact, dict) and "ok" in artifact:
+                artifact["ok"] = False
+    write_json(json_path, report)
+    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    report["artifacts"]["public_swarm_product_rc_json"]["present"] = True
+    report["artifacts"]["public_swarm_product_rc_markdown"]["present"] = True
+    write_json(json_path, report)
+    return report
 
 
 def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
@@ -177,6 +342,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         "schema": SCHEMA,
         "ok": ok,
         "output_dir": str(output_dir),
+        "product_surface_ready": product_surface_ready,
         "product_surface": {
             name: {
                 "ok": payload.get("ok"),
@@ -225,18 +391,9 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
             "P2P-lite discovers routes over HTTP gossip only; it is not libp2p, DHT, NAT traversal, or decentralized security.",
             "GPU generation evidence is imported from retained tiny GPT Kaggle proof; no large-model serving or public arbitrary prompt API is claimed.",
         ],
-        "artifacts": {
-            "public_swarm_product_rc_json": str(output_dir / "public_swarm_product_rc.json"),
-            "gpu_generation_import": str(output_dir / "gpu-generation-import" / "gpu_sharded_generation_beta_evidence_import.json"),
-        },
+        "artifacts": {},
     }
-    safety_errors = validate_public_artifact(report)
-    if safety_errors:
-        report["ok"] = False
-        report["diagnosis_codes"] = sorted(set(report["diagnosis_codes"]) | {"public_artifact_safety_failed"})
-        report["safety_errors"] = safety_errors
-    write_json(output_dir / "public_swarm_product_rc.json", report)
-    return report
+    return persist_report(report, output_dir=output_dir)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

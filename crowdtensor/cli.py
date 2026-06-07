@@ -10455,6 +10455,30 @@ def build_public_swarm_product_rc(args: argparse.Namespace, *, runner: Runner = 
     })
 
 
+def print_public_swarm_product_rc(report: dict[str, Any]) -> None:
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    print("CrowdTensor Public Swarm Product RC")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  product_surface_ready: {report.get('product_surface_ready')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+        else:
+            print(f"  artifact {name}: {artifact}")
+
+
 def build_release_ready(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -14966,7 +14990,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.json:
             print(json.dumps(report, sort_keys=True))
         else:
-            print(f"CrowdTensor Public Swarm Product RC ok={report.get('ok')} diagnosis={','.join(report.get('diagnosis_codes') or [])}")
+            print_public_swarm_product_rc(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "home-infer":
         summary = build_home_inference(args)

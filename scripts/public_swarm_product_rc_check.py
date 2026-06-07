@@ -83,6 +83,56 @@ def synthetic_gpu_report(path: Path, max_new_tokens: int) -> None:
     }), encoding="utf-8")
 
 
+def output_scope_errors(payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    if output_request.get("include_output") is not False:
+        errors.append("output_request_include_output_mismatch")
+    if output_request.get("raw_prompt_public") is not False:
+        errors.append("output_request_raw_prompt_public_mismatch")
+    if output_request.get("raw_generated_text_public") is not False:
+        errors.append("output_request_raw_generated_text_public_mismatch")
+    if output_request.get("generated_token_ids_public") is not False:
+        errors.append("output_request_generated_token_ids_public_mismatch")
+    if output_request.get("public_artifact_safe") is not True:
+        errors.append("output_request_public_artifact_safe_mismatch")
+    if answer_scope.get("scope_state") != "no-local-answer":
+        errors.append("answer_scope_state_mismatch")
+    if answer_scope.get("visible_in_terminal") is not False:
+        errors.append("answer_scope_visible_in_terminal_mismatch")
+    if answer_scope.get("terminal_only") is not False:
+        errors.append("answer_scope_terminal_only_mismatch")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        errors.append("answer_scope_saved_json_display_mismatch")
+    if answer_scope.get("saved_markdown_display") != "hash-only":
+        errors.append("answer_scope_saved_markdown_display_mismatch")
+    if answer_scope.get("raw_prompt_public") is not False:
+        errors.append("answer_scope_raw_prompt_public_mismatch")
+    if answer_scope.get("raw_generated_text_public") is not False:
+        errors.append("answer_scope_raw_generated_text_public_mismatch")
+    if answer_scope.get("generated_token_ids_public") is not False:
+        errors.append("answer_scope_generated_token_ids_public_mismatch")
+    if answer_scope.get("public_artifact_safe") is not True:
+        errors.append("answer_scope_public_artifact_safe_mismatch")
+    if shareable.get("saved_artifacts_public_safe") is not True:
+        errors.append("shareable_saved_artifacts_mismatch")
+    if shareable.get("raw_prompt_public") is not False:
+        errors.append("shareable_raw_prompt_public_mismatch")
+    if shareable.get("raw_generated_text_public") is not False:
+        errors.append("shareable_raw_generated_text_public_mismatch")
+    if shareable.get("generated_token_ids_public") is not False:
+        errors.append("shareable_generated_token_ids_public_mismatch")
+    if shareable.get("local_output_display_only") is not False:
+        errors.append("shareable_local_output_display_only_mismatch")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        errors.append("shareable_answer_scope_state_mismatch")
+    if shareable.get("local_answer_terminal_only") is not False:
+        errors.append("shareable_local_answer_terminal_only_mismatch")
+    return errors
+
+
 def run_check(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir or tempfile.mkdtemp(prefix="crowdtensor_public_swarm_product_check_")).resolve()
     gpu_report = output_dir / "synthetic_gpu_report.json"
@@ -110,6 +160,15 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
     ]:
         if code not in codes:
             errors.append(f"missing_code:{code}")
+    scope_errors = output_scope_errors(report)
+    errors.extend(scope_errors)
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    rc_json = artifacts.get("public_swarm_product_rc_json") if isinstance(artifacts.get("public_swarm_product_rc_json"), dict) else {}
+    rc_markdown = artifacts.get("public_swarm_product_rc_markdown") if isinstance(artifacts.get("public_swarm_product_rc_markdown"), dict) else {}
+    if rc_json.get("present") is not True:
+        errors.append("public_swarm_product_rc_json_missing")
+    if rc_markdown.get("present") is not True:
+        errors.append("public_swarm_product_rc_markdown_missing")
     result = {
         "schema": SCHEMA,
         "ok": not errors,
