@@ -189,6 +189,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Create a bounded CrowdTensor generation request", rendered)
         self.assertIn("examples:", rendered)
         self.assertIn('crowdtensor generate "your prompt"', rendered)
+        self.assertIn("generate_summary.json/generate_summary.md", rendered)
+        self.assertIn("--output-dir", rendered)
         self.assertIn("missing routes return startup guidance", rendered)
         self.assertIn("ready_to_submit labels mean", rendered)
         self.assertIn("ready_to_submit.next_step is the script-friendly", rendered)
@@ -505,6 +507,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("mixed prompt sources", rendered)
             self.assertIn("output_request.include_output", rendered)
             self.assertIn("output_request.raw_generated_text_public", rendered)
+            self.assertIn("generate_summary.json", rendered)
+            self.assertIn("generate_summary.md", rendered)
             self.assertIn("failure", rendered)
             self.assertIn("redacted", rendered)
             self.assertIn("prompt text", rendered)
@@ -721,10 +725,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("trusted network boundary", report["operator_action"])
 
     def test_product_generate_dry_run_uses_session_protocol(self) -> None:
+        output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
             "generate",
             "--coordinator-url",
             "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
             "--prompt-text",
             "CrowdTensor prompt",
             "--backend",
@@ -746,6 +753,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["session_request"]["hf_model_id"], "distilgpt2")
         self.assertTrue(report["stream"]["enabled"])
         self.assertTrue(report["output_request"]["include_output"])
+        self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
+        self.assertEqual(report["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
+        self.assertTrue(report["artifacts"]["generate_summary"]["present"])
+        self.assertTrue(report["artifacts"]["generate_summary_markdown"]["present"])
         self.assertEqual(
             report["operator_action"],
             "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
@@ -764,11 +775,27 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("CrowdTensor prompt", encoded)
         self.assertNotIn("CrowdTensor prompt", json.dumps(report["next_commands"], sort_keys=True))
         self.assertIn("prompt_hash", encoded)
+        persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
+        self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
+        self.assertNotIn("CrowdTensor prompt", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn("# CrowdTensor Generate Summary", markdown)
+        self.assertIn("- OK: `True`", markdown)
+        self.assertIn("- Dry run: `True`", markdown)
+        self.assertIn("Generation request shape is valid", markdown)
+        self.assertIn("Raw generated text and generated token ids are redacted", markdown)
+        self.assertIn("`check generation route`", markdown)
+        self.assertNotIn("CrowdTensor prompt", markdown)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
         self.assertIn("  stream: requested=True events=0 dry_run=True", rendered)
+        self.assertIn(
+            f"  saved_summary: {output_dir / 'generate_summary.json'} markdown={output_dir / 'generate_summary.md'} raw_generated_text_redacted=True public_artifact_safe=True",
+            rendered,
+        )
         self.assertNotIn("stream_events: None", rendered)
 
     def test_generate_main_prints_copyable_local_prompt_without_persisting_it(self) -> None:
@@ -2263,10 +2290,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("Second private prompt", json.dumps(report, sort_keys=True))
 
     def test_product_generate_requires_admin_token_with_action(self) -> None:
+        output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
             "generate",
             "--coordinator-url",
             "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
             "--prompt-text",
             "CrowdTensor prompt",
             "--max-new-tokens",
@@ -2279,18 +2309,30 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("admin_token_required", report["diagnosis_codes"])
         self.assertEqual(report["operator_action"], "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.")
+        self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
+        self.assertTrue(report["artifacts"]["generate_summary"]["present"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
             next_lines,
         )
         self.assertTrue(any("CROWDTENSOR_ADMIN_TOKEN" in item.get("requires_env", []) for item in report["next_commands"]))
+        persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertIn("admin_token_required", persisted["diagnosis_codes"])
+        self.assertNotIn("CrowdTensor prompt", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- OK: `False`", markdown)
+        self.assertIn("Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.", markdown)
+        self.assertNotIn("CrowdTensor prompt", markdown)
 
     def test_product_generate_preserves_safe_generation_counts(self) -> None:
+        output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
             "generate",
             "--coordinator-url",
             "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
             "--prompt-text",
             "CrowdTensor prompt",
             "--admin-token",
@@ -2332,6 +2374,8 @@ class CrowdTensorCliTests(unittest.TestCase):
                             "generated_token_count": 2,
                             "max_new_tokens": 2,
                             "generated_text_hash": "sha256:generated",
+                            "generated_text": "local generated text must stay local",
+                            "generated_token_ids": [1, 2],
                             "decoded_tokens_match": True,
                         }
                     }
@@ -2352,8 +2396,90 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["wait_progress"]["accepted_rows_seen"], 1)
         self.assertEqual(report["wait_progress"]["max_observed_token_count"], 2)
         self.assertTrue(report["wait_progress"]["completion_observed"])
+        self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
+        self.assertTrue(report["artifacts"]["generate_summary_markdown"]["present"])
         self.assertNotIn("admin-secret", encoded)
         self.assertIn(("GET", "/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit=50&session_id=real-llm-session-test"), calls)
+        persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- Generation: `2/2` hash=`sha256:generated`", markdown)
+        self.assertIn("Raw generated text and generated token ids are redacted", markdown)
+        self.assertNotIn("local generated text must stay local", markdown)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
+
+    def test_product_generate_human_output_is_not_persisted_to_summary(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+        ])
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, path, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-human",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                }
+            return {
+                "results": [
+                    {
+                        "validation": {
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:generated",
+                            "generated_text": "local generated text must stay local",
+                            "generated_token_ids": [1, 2],
+                            "decoded_tokens_match": True,
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["local_output"]["generated_text"], "local generated text must stay local")
+        self.assertFalse(report["local_output"]["public_artifact_safe"])
+        persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["local_output"]["generated_text"], "")
+        self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
+        self.assertTrue(persisted["local_output"]["public_artifact_safe"])
+        self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertNotIn("local generated text must stay local", markdown)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  output: local generated text must stay local", rendered)
+        self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
     def test_product_generate_timeout_reports_safe_wait_progress(self) -> None:
         args = cli.parse_args([
@@ -3534,10 +3660,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("admin-secret", encoded)
 
     def test_product_generate_batch_stream_rejects_incomplete_prompt_progress(self) -> None:
+        output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
             "generate",
             "--coordinator-url",
             "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
             "--prompt-texts",
             "first private prompt,second private prompt",
             "--admin-token",
@@ -3651,6 +3780,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("second private prompt", encoded)
         self.assertNotIn("first private prompt", rendered)
         self.assertNotIn("second private prompt", rendered)
+        persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["stream"]["issue_summary"], "request[2]=req-2:1/2")
+        self.assertTrue(persisted["artifacts"]["generate_summary_markdown"]["present"])
+        self.assertNotIn("first private prompt", json.dumps(persisted, sort_keys=True))
+        self.assertNotIn("second private prompt", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- Stream issue: `request[2]=req-2:1/2`", markdown)
+        self.assertIn("Generation completed, but stream progress is incomplete", markdown)
+        self.assertNotIn("first private prompt", markdown)
+        self.assertNotIn("second private prompt", markdown)
 
     def test_product_generate_batch_stream_prints_missing_prompt_progress(self) -> None:
         args = cli.parse_args([

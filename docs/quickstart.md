@@ -150,7 +150,10 @@ export CROWDTENSOR_OBSERVER_TOKEN=local-observer
 
 The `serve`, `join`, and `generate` commands print an `action` line in human
 mode; follow it when a step is only printing a command, missing a route, or
-waiting for the other stage Miner.
+waiting for the other stage Miner. `generate` also writes safe
+`generate_summary.json` and `generate_summary.md` files under `dist/generate`
+by default; raw prompts, generated text, token ids, and tokens stay out of
+those shareable artifacts.
 
 ```bash
 # Terminal 1

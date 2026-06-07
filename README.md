@@ -133,6 +133,9 @@ but not fully checked.
 The manual `serve` and `join` commands also print `operator_action` and
 `next[...]`, so the five-process flow tells you whether to rerun with `--run`,
 start the missing stage Miner, or preflight with `generate --dry-run`.
+`generate` writes safe `generate_summary.json` and `generate_summary.md` files
+under `dist/generate` by default; raw prompts, generated text, token ids, and
+tokens stay out of those shareable artifacts.
 
 To check an already running Coordinator or P2P-discovered swarm before
 submitting a request, use `crowdtensor infer --mode existing --dry-run` or

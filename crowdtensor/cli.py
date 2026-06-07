@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -3688,7 +3689,7 @@ def _infer_local_output_from_private_state(
     }
 
 
-def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
+def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     if not local_output:
         return summary
@@ -3702,6 +3703,10 @@ def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
             if isinstance(output, dict):
                 output["generated_text"] = ""
     return summary
+
+
+def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
+    return _strip_local_output_text(summary)
 
 
 def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
@@ -4491,6 +4496,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         generate_args = argparse.Namespace(
             prompt_text=args.prompt_text,
             prompt_texts=args.prompt_texts,
+            output_dir=str(output_dir / "generate"),
             scenario_id=args.scenario_id,
             max_new_tokens=args.max_new_tokens,
             backend=args.backend,
@@ -7023,6 +7029,83 @@ def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]
     }
 
 
+def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
+    generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
+    route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
+    batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
+    stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
+    output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
+    ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
+    coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
+    stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
+    wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
+    lines = [
+        "# CrowdTensor Generate Summary",
+        "",
+        f"- OK: `{bool(summary.get('ok'))}`",
+        f"- Dry run: `{bool(summary.get('dry_run'))}`",
+        f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
+        (
+            "- Generation: "
+            f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
+            f"hash=`{generation.get('generated_text_hash')}`"
+        ),
+        f"- Route: source=`{route.get('route_source')}` ready=`{bool(route.get('usable_now') or route.get('coordinator_url_present'))}`",
+        f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('batch_generation_ready')}`",
+        f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('stream_generation_ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
+    ]
+    if ready_to_submit:
+        lines.append(
+            "- Ready to submit: "
+            f"label=`{ready_to_submit.get('readiness_label')}` "
+            f"next_step=`{ready_to_submit.get('next_step')}` "
+            f"fully_verified=`{bool(ready_to_submit.get('fully_verified'))}`"
+        )
+    if coordinator_ready:
+        lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
+    if stage_preflight:
+        lines.append(
+            "- Stage preflight: "
+            f"checked=`{stage_preflight.get('checked')}` "
+            f"ok=`{stage_preflight.get('ok')}` "
+            f"missing=`{stage_preflight_missing_text(stage_preflight)}`"
+        )
+    if wait_progress:
+        lines.append(f"- Wait: `{wait_progress_text(wait_progress)}`")
+    if stream.get("issue_summary"):
+        lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
+    if summary.get("operator_action"):
+        lines.append(f"- Action: {summary.get('operator_action')}")
+    lines.extend([
+        f"- Saved JSON: `{saved_summary.get('path')}`",
+        f"- Output request: `{output_request_text(output_request)}`",
+        "",
+        "## Next Commands",
+        "",
+    ])
+    next_commands = summary.get("next_commands") if isinstance(summary.get("next_commands"), list) else []
+    if next_commands:
+        for index, item in enumerate(next_commands, start=1):
+            if not isinstance(item, dict):
+                continue
+            requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
+            suffix = f" requires={','.join(str(name) for name in requires_env)}" if requires_env else ""
+            lines.append(f"{index}. `{item.get('label')}`: `{item.get('command_line')}`{suffix}")
+    else:
+        lines.append("None.")
+    lines.extend([
+        "",
+        "## Safety",
+        "",
+        "- Raw prompts are not public.",
+        "- Raw generated text and generated token ids are redacted from saved artifacts.",
+        "- This is Coordinator-backed, read-only, tiny/small-model scoped generation evidence; not production Hivemind/Petals parity or large-model serving.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def _product_generate_operator_action(report: dict[str, Any]) -> str:
     if report.get("ok"):
         if bool(report.get("dry_run")):
@@ -7235,9 +7318,48 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
     return commands
 
 
-def _finalize_product_generate_report(report: dict[str, Any], *, admin_token: str = "") -> dict[str, Any]:
+def _finalize_product_generate_report(
+    report: dict[str, Any],
+    *,
+    admin_token: str = "",
+    output_dir: Path | None = None,
+) -> dict[str, Any]:
     report.setdefault("operator_action", _product_generate_operator_action(report))
     report.setdefault("next_commands", _product_generate_next_commands(report))
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report.setdefault("saved_summary", {
+            "path": str(output_dir / "generate_summary.json"),
+            "markdown_path": str(output_dir / "generate_summary.md"),
+            "raw_generated_text_redacted": True,
+            "public_artifact_safe": True,
+        })
+        artifacts = report.setdefault("artifacts", {})
+        if isinstance(artifacts, dict):
+            artifacts.setdefault("generate_summary", {
+                "kind": "crowdtensor_generate_summary",
+                "path": "generate_summary.json",
+                "present": True,
+                "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
+                "ok": bool(report.get("ok")),
+            })
+            artifacts.setdefault("generate_summary_markdown", {
+                "kind": "crowdtensor_generate_summary_markdown",
+                "path": "generate_summary.md",
+                "present": True,
+                "ok": bool(report.get("ok")),
+            })
+        persisted_summary = copy.deepcopy(report)
+        _strip_local_output_text(persisted_summary)
+        safe_persisted = sanitize(redact_values(persisted_summary, [admin_token]))
+        (output_dir / "generate_summary.json").write_text(
+            json.dumps(safe_persisted, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (output_dir / "generate_summary.md").write_text(
+            render_generate_summary_markdown(safe_persisted),
+            encoding="utf-8",
+        )
     return sanitize(redact_values(report, [admin_token]))
 
 
@@ -7559,6 +7681,7 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
 
 
 def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
     prompt_texts = parse_prompt_texts_arg(args.prompt_text, getattr(args, "prompt_texts", ""))
     prompt_text = prompt_texts[0]
     batch_enabled = len(prompt_texts) > 1
@@ -7654,7 +7777,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             route=route,
             effective_coordinator_url=effective_coordinator_url,
         )
-        return _finalize_product_generate_report(report)
+        return _finalize_product_generate_report(report, output_dir=output_dir)
     if args.p2p and not route.get("usable_now"):
         return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -7680,7 +7803,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                 if discovery_error
                 else ["generate_route_unavailable"]
             ),
-        })
+        }, output_dir=output_dir)
     if not effective_coordinator_url:
         return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -7692,7 +7815,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "stream": stream_request,
             "output_request": output_request,
             "diagnosis_codes": ["coordinator_route_missing"],
-        })
+        }, output_dir=output_dir)
     if not args.admin_token:
         return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -7704,7 +7827,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "stream": stream_request,
             "output_request": output_request,
             "diagnosis_codes": ["admin_token_required"],
-        })
+        }, output_dir=output_dir)
     private_payload = coordinator_payload_for_request(session_request, prompt_text=prompt_text, prompt_texts=prompt_texts)
     private_redactions = unique_redaction_values([args.admin_token, prompt_text, *prompt_texts])
     session_create_timeout = max(float(args.http_timeout), min(float(args.timeout_seconds), 30.0))
@@ -7745,7 +7868,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "diagnosis_codes": diagnosis,
             "error": type(exc).__name__,
             "detail": detail,
-        }, admin_token=args.admin_token)
+        }, admin_token=args.admin_token, output_dir=output_dir)
     result_row: dict[str, Any] | None = None
     stream_events: list[dict[str, Any]] = []
     stream_seen_keys: set[tuple[str, int]] = set()
@@ -7990,7 +8113,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         report["local_output_note"] = "Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only."
     elif args.include_output:
         report["local_output_note"] = "Raw generated text is suppressed in JSON/public output; rerun without --json for local display."
-    return _finalize_product_generate_report(report, admin_token=args.admin_token)
+    return _finalize_product_generate_report(report, admin_token=args.admin_token, output_dir=output_dir)
 
 
 def print_product_generate(report: dict[str, Any]) -> None:
@@ -8110,6 +8233,15 @@ def print_product_generate(report: dict[str, Any]) -> None:
         )
         if ready_to_submit.get("readiness_summary"):
             print(f"  readiness: {ready_to_submit.get('readiness_summary')}")
+    saved_summary = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
+    if saved_summary:
+        print(
+            "  saved_summary: "
+            f"{saved_summary.get('path')} "
+            f"markdown={saved_summary.get('markdown_path')} "
+            f"raw_generated_text_redacted={saved_summary.get('raw_generated_text_redacted')} "
+            f"public_artifact_safe={saved_summary.get('public_artifact_safe')}"
+        )
     if report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
     if report.get("operator_action"):
@@ -9919,8 +10051,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description=(
             "Create a bounded CrowdTensor generation request against an existing Coordinator\n"
             "or P2P-discovered product swarm. Reports include action and next[...] lines with\n"
-            "copyable follow-up commands; missing routes return startup guidance instead of a\n"
-            "bare parser error. ready_to_submit labels mean: verified is ready after route,\n"
+            "copyable follow-up commands and write safe generate_summary.json/generate_summary.md\n"
+            "files under --output-dir; missing routes return startup guidance instead of a bare\n"
+            "parser error. ready_to_submit labels mean: verified is ready after route,\n"
             "Coordinator, and stage Miner checks; partial can submit but still needs the printed\n"
             "follow-up preflight; blocked needs the printed operator_action; skipped is request-shape only.\n"
             "ready_to_submit.next_step is the script-friendly action: submit, run_stage_preflight,\n"
@@ -9942,6 +10075,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     generate.add_argument("prompt_text_arg", nargs="?", default="", help="optional single prompt text; mutually exclusive with --prompt-text/--prompt and --prompt-texts")
+    generate.add_argument("--output-dir", default="dist/generate")
     generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with positional prompt and --prompt-texts")
     generate.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; mutually exclusive with single-prompt sources")
     generate.add_argument("--scenario-id", default="public-swarm-product-rc")
