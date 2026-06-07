@@ -1199,15 +1199,39 @@ def prompt_summary_text(prompt: dict[str, Any]) -> str:
     )
 
 
+def count_pair_text(observed: Any, expected: Any, *, empty: str = "not-run") -> str:
+    if observed is None and expected is None:
+        return empty
+    return f"{observed}/{expected}"
+
+
 def infer_result_text(result: dict[str, Any]) -> str:
     return (
-        f"status={result.get('status')} "
-        f"tokens={result.get('generated_token_count')}/{result.get('max_new_tokens')} "
-        f"outputs={result.get('output_count')} "
-        f"display={result.get('display')} "
-        f"hash={result.get('generated_text_hash')} "
-        f"public_artifact_safe={bool(result.get('public_artifact_safe'))}"
+        f"status={result.get('status') or 'not-run'} "
+        f"tokens={count_pair_text(result.get('generated_token_count'), result.get('max_new_tokens'))} "
+        f"outputs={result.get('output_count') if result.get('output_count') is not None else 0} "
+        f"display={result.get('display') or 'none'} "
+        f"hash={result.get('generated_text_hash') or 'none'} "
+        f"public_artifact_safe={bool(result.get('public_artifact_safe', True))}"
     )
+
+
+def generation_summary_text(generation: dict[str, Any]) -> str:
+    generated_count = generation.get("generated_token_count")
+    target_count = generation.get("max_new_tokens")
+    generated_hash = generation.get("generated_text_hash")
+    if generated_count is None and target_count is None and not generated_hash:
+        return "not-run"
+    return f"{count_pair_text(generated_count, target_count)} hash={generated_hash or 'none'}"
+
+
+def generation_summary_markdown_text(generation: dict[str, Any]) -> str:
+    generated_count = generation.get("generated_token_count")
+    target_count = generation.get("max_new_tokens")
+    generated_hash = generation.get("generated_text_hash")
+    if generated_count is None and target_count is None and not generated_hash:
+        return "`not-run`"
+    return f"`{count_pair_text(generated_count, target_count)}` hash=`{generated_hash}`"
 
 
 def infer_trace_text(trace: dict[str, Any]) -> str:
@@ -6165,17 +6189,13 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         f"- Model: `{model.get('hf_model_id')}` backend=`{model.get('backend')}`",
         f"- Prompt: `{prompt_summary_text(prompt)}`",
-        (
-            "- Generation: "
-            f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
-            f"hash=`{generation.get('generated_text_hash')}`"
-        ),
+        f"- Generation: {generation_summary_markdown_text(generation)}",
         f"- Result: `{infer_result_text(result)}`",
         f"- Output display: `{output_display_text(output_display)}`",
         f"- Trace: `{infer_trace_text(trace)}`",
         f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{route.get('route_ready')}`",
-        f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('ready')}`",
+        f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{count_pair_text(batch.get('observed_request_count'), batch.get('request_count'))}` ready=`{batch.get('ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
     ]
     lines.extend(markdown_next_step_section(summary))
@@ -9369,17 +9389,13 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Review next: `{review_next_command_text(review_summary)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
-        (
-            "- Generation: "
-            f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
-            f"hash=`{generation.get('generated_text_hash')}`"
-        ),
+        f"- Generation: {generation_summary_markdown_text(generation)}",
         f"- Result: `{infer_result_text(result)}`",
         f"- Output display: `{output_display_text(output_display)}`",
         f"- Trace: `{infer_trace_text(trace)}`",
         f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{bool(route.get('usable_now') or route.get('coordinator_url_present'))}`",
-        f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('batch_generation_ready')}`",
+        f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{count_pair_text(batch.get('observed_request_count'), batch.get('request_count'))}` ready=`{batch.get('batch_generation_ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('stream_generation_ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
     ]
     lines.extend(markdown_next_step_section(summary))
@@ -10664,11 +10680,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
         )
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     if generation:
-        print(
-            "  generation: "
-            f"{generation.get('generated_token_count')}/{generation.get('max_new_tokens')} "
-            f"hash={generation.get('generated_text_hash')}"
-        )
+        print(f"  generation: {generation_summary_text(generation)}")
     result = report.get("result") if isinstance(report.get("result"), dict) else {}
     if result:
         print(f"  result: {infer_result_text(result)}")
@@ -10955,11 +10967,8 @@ def print_infer(report: dict[str, Any]) -> None:
     if prompt:
         print(f"  prompt: {prompt_summary_text(prompt)}")
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
-    print(
-        "  generation: "
-        f"{generation.get('generated_token_count')}/{generation.get('max_new_tokens')} "
-        f"hash={generation.get('generated_text_hash')}"
-    )
+    if generation:
+        print(f"  generation: {generation_summary_text(generation)}")
     result = report.get("result") if isinstance(report.get("result"), dict) else {}
     if result:
         print(f"  result: {infer_result_text(result)}")

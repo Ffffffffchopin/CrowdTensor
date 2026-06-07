@@ -7918,9 +7918,29 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 1)
         progress = stderr.getvalue()
+        rendered = stdout.getvalue()
         self.assertIn("checking credentials and request requirements", progress)
         self.assertNotIn("submitting to the existing swarm", progress)
         self.assertNotIn(prompt, progress)
+        self.assertIn("  action: Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.", rendered)
+        self.assertNotIn("generation: None/None", rendered)
+        self.assertNotIn("hash=None", rendered)
+
+    def test_infer_markdown_without_generation_data_says_not_run(self) -> None:
+        markdown = cli.render_infer_summary_markdown({
+            "schema": "crowdtensor_infer_cli_v1",
+            "ok": False,
+            "mode": "existing",
+            "diagnosis_codes": ["admin_token_required"],
+            "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+            "generation": {},
+            "result": {},
+            "route": {"route_source": "coordinator-url", "route_ready": False},
+        })
+
+        self.assertIn("- Generation: `not-run`", markdown)
+        self.assertNotIn("None/None", markdown)
+        self.assertNotIn("hash=`None`", markdown)
 
     def test_infer_local_batch_forwards_only_prompt_texts_to_product_loopback(self) -> None:
         output_dir = Path(self._tmp_dir())
