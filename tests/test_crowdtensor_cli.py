@@ -5389,6 +5389,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Mode: `existing`", markdown)
         self.assertIn("- Generation: `16/16` hash=`sha256:generated`", markdown)
+        self.assertIn("- Wait: `polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False`", markdown)
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertIn("`submit inference`", markdown)
         self.assertIn("Replace `<prompt>` with your local prompt before running saved commands.", markdown)
@@ -6313,6 +6314,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("crowdtensor_infer_preflight_partial", persisted["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_preflight_ready", persisted["diagnosis_codes"])
         self.assertFalse(persisted["local_output"]["available"])
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Ready to submit: label=`partial` next_step=`run_stage_preflight` fully_verified=`False`",
+            markdown,
+        )
+        self.assertIn(
+            "- Coordinator: `True service=crowdtensord-coordinator protocol=runtime_contract_v1`",
+            markdown,
+        )
+        self.assertIn(
+            "- Stage preflight: checked=`False` ok=`None` missing=`not_checked`",
+            markdown,
+        )
+        self.assertNotIn("CrowdTensor user prompt", markdown)
 
     def test_infer_existing_p2p_preserves_swarm_id_in_next_commands(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -6470,6 +6485,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["ready_to_submit"]["fully_verified"])
         self.assertEqual(persisted["ready_to_submit"]["readiness_label"], "verified")
         self.assertNotIn("observer-secret", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Ready to submit: label=`verified` next_step=`submit` fully_verified=`True`",
+            markdown,
+        )
+        self.assertIn(
+            "- Coordinator: `True service=crowdtensord-coordinator protocol=runtime_contract_v1`",
+            markdown,
+        )
+        self.assertIn(
+            "- Stage preflight: checked=`True` ok=`True` missing=`none`",
+            markdown,
+        )
+        self.assertNotIn("observer-secret", markdown)
+        self.assertNotIn("CrowdTensor user prompt", markdown)
 
     def test_infer_existing_batch_next_commands_use_only_batch_placeholder(self) -> None:
         output_dir = Path(self._tmp_dir())

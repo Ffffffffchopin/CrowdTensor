@@ -4231,6 +4231,10 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
+    ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
+    coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
+    stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
+    wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
     lines = [
         "# CrowdTensor Infer Summary",
         "",
@@ -4246,6 +4250,24 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
     ]
+    if ready_to_submit:
+        lines.append(
+            "- Ready to submit: "
+            f"label=`{ready_to_submit.get('readiness_label')}` "
+            f"next_step=`{ready_to_submit.get('next_step')}` "
+            f"fully_verified=`{bool(ready_to_submit.get('fully_verified'))}`"
+        )
+    if coordinator_ready:
+        lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
+    if stage_preflight:
+        lines.append(
+            "- Stage preflight: "
+            f"checked=`{stage_preflight.get('checked')}` "
+            f"ok=`{stage_preflight.get('ok')}` "
+            f"missing=`{stage_preflight_missing_text(stage_preflight)}`"
+        )
+    if wait_progress:
+        lines.append(f"- Wait: `{wait_progress_text(wait_progress)}`")
     if stream.get("issue_summary"):
         lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
     if summary.get("operator_action"):
