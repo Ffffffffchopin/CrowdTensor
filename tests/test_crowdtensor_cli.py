@@ -11399,6 +11399,75 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(summary["cli_schema"], "petals_class_p2p_candidate_cli_v1")
         self.assertTrue(calls)
 
+    def test_petals_candidate_prints_output_scope(self) -> None:
+        report = {
+            "schema": "petals_class_p2p_candidate_v1",
+            "cli_schema": "petals_class_p2p_candidate_cli_v1",
+            "ok": True,
+            "mode": "evidence-import",
+            "output_dir": "dist/petals-candidate",
+            "candidate": {
+                "external_generated_token_count": 16,
+                "max_new_tokens": 16,
+                "local_libp2p_ready": True,
+                "kaggle_runtime_smoke_ready": True,
+                "external_libp2p_generate_ready": True,
+                "p2p_live_requeue_ready": True,
+                "victim_result_not_accepted": True,
+                "batch_ready": True,
+                "stream_ready": True,
+                "batch": {"expected_request_count": 2},
+                "stream": {"event_count": 16},
+                "live_requeue_summary": {
+                    "rescue_miner_used": True,
+                },
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "diagnosis_codes": ["petals_class_p2p_candidate_ready"],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_petals_class_p2p_candidate(report)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            output,
+        )
+
     def test_main_petals_candidate_json_outputs_summary(self) -> None:
         summary = {"schema": "petals_class_p2p_candidate_v1", "ok": True}
         with patch.object(cli, "build_petals_class_p2p_candidate", return_value=summary), patch("builtins.print") as mocked_print:

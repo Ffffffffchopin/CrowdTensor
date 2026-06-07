@@ -218,6 +218,48 @@ def add_safe_batch_stream(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def validate_output_scope(payload: dict[str, Any], *, label: str) -> list[str]:
+    errors: list[str] = []
+    output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    if output_request.get("include_output") is not False:
+        errors.append(f"{label}:output_request_include_output_not_false")
+    if output_request.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:output_request_raw_prompt_public_not_false")
+    if output_request.get("raw_generated_text_public") is not False:
+        errors.append(f"{label}:output_request_raw_generated_text_public_not_false")
+    if output_request.get("generated_token_ids_public") is not False:
+        errors.append(f"{label}:output_request_generated_token_ids_public_not_false")
+    if output_request.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:output_request_public_artifact_safe_missing")
+    answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    if answer_scope.get("scope_state") != "no-local-answer":
+        errors.append(f"{label}:answer_scope_state_mismatch")
+    if answer_scope.get("visible_in_terminal") is not False:
+        errors.append(f"{label}:answer_scope_visible_in_terminal_not_false")
+    if answer_scope.get("terminal_only") is not False:
+        errors.append(f"{label}:answer_scope_terminal_only_not_false")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        errors.append(f"{label}:answer_scope_saved_json_not_hash_only")
+    if answer_scope.get("saved_markdown_display") != "hash-only":
+        errors.append(f"{label}:answer_scope_saved_markdown_not_hash_only")
+    if answer_scope.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:answer_scope_public_artifact_safe_missing")
+    shareable_summary = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    if shareable_summary.get("saved_artifacts_public_safe") is not True:
+        errors.append(f"{label}:shareable_saved_artifacts_public_safe_missing")
+    if shareable_summary.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:shareable_raw_prompt_public_not_false")
+    if shareable_summary.get("raw_generated_text_public") is not False:
+        errors.append(f"{label}:shareable_raw_generated_text_public_not_false")
+    if shareable_summary.get("generated_token_ids_public") is not False:
+        errors.append(f"{label}:shareable_generated_token_ids_public_not_false")
+    if shareable_summary.get("answer_scope_state") != "no-local-answer":
+        errors.append(f"{label}:shareable_answer_scope_state_mismatch")
+    if shareable_summary.get("local_answer_terminal_only") is not False:
+        errors.append(f"{label}:shareable_local_answer_terminal_only_not_false")
+    return errors
+
+
 def run_check(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir or tempfile.mkdtemp(prefix="crowdtensor_petals_candidate_check_")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -248,6 +290,11 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
         "--max-new-tokens",
         "8",
     ]))
+    package_report = pack.build_report(pack.parse_args([
+        "package",
+        "--output-dir",
+        str(output_dir / "package"),
+    ]))
     errors: list[str] = []
     required = {
         "petals_class_p2p_candidate_ready",
@@ -268,6 +315,10 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
         errors.append("schema_mismatch")
     if report.get("ok") is not True:
         errors.append("candidate_not_ready")
+    if package_report.get("schema") != pack.SCHEMA or package_report.get("ok") is not True:
+        errors.append("package_report_not_ready")
+    errors.extend(validate_output_scope(report, label="candidate"))
+    errors.extend(validate_output_scope(package_report, label="package"))
     for code in sorted(required - codes):
         errors.append(f"missing_code:{code}")
     candidate = report.get("candidate") if isinstance(report.get("candidate"), dict) else {}

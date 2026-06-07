@@ -11433,6 +11433,36 @@ def print_real_p2p_swarm_inference_core_rc(report: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_petals_class_p2p_candidate(report: dict[str, Any]) -> None:
+    candidate = report.get("candidate") if isinstance(report.get("candidate"), dict) else {}
+    batch = candidate.get("batch") if isinstance(candidate.get("batch"), dict) else {}
+    stream = candidate.get("stream") if isinstance(candidate.get("stream"), dict) else {}
+    requeue = candidate.get("live_requeue_summary") if isinstance(candidate.get("live_requeue_summary"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    print("CrowdTensor Petals-Class P2P Candidate")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  generated tokens: {candidate.get('external_generated_token_count')}/{candidate.get('max_new_tokens')}")
+    print(f"  readiness: local={candidate.get('local_libp2p_ready')} runtime_smoke={candidate.get('kaggle_runtime_smoke_ready')} external={candidate.get('external_libp2p_generate_ready')}")
+    print(f"  requeue: ready={candidate.get('p2p_live_requeue_ready')} rescue_used={requeue.get('rescue_miner_used')} victim_rejected={candidate.get('victim_result_not_accepted')}")
+    print(f"  batch: ready={candidate.get('batch_ready')} requests={batch.get('expected_request_count')}")
+    print(f"  stream: ready={candidate.get('stream_ready')} events={stream.get('event_count')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
@@ -15059,7 +15089,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.json:
             print(json.dumps(summary, sort_keys=True))
         else:
-            print(f"CrowdTensor Petals-Class P2P Candidate ok={summary.get('ok')} diagnosis={','.join(summary.get('diagnosis_codes') or [])}")
+            print_petals_class_p2p_candidate(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "public-swarm-gpu-beta":
         summary = build_public_swarm_gpu_inference_beta(args)

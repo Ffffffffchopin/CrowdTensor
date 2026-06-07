@@ -174,6 +174,62 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     return entry
 
 
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Petals-class P2P Candidate public artifacts summarize local, runtime-smoke, "
+            "external generation, requeue, peer scoring, safe batch, and safe stream "
+            "evidence only. Run the product generate command in local human mode to "
+            "display answer text."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Petals-class P2P Candidate report is shareable readiness evidence, "
+            "not an answer transcript. Raw prompts, generated text, generated token ids, "
+            "activations, lease tokens, peer secrets, private runtime payloads, and raw "
+            "runtime state are excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share `petals_class_p2p_candidate.json`, `petals_class_p2p_candidate.md`, "
+            "and `support_bundle.json`; they contain candidate readiness evidence, "
+            "hashes, counts, and safe summaries, not raw prompts or answers."
+        ),
+    }
+
+
 def first_string_value(payload: dict[str, Any], key: str) -> str:
     pending: list[Any] = [payload]
     seen: set[int] = set()
@@ -927,6 +983,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- external requeue: `{candidate.get('external_stage_requeue_ready')}`",
         f"- peer scoring: `{candidate.get('peer_scoring_ready')}`",
         "",
+        "## Output Scope",
+        "",
+        f"- output request: `include_output={bool((report.get('output_request') or {}).get('include_output'))} raw_prompt_public={bool((report.get('output_request') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('output_request') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('output_request') or {}).get('generated_token_ids_public'))} public_artifact_safe={bool((report.get('output_request') or {}).get('public_artifact_safe'))}`",
+        f"- answer scope: `state={(report.get('answer_scope') or {}).get('scope_state')} terminal_only={bool((report.get('answer_scope') or {}).get('terminal_only'))} visible_in_terminal={bool((report.get('answer_scope') or {}).get('visible_in_terminal'))} saved_json={(report.get('answer_scope') or {}).get('saved_json_display')} saved_markdown={(report.get('answer_scope') or {}).get('saved_markdown_display')} public_artifact_safe={bool((report.get('answer_scope') or {}).get('public_artifact_safe'))}`",
+        f"- shareable: `saved_artifacts={bool((report.get('shareable_summary') or {}).get('saved_artifacts_public_safe'))} raw_prompt_public={bool((report.get('shareable_summary') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('shareable_summary') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('shareable_summary') or {}).get('generated_token_ids_public'))} answer_scope_state={(report.get('shareable_summary') or {}).get('answer_scope_state')} local_answer_terminal_only={bool((report.get('shareable_summary') or {}).get('local_answer_terminal_only'))}`",
+        f"- note: {(report.get('answer_scope') or {}).get('summary')}",
+        "",
         "## Boundaries",
         "",
         "- Coordinator remains the lease/result authority.",
@@ -951,6 +1014,9 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
 
 
 def sanitize_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report))
     errors = validate_public_report(report)
     if errors:
@@ -978,6 +1044,9 @@ def sanitize_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, An
         "diagnosis_codes": report.get("diagnosis_codes"),
         "candidate": report.get("candidate"),
         "summaries": report.get("summaries"),
+        "output_request": report.get("output_request"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),
     })
     write_json(output_dir / "support_bundle.json", bundle)
