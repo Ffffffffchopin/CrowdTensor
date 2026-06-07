@@ -5363,9 +5363,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["operator_action"], "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.")
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787",
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
             next_lines,
         )
+        self.assertTrue(any("CROWDTENSOR_OBSERVER_TOKEN" in item.get("requires_env", []) for item in report["next_commands"]))
         self.assertTrue(any("CROWDTENSOR_ADMIN_TOKEN" in item.get("requires_env", []) for item in report["next_commands"]))
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertIn("admin_token_required", persisted["diagnosis_codes"])
