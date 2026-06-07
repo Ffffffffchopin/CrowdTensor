@@ -5783,6 +5783,56 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
 
+    def test_infer_full_evidence_blocked_keeps_full_evidence_next_step(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor user prompt"
+        args = cli.parse_args([
+            "infer",
+            prompt,
+            "--full-evidence",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "16",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": False,
+                "mode": "local",
+                "readiness": {
+                    "local_p2p_generate": {
+                        "route_ready": False,
+                        "generation": {"generated_token_count": 0, "max_new_tokens": 16},
+                    },
+                },
+                "diagnosis_codes": ["public_swarm_inference_v2_blocked"],
+                "missing_requirements": ["local p2p generate route"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("public_swarm_inference_v2_blocked", report["diagnosis_codes"])
+        self.assertEqual(report["issue_summary"]["primary_code"], "public_swarm_inference_v2_blocked")
+        self.assertEqual(report["review_summary"]["primary_code"], "public_swarm_inference_v2_blocked")
+        self.assertIn("Full local Public Swarm v2 evidence is blocked", report["operator_action"])
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun full local evidence")
+        self.assertIn("--full-evidence", report["recommended_next_command"]["command_line"])
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["issue_summary"]["primary_code"], "public_swarm_inference_v2_blocked")
+        self.assertEqual(persisted["recommended_next_command"]["label"], "rerun full local evidence")
+        self.assertIn("--full-evidence", persisted["recommended_next_command"]["command_line"])
+        self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("primary=public_swarm_inference_v2_blocked", markdown)
+        self.assertIn("--full-evidence", markdown)
+        self.assertNotIn(prompt, markdown)
+
     def test_infer_full_evidence_batch_forwards_only_prompt_texts(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([

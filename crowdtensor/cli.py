@@ -4294,6 +4294,7 @@ def _primary_diagnosis_code(codes: list[str], *, ok: bool, state: str) -> str:
         "stage_preflight_not_checked",
         "admin_token_required",
         "serve_start_failed",
+        "public_swarm_inference_v2_blocked",
         "generation_timeout",
         "crowdtensor_infer_source_report_missing",
     ]
@@ -4764,6 +4765,8 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
         return "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN."
     if "serve_start_failed" in codes:
         return "Local inference could not start its loopback Coordinator; retry with a fresh --output-dir or a different --coordinator-port, then inspect the child product-swarm-mvp report if it still fails."
+    if "public_swarm_inference_v2_blocked" in codes:
+        return "Full local Public Swarm v2 evidence is blocked; inspect the public-swarm-v2 child report, then rerun with --full-evidence after fixing the reported route, stage, runtime, or artifact requirement."
     if "generation_timeout" in codes:
         return _infer_wait_progress_action(payload)
     if "crowdtensor_infer_source_report_missing" in codes:
@@ -4885,6 +4888,12 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
                 "retry local inference on a fresh port",
                 _infer_command_args(args, full_evidence=False, coordinator_port_override=retry_port),
             ))
+        if bool(getattr(args, "full_evidence", False)):
+            commands.append(command_entry(
+                "rerun full local evidence",
+                _infer_command_args(args, full_evidence=True),
+            ))
+            return commands
         commands.append(command_entry(
             "run local inference",
             _infer_command_args(args, full_evidence=False),
