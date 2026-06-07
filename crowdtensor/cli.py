@@ -7667,6 +7667,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
     ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
     coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
@@ -7710,6 +7711,14 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Wait: `{wait_progress_text(wait_progress)}`")
     if stream.get("issue_summary"):
         lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
+    if local_output:
+        lines.append(
+            "- Local output: "
+            f"`{local_output_text(local_output)}` "
+            f"count=`{local_output.get('output_count')}`"
+        )
+    if summary.get("local_output_note"):
+        lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if summary.get("operator_action"):
         lines.append(f"- Action: {summary.get('operator_action')}")
     if recommended:

@@ -2635,6 +2635,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["local_output"]["public_artifact_safe"])
         self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1`",
+            markdown,
+        )
+        self.assertIn(
+            "- Local output note: Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only.",
+            markdown,
+        )
         self.assertNotIn("local generated text must stay local", markdown)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
