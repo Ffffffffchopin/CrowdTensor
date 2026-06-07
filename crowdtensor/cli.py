@@ -549,6 +549,17 @@ def prompt_summary_text(prompt: dict[str, Any]) -> str:
     )
 
 
+def infer_result_text(result: dict[str, Any]) -> str:
+    return (
+        f"status={result.get('status')} "
+        f"tokens={result.get('generated_token_count')}/{result.get('max_new_tokens')} "
+        f"outputs={result.get('output_count')} "
+        f"display={result.get('display')} "
+        f"hash={result.get('generated_text_hash')} "
+        f"public_artifact_safe={bool(result.get('public_artifact_safe'))}"
+    )
+
+
 def local_output_text(local_output: dict[str, Any]) -> str:
     available = (
         bool(local_output.get("available"))
@@ -3778,6 +3789,11 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         for output in outputs:
             if isinstance(output, dict):
                 output["generated_text"] = ""
+    result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
+    if result:
+        result["public_artifact_safe"] = True
+        if result.get("display") == "local-private":
+            result["display"] = "hash-only"
     return summary
 
 
@@ -4281,6 +4297,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
     prompt = summary.get("prompt") if isinstance(summary.get("prompt"), dict) else {}
     model = summary.get("model") if isinstance(summary.get("model"), dict) else {}
+    result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -4307,6 +4324,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
             f"hash=`{generation.get('generated_text_hash')}`"
         ),
+        f"- Result: `{infer_result_text(result)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{route.get('route_ready')}`",
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
@@ -4493,6 +4511,22 @@ def _infer_summary_from_payload(
     operator_action = _infer_operator_action(args, action_payload, ok=ok)
     next_commands = _infer_next_commands(args, payload, ok=ok, mode=mode)
     has_local_display_output = bool(generated_text or display_outputs)
+    display_output_count = len(display_outputs) if display_outputs else (1 if generated_text else 0)
+    result_output_count = display_output_count
+    if result_output_count <= 0:
+        observed_count = _safe_int(observed_request_count)
+        if observed_count > 0:
+            result_output_count = observed_count
+        elif ok and not dry_run:
+            result_output_count = expected_request_count
+        else:
+            result_output_count = 0
+    result_status = "complete" if ok and not dry_run else ("preflight" if ok and dry_run else "blocked")
+    result_display = (
+        "local-private"
+        if has_local_display_output
+        else ("hash-only-json" if getattr(args, "json", False) else "hash-only")
+    )
     source_saved_summary = payload.get("saved_summary") if isinstance(payload.get("saved_summary"), dict) else {}
     summary = {
         "schema": INFER_CLI_SCHEMA,
@@ -4517,6 +4551,17 @@ def _infer_summary_from_payload(
             "decoded_tokens_match": generation.get("decoded_tokens_match"),
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
+        },
+        "result": {
+            "status": result_status,
+            "generated_token_count": generated_tokens,
+            "max_new_tokens": max_new_tokens,
+            "generated_text_hash": generation.get("generated_text_hash"),
+            "output_count": result_output_count,
+            "display": result_display,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "public_artifact_safe": not has_local_display_output,
         },
         "route": route,
         "p2p": payload.get("p2p") if isinstance(payload.get("p2p"), dict) else {},
@@ -8519,6 +8564,9 @@ def print_infer(report: dict[str, Any]) -> None:
         f"{generation.get('generated_token_count')}/{generation.get('max_new_tokens')} "
         f"hash={generation.get('generated_text_hash')}"
     )
+    result = report.get("result") if isinstance(report.get("result"), dict) else {}
+    if result:
+        print(f"  result: {infer_result_text(result)}")
     batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
     if batch.get("enabled"):
         print(f"  batch: {batch_status_text(batch)}")
