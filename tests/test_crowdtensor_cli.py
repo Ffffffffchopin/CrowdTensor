@@ -10216,9 +10216,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["recommended_next_command"]["reason"], "confirm_live_preflight")
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --skip-live-preflight --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
             next_lines,
         )
+        check_command = next(item for item in report["next_commands"] if item["label"] == "check existing swarm")
+        self.assertNotIn("--skip-live-preflight", check_command["command_line"])
         self.assertIn(
             f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --coordinator-url http://127.0.0.1:8787",
             next_lines,

@@ -5668,6 +5668,7 @@ def _infer_command_args(
     include_observer: bool = False,
     coordinator_url_override: str = "",
     coordinator_port_override: int | None = None,
+    skip_live_preflight: bool | None = None,
 ) -> list[str]:
     command = ["crowdtensor", "infer"]
     resolved_mode = mode or getattr(args, "infer_mode", "local")
@@ -5717,7 +5718,12 @@ def _infer_command_args(
     use_dry_run = bool(getattr(args, "dry_run", False)) if dry_run is None else bool(dry_run)
     if use_dry_run:
         command.append("--dry-run")
-        if bool(getattr(args, "skip_live_preflight", False)):
+        use_skip_live_preflight = (
+            bool(getattr(args, "skip_live_preflight", False))
+            if skip_live_preflight is None
+            else bool(skip_live_preflight)
+        )
+        if use_skip_live_preflight:
             command.append("--skip-live-preflight")
     coordinator_url = coordinator_url_override or str(getattr(args, "coordinator_url", "") or "")
     peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "")
@@ -5830,6 +5836,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         include_admin=False,
         include_observer=True,
         coordinator_url_override=suggested_coordinator_url,
+        skip_live_preflight=False,
     )
     submit_command = _infer_command_args(
         args,
