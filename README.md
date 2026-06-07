@@ -84,9 +84,9 @@ use the positional prompt, `--prompt-text`/`--prompt`, or
 instead of guessing. Reports expose `output_request.include_output` while
 keeping `output_request.raw_generated_text_public` false in JSON and saved
 artifacts. Existing-swarm runs also include a safe `wait_progress` summary with
-poll count, accepted rows, endpoint readiness, observed token progress, and
-batch request progress so timeouts are actionable without exposing raw text;
-both `infer` and `generate` include `operator_action` suggestions for
+poll count, accepted rows, endpoint readiness, observed token progress, batch
+request progress, and safe last-error type so timeouts are actionable without
+exposing raw text; both `infer` and `generate` include `operator_action` suggestions for
 checking tokens, Miner health, admin API access, or timeout limits. They also
 print per-request token/target progress for bounded batch streams, mark missing
 stream slots, label rows with safe request ids or hash prefixes, and print

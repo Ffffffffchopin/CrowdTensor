@@ -38,6 +38,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "stream_endpoint_ready": False,
         }
         batch = dict(single, expected_request_count=2, observed_request_count=1, batch_generation_ready=False)
+        with_error = dict(single, last_error_type="HTTPError", last_error_detail="must not leak")
 
         self.assertEqual(
             cli.wait_progress_text(single),
@@ -47,6 +48,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.wait_progress_text(batch),
             "polls=2 accepted_rows=1 tokens=4/4 requests=1/2 batch_ready=False ledger=True stream=False",
         )
+        self.assertEqual(
+            cli.wait_progress_text(with_error),
+            "polls=2 accepted_rows=1 tokens=4/4 ledger=True stream=False last_error=HTTPError",
+        )
+        self.assertNotIn("must not leak", cli.wait_progress_text(with_error))
 
     def test_stream_progress_lines_renders_single_and_batch_progress(self) -> None:
         single = {
@@ -2471,7 +2477,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
         self.assertIn("  stream_events: 1 source=admin-results-ledger-fallback complete=False", rendered)
-        self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=False", rendered)
+        self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=False last_error=HTTPError", rendered)
+        self.assertNotIn("stream echoed CrowdTensor prompt", rendered)
+        self.assertNotIn("admin-secret", rendered)
         self.assertIn("  action: Generation reached 1/4 tokens before timeout", rendered)
         self.assertIn("  next[", rendered)
         self.assertIn("retry generation with longer timeout", rendered)

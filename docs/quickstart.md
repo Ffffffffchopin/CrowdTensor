@@ -89,9 +89,9 @@ batch. The CLI rejects mixed prompt sources instead of guessing. Reports expose
 `output_request.include_output` while keeping
 `output_request.raw_generated_text_public` false in JSON and saved artifacts.
 Existing-swarm reports include `wait_progress` with poll count, accepted rows,
-endpoint readiness, observed token progress, and batch request progress for safe
-timeout debugging; `infer` and `generate` turn that progress into a concrete
-`operator_action`.
+endpoint readiness, observed token progress, batch request progress, and safe
+last-error type for timeout debugging; `infer` and `generate` turn that progress
+into a concrete `operator_action`.
 Human output also includes per-request token/target progress for bounded batch
 streams, marks missing stream slots, labels rows with safe request ids or hash
 prefixes, and prints `next[...]` lines with safe, copyable follow-up commands.

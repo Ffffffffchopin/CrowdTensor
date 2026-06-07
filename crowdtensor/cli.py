@@ -520,6 +520,9 @@ def wait_progress_text(wait_progress: dict[str, Any]) -> str:
         f"ledger={wait_progress.get('ledger_endpoint_ready')}",
         f"stream={wait_progress.get('stream_endpoint_ready')}",
     ])
+    last_error = str(wait_progress.get("last_error_type") or "").strip()
+    if last_error:
+        parts.append(f"last_error={last_error}")
     return " ".join(parts)
 
 
