@@ -90,10 +90,11 @@ exposing raw text; both `infer` and `generate` include `operator_action`
 suggestions for checking tokens, Miner health, admin API access, or timeout
 limits. Live and summary stream progress use safe request ids or hash prefixes,
 print per-request token/target progress for bounded batch streams, mark missing
-stream slots, and print `next[...]` lines with safe follow-up commands. Human
-`infer` and `generate` output use your current local prompt so the next command
-is directly copyable; JSON reports and saved artifacts keep raw prompts and
-token values replaced with placeholders. Coordinator/session failure `detail` fields are
+stream slots, print `stream_issue` when a request is missing or incomplete, and
+print `next[...]` lines with safe follow-up commands. Human `infer` and
+`generate` output use your current local prompt so the next command is directly
+copyable; JSON reports and saved artifacts keep raw prompts and token values
+replaced with placeholders. Coordinator/session failure `detail` fields are
 redacted the same way, even if a remote endpoint echoes prompt text or tokens.
 When `ready_to_submit` is present, read
 `readiness_label` and `next_step` first:

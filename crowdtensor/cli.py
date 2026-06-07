@@ -561,6 +561,36 @@ def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
     return lines
 
 
+def stream_progress_issue_summary(progress: dict[str, Any]) -> str:
+    if not progress:
+        return ""
+    per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
+    expected_requests = _safe_int(progress.get("expected_request_count"), 1)
+    observed_requests = len(per_request)
+    target = _safe_int(progress.get("target_token_count") or progress.get("max_new_tokens"))
+    issues: list[str] = []
+    if expected_requests > 1 and observed_requests < expected_requests:
+        issues.append(f"missing_requests={expected_requests - observed_requests}/{expected_requests}")
+    if expected_requests > 1 or len(per_request) > 1:
+        for index in range(1, max(expected_requests, len(per_request), 1) + 1):
+            item = per_request[index - 1] if index - 1 < len(per_request) and isinstance(per_request[index - 1], dict) else {}
+            if not item:
+                issues.append(f"request[{index}]=missing")
+                continue
+            counts = item.get("observed_token_counts") or []
+            observed = _safe_int(item.get("max_observed_token_count")) or max((_safe_int(count) for count in counts), default=0)
+            item_target = _safe_int(item.get("target_token_count")) or target
+            if item_target and observed < item_target:
+                issues.append(f"request[{index}]={stream_request_label(item)}:{observed}/{item_target}")
+    elif not progress.get("stream_progress_complete"):
+        counts = progress.get("observed_token_counts") or []
+        observed = _safe_int(progress.get("max_observed_token_count")) or max((_safe_int(count) for count in counts), default=0)
+        request_item = per_request[0] if per_request and isinstance(per_request[0], dict) else {}
+        if target and observed < target:
+            issues.append(f"request={stream_request_label(request_item)}:{observed}/{target}")
+    return " ".join(issues)
+
+
 def stream_request_label(item: dict[str, Any]) -> str:
     if not item:
         return "missing"
@@ -3676,6 +3706,8 @@ def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
 
 def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
     progress = payload.get("wait_progress") if isinstance(payload.get("wait_progress"), dict) else {}
+    stream_report = payload.get("stream") if isinstance(payload.get("stream"), dict) else {}
+    stream_issue = str(stream_report.get("issue_summary") or "").strip()
     if not progress:
         return "Increase --timeout-seconds and confirm both stage Miners are running."
     if not progress.get("session_created"):
@@ -3694,6 +3726,8 @@ def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
         return "No accepted result rows appeared; confirm both stage Miners are joined, healthy, and advertising the requested backend."
     if expected_requests > 1 and observed_requests < expected_requests:
         return f"Only {observed_requests}/{expected_requests} batch results appeared; keep both stage Miners running and increase --timeout-seconds."
+    if expected_requests > 1 and stream_issue:
+        return f"Stream progress is incomplete ({stream_issue}); keep stage Miners running and increase --timeout-seconds."
     if observed > 0 and target > 0 and observed < target:
         return f"Generation reached {observed}/{target} tokens before timeout; increase --timeout-seconds or check slow stage Miner logs."
     if progress.get("stream_endpoint_ready") and _safe_int(progress.get("stream_event_count")) > 0:
@@ -6920,6 +6954,10 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
                 if coordinator_ready and coordinator_ready.get("ok") is False:
                     return "Dry-run request shape is valid, but Coordinator /ready is not reachable; start the Coordinator before submitting."
             return "Dry-run is verified; run the printed submit generation next command."
+        stream_report = report.get("stream") if isinstance(report.get("stream"), dict) else {}
+        stream_issue = str(stream_report.get("issue_summary") or "").strip()
+        if stream_report.get("enabled") and not stream_report.get("stream_generation_ready") and stream_issue:
+            return f"Generation completed, but stream progress is incomplete ({stream_issue}); retry with --stream if you need live token evidence."
         return ""
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     detail = " ".join(str(report.get(key) or "") for key in ["detail", "error"])
@@ -7765,6 +7803,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         source=stream_source,
         expected_request_count=len(prompt_texts),
     )
+    stream_issue = stream_progress_issue_summary(stream_progress) if stream_enabled else ""
     stream_ready = bool(
         stream_enabled
         and ok
@@ -7836,6 +7875,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "endpoint_ready": stream_endpoint_ready,
             "stream_generation_ready": stream_ready,
             "progress": stream_progress,
+            "issue_summary": stream_issue,
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
         },
@@ -7923,6 +7963,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
             )
             for line in stream_progress_lines(progress):
                 print(line)
+            if stream.get("issue_summary"):
+                print(f"  stream_issue: {stream.get('issue_summary')}")
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     if wait_progress:
         print(f"  wait: {wait_progress_text(wait_progress)}")
@@ -8120,6 +8162,8 @@ def print_infer(report: dict[str, Any]) -> None:
         progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
         for line in stream_progress_lines(progress):
             print(line)
+        if stream.get("issue_summary"):
+            print(f"  stream_issue: {stream.get('issue_summary')}")
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     if wait_progress:
         print(f"  wait: {wait_progress_text(wait_progress)}")

@@ -96,6 +96,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
+            cli.stream_progress_issue_summary(batch),
+            "missing_requests=1/3 request[2]=req-2:1/2 request[3]=missing",
+        )
+        self.assertEqual(
             cli.stream_request_label({"prompt_hash": "sha256:abcdef1234567890zz"}),
             "sha256:abcdef1234567890z",
         )
@@ -3625,6 +3629,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("public_swarm_generate_stream_ready", report["diagnosis_codes"])
         self.assertFalse(report["stream"]["stream_generation_ready"])
         self.assertFalse(report["stream"]["progress"]["per_request_progress_complete"])
+        self.assertEqual(report["stream"]["issue_summary"], "request[2]=req-2:1/2")
+        self.assertEqual(
+            report["operator_action"],
+            "Generation completed, but stream progress is incomplete (request[2]=req-2:1/2); retry with --stream if you need live token evidence.",
+        )
         self.assertEqual(report["stream"]["event_count"], 3)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -3636,8 +3645,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("  stream[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
         self.assertIn("  stream[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False", rendered)
+        self.assertIn("  stream_issue: request[2]=req-2:1/2", rendered)
+        self.assertIn("  action: Generation completed, but stream progress is incomplete (request[2]=req-2:1/2); retry with --stream if you need live token evidence.", rendered)
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
+        self.assertNotIn("first private prompt", rendered)
+        self.assertNotIn("second private prompt", rendered)
 
     def test_product_generate_batch_stream_prints_missing_prompt_progress(self) -> None:
         args = cli.parse_args([
@@ -3732,6 +3745,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertFalse(report["stream"]["stream_generation_ready"])
         self.assertFalse(report["stream"]["progress"]["per_request_progress_complete"])
+        self.assertEqual(
+            report["stream"]["issue_summary"],
+            "missing_requests=1/2 request[2]=missing",
+        )
+        self.assertEqual(
+            report["operator_action"],
+            "Generation completed, but stream progress is incomplete (missing_requests=1/2 request[2]=missing); retry with --stream if you need live token evidence.",
+        )
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
@@ -3742,6 +3763,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("  stream[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
         self.assertIn("  stream[2]: request=missing tokens=0/2 counts=[] complete=False missing=True", rendered)
+        self.assertIn("  stream_issue: missing_requests=1/2 request[2]=missing", rendered)
+        self.assertIn("  action: Generation completed, but stream progress is incomplete (missing_requests=1/2 request[2]=missing); retry with --stream if you need live token evidence.", rendered)
+        self.assertNotIn("first private prompt", rendered)
+        self.assertNotIn("second private prompt", rendered)
 
     def test_product_generate_live_stream_prints_safe_request_labels(self) -> None:
         args = cli.parse_args([
@@ -5837,7 +5862,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
         self.assertIn(
-            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787",
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
             next_lines,
         )
         self.assertIn(
@@ -5910,7 +5935,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor p2pd --port 8799 --run", next_lines)
         self.assertIn(
-            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --peer-bootstrap http://127.0.0.1:8799 --p2p",
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --peer-bootstrap http://127.0.0.1:8799 --p2p --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
             next_lines,
         )
         self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))

@@ -94,7 +94,8 @@ last-error type for timeout debugging; `infer` and `generate` turn that progress
 into a concrete `operator_action`.
 Live and summary stream progress use safe request ids or hash prefixes, include
 per-request token/target progress for bounded batch streams, mark missing stream
-slots, and print `next[...]` lines with safe, copyable follow-up commands.
+slots, print `stream_issue` when a request is missing or incomplete, and print
+`next[...]` lines with safe, copyable follow-up commands.
 Human `infer` and `generate` output use your current local prompt in those next
 commands; JSON reports and saved artifacts keep raw prompts and token values
 represented as placeholders.
