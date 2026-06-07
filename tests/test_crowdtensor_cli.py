@@ -3371,7 +3371,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  answer: local generated text must stay local", rendered)
         self.assertIn(
-            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
         self.assertIn("  result: status=complete tokens=2/2 outputs=1 display=local-private", rendered)
@@ -5331,7 +5331,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("  answer:  readable beta text", rendered)
         self.assertIn(
-            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
         self.assertLess(rendered.index("  answer:  readable beta text"), rendered.index("  local_output: "))
@@ -7215,7 +7215,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  answer[1]:  first output", rendered)
         self.assertIn("  answer[2]:  second output", rendered)
         self.assertIn(
-            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
@@ -7576,7 +7576,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  answer[1]:  first answer", rendered)
         self.assertIn("  answer[2]:  second answer", rendered)
         self.assertIn(
-            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
 
@@ -7604,7 +7604,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  answer: first line\n          second line\n", rendered)
         self.assertIn(
-            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
         self.assertIn(
@@ -7646,7 +7646,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  answer[1]: first one\n             second one\n", rendered)
         self.assertIn("  answer[2]: first two\n             second two\n", rendered)
         self.assertIn(
-            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
         self.assertNotIn("\nsecond one\n", rendered)

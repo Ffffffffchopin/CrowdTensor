@@ -907,7 +907,17 @@ def print_local_output_block(report: dict[str, Any]) -> bool:
                 print_answer_text(f"answer[{index}]", item.get("generated_text"))
                 printed_answer = True
     if printed_answer:
-        print(f"  answer_scope: {LOCAL_ANSWER_SCOPE_TEXT}")
+        answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+        if not answer_scope:
+            answer_scope = {
+                "scope_state": "terminal-visible",
+                "terminal_only": True,
+                "visible_in_terminal": True,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            }
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
     if has_output:
         print(f"  local_output: {local_output_terminal_text(local_output)}")
     return has_output
