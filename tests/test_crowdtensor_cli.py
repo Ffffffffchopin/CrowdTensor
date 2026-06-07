@@ -1866,6 +1866,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
     def test_generate_prompt_stdin_next_commands_keep_stdin_source_without_prompt_text(self) -> None:
         prompt = "Generate stdin prompt stays private"
+        output_dir = Path(self._tmp_dir())
         with patch.object(cli.sys, "stdin", io.StringIO(prompt + "\n")):
             args = cli.parse_args([
                 "generate",
@@ -1874,6 +1875,8 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "http://127.0.0.1:8787",
                 "--dry-run",
                 "--skip-live-preflight",
+                "--output-dir",
+                str(output_dir),
                 "--json",
             ])
 
@@ -1886,6 +1889,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(any("--prompt-text '<prompt>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn(prompt, encoded)
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn("this command reads stdin", markdown)
+        self.assertIn("printf %s '<prompt>' | crowdtensor generate", markdown)
+        self.assertIn("Commands with `--prompt-stdin` read the prompt from stdin", markdown)
+        self.assertNotIn(prompt, markdown)
 
     def test_generate_rejects_empty_prompt_stdin(self) -> None:
         with patch.object(cli.sys, "stdin", io.StringIO("")):
@@ -2077,6 +2085,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
     def test_infer_prompt_stdin_next_commands_keep_stdin_source_without_prompt_text(self) -> None:
         prompt = "Infer stdin prompt stays private"
+        output_dir = Path(self._tmp_dir())
         with patch.object(cli.sys, "stdin", io.StringIO(prompt + "\n")):
             args = cli.parse_args([
                 "infer",
@@ -2087,6 +2096,8 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "http://127.0.0.1:8787",
                 "--dry-run",
                 "--skip-live-preflight",
+                "--output-dir",
+                str(output_dir),
                 "--json",
             ])
 
@@ -2098,6 +2109,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(any("infer '<prompt>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn(prompt, encoded)
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("this command reads stdin", markdown)
+        self.assertIn("printf %s '<prompt>' | crowdtensor infer", markdown)
+        self.assertIn("Commands with `--prompt-stdin` read the prompt from stdin", markdown)
+        self.assertNotIn(prompt, markdown)
 
     def test_generate_rejects_ambiguous_prompt_sources(self) -> None:
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"

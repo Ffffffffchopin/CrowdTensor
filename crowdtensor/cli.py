@@ -612,6 +612,12 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
             "prompt per non-empty line in `prompts.txt` and replace the placeholder with "
             "`--prompt-texts-file prompts.txt`."
         )
+    if "--prompt-stdin" in command_text and INFER_PROMPT_PLACEHOLDER not in command_text:
+        notes.append(
+            "- Commands with `--prompt-stdin` read the prompt from stdin. To rerun safely, use "
+            "`printf %s '<prompt>' | ... --prompt-stdin` and replace `<prompt>` locally; saved artifacts "
+            "do not include raw prompt text."
+        )
     if requires_env:
         notes.append(f"- Set required environment variables before running commands: `{', '.join(requires_env)}`.")
     return notes
@@ -620,8 +626,15 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
 def markdown_prompt_input_hint(command_text: str) -> str:
     has_prompt = INFER_PROMPT_PLACEHOLDER in command_text
     has_batch = INFER_BATCH_PROMPTS_PLACEHOLDER in command_text
-    if not has_prompt and not has_batch:
+    has_stdin = "--prompt-stdin" in command_text
+    if not has_prompt and not has_batch and not has_stdin:
         return ""
+    if has_stdin:
+        stdin_command = pipe_prompt_placeholder_for_stdin(command_text)
+        return (
+            "- Prompt input: this command reads stdin. Safe copy form: "
+            f"`{stdin_command}`. Replace `{INFER_PROMPT_PLACEHOLDER}` locally; saved Markdown does not include raw prompt text."
+        )
     if has_prompt and has_batch:
         placeholders = f"`{INFER_PROMPT_PLACEHOLDER}` and `{INFER_BATCH_PROMPTS_PLACEHOLDER}`"
         noun = "local prompt inputs"
