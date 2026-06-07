@@ -4443,6 +4443,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["runtime_options"]["poll_interval"], 0.01)
         self.assertEqual(report["runtime_options"]["http_timeout"], 7.0)
         self.assertEqual(report["runtime_options"]["admin_results_limit"], 9)
+        self.assertTrue(report["runtime_options"]["public_artifact_safe"])
         self.assertEqual(
             report["recommended_next_command"]["reason_detail"],
             "Retry the same request with a longer timeout after incomplete or partial progress.",
@@ -4461,11 +4462,25 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("  stream_events: 1 source=admin-results-ledger-fallback complete=False", rendered)
         self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=False last_error=HTTPError", rendered)
+        self.assertIn(
+            "  runtime_options: timeout_seconds=1.0 poll_interval=0.01 http_timeout=7.0 admin_results_limit=9 public_artifact_safe=True",
+            rendered,
+        )
         self.assertNotIn("stream echoed CrowdTensor prompt", rendered)
         self.assertNotIn("admin-secret", rendered)
         self.assertIn("  action: Generation reached 1/4 tokens before timeout", rendered)
         self.assertIn("  next[", rendered)
         self.assertIn("retry generation with longer timeout", rendered)
+        persisted = json.loads((Path(report["output_dir"]) / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["runtime_options"]["timeout_seconds"], 1.0)
+        self.assertEqual(persisted["runtime_options"]["poll_interval"], 0.01)
+        self.assertEqual(persisted["runtime_options"]["http_timeout"], 7.0)
+        self.assertEqual(persisted["runtime_options"]["admin_results_limit"], 9)
+        markdown = (Path(report["output_dir"]) / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Runtime options: `timeout_seconds=1.0 poll_interval=0.01 http_timeout=7.0 admin_results_limit=9 public_artifact_safe=True`",
+            markdown,
+        )
 
     def test_product_generate_batch_timeout_prints_request_progress(self) -> None:
         args = cli.parse_args([
@@ -10222,6 +10237,12 @@ class CrowdTensorCliTests(unittest.TestCase):
                 self.assertFalse(report["ok"], report)
                 self.assertIn(expected, report["operator_action"])
                 self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
+                if case_index == 0:
+                    self.assertEqual(report["runtime_options"]["timeout_seconds"], 90.0)
+                    self.assertEqual(report["runtime_options"]["poll_interval"], 0.5)
+                    self.assertEqual(report["runtime_options"]["http_timeout"], 8.0)
+                    self.assertEqual(report["runtime_options"]["admin_results_limit"], 7)
+                    self.assertTrue(report["runtime_options"]["public_artifact_safe"])
                 next_lines = [item["command_line"] for item in report["next_commands"]]
                 expected_retry_timeout = "180" if case_index == 0 else "240"
                 expected_extra = (
@@ -10257,10 +10278,29 @@ class CrowdTensorCliTests(unittest.TestCase):
                 self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
                 persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
                 self.assertIn(expected, persisted["operator_action"])
+                if case_index == 0:
+                    self.assertEqual(persisted["runtime_options"]["timeout_seconds"], 90.0)
+                    self.assertEqual(persisted["runtime_options"]["poll_interval"], 0.5)
+                    self.assertEqual(persisted["runtime_options"]["http_timeout"], 8.0)
+                    self.assertEqual(persisted["runtime_options"]["admin_results_limit"], 7)
                 self.assertIn(
                     f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds {expected_retry_timeout}{expected_extra}",
                     [item["command_line"] for item in persisted["next_commands"]],
                 )
+                if case_index == 0:
+                    markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+                    self.assertIn(
+                        "- Runtime options: `timeout_seconds=90.0 poll_interval=0.5 http_timeout=8.0 admin_results_limit=7 public_artifact_safe=True`",
+                        markdown,
+                    )
+                    stdout = io.StringIO()
+                    with contextlib.redirect_stdout(stdout):
+                        cli.print_infer(report)
+                    rendered = stdout.getvalue()
+                    self.assertIn(
+                        "  runtime_options: timeout_seconds=90.0 poll_interval=0.5 http_timeout=8.0 admin_results_limit=7 public_artifact_safe=True",
+                        rendered,
+                    )
 
     def test_infer_existing_requires_route(self) -> None:
         output_dir = Path(self._tmp_dir())

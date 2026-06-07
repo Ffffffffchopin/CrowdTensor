@@ -1111,6 +1111,16 @@ def output_request_text(output_request: dict[str, Any]) -> str:
     )
 
 
+def runtime_options_text(options: dict[str, Any]) -> str:
+    return (
+        f"timeout_seconds={options.get('timeout_seconds')} "
+        f"poll_interval={options.get('poll_interval')} "
+        f"http_timeout={options.get('http_timeout')} "
+        f"admin_results_limit={options.get('admin_results_limit')} "
+        f"public_artifact_safe={bool(options.get('public_artifact_safe', True))}"
+    )
+
+
 def output_display_text(display: dict[str, Any]) -> str:
     return (
         f"terminal={display.get('terminal_display')} "
@@ -6122,6 +6132,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    runtime_options = summary.get("runtime_options") if isinstance(summary.get("runtime_options"), dict) else {}
     output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
@@ -6221,6 +6232,10 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Saved JSON: `{saved_summary.get('path')}`",
         f"- Artifacts: `{artifact_summary_text(artifact_summary)}`",
         f"- Output request: `{output_request_text(output_request)}`",
+    ])
+    if runtime_options:
+        lines.append(f"- Runtime options: `{runtime_options_text(runtime_options)}`")
+    lines.extend([
         "",
         "## Next Commands",
         "",
@@ -6539,6 +6554,13 @@ def _infer_summary_from_payload(
         "output_request": {
             "include_output": bool(getattr(args, "include_output", False)),
             "raw_generated_text_public": False,
+            "public_artifact_safe": True,
+        },
+        "runtime_options": {
+            "timeout_seconds": float(getattr(args, "timeout_seconds", 420.0) or 420.0),
+            "poll_interval": float(getattr(args, "poll_interval", 1.0) or 1.0),
+            "http_timeout": float(getattr(args, "http_timeout", 30.0) or 30.0),
+            "admin_results_limit": int(getattr(args, "admin_results_limit", 50) or 50),
             "public_artifact_safe": True,
         },
         "saved_summary": {
@@ -9318,6 +9340,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    runtime_options = summary.get("runtime_options") if isinstance(summary.get("runtime_options"), dict) else {}
     output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
@@ -9405,6 +9428,10 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Saved JSON: `{saved_summary.get('path')}`",
         f"- Artifacts: `{artifact_summary_text(artifact_summary)}`",
         f"- Output request: `{output_request_text(output_request)}`",
+    ])
+    if runtime_options:
+        lines.append(f"- Runtime options: `{runtime_options_text(runtime_options)}`")
+    lines.extend([
         "",
         "## Next Commands",
         "",
@@ -10690,6 +10717,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
+    runtime_options = report.get("runtime_options") if isinstance(report.get("runtime_options"), dict) else {}
+    if runtime_options:
+        print(f"  runtime_options: {runtime_options_text(runtime_options)}")
     route = report.get("route") if isinstance(report.get("route"), dict) else {}
     if route:
         print(
@@ -10987,6 +11017,9 @@ def print_infer(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
+    runtime_options = report.get("runtime_options") if isinstance(report.get("runtime_options"), dict) else {}
+    if runtime_options:
+        print(f"  runtime_options: {runtime_options_text(runtime_options)}")
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     if local_output.get("note"):
         print(f"  note: {local_output.get('note')}")
