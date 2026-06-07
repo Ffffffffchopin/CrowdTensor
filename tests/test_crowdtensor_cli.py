@@ -9954,6 +9954,98 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
 
+    def test_print_generate_no_local_answer_shows_answer_scope(self) -> None:
+        report = {
+            "ok": False,
+            "diagnosis_codes": ["generation_timeout"],
+            "result": {"status": "blocked", "output_count": 0, "display": "hash-only"},
+            "generation": {"generated_token_count": 0, "max_new_tokens": 4, "generated_text_hash": ""},
+            "output_display": {
+                "terminal_display": "hash-only",
+                "terminal_text_available": False,
+                "saved_artifact_display": "hash-only",
+                "json_stdout_display": "hash-only-json",
+                "include_output_requested": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "local_output": {
+                "available": False,
+                "output_count": 0,
+                "source": "",
+                "public_artifact_safe": True,
+            },
+            "stream": {},
+            "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            rendered,
+        )
+        self.assertNotIn("  answer: ", rendered)
+        self.assertLess(rendered.index("  output_display: "), rendered.index("  answer_scope: "))
+
+    def test_print_infer_no_local_answer_shows_answer_scope(self) -> None:
+        report = {
+            "ok": False,
+            "mode": "existing",
+            "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+            "diagnosis_codes": ["coordinator_route_missing"],
+            "generation": {"generated_token_count": 0, "max_new_tokens": 8, "generated_text_hash": ""},
+            "output_display": {
+                "terminal_display": "hash-only",
+                "terminal_text_available": False,
+                "saved_artifact_display": "hash-only",
+                "json_stdout_display": "hash-only-json",
+                "include_output_requested": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "local_output": {
+                "available": False,
+                "output_count": 0,
+                "source": "",
+                "public_artifact_safe": True,
+            },
+            "route": {"route_source": "coordinator-url", "route_ready": False},
+            "stream": {},
+            "output_dir": "/tmp/infer",
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            rendered,
+        )
+        self.assertNotIn("  answer: ", rendered)
+        self.assertLess(rendered.index("  output_display: "), rendered.index("  answer_scope: "))
+
     def test_print_infer_multiline_answer_is_indented(self) -> None:
         report = {
             "ok": True,

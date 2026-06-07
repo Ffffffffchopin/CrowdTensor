@@ -1180,7 +1180,15 @@ def print_local_output_block(report: dict[str, Any]) -> bool:
         print(f"  local_output: {local_output_terminal_text(local_output)}")
     elif _safe_int(local_output.get("output_count")) > 0:
         print(f"  local_output: {local_output_terminal_text(local_output)}")
-    return has_output
+    return printed_answer
+
+
+def print_answer_scope_line(report: dict[str, Any], *, already_printed: bool = False) -> None:
+    if already_printed or bool(report.get("json_mode")):
+        return
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
 
 
 def prompt_summary_text(prompt: dict[str, Any]) -> str:
@@ -10667,7 +10675,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
     output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
     if output_display:
         print(f"  output_display: {output_display_text(output_display)}")
-    print_local_output_block(report)
+    answer_scope_printed = print_local_output_block(report)
+    print_answer_scope_line(report, already_printed=answer_scope_printed)
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
@@ -10957,7 +10966,8 @@ def print_infer(report: dict[str, Any]) -> None:
     output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
     if output_display:
         print(f"  output_display: {output_display_text(output_display)}")
-    print_local_output_block(report)
+    answer_scope_printed = print_local_output_block(report)
+    print_answer_scope_line(report, already_printed=answer_scope_printed)
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
