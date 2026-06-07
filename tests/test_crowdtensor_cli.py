@@ -5329,8 +5329,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["local_output"]["public_artifact_safe"])
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Model: `sshleifer/tiny-gpt2` backend=`cpu`", markdown)
-        self.assertIn("- Prompt: count=`1` hash=`", markdown)
-        self.assertIn("raw_public=`False`", markdown)
+        self.assertIn("- Prompt: `count=1 hash=", markdown)
+        self.assertIn("raw_public=False`", markdown)
         self.assertIn(
             "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=`local-private-task-state`",
             markdown,
@@ -5404,6 +5404,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False", stdout.getvalue())
+        self.assertIn("  prompt: count=1 hash=", stdout.getvalue())
+        self.assertIn("raw_public=False", stdout.getvalue())
         self.assertIn(
             "  output_request: include_output=True raw_generated_text_public=False public_artifact_safe=True",
             stdout.getvalue(),
@@ -5480,8 +5482,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Mode: `existing`", markdown)
         self.assertIn("- Model: `sshleifer/tiny-gpt2` backend=`cpu`", markdown)
-        self.assertIn("- Prompt: count=`1` hash=`", markdown)
-        self.assertIn("raw_public=`False`", markdown)
+        self.assertIn("- Prompt: `count=1 hash=", markdown)
+        self.assertIn("raw_public=False`", markdown)
         self.assertIn("- Generation: `16/16` hash=`sha256:generated`", markdown)
         self.assertIn("- Wait: `polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False`", markdown)
         self.assertIn(

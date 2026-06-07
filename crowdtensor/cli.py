@@ -541,6 +541,14 @@ def output_request_text(output_request: dict[str, Any]) -> str:
     )
 
 
+def prompt_summary_text(prompt: dict[str, Any]) -> str:
+    return (
+        f"count={prompt.get('prompt_count')} "
+        f"hash={prompt.get('prompt_hash')} "
+        f"raw_public={bool(prompt.get('raw_prompt_public'))}"
+    )
+
+
 def local_output_text(local_output: dict[str, Any]) -> str:
     available = (
         bool(local_output.get("available"))
@@ -4293,12 +4301,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Mode: `{summary.get('mode')}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         f"- Model: `{model.get('hf_model_id')}` backend=`{model.get('backend')}`",
-        (
-            "- Prompt: "
-            f"count=`{prompt.get('prompt_count')}` "
-            f"hash=`{prompt.get('prompt_hash')}` "
-            f"raw_public=`{bool(prompt.get('raw_prompt_public'))}`"
-        ),
+        f"- Prompt: `{prompt_summary_text(prompt)}`",
         (
             "- Generation: "
             f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
@@ -8507,6 +8510,9 @@ def print_infer(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
+    prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
+    if prompt:
+        print(f"  prompt: {prompt_summary_text(prompt)}")
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     print(
         "  generation: "
