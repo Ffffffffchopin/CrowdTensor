@@ -163,6 +163,19 @@ crowdtensor public-real-llm-swarm-beta release \
 This command starts local stand-ins for the public swarm route, runs a tiny real
 GPT split across stage 0 and stage 1, validates decoded tokens, checks evidence,
 and writes artifacts under `dist/`.
+When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`
+first, then `dist/public-real-llm-swarm-beta/support_bundle.json` if you need
+diagnostics. The terminal also prints the final inference status: model and
+token target, external/P2P/Public Swarm v2 token counts, accepted stage rows,
+batch/stream readiness, KV-cache hit counts, and any `not_completed` blockers.
+Safe shareable files are `public_real_llm_swarm_beta.json`,
+`public_real_llm_swarm_beta.md`, and `support_bundle.json`; do not share
+private env files, registries, runtime state, raw task logs, prompts,
+generated text, generated token ids, credentials, activations, leases, or
+idempotency material. If `ok` is false, start with the Markdown
+`Not Completed` section and the printed `not_completed` lines; they map to the
+missing token target, KV-cache, route hardening, batch/stream, external
+runtime, or requeue evidence that must be rerun or imported.
 
 Useful readiness fields in the JSON output include:
 
