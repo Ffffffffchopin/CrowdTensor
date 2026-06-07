@@ -512,6 +512,7 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     inspect_first = str(review_summary.get("inspect_first") or artifact_summary.get("inspect_first") or "")
     recommended_label = str(recommended.get("label") or review_summary.get("recommended_label") or "")
     recommended_reason = str(recommended.get("reason") or review_summary.get("recommended_reason") or "")
+    recommended_reason_detail = str(recommended.get("reason_detail") or next_reason_detail(recommended_reason))
     attention = str(review_summary.get("attention") or "")
     attention_detail = str(review_summary.get("attention_detail") or attention_display_text(attention))
     command = markdown_command_line(recommended) if recommended.get("command_line") else ""
@@ -533,6 +534,8 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     if recommended_label:
         reason = f" reason=`{recommended_reason}`" if recommended_reason else ""
         lines.append(f"- Recommended: `{recommended_label}`{reason}")
+        if recommended_reason_detail:
+            lines.append(f"- Reason: {recommended_reason_detail}")
     if command:
         lines.append(f"- Copy command: `{command}`")
         prompt_hint = markdown_prompt_input_hint(command)
@@ -9729,6 +9732,11 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"reason={recommended.get('reason')} "
             f"{rendered_command}{suffix}"
         )
+        reason_detail = str(
+            recommended.get("reason_detail") or next_reason_detail(str(recommended.get("reason") or ""))
+        )
+        if reason_detail:
+            print(f"  recommended_reason: {reason_detail}")
     for index, item in enumerate(report.get("next_commands") or [], start=1):
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
@@ -10008,6 +10016,11 @@ def print_infer(report: dict[str, Any]) -> None:
             f"reason={recommended.get('reason')} "
             f"{rendered_command}{suffix}"
         )
+        reason_detail = str(
+            recommended.get("reason_detail") or next_reason_detail(str(recommended.get("reason") or ""))
+        )
+        if reason_detail:
+            print(f"  recommended_reason: {reason_detail}")
     for index, item in enumerate(report.get("next_commands") or [], start=1):
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []

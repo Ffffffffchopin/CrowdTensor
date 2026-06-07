@@ -986,6 +986,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn("- Recommended: `check generation route` reason=`confirm_live_preflight`", markdown)
+        self.assertIn("- Reason: Run live preflight before submitting because readiness was skipped.", markdown)
         self.assertIn("- Copy command: `crowdtensor generate --max-new-tokens 16", markdown)
         self.assertIn(
             "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render your local prompt for copy/paste when available.",
@@ -1082,6 +1083,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(f"  output_dir: {output_dir}", rendered)
+        self.assertIn(
+            "  recommended_reason: Run live preflight before submitting because readiness was skipped.",
+            rendered,
+        )
         self.assertNotIn("stream_events: None", rendered)
 
     def test_generate_main_prints_copyable_local_prompt_without_persisting_it(self) -> None:
@@ -3155,6 +3160,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Recommended next: `submit generation` reason=`rerun_generation` command=`CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
             markdown,
         )
+        self.assertIn("- Reason: Rerun the generation request.", markdown)
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Generation: `2/2` hash=`sha256:generated`", markdown)
         self.assertIn("- Result: `status=complete tokens=2/2 outputs=1 display=hash-only-json hash=sha256:generated public_artifact_safe=True`", markdown)
@@ -3214,6 +3220,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(f"  output_dir: {output_dir}", rendered)
+        self.assertIn("  recommended_reason: Rerun the generation request.", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
     def test_product_generate_human_output_is_not_persisted_to_summary(self) -> None:
@@ -6627,6 +6634,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "recommended_next: submit inference reason=rerun_inference CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
             stdout.getvalue(),
         )
+        self.assertIn("  recommended_reason: Rerun the inference request.", stdout.getvalue())
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer", stdout.getvalue())
         self.assertIn("# requires CROWDTENSOR_ADMIN_TOKEN", stdout.getvalue())
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -6765,6 +6773,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- State: `completed`", markdown)
         self.assertIn("- Next step: `rerun_or_review_artifacts`", markdown)
         self.assertIn("- Recommended: `submit inference` reason=`rerun_inference`", markdown)
+        self.assertIn("- Reason: Rerun the inference request.", markdown)
         self.assertIn("- Copy command: `CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing", markdown)
         self.assertIn(
             "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render your local prompt for copy/paste when available.",
