@@ -542,8 +542,13 @@ def output_request_text(output_request: dict[str, Any]) -> str:
 
 
 def local_output_text(local_output: dict[str, Any]) -> str:
+    available = (
+        bool(local_output.get("available"))
+        if "available" in local_output
+        else bool(local_output.get("generated_text") or local_output.get("outputs"))
+    )
     return (
-        f"available={bool(local_output.get('generated_text') or local_output.get('outputs'))} "
+        f"available={available} "
         f"display_only={bool(local_output.get('display_only'))} "
         f"public_artifact_safe={bool(local_output.get('public_artifact_safe'))}"
     )
@@ -4258,6 +4263,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
     source_report = summary.get("source_report") if isinstance(summary.get("source_report"), dict) else {}
     ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
@@ -4297,6 +4303,15 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         )
     if wait_progress:
         lines.append(f"- Wait: `{wait_progress_text(wait_progress)}`")
+    if local_output:
+        lines.append(
+            "- Local output: "
+            f"`{local_output_text(local_output)}` "
+            f"count=`{local_output.get('output_count')}` "
+            f"source=`{local_output.get('source')}`"
+        )
+    if summary.get("local_output_note"):
+        lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if stream.get("issue_summary"):
         lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
     if summary.get("operator_action"):

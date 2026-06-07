@@ -5318,6 +5318,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["local_output"]["available"])
         self.assertFalse(persisted["local_output"]["display_only"])
         self.assertTrue(persisted["local_output"]["public_artifact_safe"])
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=`local-private-task-state`",
+            markdown,
+        )
+        self.assertIn(
+            "- Local output note: Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
+            markdown,
+        )
+        self.assertNotIn(generated_text, markdown)
 
     def test_infer_existing_uses_generate_and_does_not_persist_raw_text(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -5452,6 +5462,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Mode: `existing`", markdown)
         self.assertIn("- Generation: `16/16` hash=`sha256:generated`", markdown)
         self.assertIn("- Wait: `polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False`", markdown)
+        self.assertIn(
+            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=``",
+            markdown,
+        )
+        self.assertIn(
+            "- Local output note: Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
+            markdown,
+        )
         self.assertIn(
             f"- Source generate summary: json=`{output_dir / 'generate' / 'generate_summary.json'}` markdown=`{output_dir / 'generate' / 'generate_summary.md'}`",
             markdown,
@@ -5916,6 +5934,16 @@ class CrowdTensorCliTests(unittest.TestCase):
             persisted["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
         )
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`0` source=``",
+            markdown,
+        )
+        self.assertIn(
+            "- Local output note: Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
+            markdown,
+        )
+        self.assertNotIn("must not be returned in json", markdown)
 
     def test_print_infer_batch_outputs_are_not_duplicated(self) -> None:
         report = {
