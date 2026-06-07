@@ -165,6 +165,34 @@ class PublicSwarmTrialPackTests(unittest.TestCase):
         self.assertTrue(report["trial"]["generated_token_count_ready"])
         self.assertIn("serve_join_generate_trial_ready", report["diagnosis_codes"])
         self.assertTrue(calls)
+        saved = json.loads((output_dir / "trial" / "public_swarm_trial.json").read_text(encoding="utf-8"))
+        self.assertFalse(saved["output_request"]["include_output"])
+        self.assertFalse(saved["output_request"]["raw_prompt_public"])
+        self.assertFalse(saved["output_request"]["raw_generated_text_public"])
+        self.assertFalse(saved["output_request"]["generated_token_ids_public"])
+        self.assertTrue(saved["output_request"]["public_artifact_safe"])
+        self.assertEqual(saved["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(saved["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(saved["answer_scope"]["terminal_only"])
+        self.assertEqual(saved["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(saved["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(saved["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(saved["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(saved["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(saved["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(saved["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(saved["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(saved["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (output_dir / "trial" / "public_swarm_trial.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn(
+            "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            markdown,
+        )
+        support = json.loads((output_dir / "trial" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
     def test_local_loopback_degrades_to_cpu_fallback_when_hf_missing(self) -> None:
         output_dir = self._tmp_dir()
@@ -206,6 +234,9 @@ class PublicSwarmTrialPackTests(unittest.TestCase):
         self.assertIn("gpu_generation_evidence_import_ready", report["diagnosis_codes"])
         for fragment in pack.SECRET_FRAGMENTS:
             self.assertNotIn(fragment, encoded)
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
 
 if __name__ == "__main__":
