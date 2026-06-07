@@ -531,14 +531,21 @@ def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
             if not isinstance(item, dict):
                 continue
             counts = item.get("observed_token_counts") or []
+            observed = _safe_int(item.get("max_observed_token_count")) or max((_safe_int(count) for count in counts), default=0)
+            target = _safe_int(item.get("target_token_count")) or _safe_int(progress.get("target_token_count"))
             lines.append(
                 f"  stream[{index}]: "
+                f"tokens={observed}/{target} "
                 f"counts={counts} "
                 f"complete={item.get('stream_progress_complete')}"
             )
     elif progress:
+        counts = progress.get("observed_token_counts") or []
+        observed = _safe_int(progress.get("max_observed_token_count")) or max((_safe_int(count) for count in counts), default=0)
+        target = _safe_int(progress.get("target_token_count") or progress.get("max_new_tokens"))
         lines.append(
             "  stream_progress: "
+            f"tokens={observed}/{target} "
             f"counts={progress.get('observed_token_counts') or []} "
             f"complete={progress.get('stream_progress_complete')}"
         )

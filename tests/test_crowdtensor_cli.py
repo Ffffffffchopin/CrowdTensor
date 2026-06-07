@@ -51,24 +51,37 @@ class CrowdTensorCliTests(unittest.TestCase):
     def test_stream_progress_lines_renders_single_and_batch_progress(self) -> None:
         single = {
             "observed_token_counts": [1, 2],
+            "max_observed_token_count": 2,
+            "target_token_count": 2,
             "stream_progress_complete": True,
         }
         batch = {
+            "target_token_count": 2,
             "per_request_progress": [
-                {"observed_token_counts": [1, 2], "stream_progress_complete": True},
-                {"observed_token_counts": [1], "stream_progress_complete": False},
+                {
+                    "observed_token_counts": [1, 2],
+                    "max_observed_token_count": 2,
+                    "target_token_count": 2,
+                    "stream_progress_complete": True,
+                },
+                {
+                    "observed_token_counts": [1],
+                    "max_observed_token_count": 1,
+                    "target_token_count": 2,
+                    "stream_progress_complete": False,
+                },
             ]
         }
 
         self.assertEqual(
             cli.stream_progress_lines(single),
-            ["  stream_progress: counts=[1, 2] complete=True"],
+            ["  stream_progress: tokens=2/2 counts=[1, 2] complete=True"],
         )
         self.assertEqual(
             cli.stream_progress_lines(batch),
             [
-                "  stream[1]: counts=[1, 2] complete=True",
-                "  stream[2]: counts=[1] complete=False",
+                "  stream[1]: tokens=2/2 counts=[1, 2] complete=True",
+                "  stream[2]: tokens=1/2 counts=[1] complete=False",
             ],
         )
 
@@ -3482,8 +3495,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  stream_events: 4 source=admin-session-stream complete=True requests=2/2",
             rendered,
         )
-        self.assertIn("  stream[1]: counts=[1, 2] complete=True", rendered)
-        self.assertIn("  stream[2]: counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[2]: tokens=2/2 counts=[1, 2] complete=True", rendered)
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
         self.assertNotIn("raw one", encoded)
@@ -3596,8 +3609,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  stream_events: 3 source=admin-session-stream complete=False requests=2/2",
             rendered,
         )
-        self.assertIn("  stream[1]: counts=[1, 2] complete=True", rendered)
-        self.assertIn("  stream[2]: counts=[1] complete=False", rendered)
+        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[2]: tokens=1/2 counts=[1] complete=False", rendered)
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
 
@@ -5264,8 +5277,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
-        self.assertIn("  stream[1]: counts=[1, 2] complete=True", rendered)
-        self.assertIn("  stream[2]: counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[2]: tokens=2/2 counts=[1, 2] complete=True", rendered)
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)
