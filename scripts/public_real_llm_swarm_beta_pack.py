@@ -1572,16 +1572,67 @@ def artifact_summary(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def recommended_check_command(report: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    if mode not in {"release", MODE_LOCAL_MODEL_VARIANT}:
+        return {}
+    output_dir = str(report.get("output_dir") or "").strip()
+    if not output_dir:
+        return {}
+    max_new_tokens = int((report.get("beta") if isinstance(report.get("beta"), dict) else {}).get("max_new_tokens") or 16)
+    model_id = str((report.get("beta") if isinstance(report.get("beta"), dict) else {}).get("hf_model_id") or DEFAULT_HF_MODEL_ID)
+    beta_report = Path(output_dir) / "public_real_llm_swarm_beta.json"
+    check_dir = Path(f"{output_dir}-check")
+    command = [
+        "crowdtensor",
+        "public-real-llm-swarm-beta",
+        "check",
+    ]
+    if model_id != DEFAULT_HF_MODEL_ID:
+        command.extend(["--hf-model-id", model_id])
+    command.extend([
+        "--beta-report",
+        str(beta_report),
+        "--output-dir",
+        str(check_dir),
+        "--max-new-tokens",
+        str(max_new_tokens),
+        "--json",
+    ])
+    return {
+        "label": "validate beta report",
+        "reason": "check_current_beta_report",
+        "command_line": " ".join(command),
+        "beta_report": str(beta_report),
+        "output_dir": str(check_dir),
+        "check_source": "beta-report",
+        "public_artifact_safe": True,
+    }
+
+
 def review_summary(report: dict[str, Any]) -> dict[str, Any]:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     not_completed = [str(item) for item in (report.get("not_completed") if isinstance(report.get("not_completed"), list) else [])]
     artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else artifact_summary(report)
     ready = bool(report.get("ok") is True and beta.get("ready") is True and not not_completed)
-    next_step = "share_public_artifacts" if ready else ("review_not_completed" if not_completed else "review_diagnostics")
+    check_command = (
+        report.get("recommended_check_command")
+        if isinstance(report.get("recommended_check_command"), dict)
+        else recommended_check_command(report)
+    )
+    next_step = "run_beta_report_check" if ready and check_command else ("share_public_artifacts" if ready else ("review_not_completed" if not_completed else "review_diagnostics"))
     operator_action = [
         str(item)
         for item in (report.get("operator_action") if isinstance(report.get("operator_action"), list) else [])
     ]
+    if ready and check_command:
+        summary_text = "Ready: run the beta-report check, then share the public Markdown, public JSON, and support bundle."
+    elif ready:
+        summary_text = "Ready: share the public Markdown, public JSON, and support bundle."
+    elif not_completed:
+        summary_text = "Blocked: review the Not Completed section, then rerun the Beta check after fixing the missing evidence."
+    else:
+        summary_text = "Blocked: review diagnosis codes and safety errors, then rerun the Beta check after fixing the issue."
     return {
         "schema": REVIEW_SUMMARY_SCHEMA,
         "state": "ready" if ready else "blocked",
@@ -1590,6 +1641,7 @@ def review_summary(report: dict[str, Any]) -> dict[str, Any]:
         "inspect_first": artifacts.get("inspect_first"),
         "machine_readable": artifacts.get("machine_readable"),
         "support_bundle": artifacts.get("support_bundle"),
+        "recommended_check_command": check_command,
         "shareable_paths": artifacts.get("shareable_paths") or [],
         "not_completed_count": len(not_completed),
         "not_completed_preview": not_completed[:8],
@@ -1598,15 +1650,7 @@ def review_summary(report: dict[str, Any]) -> dict[str, Any]:
         "raw_prompt_public": False,
         "raw_generated_text_public": False,
         "generated_token_ids_public": False,
-        "summary": (
-            "Ready: share the public Markdown, public JSON, and support bundle."
-            if ready
-            else (
-                "Blocked: review the Not Completed section, then rerun the Beta check after fixing the missing evidence."
-                if not_completed
-                else "Blocked: review diagnosis codes and safety errors, then rerun the Beta check after fixing the issue."
-            )
-        ),
+        "summary": summary_text,
     }
 
 
@@ -1963,6 +2007,20 @@ def build_aggregate(
         if not kv_cache.get("model", {}).get("compatible"):
             codes.add("kv_cache_model_mismatch")
 
+    operator_actions = [
+        "Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.",
+        "Release mode also fresh-runs the Petals-class P2P candidate local-smoke and the local Public Swarm v2 `p2pd` / `serve --p2p` / `join --p2p` / `generate --p2p` proof; evidence-import mode uses `--p2p-report` and `--public-swarm-v2-report`.",
+        "Share this top-level JSON/Markdown artifact; raw prompts, generated text, token ids, activations, and credentials are excluded.",
+        "Rotate tokens after temporary public HTTP/Kaggle proofs.",
+    ]
+    check_preview = recommended_check_command({
+        "mode": args.mode,
+        "output_dir": str(output_dir),
+        "beta": {"hf_model_id": args.hf_model_id, "max_new_tokens": args.max_new_tokens},
+    })
+    if check_preview:
+        operator_actions.insert(0, f"Validate this report before sharing: {check_preview.get('command_line')}")
+
     report = {
         "schema": SCHEMA,
         "generated_at": utc_now(),
@@ -2058,12 +2116,7 @@ def build_aggregate(
             "gpu_report": str(Path(args.gpu_report).resolve()) if args.gpu_report else "",
         },
         "safety": safety_block(),
-        "operator_action": [
-            "Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.",
-            "Release mode also fresh-runs the Petals-class P2P candidate local-smoke and the local Public Swarm v2 `p2pd` / `serve --p2p` / `join --p2p` / `generate --p2p` proof; evidence-import mode uses `--p2p-report` and `--public-swarm-v2-report`.",
-            "Share this top-level JSON/Markdown artifact; raw prompts, generated text, token ids, activations, and credentials are excluded.",
-            "Rotate tokens after temporary public HTTP/Kaggle proofs.",
-        ],
+        "operator_action": operator_actions,
         "limitations": limitations(),
         "not_completed": [] if release_ready else [
             item for item, ok in [
@@ -2359,6 +2412,7 @@ def build_local_model_variant(args: argparse.Namespace, *, output_dir: Path, run
         },
         "safety": safety_block(),
         "operator_action": [
+            f"Validate this local model variant report before sharing: {recommended_check_command({'mode': MODE_LOCAL_MODEL_VARIANT, 'output_dir': str(output_dir), 'beta': {'hf_model_id': args.hf_model_id, 'max_new_tokens': args.max_new_tokens}}).get('command_line')}",
             "Use release or evidence-import mode for retained external Kaggle and Petals-class P2P candidate claims.",
             "Use this mode only to prove a non-default small Hugging Face model across the local Coordinator-backed product, v2 P2P, real-P2P local requeue, and KV-cache paths.",
         ],
@@ -2396,6 +2450,11 @@ def render_markdown(report: dict[str, Any]) -> str:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     shareable_paths = artifact_overview.get("shareable_paths") if isinstance(artifact_overview.get("shareable_paths"), list) else []
+    recommended = (
+        review.get("recommended_check_command")
+        if isinstance(review.get("recommended_check_command"), dict)
+        else report.get("recommended_check_command") if isinstance(report.get("recommended_check_command"), dict) else {}
+    )
     raw_operator_actions = report.get("operator_action")
     if isinstance(raw_operator_actions, list):
         operator_actions = [str(item) for item in raw_operator_actions]
@@ -2421,6 +2480,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- inspect first: `{review.get('inspect_first')}`",
         f"- support bundle: `{review.get('support_bundle')}`",
         f"- not completed count: `{review.get('not_completed_count')}`",
+        f"- recommended check: `{recommended.get('command_line') or 'none'}`",
         "",
         "## Operator Action",
         "",
@@ -2492,6 +2552,11 @@ def print_human_summary(report: dict[str, Any]) -> None:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = (
+        report.get("recommended_check_command")
+        if isinstance(report.get("recommended_check_command"), dict)
+        else review.get("recommended_check_command") if isinstance(review.get("recommended_check_command"), dict) else {}
+    )
     raw_operator_actions = report.get("operator_action")
     if isinstance(raw_operator_actions, list):
         operator_actions = [str(item) for item in raw_operator_actions]
@@ -2519,6 +2584,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
     print(f"  kv_cache hits: stage0={stage0.get('hit_count')} stage1={stage1.get('hit_count')}")
     if review:
         print(f"  review: state={review.get('state')} next_step={review.get('next_step')} inspect_first={review.get('inspect_first')}")
+    if recommended:
+        print(f"  recommended_check: {recommended.get('command_line')}")
     if operator_actions:
         print("  operator_action:")
         for item in operator_actions[:4]:
@@ -2603,6 +2670,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     report.setdefault("output_request", output_request_summary())
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
+    report["recommended_check_command"] = recommended_check_command(report)
     cleanup = cleanup_release_private_artifacts(output_dir)
     report["release_private_artifact_cleanup"] = cleanup
     if cleanup["private_artifacts_cleaned"]:
@@ -2664,6 +2732,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "readiness": report.get("readiness"),
         "artifact_summary": report.get("artifact_summary"),
         "review_summary": report.get("review_summary"),
+        "recommended_check_command": report.get("recommended_check_command"),
         "operator_action": report.get("operator_action"),
         "not_completed": report.get("not_completed"),
         "release_private_artifact_cleanup": report.get("release_private_artifact_cleanup"),

@@ -902,8 +902,27 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
     if payload.get("ok") is True and beta.get("ready") is True and not not_completed:
         if review_summary.get("state") != "ready" or review_summary.get("ready") is not True:
             errors.append("review_summary_ready_state_mismatch")
-        if review_summary.get("next_step") != "share_public_artifacts":
+        if review_summary.get("next_step") != "run_beta_report_check":
             errors.append("review_summary_next_step_mismatch")
+        recommended_check = payload.get("recommended_check_command") if isinstance(payload.get("recommended_check_command"), dict) else {}
+        review_recommended_check = review_summary.get("recommended_check_command") if isinstance(review_summary.get("recommended_check_command"), dict) else {}
+        command_line = str(recommended_check.get("command_line") or "")
+        if not recommended_check:
+            errors.append("recommended_check_command_missing")
+        if review_recommended_check != recommended_check:
+            errors.append("review_summary_recommended_check_mismatch")
+        for fragment in [
+            "crowdtensor public-real-llm-swarm-beta check",
+            "--beta-report",
+            "public_real_llm_swarm_beta.json",
+            f"--max-new-tokens {expected_tokens}",
+            "--json",
+        ]:
+            if fragment not in command_line:
+                errors.append(f"recommended_check_command_missing:{fragment}")
+        model_id = str(beta.get("hf_model_id") or pack.DEFAULT_HF_MODEL_ID)
+        if model_id != pack.DEFAULT_HF_MODEL_ID and f"--hf-model-id {model_id}" not in command_line:
+            errors.append("recommended_check_command_model_missing")
     if review_summary.get("public_artifact_safe") is not True:
         errors.append("review_summary_public_artifact_safe_mismatch")
     if review_summary.get("raw_prompt_public") is not False:
@@ -959,6 +978,8 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         machine_review = machine.get("review_summary") if isinstance(machine.get("review_summary"), dict) else {}
         if machine_review.get("next_step") != review_summary.get("next_step"):
             errors.append("machine_readable_review_next_step_mismatch")
+        if machine.get("recommended_check_command") != payload.get("recommended_check_command"):
+            errors.append("machine_readable_recommended_check_mismatch")
     markdown = artifact_text(
         payload,
         "public_real_llm_swarm_beta_markdown",
@@ -986,6 +1007,9 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("markdown_support_bundle_missing")
         if "- machine readable: `public_real_llm_swarm_beta.json`" not in markdown:
             errors.append("markdown_machine_readable_missing")
+        recommended_line = str((payload.get("recommended_check_command") if isinstance(payload.get("recommended_check_command"), dict) else {}).get("command_line") or "")
+        if recommended_line and recommended_line not in markdown:
+            errors.append("markdown_recommended_check_missing")
         if "- answer scope: `no-local-answer`" not in markdown:
             errors.append("markdown_answer_scope_missing")
         for item in operator_actions[:3]:
@@ -1027,6 +1051,8 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         support_review = support.get("review_summary") if isinstance(support.get("review_summary"), dict) else {}
         if support_review.get("next_step") != review_summary.get("next_step"):
             errors.append("support_bundle_review_next_step_mismatch")
+        if support.get("recommended_check_command") != payload.get("recommended_check_command"):
+            errors.append("support_bundle_recommended_check_mismatch")
         support_artifacts = support.get("artifact_summary") if isinstance(support.get("artifact_summary"), dict) else {}
         if support_artifacts.get("inspect_first") != "public_real_llm_swarm_beta.md":
             errors.append("support_bundle_inspect_first_mismatch")
