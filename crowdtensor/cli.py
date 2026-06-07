@@ -11581,19 +11581,45 @@ def print_petals_class_p2p_candidate(report: dict[str, Any]) -> None:
 
 def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    product_path = readiness.get("product_path") if isinstance(readiness.get("product_path"), dict) else {}
+    external_kaggle = readiness.get("external_kaggle") if isinstance(readiness.get("external_kaggle"), dict) else {}
+    p2p_candidate = readiness.get("p2p_candidate") if isinstance(readiness.get("p2p_candidate"), dict) else {}
+    public_swarm_v2 = readiness.get("public_swarm_v2") if isinstance(readiness.get("public_swarm_v2"), dict) else {}
+    usable_kv_cache = readiness.get("usable_p2p_kv_cache") if isinstance(readiness.get("usable_p2p_kv_cache"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
+    product_batch = beta.get("batch") if isinstance(beta.get("batch"), dict) else {}
+    product_stream = beta.get("stream") if isinstance(beta.get("stream"), dict) else {}
+    kv_stage0 = usable_kv_cache.get("stage0") if isinstance(usable_kv_cache.get("stage0"), dict) else {}
+    kv_stage1 = usable_kv_cache.get("stage1") if isinstance(usable_kv_cache.get("stage1"), dict) else {}
     print("CrowdTensor Public Real-LLM Swarm Inference Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {beta.get('ready')}")
+    print(f"  model: {beta.get('hf_model_id')} tokens={beta.get('max_new_tokens')}")
     print(f"  cpu_default_ready: {beta.get('cpu_default_ready')}")
     print(f"  external_two_stage_ready: {beta.get('external_two_stage_ready')}")
     print(f"  external_stage_requeue_ready: {beta.get('external_stage_requeue_ready')}")
     print(f"  p2p_ready_product_beta: {beta.get('p2p_ready_product_beta')}")
+    print(f"  product tokens: {product_path.get('max_new_tokens')}")
+    print(f"  external tokens: {external_kaggle.get('generated_token_count')}/{external_kaggle.get('required_generated_token_count')}")
+    print(f"  p2p tokens: {p2p_candidate.get('generated_token_count')}/{p2p_candidate.get('required_generated_token_count')}")
+    print(f"  public_swarm_v2_ready: {beta.get('public_swarm_v2_ready')}")
+    print(
+        "  public_swarm_v2 tokens: "
+        f"{public_swarm_v2.get('generated_token_count')}/{public_swarm_v2.get('required_generated_token_count')} "
+        f"accepted_rows={public_swarm_v2.get('accepted_rows')}/{public_swarm_v2.get('required_stage_rows')}"
+    )
+    print(f"  public_swarm_v2 real_p2p_local: route={beta.get('public_swarm_v2_real_p2p_local_ready')} requeue={beta.get('public_swarm_v2_real_p2p_local_requeue_ready')}")
+    print(f"  batch ready: product={product_batch.get('batch_generation_ready')} p2p={beta.get('p2p_batch_ready')} v2={beta.get('public_swarm_v2_batch_ready')}")
+    print(f"  stream ready: product={product_stream.get('stream_generation_ready')} p2p={beta.get('p2p_stream_ready')} v2={beta.get('public_swarm_v2_stream_ready')}")
+    print(f"  kv_cache_ready: {beta.get('kv_cache_ready')}")
+    print(f"  kv_cache hits: stage0={kv_stage0.get('hit_count')} stage1={kv_stage1.get('hit_count')}")
     print(f"  cuda_optional_fail_closed_ready: {beta.get('cuda_optional_fail_closed_ready')}")
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
@@ -11603,6 +11629,12 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    if not_completed:
+        print("  not_completed:")
+        for item in not_completed[:8]:
+            print(f"    - {item}")
+        if len(not_completed) > 8:
+            print(f"    - ... {len(not_completed) - 8} more")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 

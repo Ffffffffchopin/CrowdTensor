@@ -5785,11 +5785,44 @@ class CrowdTensorCliTests(unittest.TestCase):
             "output_dir": "dist/beta",
             "beta": {
                 "ready": True,
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "max_new_tokens": 16,
                 "cpu_default_ready": True,
                 "external_two_stage_ready": True,
                 "external_stage_requeue_ready": True,
                 "p2p_ready_product_beta": True,
+                "p2p_batch_ready": True,
+                "p2p_stream_ready": True,
+                "public_swarm_v2_ready": True,
+                "public_swarm_v2_batch_ready": True,
+                "public_swarm_v2_stream_ready": True,
+                "public_swarm_v2_real_p2p_local_ready": True,
+                "public_swarm_v2_real_p2p_local_requeue_ready": True,
+                "kv_cache_ready": True,
                 "cuda_optional_fail_closed_ready": True,
+                "batch": {"batch_generation_ready": True},
+                "stream": {"stream_generation_ready": True},
+            },
+            "readiness": {
+                "product_path": {"max_new_tokens": 16},
+                "external_kaggle": {
+                    "generated_token_count": 16,
+                    "required_generated_token_count": 16,
+                },
+                "p2p_candidate": {
+                    "generated_token_count": 16,
+                    "required_generated_token_count": 16,
+                },
+                "public_swarm_v2": {
+                    "generated_token_count": 16,
+                    "required_generated_token_count": 16,
+                    "accepted_rows": 32,
+                    "required_stage_rows": 32,
+                },
+                "usable_p2p_kv_cache": {
+                    "stage0": {"hit_count": 15},
+                    "stage1": {"hit_count": 15},
+                },
             },
             "output_request": {
                 "include_output": False,
@@ -5822,6 +5855,15 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_real_llm_swarm_beta(report)
         output = stdout.getvalue()
 
+        self.assertIn("  model: sshleifer/tiny-gpt2 tokens=16", output)
+        self.assertIn("  external tokens: 16/16", output)
+        self.assertIn("  p2p tokens: 16/16", output)
+        self.assertIn("  public_swarm_v2 tokens: 16/16 accepted_rows=32/32", output)
+        self.assertIn("  public_swarm_v2 real_p2p_local: route=True requeue=True", output)
+        self.assertIn("  batch ready: product=True p2p=True v2=True", output)
+        self.assertIn("  stream ready: product=True p2p=True v2=True", output)
+        self.assertIn("  kv_cache_ready: True", output)
+        self.assertIn("  kv_cache hits: stage0=15 stage1=15", output)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
@@ -5834,6 +5876,58 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             output,
         )
+
+    def test_public_real_llm_swarm_beta_prints_blockers(self) -> None:
+        report = {
+            "schema": "public_real_llm_swarm_beta_v1",
+            "cli_schema": "public_real_llm_swarm_beta_cli_v1",
+            "ok": False,
+            "mode": "release",
+            "output_dir": "dist/beta",
+            "beta": {
+                "ready": False,
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "max_new_tokens": 16,
+                "cpu_default_ready": True,
+                "external_two_stage_ready": False,
+                "external_stage_requeue_ready": False,
+                "p2p_ready_product_beta": True,
+                "public_swarm_v2_ready": False,
+                "kv_cache_ready": False,
+            },
+            "readiness": {
+                "public_swarm_v2": {
+                    "generated_token_count": 8,
+                    "required_generated_token_count": 16,
+                    "accepted_rows": 16,
+                    "required_stage_rows": 32,
+                },
+                "usable_p2p_kv_cache": {
+                    "stage0": {"hit_count": 7},
+                    "stage1": {"hit_count": 7},
+                },
+            },
+            "diagnosis_codes": ["public_real_llm_swarm_beta_blocked"],
+            "not_completed": [
+                "external Kaggle two-stage real LLM proof",
+                "Public Swarm v2 generated token target",
+                "persistent dual-stage KV-cache reuse",
+            ],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_real_llm_swarm_beta(report)
+        output = stdout.getvalue()
+
+        self.assertIn("  ready: False", output)
+        self.assertIn("  public_swarm_v2 tokens: 8/16 accepted_rows=16/32", output)
+        self.assertIn("  kv_cache hits: stage0=7 stage1=7", output)
+        self.assertIn("  not_completed:", output)
+        self.assertIn("    - external Kaggle two-stage real LLM proof", output)
+        self.assertIn("    - Public Swarm v2 generated token target", output)
+        self.assertIn("    - persistent dual-stage KV-cache reuse", output)
 
     def test_usable_swarm_cli_wraps_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
