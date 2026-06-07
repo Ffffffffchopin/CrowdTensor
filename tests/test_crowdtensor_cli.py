@@ -4699,6 +4699,8 @@ class CrowdTensorCliTests(unittest.TestCase):
                             "existing",
                             "--output-dir",
                             str(output_dir),
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
                             "--prompt-texts",
                             cli.INFER_BATCH_PROMPTS_PLACEHOLDER,
                             "--dry-run",
@@ -4732,6 +4734,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertNotIn(f"crowdtensor infer '{prompt}' --mode existing", rendered)
+        self.assertNotIn("--prompt-text '<prompt>'", rendered)
+        self.assertNotIn("--prompt-text 'first prompt'", rendered)
         self.assertNotIn(cli.INFER_BATCH_PROMPTS_PLACEHOLDER, rendered)
 
     def test_infer_existing_batch_outputs_are_display_only(self) -> None:
