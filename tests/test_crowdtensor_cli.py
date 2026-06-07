@@ -57,6 +57,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         }
         batch = {
             "target_token_count": 2,
+            "expected_request_count": 3,
             "per_request_progress": [
                 {
                     "observed_token_counts": [1, 2],
@@ -80,8 +81,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(
             cli.stream_progress_lines(batch),
             [
-                "  stream[1]: tokens=2/2 counts=[1, 2] complete=True",
-                "  stream[2]: tokens=1/2 counts=[1] complete=False",
+                "  stream[1]: tokens=2/2 counts=[1, 2] complete=True missing=False",
+                "  stream[2]: tokens=1/2 counts=[1] complete=False missing=False",
+                "  stream[3]: tokens=0/2 counts=[] complete=False missing=True",
             ],
         )
 
@@ -3495,8 +3497,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  stream_events: 4 source=admin-session-stream complete=True requests=2/2",
             rendered,
         )
-        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True", rendered)
-        self.assertIn("  stream[2]: tokens=2/2 counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
+        self.assertIn("  stream[2]: tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
         self.assertNotIn("raw one", encoded)
@@ -3609,10 +3611,114 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  stream_events: 3 source=admin-session-stream complete=False requests=2/2",
             rendered,
         )
-        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True", rendered)
-        self.assertIn("  stream[2]: tokens=1/2 counts=[1] complete=False", rendered)
+        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
+        self.assertIn("  stream[2]: tokens=1/2 counts=[1] complete=False missing=False", rendered)
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
+
+    def test_product_generate_batch_stream_prints_missing_prompt_progress(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--stream",
+            "--json",
+        ])
+
+        def event(request_id: str, prompt_hash: str, count: int) -> dict:
+            return {
+                "schema": "session_stream_event_v1",
+                "session_id": "real-llm-session-batch-stream",
+                "request_id": request_id,
+                "prompt_hash": prompt_hash,
+                "generated_token_count": count,
+                "max_new_tokens": 2,
+                "generation_step": count - 1,
+                "generated_text_hash": f"sha256:{request_id}-{count}",
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            }
+
+        final_row = {
+            "validation": {
+                "request_count": 2,
+                "generated_token_count": 2,
+                "max_new_tokens": 2,
+                "generated_text_hash": "sha256:batch",
+                "decoded_tokens_match": True,
+                "inference_results": [
+                    {
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:req-1-2",
+                        "decoded_tokens_match": True,
+                    },
+                    {
+                        "request_id": "req-2",
+                        "prompt_hash": "sha256:p2",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:req-2-2",
+                        "decoded_tokens_match": True,
+                    },
+                ],
+            }
+        }
+        stream_payload = {
+            "schema": "admin_session_stream_v1",
+            "events": [
+                event("req-1", "sha256:p1", 1),
+                event("req-1", "sha256:p1", 2),
+            ],
+        }
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-batch-stream",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 2,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            if path.startswith("/admin/session-stream"):
+                return stream_payload
+            return {"results": [final_row]}
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_generate(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertFalse(report["stream"]["stream_generation_ready"])
+        self.assertFalse(report["stream"]["progress"]["per_request_progress_complete"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  stream_events: 2 source=admin-session-stream complete=False requests=1/2",
+            rendered,
+        )
+        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
+        self.assertIn("  stream[2]: tokens=0/2 counts=[] complete=False missing=True", rendered)
 
     def test_product_generate_batch_stream_ledger_fallback_expands_batch_rows(self) -> None:
         args = cli.parse_args([
@@ -5277,8 +5383,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
-        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True", rendered)
-        self.assertIn("  stream[2]: tokens=2/2 counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[1]: tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
+        self.assertIn("  stream[2]: tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)

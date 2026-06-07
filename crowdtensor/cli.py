@@ -526,18 +526,20 @@ def wait_progress_text(wait_progress: dict[str, Any]) -> str:
 def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
     per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
     lines = []
-    if len(per_request) > 1:
-        for index, item in enumerate(per_request, start=1):
-            if not isinstance(item, dict):
-                continue
+    expected_requests = _safe_int(progress.get("expected_request_count"), 1)
+    if expected_requests > 1 or len(per_request) > 1:
+        target = _safe_int(progress.get("target_token_count") or progress.get("max_new_tokens"))
+        for index in range(1, max(expected_requests, len(per_request), 1) + 1):
+            item = per_request[index - 1] if index - 1 < len(per_request) and isinstance(per_request[index - 1], dict) else {}
             counts = item.get("observed_token_counts") or []
             observed = _safe_int(item.get("max_observed_token_count")) or max((_safe_int(count) for count in counts), default=0)
-            target = _safe_int(item.get("target_token_count")) or _safe_int(progress.get("target_token_count"))
+            item_target = _safe_int(item.get("target_token_count")) or target
             lines.append(
                 f"  stream[{index}]: "
-                f"tokens={observed}/{target} "
+                f"tokens={observed}/{item_target} "
                 f"counts={counts} "
-                f"complete={item.get('stream_progress_complete')}"
+                f"complete={bool(item.get('stream_progress_complete'))} "
+                f"missing={not bool(item)}"
             )
     elif progress:
         counts = progress.get("observed_token_counts") or []
