@@ -10249,6 +10249,53 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "public_swarm_inference_beta_v1")
 
+    def test_print_public_swarm_beta_outputs_scope_summary(self) -> None:
+        report = {
+            "schema": "public_swarm_inference_beta_v1",
+            "cli_schema": "public_swarm_inference_beta_cli_v1",
+            "ok": True,
+            "mode": "product-beta",
+            "beta": {"ready": True},
+            "output_dir": "/tmp/public-swarm-beta",
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "diagnosis_codes": ["public_swarm_inference_beta_ready"],
+            "artifacts": {},
+        }
+
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            cli.print_public_swarm_inference_beta(report)
+
+        output = stream.getvalue()
+        self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
+        self.assertIn("answer_scope: state=no-local-answer", output)
+        self.assertIn("saved_json=hash-only", output)
+        self.assertIn("shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False", output)
+        self.assertIn("generated_token_ids_public=False", output)
+
     def test_public_swarm_beta_rc_wraps_rc_pack_and_redacts_tokens(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []

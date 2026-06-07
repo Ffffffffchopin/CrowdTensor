@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts import public_swarm_inference_beta_check as check
 from scripts import public_swarm_inference_beta_pack as pack
 
 
@@ -341,6 +342,33 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertTrue(report["safety"]["p2p_lite_discovery_only"])
         self.assertTrue(report["artifacts"]["public_swarm_product_rc_json"]["present"])
         self.assertTrue(report["artifacts"]["cpu_inference_beta_json"]["present"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertFalse(report["answer_scope"]["raw_prompt_public"])
+        self.assertFalse(report["answer_scope"]["raw_generated_text_public"])
+        self.assertFalse(report["answer_scope"]["generated_token_ids_public"])
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (output_dir / "public_swarm_inference_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn(
+            "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            markdown,
+        )
         self.assertTrue(calls)
 
     def test_product_beta_blocks_when_cpu_fallback_missing(self) -> None:
@@ -435,6 +463,11 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("two_stage_join_pack_ready", report["diagnosis_codes"])
         self.assertNotIn("operator-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(check.output_scope_errors(report), [])
+        broken = dict(report)
+        broken["output_request"] = {**report["output_request"], "include_output": True}
+        self.assertIn("output_request_include_output_mismatch", check.output_scope_errors(broken))
         self.assertTrue(calls)
 
 
