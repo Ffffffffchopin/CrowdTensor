@@ -2320,6 +2320,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
         "",
+        "## Not Completed",
+        "",
+    ])
+    not_completed = report.get("not_completed") or []
+    lines.extend(f"- {item}" for item in not_completed) if not_completed else lines.append("- none")
+    lines.extend([
+        "",
         "## Boundaries",
         "",
     ])

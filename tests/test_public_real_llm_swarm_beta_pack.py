@@ -473,6 +473,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(report["readiness"]["usable_p2p_kv_cache"]["ready"])
         self.assertIn("public_real_llm_swarm_beta_kv_cache_missing", report["diagnosis_codes"])
         self.assertIn("persistent dual-stage KV-cache reuse", report["not_completed"])
+        markdown = (output_dir / "beta" / "public_real_llm_swarm_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Not Completed", markdown)
+        self.assertIn("- persistent dual-stage KV-cache reuse", markdown)
 
     def test_evidence_import_blocks_when_public_swarm_v2_report_missing(self) -> None:
         output_dir = self._tmp_dir()
@@ -507,6 +510,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(report["readiness"]["public_swarm_v2"]["ready"])
         self.assertIn("public_swarm_v2_token_target_missing", report["diagnosis_codes"])
         self.assertIn("Public Swarm v2 ordinary P2P user path", report["not_completed"])
+        markdown = (output_dir / "beta" / "public_real_llm_swarm_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Not Completed", markdown)
+        self.assertIn("- Public Swarm v2 ordinary P2P user path", markdown)
 
     def test_evidence_import_blocks_when_public_swarm_v2_batch_or_stream_missing(self) -> None:
         output_dir = self._tmp_dir()
@@ -554,6 +560,10 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("public_swarm_v2_stream_generation_missing", report["diagnosis_codes"])
         self.assertIn("Public Swarm v2 batch generation", report["not_completed"])
         self.assertIn("Public Swarm v2 stream generation", report["not_completed"])
+        markdown = (output_dir / "beta" / "public_real_llm_swarm_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Not Completed", markdown)
+        self.assertIn("- Public Swarm v2 batch generation", markdown)
+        self.assertIn("- Public Swarm v2 stream generation", markdown)
 
     def test_evidence_import_blocks_when_public_swarm_v2_real_p2p_local_route_missing(self) -> None:
         output_dir = self._tmp_dir()
