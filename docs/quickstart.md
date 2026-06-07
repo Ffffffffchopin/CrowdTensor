@@ -91,7 +91,12 @@ redacted. When human output shows generated text, it prints `answer:` or
 Markdown `What To Do Next` and `Details` sections repeat that saved JSON and
 Markdown contain no generated text. `local_output`
 adds safe output `count` and `source` fields such as
-`local-private-task-state` or `coordinator-validation`.
+`local-private-task-state` or `coordinator-validation`. JSON mode can still
+report completed generation through `json-suppressed` plus redacted
+`local_output` metadata such as `saved_redacted=True count=N`; that means
+output exists, but the raw answer is intentionally hidden from machine-readable
+stdout and saved artifacts. Use non-JSON human mode when you need a local
+terminal answer.
 Pick one prompt source per command: positional prompt,
 `--prompt-text`/`--prompt`, `--prompt-file prompt.txt` for a UTF-8 single
 prompt file, `--prompt-stdin` for an explicit stdin single prompt, or
