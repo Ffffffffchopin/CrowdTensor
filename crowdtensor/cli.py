@@ -421,6 +421,21 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
     return notes
 
 
+def _infer_prompt_redaction_values(args: argparse.Namespace) -> list[str]:
+    values: list[str] = []
+    try:
+        prompts = parse_prompt_texts_arg(str(getattr(args, "prompt_text", "") or ""), str(getattr(args, "prompt_texts", "") or ""))
+    except ValueError:
+        prompts = [str(getattr(args, "prompt_text", "") or ""), str(getattr(args, "prompt_texts", "") or "")]
+    for prompt in prompts:
+        if prompt:
+            values.append(prompt)
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    if prompt_texts:
+        values.append(prompt_texts)
+    return unique_redaction_values(values)
+
+
 def stage_preflight_missing_text(stage_preflight: dict[str, Any]) -> str:
     missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
     if missing:
@@ -4541,6 +4556,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     mode = getattr(args, "infer_mode", "local")
+    prompt_redactions = _infer_prompt_redaction_values(args)
     if mode == "existing":
         generate_args = argparse.Namespace(
             prompt_text=args.prompt_text,
@@ -4611,6 +4627,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             runner=runner,
             cwd=ROOT,
             timeout_seconds=int(max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 900.0),
+            redact_secrets=prompt_redactions,
         )
         if not payload:
             payload = {
@@ -4690,6 +4707,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         runner=runner,
         cwd=ROOT,
         timeout_seconds=int(max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 1800.0),
+        redact_secrets=prompt_redactions,
     )
     if not payload:
         payload = {

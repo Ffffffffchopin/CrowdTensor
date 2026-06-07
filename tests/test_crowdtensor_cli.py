@@ -465,6 +465,15 @@ class CrowdTensorCliTests(unittest.TestCase):
             ),
         )
 
+    def test_infer_prompt_redaction_values_include_batch_items_and_raw_batch(self) -> None:
+        args = argparse.Namespace(prompt_text="", prompt_texts="first private prompt,second private prompt")
+
+        values = cli._infer_prompt_redaction_values(args)
+
+        self.assertIn("first private prompt", values)
+        self.assertIn("second private prompt", values)
+        self.assertIn("first private prompt,second private prompt", values)
+
     def test_serve_help_shows_inference_flow_examples(self) -> None:
         stdout = io.StringIO()
 
@@ -5050,6 +5059,39 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["batch"]["enabled"])
         self.assertEqual(report["prompt"]["prompt_count"], 2)
         self.assertTrue(calls)
+
+    def test_infer_local_failure_redacts_prompt_from_step_output(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor private prompt"
+        args = cli.parse_args([
+            "infer",
+            prompt,
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "8",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(command[command.index("--prompt-text") + 1], prompt)
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=1,
+                stdout=f"no json because {prompt} failed\n",
+                stderr=f"runtime echoed {prompt}\n",
+            )
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("<redacted>", report["step"]["stderr_tail"])
+        self.assertIn("<redacted>", report["step"]["stdout_tail"])
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertNotIn(prompt, markdown)
 
     def test_infer_full_evidence_uses_public_swarm_v2_local_gate(self) -> None:
         output_dir = Path(self._tmp_dir())
