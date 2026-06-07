@@ -765,11 +765,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("submit generation after live preflight", labels)
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --include-output",
+            f"crowdtensor generate --max-new-tokens 16 --output-dir {output_dir} --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --dry-run --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}} --stream --include-output",
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --stream --include-output",
+            f"crowdtensor generate --max-new-tokens 16 --output-dir {output_dir} --coordinator-url http://127.0.0.1:8787 --backend cuda --hf-model-id distilgpt2 --prompt-text '<prompt>' --stream --include-output",
             next_lines,
         )
         self.assertNotIn("CrowdTensor prompt", encoded)
@@ -967,6 +967,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["session_request"]["prompt_chars"], len(cli.DEFAULT_PRODUCT_GENERATE_PROMPT))
         self.assertNotIn(cli.DEFAULT_PRODUCT_GENERATE_PROMPT, encoded)
         self.assertIn("prompt_hash", encoded)
+        self.assertFalse(report["output_dir_explicit"])
+        self.assertFalse(any("--output-dir" in item["command_line"] for item in report["next_commands"]))
 
     def test_product_generate_dry_run_checks_coordinator_and_stage_preflight(self) -> None:
         args = cli.parse_args([
@@ -2313,7 +2315,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["artifacts"]["generate_summary"]["present"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
+            f"crowdtensor generate --max-new-tokens 2 --output-dir {output_dir} --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
             next_lines,
         )
         self.assertTrue(any("CROWDTENSOR_ADMIN_TOKEN" in item.get("requires_env", []) for item in report["next_commands"]))

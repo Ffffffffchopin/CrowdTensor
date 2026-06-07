@@ -4497,6 +4497,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             prompt_text=args.prompt_text,
             prompt_texts=args.prompt_texts,
             output_dir=str(output_dir / "generate"),
+            output_dir_explicit=True,
             scenario_id=args.scenario_id,
             max_new_tokens=args.max_new_tokens,
             backend=args.backend,
@@ -6271,6 +6272,7 @@ def _product_cli_generate_command(
     hf_model_id: str,
     dry_run: bool,
     max_new_tokens: int = 16,
+    output_dir: str = "",
     prompt_text: str = "",
     prompt_texts: str = "",
     swarm_id: str = "default",
@@ -6284,6 +6286,8 @@ def _product_cli_generate_command(
         "--max-new-tokens",
         str(max_new_tokens),
     ]
+    if output_dir:
+        command.extend(["--output-dir", output_dir])
     if p2p:
         command.append("--p2p")
         if swarm_id != "default":
@@ -7160,6 +7164,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
     coordinator_url = str(route.get("coordinator_url") or "")
     backend = str(session_request.get("backend") or route.get("backend") or "cpu")
     hf_model_id = str(session_request.get("hf_model_id") or route.get("hf_model_id") or "sshleifer/tiny-gpt2")
+    output_dir = str(report.get("output_dir") or "") if report.get("output_dir_explicit") else ""
     batch = session_request.get("batch") if isinstance(session_request.get("batch"), dict) else {}
     try:
         request_count = int(batch.get("request_count") or session_request.get("request_count") or 1)
@@ -7202,6 +7207,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         hf_model_id=hf_model_id,
         dry_run=True,
         max_new_tokens=max_new_tokens,
+        output_dir=output_dir,
         prompt_text=prompt_placeholder,
         prompt_texts=prompt_texts_placeholder,
         swarm_id=swarm_id,
@@ -7227,6 +7233,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 hf_model_id=hf_model_id,
                 dry_run=False,
                 max_new_tokens=max_new_tokens,
+                output_dir=output_dir,
                 prompt_text=prompt_placeholder,
                 prompt_texts=prompt_texts_placeholder,
                 swarm_id=swarm_id,
@@ -7301,6 +7308,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 hf_model_id=hf_model_id,
                 dry_run=False,
                 max_new_tokens=max_new_tokens,
+                output_dir=output_dir,
                 prompt_text=prompt_placeholder,
                 prompt_texts=prompt_texts_placeholder,
                 swarm_id=swarm_id,
@@ -7682,6 +7690,7 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
 
 def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
+    output_dir_explicit = bool(getattr(args, "output_dir_explicit", False))
     prompt_texts = parse_prompt_texts_arg(args.prompt_text, getattr(args, "prompt_texts", ""))
     prompt_text = prompt_texts[0]
     batch_enabled = len(prompt_texts) > 1
@@ -7742,6 +7751,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "ok": bool(route.get("usable_now") if args.p2p else route.get("coordinator_url_present")),
             "mode": "generate",
             "dry_run": True,
+            "output_dir": str(output_dir),
+            "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
@@ -7783,6 +7794,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
+            "output_dir": str(output_dir),
+            "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
@@ -7809,6 +7822,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
+            "output_dir": str(output_dir),
+            "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
@@ -7821,6 +7836,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
+            "output_dir": str(output_dir),
+            "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
@@ -7860,6 +7877,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
+            "output_dir": str(output_dir),
+            "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
             "batch": session_request.get("batch"),
             "route": route,
@@ -8038,6 +8057,8 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         "ok": ok,
         "mode": "generate",
         "dry_run": False,
+        "output_dir": str(output_dir),
+        "output_dir_explicit": output_dir_explicit,
         "session_request": session_request,
         "batch": {
             "enabled": batch_enabled,
@@ -11964,6 +11985,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if args.idle_sleep <= 0:
             raise SystemExit("--idle-sleep must be positive")
     if args.command == "generate":
+        args.output_dir_explicit = bool(argv and "--output-dir" in argv)
         prompt_sources = [
             name
             for name, value in [
