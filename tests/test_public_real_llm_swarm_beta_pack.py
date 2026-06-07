@@ -1735,6 +1735,22 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(result["schema"], check.SCHEMA)
         self.assertEqual(result["max_new_tokens"], 16)
         self.assertIn("public_real_llm_swarm_beta_check_ready", result["diagnosis_codes"])
+        self.assertEqual(result["artifact_summary"]["schema"], check.ARTIFACT_SUMMARY_SCHEMA)
+        self.assertTrue(result["artifact_summary"]["inspect_first"].endswith("public_real_llm_swarm_beta.md"))
+        self.assertTrue(result["artifact_summary"]["machine_readable"].endswith("public_real_llm_swarm_beta.json"))
+        self.assertTrue(result["artifact_summary"]["support_bundle"].endswith("support_bundle.json"))
+        self.assertTrue(result["artifact_summary"]["check_json"].endswith("public_real_llm_swarm_beta_check.json"))
+        self.assertTrue(result["artifact_summary"]["public_artifact_safe"])
+        self.assertFalse(result["artifact_summary"]["raw_prompt_public"])
+        self.assertFalse(result["artifact_summary"]["raw_generated_text_public"])
+        self.assertFalse(result["artifact_summary"]["generated_token_ids_public"])
+        self.assertEqual(result["review_summary"]["schema"], check.REVIEW_SUMMARY_SCHEMA)
+        self.assertEqual(result["review_summary"]["state"], "ready")
+        self.assertTrue(result["review_summary"]["ready"])
+        self.assertEqual(result["review_summary"]["next_step"], "review_checked_artifacts")
+        self.assertEqual(result["review_summary"]["error_count"], 0)
+        self.assertTrue(result["review_summary"]["public_artifact_safe"])
+        self.assertEqual(result["operator_action"], "Open the checked Markdown and support bundle.")
         report_path = output_dir / "beta" / "public_real_llm_swarm_beta.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertEqual(report["beta"]["max_new_tokens"], 16)
@@ -1763,6 +1779,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertTrue(artifacts["public_real_llm_swarm_beta_markdown"].endswith("public_real_llm_swarm_beta.md"))
         self.assertTrue(artifacts["support_bundle_json"].endswith("support_bundle.json"))
         self.assertTrue(artifacts["runbook"].endswith("PUBLIC_REAL_LLM_SWARM_BETA.md"))
+        persisted_check = json.loads((output_dir / "public_real_llm_swarm_beta_check.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted_check["review_summary"]["next_step"], "review_checked_artifacts")
+        self.assertTrue(persisted_check["artifact_summary"]["check_json"].endswith("public_real_llm_swarm_beta_check.json"))
 
     def test_pack_human_summary_shows_final_status_and_artifacts(self) -> None:
         output_dir = self._tmp_dir()
@@ -1820,6 +1839,11 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
 
         self.assertIn("Public Real-LLM Swarm Beta check ready: True", output)
         self.assertIn("  max_new_tokens: 16", output)
+        self.assertIn("  review: state=ready next=review_checked_artifacts", output)
+        self.assertIn("errors=0", output)
+        self.assertIn("  artifacts: inspect=", output)
+        self.assertIn("check=", output)
+        self.assertIn("  action: Open the checked Markdown and support bundle.", output)
         self.assertIn("  diagnosis: public_real_llm_swarm_beta_check_ready", output)
         self.assertIn("  artifact public_real_llm_swarm_beta_markdown:", output)
         self.assertIn("public_real_llm_swarm_beta.md", output)
@@ -1855,6 +1879,54 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("usable_kv_cache_required_token_target_below_16", errors)
         self.assertIn("stage0_kv_cache_hits_below_15", errors)
         self.assertIn("stage1_kv_cache_hits_below_15", errors)
+
+    def test_check_script_blocked_result_has_review_guidance(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=8)
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+        result = {
+            "schema": check.SCHEMA,
+            "ok": False,
+            "mode": "release",
+            "max_new_tokens": 16,
+            "output_dir": str(output_dir),
+            "errors": errors,
+            "diagnosis_codes": ["public_real_llm_swarm_beta_check_blocked"],
+            "artifacts": {
+                "public_real_llm_swarm_beta_json": check.artifact_path(
+                    payload,
+                    "public_real_llm_swarm_beta_json",
+                    "public_real_llm_swarm_beta.json",
+                ),
+                "public_real_llm_swarm_beta_markdown": check.artifact_path(
+                    payload,
+                    "public_real_llm_swarm_beta_markdown",
+                    "public_real_llm_swarm_beta.md",
+                ),
+                "support_bundle_json": check.artifact_path(payload, "support_bundle_json", "support_bundle.json"),
+                "runbook": check.artifact_path(payload, "runbook", "PUBLIC_REAL_LLM_SWARM_BETA.md"),
+            },
+        }
+        result["artifact_summary"] = check.check_artifact_summary(result)
+        result["review_summary"] = check.check_review_summary(result)
+        result["operator_action"] = result["review_summary"]["operator_action"]
+
+        self.assertFalse(result["ok"], result)
+        self.assertIn("public_real_llm_swarm_beta_check_blocked", result["diagnosis_codes"])
+        self.assertEqual(result["review_summary"]["state"], "blocked")
+        self.assertFalse(result["review_summary"]["ready"])
+        self.assertEqual(result["review_summary"]["next_step"], "fix_validation_errors")
+        self.assertGreater(result["review_summary"]["error_count"], 0)
+        self.assertIn("beta_token_target_below_16", result["review_summary"]["error_preview"])
+        self.assertIn("Fix the listed validation errors", result["operator_action"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            check.print_human_summary(result)
+        output = stdout.getvalue()
+        self.assertIn("Public Real-LLM Swarm Beta check ready: False", output)
+        self.assertIn("  review: state=blocked next=fix_validation_errors", output)
+        self.assertIn("  errors:", output)
+        self.assertIn("    - beta_token_target_below_16", output)
 
     def test_check_script_validates_local_model_variant_contract(self) -> None:
         output_dir = self._tmp_dir()

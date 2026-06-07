@@ -23,6 +23,8 @@ from petals_class_p2p_candidate_check import add_safe_batch_stream  # noqa: E402
 
 
 SCHEMA = "public_real_llm_swarm_beta_check_v1"
+ARTIFACT_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_check_artifact_summary_v1"
+REVIEW_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_check_review_summary_v1"
 REQUIRED_RELEASE_CODES = {
     "public_real_llm_swarm_beta_ready",
     "release_evidence_ready",
@@ -980,6 +982,62 @@ def artifact_path(payload: dict[str, Any], name: str, fallback: str) -> str:
     return str(output_dir / fallback)
 
 
+def check_artifact_summary(result: dict[str, Any]) -> dict[str, Any]:
+    artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+    check_json = str(Path(str(result.get("output_dir") or "")) / "public_real_llm_swarm_beta_check.json")
+    shareable_paths = [
+        str(artifacts.get("public_real_llm_swarm_beta_json") or ""),
+        str(artifacts.get("public_real_llm_swarm_beta_markdown") or ""),
+        str(artifacts.get("support_bundle_json") or ""),
+        check_json,
+    ]
+    return {
+        "schema": ARTIFACT_SUMMARY_SCHEMA,
+        "inspect_first": str(artifacts.get("public_real_llm_swarm_beta_markdown") or ""),
+        "machine_readable": str(artifacts.get("public_real_llm_swarm_beta_json") or ""),
+        "support_bundle": str(artifacts.get("support_bundle_json") or ""),
+        "check_json": check_json,
+        "runbook": str(artifacts.get("runbook") or ""),
+        "shareable_paths": [path for path in shareable_paths if path],
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": "Open inspect_first for the checked Beta report; use check_json for validation errors.",
+    }
+
+
+def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
+    errors = [str(error) for error in (result.get("errors") if isinstance(result.get("errors"), list) else [])]
+    artifact_summary = (
+        result.get("artifact_summary")
+        if isinstance(result.get("artifact_summary"), dict)
+        else check_artifact_summary(result)
+    )
+    ready = bool(result.get("ok") is True and not errors)
+    return {
+        "schema": REVIEW_SUMMARY_SCHEMA,
+        "state": "ready" if ready else "blocked",
+        "ready": ready,
+        "next_step": "review_checked_artifacts" if ready else "fix_validation_errors",
+        "inspect_first": artifact_summary.get("inspect_first"),
+        "machine_readable": artifact_summary.get("machine_readable"),
+        "support_bundle": artifact_summary.get("support_bundle"),
+        "check_json": artifact_summary.get("check_json"),
+        "error_count": len(errors),
+        "error_preview": errors[:8],
+        "operator_action": (
+            "Open the checked Markdown and support bundle."
+            if ready
+            else "Fix the listed validation errors, then rerun scripts/public_real_llm_swarm_beta_check.py."
+        ),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
 def run_check(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir) if args.output_dir else Path(tempfile.mkdtemp(prefix="crowdtensor_public_real_llm_beta_check_"))
     if args.mode == pack.MODE_LOCAL_MODEL_VARIANT:
@@ -1012,14 +1070,38 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
             "runbook": artifact_path(payload, "runbook", "PUBLIC_REAL_LLM_SWARM_BETA.md"),
         },
     }
+    result["artifact_summary"] = check_artifact_summary(result)
+    result["review_summary"] = check_review_summary(result)
+    result["operator_action"] = result["review_summary"]["operator_action"]
     write(output_dir / "public_real_llm_swarm_beta_check.json", json.dumps(result, indent=2, sort_keys=True) + "\n")
     return result
 
 
 def print_human_summary(result: dict[str, Any]) -> None:
+    review = result.get("review_summary") if isinstance(result.get("review_summary"), dict) else {}
+    artifact_summary = result.get("artifact_summary") if isinstance(result.get("artifact_summary"), dict) else {}
     print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
     print(f"  mode: {result.get('mode')}")
     print(f"  max_new_tokens: {result.get('max_new_tokens')}")
+    if review:
+        print(
+            "  review: "
+            f"state={review.get('state')} "
+            f"next={review.get('next_step')} "
+            f"inspect={review.get('inspect_first')} "
+            f"errors={review.get('error_count')} "
+            f"public_artifact_safe={review.get('public_artifact_safe')}"
+        )
+    if artifact_summary:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary.get('inspect_first')} "
+            f"json={artifact_summary.get('machine_readable')} "
+            f"support={artifact_summary.get('support_bundle')} "
+            f"check={artifact_summary.get('check_json')}"
+        )
+    if result.get("operator_action"):
+        print(f"  action: {result.get('operator_action')}")
     print(f"  output: {result.get('output_dir')}")
     print(f"  diagnosis: {', '.join(result.get('diagnosis_codes') or [])}")
     errors = result.get("errors") if isinstance(result.get("errors"), list) else []
