@@ -811,7 +811,7 @@ def print_local_output_block(report: dict[str, Any]) -> bool:
             if isinstance(item, dict) and item.get("generated_text"):
                 print_answer_text(f"answer[{index}]", item.get("generated_text"))
     if has_output:
-        print(f"  local_output: {local_output_text(local_output)}")
+        print(f"  local_output: {local_output_terminal_text(local_output)}")
     return has_output
 
 
@@ -962,6 +962,15 @@ def local_output_text(local_output: dict[str, Any]) -> str:
         f"display_only={bool(local_output.get('display_only'))} "
         f"public_artifact_safe={bool(local_output.get('public_artifact_safe'))}"
     )
+
+
+def local_output_terminal_text(local_output: dict[str, Any]) -> str:
+    output_count = local_output.get("output_count")
+    if output_count is None:
+        outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+        output_count = len(outputs) if outputs else (1 if local_output.get("generated_text") else 0)
+    source = str(local_output.get("source") or "none")
+    return f"{local_output_text(local_output)} count={output_count} source={source}"
 
 
 def batch_status_text(batch: dict[str, Any]) -> str:
@@ -8123,6 +8132,7 @@ def _product_generate_local_output_from_validation(validation: dict[str, Any], *
     if not outputs:
         return {}
     return {
+        "source": "coordinator-validation",
         "generated_text": str(outputs[0].get("generated_text") or ""),
         "outputs": outputs,
         "output_count": len(outputs),
@@ -8330,7 +8340,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(
             "- Local output: "
             f"`{local_output_text(local_output)}` "
-            f"count=`{local_output.get('output_count')}`"
+            f"count=`{local_output.get('output_count')}` "
+            f"source=`{local_output.get('source')}`"
         )
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")

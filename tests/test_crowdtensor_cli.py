@@ -3236,7 +3236,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1`",
+            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=`coordinator-validation`",
             markdown,
         )
         self.assertIn(
@@ -3255,7 +3255,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            "  local_output: available=True display_only=True public_artifact_safe=False",
+            "  local_output: available=True display_only=True public_artifact_safe=False count=1 source=coordinator-validation",
             rendered,
         )
         self.assertLess(rendered.index("  answer: local generated text must stay local"), rendered.index("  local_output: "))
@@ -5196,7 +5196,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            "  local_output: available=True display_only=True public_artifact_safe=False",
+            "  local_output: available=True display_only=True public_artifact_safe=False count=1 source=coordinator-validation",
             rendered,
         )
         self.assertIn("  answer:  readable beta text", rendered)
@@ -6534,7 +6534,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn(
-            "  local_output: available=True display_only=True public_artifact_safe=False",
+            "  local_output: available=True display_only=True public_artifact_safe=False count=1 source=none",
             stdout.getvalue(),
         )
         self.assertLess(stdout.getvalue().index("  answer: local text only"), stdout.getvalue().index("  local_output: "))
@@ -7378,6 +7378,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "stream": {},
             "local_output": {
                 "generated_text": "first line\nsecond line",
+                "output_count": 1,
+                "source": "local-private-task-state",
                 "note": "local only",
             },
             "diagnosis_codes": ["crowdtensor_infer_ready"],
@@ -7389,6 +7391,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         rendered = stdout.getvalue()
         self.assertIn("  answer: first line\n          second line\n", rendered)
+        self.assertIn(
+            "  local_output: available=True display_only=False public_artifact_safe=False count=1 source=local-private-task-state",
+            rendered,
+        )
         self.assertNotIn("\nsecond line\n", rendered)
         self.assertLess(rendered.index("  answer: first line"), rendered.index("  local_output: "))
 
