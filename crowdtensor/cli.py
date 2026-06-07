@@ -6345,6 +6345,15 @@ def _infer_summary_from_payload(
             result_output_count = expected_request_count
         else:
             result_output_count = 0
+    batch_generation_ready = bool(batch.get("batch_generation_ready"))
+    if (
+        _safe_int(observed_request_count) <= 0
+        and result_output_count > 0
+        and ok
+        and not dry_run
+        and (expected_request_count <= 1 or batch_generation_ready)
+    ):
+        observed_request_count = min(result_output_count, expected_request_count) if expected_request_count > 0 else result_output_count
     result_status = "complete" if ok and not dry_run else ("preflight" if ok and dry_run else "blocked")
     result_display = (
         "local-private"
@@ -6437,7 +6446,7 @@ def _infer_summary_from_payload(
         "batch": {
             "enabled": bool(batch.get("enabled") or expected_request_count > 1),
             "request_count": expected_request_count,
-            "ready": bool(batch.get("batch_generation_ready")),
+            "ready": batch_generation_ready,
             "observed_request_count": observed_request_count,
         },
         "stream": {

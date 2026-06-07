@@ -7592,6 +7592,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["status"], "complete")
         self.assertEqual(persisted["result"]["display"], "hash-only-json")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
+        self.assertEqual(persisted["batch"]["observed_request_count"], 1)
         self.assertEqual(persisted["local_output"]["output_count"], 1)
         self.assertEqual(
             persisted["local_output_note"],
@@ -7607,6 +7608,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True` count=`1` source=``",
             markdown,
         )
+        self.assertIn("- Batch: enabled=`False` requests=`1/1` ready=`False`", markdown)
         self.assertIn(
             "- Local output note: Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display.",
             markdown,
@@ -9391,6 +9393,55 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["local_output"]["display_only"])
         self.assertNotIn("first output", json.dumps(persisted, sort_keys=True))
         self.assertNotIn("second output", json.dumps(persisted, sort_keys=True))
+
+    def test_infer_existing_does_not_infer_batch_observed_without_batch_ready(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+        generate_payload = {
+            "schema": "public_swarm_product_cli_v1",
+            "ok": True,
+            "mode": "generate",
+            "generation": {
+                "generated_token_count": 2,
+                "max_new_tokens": 2,
+                "generated_text_hash": "sha256:batch",
+                "decoded_tokens_match": True,
+            },
+            "batch": {
+                "enabled": True,
+                "request_count": 2,
+                "observed_request_count": 0,
+                "batch_generation_ready": False,
+            },
+            "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
+            "diagnosis_codes": ["public_swarm_generate_ready"],
+        }
+
+        with patch.object(cli, "build_product_generate", return_value=generate_payload):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["result"]["output_count"], 2)
+        self.assertEqual(report["batch"]["request_count"], 2)
+        self.assertEqual(report["batch"]["observed_request_count"], 0)
+        self.assertFalse(report["batch"]["ready"])
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["batch"]["observed_request_count"], 0)
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- Batch: enabled=`True` requests=`0/2` ready=`False`", markdown)
 
     def test_infer_existing_batch_stream_progress_is_human_readable_and_safe(self) -> None:
         output_dir = Path(self._tmp_dir())
