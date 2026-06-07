@@ -513,6 +513,7 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     recommended_label = str(recommended.get("label") or review_summary.get("recommended_label") or "")
     recommended_reason = str(recommended.get("reason") or review_summary.get("recommended_reason") or "")
     attention = str(review_summary.get("attention") or "")
+    attention_detail = str(review_summary.get("attention_detail") or attention_display_text(attention))
     command = markdown_command_line(recommended) if recommended.get("command_line") else ""
     requires_env = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
     operator_action = str(summary.get("operator_action") or issue_summary.get("operator_action") or "")
@@ -525,8 +526,8 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     ]
     if headline:
         lines.append(f"- Meaning: {headline}")
-    if attention:
-        lines.append(f"- Attention: `{attention_display_text(attention)}`")
+    if attention_detail:
+        lines.append(f"- Attention: `{attention_detail}`")
     if inspect_first:
         lines.append(f"- Inspect first: `{inspect_first}`")
     if recommended_label:
@@ -939,6 +940,10 @@ def review_summary_text(summary: dict[str, Any]) -> str:
         f"attention={summary.get('attention') or 'none'} "
         f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
     )
+
+
+def review_attention_display_text(summary: dict[str, Any]) -> str:
+    return str(summary.get("attention_detail") or attention_display_text(str(summary.get("attention") or "")))
 
 
 def review_next_command_text(summary: dict[str, Any]) -> str:
@@ -4422,6 +4427,7 @@ def _review_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[st
         attention = "redacted_detail_available"
     if not attention and report.get("operator_action") and user_status.get("state") != "completed":
         attention = "operator_action"
+    attention_detail = attention_display_text(attention)
     return {
         "kind": kind,
         "state": user_status.get("state") or ("completed" if report.get("ok") else "blocked"),
@@ -4434,6 +4440,7 @@ def _review_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[st
         "requires_env": recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else [],
         "primary_code": issue_summary.get("primary_code") or "",
         "attention": attention,
+        "attention_detail": attention_detail,
         "inspect_first": artifact_summary.get("inspect_first") or "",
         "summary_json": artifact_summary.get("summary_json") or "",
         "summary_markdown": artifact_summary.get("summary_markdown") or "",
@@ -9541,7 +9548,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
-        attention_text = attention_display_text(str(review_summary.get("attention") or ""))
+        attention_text = review_attention_display_text(review_summary)
         if attention_text:
             print(f"  attention: {attention_text}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
@@ -9839,7 +9846,7 @@ def print_infer(report: dict[str, Any]) -> None:
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
-        attention_text = attention_display_text(str(review_summary.get("attention") or ""))
+        attention_text = review_attention_display_text(review_summary)
         if attention_text:
             print(f"  attention: {attention_text}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
