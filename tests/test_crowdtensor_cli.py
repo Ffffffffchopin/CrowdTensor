@@ -2127,8 +2127,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "generate",
             "--coordinator-url",
             "http://127.0.0.1:8787",
-            "--prompt-text",
-            "CrowdTensor prompt",
+            "--prompt-texts",
+            "CrowdTensor prompt,Second private prompt",
             "--admin-token",
             "admin-secret",
             "--max-new-tokens",
@@ -2138,24 +2138,42 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--json",
         ])
 
-        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+        error_body = b"bad request echoed CrowdTensor prompt, Second private prompt, and admin-secret"
+        with patch.object(
+            cli,
+            "request_json_url",
+            side_effect=cli.HTTPError(
+                "http://127.0.0.1:8787/admin/inference-sessions",
+                400,
+                "bad request",
+                {},
+                io.BytesIO(error_body),
+            ),
+        ):
             report = cli.build_product_generate(args)
 
         self.assertFalse(report["ok"], report)
         self.assertIn("session_create_failed", report["diagnosis_codes"])
+        self.assertEqual(report["error"], "HTTPError")
+        self.assertIn("<redacted>", report["detail"])
+        self.assertNotIn("CrowdTensor prompt", report["detail"])
+        self.assertNotIn("Second private prompt", report["detail"])
+        self.assertNotIn("admin-secret", report["detail"])
         self.assertTrue(report["stream"]["enabled"])
         self.assertTrue(report["stream"]["requested"])
         self.assertTrue(report["output_request"]["include_output"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --include-output",
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-texts '<prompt-1>,<prompt-2>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --include-output",
             next_lines,
         )
         self.assertIn(
-            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --stream --include-output",
+            "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-texts '<prompt-1>,<prompt-2>' --stream --include-output",
             next_lines,
         )
         self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
+        self.assertNotIn("CrowdTensor prompt", json.dumps(report, sort_keys=True))
+        self.assertNotIn("Second private prompt", json.dumps(report, sort_keys=True))
 
     def test_product_generate_requires_admin_token_with_action(self) -> None:
         args = cli.parse_args([

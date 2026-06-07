@@ -534,6 +534,16 @@ def redact_values(value: Any, secret_values: list[str] | None = None) -> Any:
     return value
 
 
+def unique_redaction_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    redactions: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            redactions.append(value)
+            seen.add(value)
+    return redactions
+
+
 def json_from_stdout(stdout: str) -> dict[str, Any]:
     for line in reversed([line.strip() for line in stdout.splitlines() if line.strip()]):
         try:
@@ -7489,6 +7499,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "diagnosis_codes": ["admin_token_required"],
         })
     private_payload = coordinator_payload_for_request(session_request, prompt_text=prompt_text, prompt_texts=prompt_texts)
+    private_redactions = unique_redaction_values([args.admin_token, prompt_text, *prompt_texts])
     session_create_timeout = max(float(args.http_timeout), min(float(args.timeout_seconds), 30.0))
     try:
         session = request_json_url(
@@ -7500,7 +7511,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             timeout=session_create_timeout,
         )
     except Exception as exc:
-        detail = str(exc)[:240]
+        detail = redact_text(str(exc), private_redactions)[:240]
         diagnosis = ["session_create_failed"]
         if isinstance(exc, HTTPError):
             try:
@@ -7508,7 +7519,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             except Exception:
                 body = ""
             if body:
-                detail = body[:240]
+                detail = redact_text(body, private_redactions)[:240]
             if "requires optional Hugging Face dependencies" in body or "transformers" in body:
                 diagnosis.append("hf_dependencies_missing")
                 detail = "real_llm_sharded_infer requires optional Hugging Face dependencies; install with python -m pip install -e '.[hf]'"
