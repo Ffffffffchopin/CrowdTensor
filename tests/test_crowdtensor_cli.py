@@ -176,8 +176,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Use one prompt source at a time: positional prompt, --prompt-text/--prompt", rendered)
         self.assertIn("--prompt-file for a UTF-8 single prompt file", rendered)
         self.assertIn("--prompt-stdin for an explicit", rendered)
+        self.assertIn("--prompt-texts-file for one prompt per line", rendered)
         self.assertIn("crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8", rendered)
         self.assertIn('echo "your prompt" | crowdtensor infer --prompt-stdin --max-new-tokens 8', rendered)
+        self.assertIn("crowdtensor infer --prompt-texts-file prompts.txt --max-new-tokens 8 --stream", rendered)
         self.assertIn("ambiguous mixes are rejected", rendered)
         self.assertIn("output_request.include_output", rendered)
         self.assertIn("output_request.raw_generated_text_public false", rendered)
@@ -250,8 +252,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Use one prompt source at a time: positional prompt, --prompt-text/--prompt", rendered)
         self.assertIn("--prompt-file for a UTF-8 single prompt file", rendered)
         self.assertIn("--prompt-stdin for an explicit", rendered)
+        self.assertIn("--prompt-texts-file for one prompt per line", rendered)
         self.assertIn("crowdtensor generate --prompt-file prompt.txt", rendered)
         self.assertIn('echo "your prompt" | crowdtensor generate --prompt-stdin --coordinator-url http://127.0.0.1:8787 --dry-run', rendered)
+        self.assertIn("crowdtensor generate --prompt-texts-file prompts.txt --coordinator-url http://127.0.0.1:8787 --dry-run", rendered)
         self.assertIn("ambiguous mixes are rejected", rendered)
         self.assertIn("output_request.include_output", rendered)
         self.assertIn("output_request.raw_generated_text_public false", rendered)
@@ -620,11 +624,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("Pick one prompt source per command", rendered)
             self.assertIn("--prompt-file prompt.txt", rendered)
             self.assertIn("--prompt-stdin", rendered)
+            self.assertIn("--prompt-texts-file prompts.txt", rendered)
             self.assertIn("UTF-8 single", rendered)
             self.assertIn("crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8", rendered)
             self.assertIn('echo "your prompt" | crowdtensor infer --prompt-stdin --max-new-tokens 8', rendered)
+            self.assertIn("crowdtensor infer --prompt-texts-file prompts.txt --max-new-tokens 8 --stream", rendered)
             self.assertIn("crowdtensor generate --prompt-file prompt.txt", rendered)
             self.assertIn('echo "your prompt" | crowdtensor generate --prompt-stdin', rendered)
+            self.assertIn("crowdtensor generate --prompt-texts-file prompts.txt", rendered)
             self.assertIn("mixed prompt sources", rendered)
             self.assertIn("output_request.include_output", rendered)
             self.assertIn("output_request.raw_generated_text_public", rendered)
@@ -1341,6 +1348,91 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
+    def test_generate_main_prints_prompt_texts_file_without_expanding_prompts(self) -> None:
+        prompts = ["first private prompt, with comma", "second private prompt"]
+        prompt_file = Path(self._tmp_dir()) / "prompts.txt"
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+
+        def fake_build_product_generate(args: object) -> dict[str, object]:
+            self.assertEqual(getattr(args, "prompt_texts_file"), str(prompt_file))
+            self.assertEqual(getattr(args, "prompt_texts_list"), prompts)
+            return {
+                "schema": "public_swarm_product_cli_v1",
+                "ok": True,
+                "mode": "generate",
+                "diagnosis_codes": ["generate_dry_run_ready"],
+                "route": {"route_source": "coordinator-url", "coordinator_url_present": True, "missing_capabilities": []},
+                "next_commands": [
+                    cli.command_entry(
+                        "check generation route",
+                        [
+                            "crowdtensor",
+                            "generate",
+                            "--max-new-tokens",
+                            "16",
+                            "--coordinator-url",
+                            "http://127.0.0.1:8787",
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--prompt-texts",
+                            cli.INFER_BATCH_PROMPTS_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    )
+                ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check generation route",
+                        [
+                            "crowdtensor",
+                            "generate",
+                            "--max-new-tokens",
+                            "16",
+                            "--coordinator-url",
+                            "http://127.0.0.1:8787",
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--prompt-texts",
+                            cli.INFER_BATCH_PROMPTS_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    ),
+                    "reason": "verify_stage_miners",
+                    "source_index": 1,
+                },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check generation route",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --prompt-texts '<prompt-1>,<prompt-2>' --dry-run",
+                    "public_artifact_safe": True,
+                },
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_product_generate", side_effect=fake_build_product_generate):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "generate",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--prompt-texts-file",
+                    str(prompt_file),
+                    "--dry-run",
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertIn(f"--prompt-texts-file {prompt_file}", rendered)
+        self.assertNotIn("--prompt-text '<prompt>'", rendered)
+        self.assertNotIn("--prompt-texts '<prompt-1>,<prompt-2>'", rendered)
+        for prompt in prompts:
+            self.assertNotIn(prompt, rendered)
+            self.assertNotIn(prompt, progress)
+
     def test_generate_main_prints_prompt_file_without_expanding_prompt(self) -> None:
         prompt = "Prompt file private text"
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"
@@ -1626,12 +1718,49 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
         self.assertIn("prompt_hash", json.dumps(report, sort_keys=True))
 
+    def test_generate_accepts_prompt_texts_file_without_persisting_prompt_text(self) -> None:
+        prompts = ["Prompt file batch, with comma", "Second batch prompt"]
+        prompt_file = Path(self._tmp_dir()) / "prompts.txt"
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "generate",
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+
+        self.assertEqual(args.prompt_text, "")
+        self.assertEqual(args.prompt_texts_file, str(prompt_file))
+        self.assertEqual(args.prompt_texts_list, prompts)
+        self.assertEqual(cli.prompt_list_from_args(args), prompts)
+        report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["batch"]["request_count"], 2)
+        self.assertEqual(report["session_request"]["prompt_char_counts"], [len(prompt) for prompt in prompts])
+        encoded = json.dumps(report, sort_keys=True)
+        for prompt in prompts:
+            self.assertNotIn(prompt, encoded)
+        self.assertIn("prompt_hashes", encoded)
+
     def test_generate_rejects_empty_prompt_stdin(self) -> None:
         with patch.object(cli.sys, "stdin", io.StringIO("")):
             with self.assertRaises(SystemExit) as raised:
                 cli.parse_args(["generate", "--prompt-stdin"])
 
         self.assertEqual(str(raised.exception), "prompt_stdin is empty")
+
+    def test_generate_rejects_empty_prompt_texts_file(self) -> None:
+        prompt_file = Path(self._tmp_dir()) / "empty-prompts.txt"
+        prompt_file.write_text("\n\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["generate", "--prompt-texts-file", str(prompt_file)])
+
+        self.assertEqual(str(raised.exception), "prompt_texts_file is empty")
 
     def test_infer_accepts_prompt_text_alias_like_generate(self) -> None:
         prompt = "CrowdTensor flag prompt"
@@ -1711,9 +1840,44 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["prompt"]["prompt_count"], 1)
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
 
+    def test_infer_accepts_prompt_texts_file_without_persisting_prompt_text(self) -> None:
+        prompts = ["Infer batch prompt, with comma", "Second infer prompt"]
+        prompt_file = Path(self._tmp_dir()) / "infer-prompts.txt"
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "infer",
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--observer-token",
+            "observer-secret",
+            "--dry-run",
+            "--json",
+        ])
+
+        self.assertEqual(args.prompt_texts_file, str(prompt_file))
+        self.assertEqual(args.prompt_texts_list, prompts)
+        with patch.object(cli, "request_json_url", return_value={
+            "schema": "ready_v1",
+            "service": "crowdtensord-coordinator",
+            "protocol": "runtime_contract_v1",
+        }):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["prompt"]["raw_prompt_public"])
+        self.assertEqual(report["prompt"]["prompt_count"], 2)
+        encoded = json.dumps(report, sort_keys=True)
+        for prompt in prompts:
+            self.assertNotIn(prompt, encoded)
+
     def test_generate_rejects_ambiguous_prompt_sources(self) -> None:
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"
         prompt_file.write_text("file prompt", encoding="utf-8")
+        prompts_file = Path(self._tmp_dir()) / "prompts.txt"
+        prompts_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
         cases = [
             ["generate", "positional prompt", "--prompt-text", "flag prompt"],
             ["generate", "positional prompt", "--prompt-texts", "first prompt,second prompt"],
@@ -1723,13 +1887,15 @@ class CrowdTensorCliTests(unittest.TestCase):
             ["generate", "--prompt-stdin", "--prompt-text", "flag prompt"],
             ["generate", "--prompt-stdin", "--prompt-file", str(prompt_file)],
             ["generate", "--prompt-stdin", "--prompt-texts", "first prompt,second prompt"],
+            ["generate", "--prompt-texts-file", str(prompts_file), "--prompt-texts", "first prompt,second prompt"],
+            ["generate", "--prompt-texts-file", str(prompts_file), "--prompt-file", str(prompt_file)],
         ]
         for argv in cases:
             with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
                 cli.parse_args(argv)
             self.assertEqual(
                 str(raised.exception),
-                "generate accepts one prompt source: positional prompt, --prompt-text, --prompt-file, --prompt-stdin, or --prompt-texts",
+                "generate accepts one prompt source: positional prompt, --prompt-text, --prompt-file, --prompt-stdin, --prompt-texts, or --prompt-texts-file",
             )
 
     def test_product_generate_dry_run_has_safe_default_prompt(self) -> None:
@@ -7322,6 +7488,64 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["prompt"]["prompt_count"], 2)
         self.assertTrue(calls)
 
+    def test_infer_local_batch_file_forwards_prompt_texts_file_to_product_loopback(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompts = ["first prompt, with comma", "second prompt"]
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "infer",
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "8",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("product_swarm_mvp_check.py", command[1])
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn("--prompt-texts", command)
+            self.assertIn("--prompt-texts-file", command)
+            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "generation": {
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "generated_text_hash": "sha256:generated",
+                    "decoded_tokens_match": True,
+                    "request_count": 2,
+                    "batch_generation_ready": True,
+                },
+                "batch": {
+                    "enabled": True,
+                    "request_count": 2,
+                    "observed_request_count": 2,
+                    "batch_generation_ready": True,
+                },
+                "stage_assignment": {"distinct_stage_miners": True},
+                "ledger": {"accepted_rows": 16},
+                "diagnosis_codes": ["product_swarm_mvp_ready", "product_swarm_mvp_batch_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt"]["prompt_count"], 2)
+        encoded = json.dumps(report, sort_keys=True)
+        for prompt in prompts:
+            self.assertNotIn(prompt, encoded)
+        self.assertTrue(calls)
+
     def test_infer_local_failure_redacts_prompt_from_step_output(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompt = "CrowdTensor private prompt"
@@ -7554,6 +7778,67 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["batch"]["enabled"])
         self.assertEqual(report["prompt"]["prompt_count"], 2)
+        self.assertTrue(calls)
+
+    def test_infer_full_evidence_batch_file_forwards_prompt_texts_file(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_file = output_dir / "prompts.txt"
+        prompts = ["first prompt, with comma", "second prompt"]
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "infer",
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--full-evidence",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "16",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn("--prompt-texts", command)
+            self.assertIn("--prompt-texts-file", command)
+            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "readiness": {
+                    "local_p2p_generate": {
+                        "route_ready": True,
+                        "distinct_stage_miners": True,
+                        "generation": {
+                            "generated_token_count": 16,
+                            "max_new_tokens": 16,
+                            "generated_text_hash": "sha256:generated",
+                            "request_count": 2,
+                            "batch_generation_ready": True,
+                        },
+                        "batch": {
+                            "enabled": True,
+                            "request_count": 2,
+                            "observed_request_count": 2,
+                            "batch_generation_ready": True,
+                        },
+                    }
+                },
+                "diagnosis_codes": ["public_swarm_inference_v2_ready", "public_swarm_v2_batch_generation_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt"]["prompt_count"], 2)
+        for prompt in prompts:
+            self.assertNotIn(prompt, encoded)
         self.assertTrue(calls)
 
     def test_infer_local_preserves_safe_stream_progress(self) -> None:
@@ -8365,6 +8650,100 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("infer '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
+
+    def test_infer_main_prints_prompt_texts_file_without_expanding_prompts(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompts = ["Infer file prompt, with comma", "Second infer file prompt"]
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            self.assertEqual(getattr(args, "prompt_texts_file"), str(prompt_file))
+            self.assertEqual(getattr(args, "prompt_texts_list"), prompts)
+            return {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": True,
+                "mode": "existing",
+                "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "generation": {"generated_token_count": 8, "max_new_tokens": 8, "generated_text_hash": "sha256:generated"},
+                "route": {"route_source": "coordinator-url", "route_ready": True, "distinct_stage_miners": True},
+                "stream": {},
+                "local_output": {},
+                "output_dir": str(output_dir),
+                "next_commands": [
+                    cli.command_entry(
+                        "check existing swarm",
+                        [
+                            "crowdtensor",
+                            "infer",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--mode",
+                            "existing",
+                            "--output-dir",
+                            str(output_dir),
+                            "--prompt-texts",
+                            cli.INFER_BATCH_PROMPTS_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    )
+                ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check existing swarm",
+                        [
+                            "crowdtensor",
+                            "infer",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--mode",
+                            "existing",
+                            "--output-dir",
+                            str(output_dir),
+                            "--prompt-texts",
+                            cli.INFER_BATCH_PROMPTS_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    ),
+                    "reason": "verify_stage_miners",
+                    "source_index": 1,
+                },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check existing swarm",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": f"crowdtensor infer '<prompt>' --mode existing --output-dir {output_dir} --prompt-texts '<prompt-1>,<prompt-2>' --dry-run",
+                    "public_artifact_safe": True,
+                },
+                "diagnosis_codes": ["crowdtensor_infer_ready"],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "infer",
+                    "--prompt-texts-file",
+                    str(prompt_file),
+                    "--mode",
+                    "existing",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--admin-token",
+                    "admin-secret",
+                    "--output-dir",
+                    str(output_dir),
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertIn(f"--prompt-texts-file {prompt_file}", rendered)
+        self.assertNotIn("infer '<prompt>'", rendered)
+        self.assertNotIn("--prompt-texts '<prompt-1>,<prompt-2>'", rendered)
+        for prompt in prompts:
+            self.assertNotIn(prompt, rendered)
+            self.assertNotIn(prompt, progress)
 
     def test_infer_main_prints_prompt_stdin_without_expanding_prompt(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -9854,6 +10233,8 @@ class CrowdTensorCliTests(unittest.TestCase):
     def test_infer_rejects_ambiguous_prompt_sources(self) -> None:
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"
         prompt_file.write_text("file prompt", encoding="utf-8")
+        prompts_file = Path(self._tmp_dir()) / "prompts.txt"
+        prompts_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
         cases = [
             ["infer", "positional prompt", "--prompt-text", "flag prompt"],
             ["infer", "positional prompt", "--prompt-texts", "first prompt,second prompt"],
@@ -9863,13 +10244,15 @@ class CrowdTensorCliTests(unittest.TestCase):
             ["infer", "--prompt-stdin", "--prompt-text", "flag prompt"],
             ["infer", "--prompt-stdin", "--prompt-file", str(prompt_file)],
             ["infer", "--prompt-stdin", "--prompt-texts", "first prompt,second prompt"],
+            ["infer", "--prompt-texts-file", str(prompts_file), "--prompt-texts", "first prompt,second prompt"],
+            ["infer", "--prompt-texts-file", str(prompts_file), "--prompt-file", str(prompt_file)],
         ]
         for argv in cases:
             with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
                 cli.parse_args(argv)
             self.assertEqual(
                 str(raised.exception),
-                "infer accepts one prompt source: positional prompt, --prompt-text/--prompt, --prompt-file, --prompt-stdin, or --prompt-texts",
+                "infer accepts one prompt source: positional prompt, --prompt-text/--prompt, --prompt-file, --prompt-stdin, --prompt-texts, or --prompt-texts-file",
             )
 
     def test_infer_rejects_empty_prompt_stdin(self) -> None:
@@ -9878,6 +10261,14 @@ class CrowdTensorCliTests(unittest.TestCase):
                 cli.parse_args(["infer", "--prompt-stdin"])
 
         self.assertEqual(str(raised.exception), "prompt_stdin is empty")
+
+    def test_infer_rejects_empty_prompt_texts_file(self) -> None:
+        prompt_file = Path(self._tmp_dir()) / "empty-infer-prompts.txt"
+        prompt_file.write_text("\n\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["infer", "--prompt-texts-file", str(prompt_file)])
+
+        self.assertEqual(str(raised.exception), "prompt_texts_file is empty")
 
     def test_infer_existing_dry_run_with_observer_token_blocks_missing_stage_state(self) -> None:
         output_dir = Path(self._tmp_dir())

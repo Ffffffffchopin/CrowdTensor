@@ -561,6 +561,21 @@ class P2PSwarmInferenceV06PackTests(unittest.TestCase):
                 "one,two,three,four,five",
             ])
 
+    def test_parse_args_accepts_prompt_texts_file(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt_file = output_dir / "prompts.txt"
+        prompts = ["one prompt, with comma", "second prompt"]
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+
+        args = pack.parse_args([
+            pack.MODE_LOCAL_SMOKE,
+            "--prompt-texts-file",
+            str(prompt_file),
+        ])
+
+        self.assertEqual(args.prompt_texts_file, str(prompt_file))
+        self.assertEqual(args.prompt_texts_list, prompts)
+
     def test_normalize_local_p2p_report_requires_real_stage_rescue(self) -> None:
         normalized = pack.normalize_local_p2p_report({
             "schema": pack.SCHEMA,
@@ -683,6 +698,21 @@ class P2PSwarmInferenceV06PackTests(unittest.TestCase):
         self.assertIn("--dry-run", command)
         self.assertIn("--stream", command)
         self.assertNotIn("--admin-token", command)
+
+    def test_p2p_generate_command_preserves_prompt_texts_file(self) -> None:
+        command = pack.p2p_generate_command(
+            p2p_url="http://p2p.example",
+            backend="cpu",
+            hf_model_id="gpt2",
+            max_new_tokens="2",
+            prompt_text="ignored single prompt",
+            prompt_texts="ignored batch",
+            prompt_texts_file="/tmp/prompts.txt",
+        )
+
+        self.assertEqual(command[command.index("--prompt-texts-file") + 1], "/tmp/prompts.txt")
+        self.assertNotIn("--prompt-texts", command)
+        self.assertNotIn("--prompt", command)
         self.assertEqual(command[-1], "--json")
 
     def test_check_builds_ready_local_smoke_contract(self) -> None:

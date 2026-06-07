@@ -412,6 +412,44 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertNotIn("first prompt", encoded)
         self.assertNotIn("second prompt", encoded)
 
+    def test_local_mode_forwards_prompt_texts_file_to_usable_path(self) -> None:
+        output_dir = self._tmp_dir()
+        sources = self._write_sources(output_dir, external_tokens=16)
+        prompt_file = output_dir / "prompts.txt"
+        prompts = ["first prompt, with comma", "second prompt"]
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+        usable_payload = check.fake_usable_report(16)
+        usable_payload["readiness"]["p2p_product_path"]["batch_ready"] = True
+        usable_payload["readiness"]["p2p_product_path"]["batch"] = safe_batch(16)
+        usable_payload["diagnosis_codes"].extend(["usable_real_llm_batch_ready", "public_swarm_generate_batch_ready"])
+        calls: list[list[str]] = []
+
+        report = pack.build_report(pack.parse_args([
+            "local",
+            "--output-dir",
+            str(output_dir / "v2-local-file"),
+            "--preview-report",
+            str(sources["preview"]),
+            "--real-p2p-report",
+            str(sources["real_p2p"]),
+            "--gpu-report",
+            str(sources["gpu"]),
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--fresh-external-report",
+            "--max-new-tokens",
+            "16",
+        ]), runner=self._local_runner(calls, usable_payload=usable_payload))
+
+        self.assertTrue(report["ok"], report)
+        usable_command = next(command for command in calls if "usable_swarm_inference_pack.py" in " ".join(command))
+        self.assertIn("--prompt-texts-file", usable_command)
+        self.assertEqual(usable_command[usable_command.index("--prompt-texts-file") + 1], str(prompt_file))
+        self.assertNotIn("--prompt-texts", usable_command)
+        encoded = json.dumps(report, sort_keys=True)
+        for prompt in prompts:
+            self.assertNotIn(prompt, encoded)
+
     def test_local_mode_rejects_usable_batch_ready_code_without_batch_evidence(self) -> None:
         output_dir = self._tmp_dir()
         sources = self._write_sources(output_dir, external_tokens=16)

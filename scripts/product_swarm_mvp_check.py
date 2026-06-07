@@ -296,7 +296,7 @@ def summarize_step_durations(steps: list[dict[str, Any]], *, generated_tokens: i
 
 
 def safe_batch_summary(args: argparse.Namespace, generation: dict[str, Any]) -> dict[str, Any]:
-    prompts = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+    prompts = prompt_list_from_args(args)
     expected_request_count = len(prompts)
     batch_requested = expected_request_count > 1
     observed_request_count = int(generation.get("request_count") or (0 if batch_requested else expected_request_count))
@@ -381,7 +381,7 @@ def safe_stream_summary(args: argparse.Namespace, generate_payload: dict[str, An
         })
     requested = bool(getattr(args, "stream_generation", False))
     complete = bool(progress.get("stream_progress_complete"))
-    prompt_count = len(parse_prompt_texts_arg(args.prompt_text, args.prompt_texts))
+    prompt_count = len(prompt_list_from_args(args))
     per_request_progress: list[dict[str, Any]] = []
     raw_per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
     for item in raw_per_request:
@@ -478,6 +478,11 @@ def parse_prompt_texts_arg(prompt_text: str, prompt_texts: str) -> list[str]:
         prompts = [item.strip() for item in str(prompt_texts).split(",") if item.strip()]
     else:
         prompts = [str(prompt_text or "").strip()] if str(prompt_text or "").strip() else []
+    return validate_prompt_texts(prompts)
+
+
+def validate_prompt_texts(prompts: list[str]) -> list[str]:
+    prompts = [str(prompt or "").strip() for prompt in prompts if str(prompt or "").strip()]
     if not prompts:
         raise ValueError("prompt_text is required")
     if len(prompts) > MAX_BATCH_REQUESTS:
@@ -486,6 +491,29 @@ def parse_prompt_texts_arg(prompt_text: str, prompt_texts: str) -> list[str]:
         if len(prompt) > 256:
             raise ValueError("prompt_text must be at most 256 characters")
     return prompts
+
+
+def read_prompt_texts_file(path_value: str) -> list[str]:
+    path = Path(str(path_value or "")).expanduser()
+    if not str(path_value or "").strip():
+        raise ValueError("prompt_texts_file is required")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"could not read prompt texts file: {exc}") from exc
+    try:
+        return validate_prompt_texts([line.strip() for line in text.splitlines() if line.strip()])
+    except ValueError as exc:
+        if str(exc) == "prompt_text is required":
+            raise ValueError("prompt_texts_file is empty") from exc
+        raise
+
+
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return validate_prompt_texts([str(prompt) for prompt in prompt_list])
+    return parse_prompt_texts_arg(str(getattr(args, "prompt_text", "") or ""), str(getattr(args, "prompt_texts", "") or ""))
 
 
 def wait_workload_queued(base_url: str, *, timeout: float) -> tuple[bool, str]:
@@ -646,7 +674,9 @@ def run_local_loopback(args: argparse.Namespace, output_dir: Path) -> dict[str, 
             str(args.generate_timeout),
             "--json",
         ]
-        if args.prompt_texts:
+        if args.prompt_texts_file:
+            generate_cmd.extend(["--prompt-texts-file", args.prompt_texts_file])
+        elif args.prompt_texts:
             generate_cmd.extend(["--prompt-texts", args.prompt_texts])
         else:
             generate_cmd.extend(["--prompt-text", args.prompt_text])
@@ -869,6 +899,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--prompt-text", default="CrowdTensor turns spare compute into open inference")
     parser.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
+    parser.add_argument("--prompt-texts-file", default="", help="UTF-8 batch prompt file with one non-empty prompt per line")
     parser.add_argument("--max-new-tokens", type=int, default=2)
     parser.add_argument("--startup-timeout", type=float, default=45.0)
     parser.add_argument("--session-queue-timeout", type=float, default=30.0)
@@ -882,8 +913,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--port must be positive")
     if args.max_new_tokens < 2 or args.max_new_tokens > 8:
         raise SystemExit("--max-new-tokens must be between 2 and 8 for this smoke")
+    if args.prompt_texts and args.prompt_texts_file:
+        raise SystemExit("product_swarm_mvp accepts either --prompt-texts or --prompt-texts-file, not both")
     try:
-        parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        if args.prompt_texts_file:
+            args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+        else:
+            args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     for name in ["startup_timeout", "session_queue_timeout", "miner_timeout", "generate_timeout"]:

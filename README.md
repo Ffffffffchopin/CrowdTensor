@@ -93,7 +93,9 @@ safe output `count` and `source` fields such as
 Pick one prompt source per command: use the positional prompt,
 `--prompt-text`/`--prompt`, `--prompt-file prompt.txt` for a UTF-8 single
 prompt file, `--prompt-stdin` for an explicit stdin single prompt, or
-`--prompt-texts` for a bounded batch. The CLI rejects
+`--prompt-texts` for a bounded comma-separated batch. Use
+`--prompt-texts-file prompts.txt` for a UTF-8 batch file with one prompt per
+non-empty line. The CLI rejects
 mixed prompt sources instead of guessing. Reports expose
 `output_request.include_output` while keeping
 `output_request.raw_generated_text_public` false in JSON and saved artifacts.
@@ -101,8 +103,10 @@ mixed prompt sources instead of guessing. Reports expose
 ```bash
 crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8
 echo "your prompt" | crowdtensor infer --prompt-stdin --max-new-tokens 8
+crowdtensor infer --prompt-texts-file prompts.txt --max-new-tokens 8 --stream
 crowdtensor generate --prompt-file prompt.txt --coordinator-url http://127.0.0.1:8787 --dry-run
 echo "your prompt" | crowdtensor generate --prompt-stdin --coordinator-url http://127.0.0.1:8787 --dry-run
+crowdtensor generate --prompt-texts-file prompts.txt --coordinator-url http://127.0.0.1:8787 --dry-run
 ```
 
 Existing-swarm runs also include a safe `wait_progress` summary with

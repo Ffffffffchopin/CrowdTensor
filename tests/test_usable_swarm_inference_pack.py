@@ -183,6 +183,73 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertNotIn("first prompt", encoded)
         self.assertNotIn("second prompt", encoded)
 
+    def test_local_mode_forwards_prompt_texts_file_to_p2p_path(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt_file = output_dir / "prompts.txt"
+        prompts = ["first prompt, with comma", "second prompt"]
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+        payload = check.fake_p2p_v06_payload()
+        batch = {
+            "enabled": True,
+            "expected_request_count": 2,
+            "observed_request_count": 2,
+            "max_request_count": 4,
+            "prompt_hashes": ["sha256:p1", "sha256:p2"],
+            "prompt_char_counts": [24, 13],
+            "result_count": 2,
+            "results": [
+                {
+                    "request_id": "req-1",
+                    "prompt_hash": "sha256:p1",
+                    "generated_token_count": 8,
+                    "generated_text_hash": "sha256:g1",
+                    "multi_token_generation_ready": True,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                },
+                {
+                    "request_id": "req-2",
+                    "prompt_hash": "sha256:p2",
+                    "generated_token_count": 8,
+                    "generated_text_hash": "sha256:g2",
+                    "multi_token_generation_ready": True,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                },
+            ],
+            "batch_generation_ready": True,
+            "raw_prompts_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        }
+        payload["payload_summaries"]["local_p2p_discovery"]["real_generate_probe"]["batch"] = batch
+        payload["diagnosis_codes"].extend(["p2p_real_generate_batch_ready", "public_swarm_generate_batch_ready"])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("--prompt-texts-file", command)
+            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            self.assertNotIn("--prompt-texts", command)
+            self.assertNotIn("--prompt-text", command)
+            return completed(payload)
+
+        report = pack.build_report(pack.parse_args([
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--max-new-tokens",
+            "8",
+        ]), runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["readiness"]["p2p_product_path"]["batch_ready"])
+        for prompt in prompts:
+            self.assertNotIn(prompt, encoded)
+
     def test_local_mode_does_not_accept_batch_ready_code_without_batch_evidence(self) -> None:
         output_dir = self._tmp_dir()
         payload = check.fake_p2p_v06_payload()

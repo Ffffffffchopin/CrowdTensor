@@ -25,7 +25,7 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 import support_bundle  # noqa: E402
-from product_swarm_mvp_check import parse_prompt_texts_arg  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 from crowdtensor.session_protocol import public_leak_paths  # noqa: E402
 
 
@@ -601,7 +601,9 @@ def run_p2p_local(args: argparse.Namespace, *, output_dir: Path, runner: Runner)
         args.optional_model_report,
         "--json",
     ]
-    if args.prompt_texts:
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -1113,6 +1115,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--prompt-text", default=DEFAULT_PROMPT)
     parser.add_argument("--prompt-texts", default="")
+    parser.add_argument("--prompt-texts-file", default="")
     parser.add_argument("--stream-generation", action="store_true")
     parser.add_argument("--max-new-tokens", type=int, default=8)
     parser.add_argument("--startup-timeout", type=float, default=45.0)
@@ -1125,8 +1128,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.max_new_tokens < 2 or args.max_new_tokens > 32:
         raise SystemExit("--max-new-tokens must be between 2 and 32")
+    if args.prompt_texts and args.prompt_texts_file:
+        raise SystemExit("usable_swarm_inference accepts either --prompt-texts or --prompt-texts-file, not both")
     try:
-        parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        if args.prompt_texts_file:
+            args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+        else:
+            args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     if args.p2p_port < 1 or args.coordinator_port < 1:

@@ -191,6 +191,7 @@ def p2p_generate_command(
     http_timeout: float | str | None = None,
     prompt_text: str = "",
     prompt_texts: str = "",
+    prompt_texts_file: str = "",
     dry_run: bool = False,
     stream: bool = False,
 ) -> list[str]:
@@ -203,7 +204,9 @@ def p2p_generate_command(
         "--peer-bootstrap",
         p2p_url,
     ]
-    if prompt_texts:
+    if prompt_texts_file:
+        command.extend(["--prompt-texts-file", prompt_texts_file])
+    elif prompt_texts:
         command.extend(["--prompt-texts", prompt_texts])
     elif prompt_text:
         command.extend(["--prompt", prompt_text])
@@ -1104,6 +1107,7 @@ def run_single_real_stage_rescue_probe(args: argparse.Namespace, *, output_dir: 
             timeout_seconds=args.timeout_seconds,
             prompt_text=args.prompt_text,
             prompt_texts=getattr(args, "prompt_texts", ""),
+            prompt_texts_file=getattr(args, "prompt_texts_file", ""),
         )
         generate_proc = product_mvp.popen_command(generate_cmd)
         queued, queued_error = wait_v06_stage_queued(coordinator_url, stage_id=0, timeout=args.timeout_seconds)
@@ -1838,6 +1842,7 @@ def run_real_generate_probe(args: argparse.Namespace, *, output_dir: Path) -> di
             http_timeout=max(float(args.http_timeout), min(float(args.timeout_seconds), 120.0)),
             prompt_text=args.prompt_text,
             prompt_texts=getattr(args, "prompt_texts", ""),
+            prompt_texts_file=getattr(args, "prompt_texts_file", ""),
             stream=args.stream_generation,
         )
         generate_proc = product_mvp.popen_command(generate_cmd)
@@ -1980,6 +1985,8 @@ def run_local_p2p_discovery(args: argparse.Namespace, *, output_dir: Path, runne
                 hf_model_id=args.hf_model_id,
                 max_new_tokens=args.max_new_tokens,
                 prompt_text=args.prompt_text,
+                prompt_texts=getattr(args, "prompt_texts", ""),
+                prompt_texts_file=getattr(args, "prompt_texts_file", ""),
                 dry_run=True,
             ),
             runner=runner,
@@ -2319,7 +2326,9 @@ def run_external_existing_probe(args: argparse.Namespace, *, output_dir: Path) -
                 str(args.http_timeout),
                 "--json",
             ]
-            if getattr(args, "prompt_texts", ""):
+            if getattr(args, "prompt_texts_file", ""):
+                command.extend(["--prompt-texts-file", args.prompt_texts_file])
+            elif getattr(args, "prompt_texts", ""):
                 command.extend(["--prompt-texts", args.prompt_texts])
             else:
                 command.extend(["--prompt", args.prompt_text])
@@ -2354,7 +2363,7 @@ def run_external_existing_probe(args: argparse.Namespace, *, output_dir: Path) -
         codes.add("external_p2p_generate_verified")
     generation = generate_payload.get("generation") if isinstance(generate_payload.get("generation"), dict) else {}
     batch = product_mvp.safe_batch_summary(args, generation) if generate_payload else {
-        "enabled": bool(str(getattr(args, "prompt_texts", "") or "").strip()),
+        "enabled": bool(str(getattr(args, "prompt_texts", "") or "").strip() or str(getattr(args, "prompt_texts_file", "") or "").strip()),
         "batch_generation_ready": False,
         "raw_prompts_public": False,
         "raw_generated_text_public": False,
@@ -2953,6 +2962,8 @@ def run_kaggle_auto(args: argparse.Namespace, *, output_dir: Path) -> dict[str, 
             timeout_seconds=args.timeout_seconds,
             http_timeout=max(float(args.http_timeout), 60.0),
             prompt_text=args.prompt_text,
+            prompt_texts=getattr(args, "prompt_texts", ""),
+            prompt_texts_file=getattr(args, "prompt_texts_file", ""),
         )
         generate_proc = product_mvp.popen_command(generate_cmd)
         generate_step, generate_payload = product_mvp.finish_process_step("generate_p2p_kaggle", generate_proc, timeout=args.timeout_seconds + 120.0)
@@ -3562,6 +3573,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--prompt-text", default="CrowdTensor P2P v0.6")
     parser.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts for real-generate probes")
+    parser.add_argument("--prompt-texts-file", default="", help="UTF-8 batch prompt file with one non-empty prompt per line for real-generate probes")
     parser.add_argument("--stream-generation", action="store_true", help="require safe generate --stream progress evidence in real-generate probes")
     parser.add_argument("--max-new-tokens", type=int, default=2)
     parser.add_argument("--startup-timeout", type=float, default=30.0)
@@ -3588,8 +3600,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--p2p-port and --coordinator-port must be positive")
     if args.max_new_tokens < 2 or args.max_new_tokens > 32:
         raise SystemExit("--max-new-tokens must be between 2 and 32")
+    if args.prompt_texts and args.prompt_texts_file:
+        raise SystemExit("p2p_swarm_inference_v06 accepts either --prompt-texts or --prompt-texts-file, not both")
     try:
-        product_mvp.parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        if args.prompt_texts_file:
+            args.prompt_texts_list = product_mvp.read_prompt_texts_file(args.prompt_texts_file)
+        else:
+            args.prompt_texts_list = product_mvp.parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     if args.mode == MODE_EXTERNAL_EXISTING and not args.peer_bootstrap:

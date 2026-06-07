@@ -486,6 +486,34 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
                 "one,two,three,four,five",
             ])
 
+    def test_parse_args_accepts_prompt_texts_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = Path(tmp) / "prompts.txt"
+            prompts = ["one prompt, with comma", "second prompt"]
+            prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+
+            args = product_check.parse_args([
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+
+        self.assertEqual(args.prompt_texts_file, str(prompt_file))
+        self.assertEqual(args.prompt_texts_list, prompts)
+
+    def test_parse_args_rejects_prompt_texts_and_file_together(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = Path(tmp) / "prompts.txt"
+            prompt_file.write_text("one prompt\n", encoding="utf-8")
+            with self.assertRaises(SystemExit) as raised:
+                product_check.parse_args([
+                    "--prompt-texts",
+                    "one,two",
+                    "--prompt-texts-file",
+                    str(prompt_file),
+                ])
+
+        self.assertEqual(str(raised.exception), "product_swarm_mvp accepts either --prompt-texts or --prompt-texts-file, not both")
+
 
 if __name__ == "__main__":
     unittest.main()
