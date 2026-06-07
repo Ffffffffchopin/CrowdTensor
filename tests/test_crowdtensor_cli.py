@@ -2294,6 +2294,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--json",
         ])
         monotonic_values = iter([0.0, 0.2, 1.2])
+        stream_failed = False
 
         def fake_request(
             method: str,
@@ -2304,7 +2305,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             admin_token: str = "",
             timeout: float = 10.0,
         ) -> dict:
-            del base_url, payload, admin_token, timeout
+            nonlocal stream_failed
+            del base_url, payload, timeout
             if method == "POST":
                 return {
                     "schema": "real_llm_sharded_session_v1",
@@ -2314,6 +2316,15 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "backend": "hf_transformers_cpu",
                 }
             if path.startswith("/admin/session-stream"):
+                if not stream_failed:
+                    stream_failed = True
+                    raise cli.HTTPError(
+                        path,
+                        500,
+                        "stream failed with CrowdTensor prompt and admin-secret",
+                        {},
+                        io.BytesIO(b"stream echoed CrowdTensor prompt and admin-secret"),
+                    )
                 return {
                     "schema": "admin_session_stream_v1",
                     "events": [
@@ -2356,13 +2367,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("generation_timeout", report["diagnosis_codes"])
         self.assertTrue(report["wait_progress"]["session_created"])
         self.assertTrue(report["wait_progress"]["ledger_endpoint_ready"])
-        self.assertTrue(report["wait_progress"]["stream_endpoint_ready"])
+        self.assertFalse(report["wait_progress"]["stream_endpoint_ready"])
         self.assertEqual(report["wait_progress"]["poll_count"], 1)
         self.assertEqual(report["wait_progress"]["accepted_rows_seen"], 1)
         self.assertEqual(report["wait_progress"]["stream_event_count"], 1)
         self.assertEqual(report["wait_progress"]["max_observed_token_count"], 1)
         self.assertEqual(report["wait_progress"]["target_token_count"], 4)
         self.assertFalse(report["wait_progress"]["completion_observed"])
+        self.assertEqual(report["wait_progress"]["last_error_type"], "HTTPError")
+        self.assertIn("<redacted>", report["wait_progress"]["last_error_detail"])
+        self.assertNotIn("CrowdTensor prompt", report["wait_progress"]["last_error_detail"])
+        self.assertNotIn("admin-secret", report["wait_progress"]["last_error_detail"])
         self.assertIn("Generation reached 1/4 tokens", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
@@ -2387,7 +2402,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
-        self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=True", rendered)
+        self.assertIn("  stream_events: 1 source=admin-results-ledger-fallback complete=False", rendered)
+        self.assertIn("  wait: polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=False", rendered)
         self.assertIn("  action: Generation reached 1/4 tokens before timeout", rendered)
         self.assertIn("  next[", rendered)
         self.assertIn("retry generation with longer timeout", rendered)
@@ -5236,8 +5252,22 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "target_token_count": 4,
                     "expected_request_count": 1,
                     "observed_request_count": 1,
+                    "last_error_type": "HTTPError",
                 },
                 "Generation reached 2/4 tokens",
+            ),
+            (
+                {
+                    "session_created": True,
+                    "ledger_endpoint_ready": True,
+                    "accepted_rows_seen": 0,
+                    "max_observed_token_count": 0,
+                    "target_token_count": 4,
+                    "expected_request_count": 1,
+                    "observed_request_count": 0,
+                    "last_error_type": "HTTPError",
+                },
+                "Coordinator polling reported HTTPError",
             ),
             (
                 {

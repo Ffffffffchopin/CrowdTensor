@@ -3601,9 +3601,6 @@ def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
         return "Increase --timeout-seconds and confirm both stage Miners are running."
     if not progress.get("session_created"):
         return "The session was not created; check --admin-token and Coordinator /admin/inference-sessions."
-    last_error = str(progress.get("last_error_type") or "")
-    if last_error:
-        return f"Coordinator polling reported {last_error}; check token permissions and Coordinator reachability, then rerun with --dry-run."
     if not progress.get("ledger_endpoint_ready"):
         return "The session was created but /admin/results was not reachable; check --admin-token and Coordinator admin API access."
     observed = _safe_int(progress.get("max_observed_token_count"))
@@ -3611,6 +3608,9 @@ def _infer_wait_progress_action(payload: dict[str, Any]) -> str:
     accepted = _safe_int(progress.get("accepted_rows_seen"))
     expected_requests = _safe_int(progress.get("expected_request_count"), 1)
     observed_requests = _safe_int(progress.get("observed_request_count"))
+    last_error = str(progress.get("last_error_type") or "")
+    if last_error and accepted <= 0 and observed <= 0:
+        return f"Coordinator polling reported {last_error}; check token permissions and Coordinator reachability, then rerun with --dry-run."
     if accepted <= 0:
         return "No accepted result rows appeared; confirm both stage Miners are joined, healthy, and advertising the requested backend."
     if expected_requests > 1 and observed_requests < expected_requests:
@@ -6766,15 +6766,15 @@ def _update_generate_wait_progress(
     progress["completion_observed"] = bool(progress.get("completion_observed") or generation.get("multi_token_generation_ready"))
 
 
-def _safe_generate_error(exc: Exception) -> tuple[str, str]:
-    detail = str(exc)[:200]
+def _safe_generate_error(exc: Exception, redactions: list[str] | None = None) -> tuple[str, str]:
+    detail = redact_text(str(exc), redactions)[:200]
     if isinstance(exc, HTTPError):
         try:
             body = exc.read().decode("utf-8", errors="replace")
         except Exception:
             body = ""
         if body:
-            detail = body[:200]
+            detail = redact_text(body, redactions)[:200]
     return type(exc).__name__, detail
 
 
@@ -7573,13 +7573,13 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                     timeout=args.http_timeout,
                 )
             except HTTPError as exc:
-                wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc)
+                wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc, private_redactions)
                 if exc.code == 404:
                     stream_source = "admin-results-ledger-fallback"
                 else:
                     stream_payload = {}
             except Exception as exc:
-                wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc)
+                wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc, private_redactions)
                 stream_payload = {}
             else:
                 stream_endpoint_ready_this_poll = bool(stream_payload.get("schema") == "admin_session_stream_v1")
@@ -7612,7 +7612,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         try:
             ledger = request_json_url("GET", effective_coordinator_url, query, admin_token=args.admin_token, timeout=args.http_timeout)
         except Exception as exc:
-            wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc)
+            wait_progress["last_error_type"], wait_progress["last_error_detail"] = _safe_generate_error(exc, private_redactions)
             ledger = {}
         else:
             wait_progress["ledger_endpoint_ready"] = True
