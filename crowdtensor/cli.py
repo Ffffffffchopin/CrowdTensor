@@ -884,6 +884,7 @@ def print_answer_text(label: str, text: Any) -> None:
 
 
 LOCAL_ANSWER_SCOPE_TEXT = "terminal-only; saved JSON/Markdown keep hashes/redacted generated text."
+SAVED_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; inspect terminal output for any local answer."
 
 
 def print_local_output_block(report: dict[str, Any]) -> bool:
@@ -4399,7 +4400,7 @@ def _answer_scope_from_report(report: dict[str, Any]) -> dict[str, Any]:
         "raw_generated_text_public": False,
         "generated_token_ids_public": False,
         "public_artifact_safe": True,
-        "summary": LOCAL_ANSWER_SCOPE_TEXT,
+        "summary": LOCAL_ANSWER_SCOPE_TEXT if visible_in_terminal else SAVED_ANSWER_SCOPE_TEXT,
     }
 
 
@@ -4816,6 +4817,7 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         answer_scope["raw_generated_text_public"] = False
         answer_scope["generated_token_ids_public"] = False
         answer_scope["public_artifact_safe"] = True
+        answer_scope["summary"] = SAVED_ANSWER_SCOPE_TEXT
     return summary
 
 
@@ -5443,6 +5445,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         )
     if answer_scope:
         lines.append(f"- Answer scope: `{answer_scope_text(answer_scope)}`")
+        if answer_scope.get("summary"):
+            lines.append(f"- Answer scope note: {answer_scope.get('summary')}")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if stream.get("issue_summary"):
@@ -8488,6 +8492,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         )
     if answer_scope:
         lines.append(f"- Answer scope: `{answer_scope_text(answer_scope)}`")
+        if answer_scope.get("summary"):
+            lines.append(f"- Answer scope note: {answer_scope.get('summary')}")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if summary.get("operator_action"):

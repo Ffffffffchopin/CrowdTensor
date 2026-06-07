@@ -3301,6 +3301,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
         self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
         self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["summary"], cli.LOCAL_ANSWER_SCOPE_TEXT)
         persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
@@ -3319,6 +3320,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["answer_scope"]["saved_json_display"], "hash-only")
         self.assertEqual(persisted["answer_scope"]["saved_markdown_display"], "hash-only")
         self.assertTrue(persisted["answer_scope"]["public_artifact_safe"])
+        self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Result: `status=complete tokens=2/2 outputs=1 display=hash-only", markdown)
@@ -3334,6 +3336,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Answer scope: `terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True`",
             markdown,
         )
+        self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
         self.assertIn(
             "- Local output note: Raw generated text is shown only in local human output; JSON and public artifacts expose hashes only.",
             markdown,
@@ -6491,6 +6494,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
         self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
         self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["summary"], cli.LOCAL_ANSWER_SCOPE_TEXT)
         self.assertEqual(
             report["local_output_note"],
             "Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
@@ -6516,6 +6520,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["answer_scope"]["saved_json_display"], "hash-only")
         self.assertEqual(persisted["answer_scope"]["saved_markdown_display"], "hash-only")
         self.assertTrue(persisted["answer_scope"]["public_artifact_safe"])
+        self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Model: `sshleifer/tiny-gpt2` backend=`cpu`", markdown)
         self.assertIn("- Prompt: `count=1 hash=", markdown)
@@ -6534,6 +6539,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Answer scope: `terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True`",
             markdown,
         )
+        self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
         self.assertIn(
             "- Local output note: Shown only in local human output; JSON and saved artifacts keep raw generated text redacted.",
             markdown,
