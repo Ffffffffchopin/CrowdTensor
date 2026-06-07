@@ -66,6 +66,7 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         rc_args = pack.rc_args(args, Path("/tmp/product-beta-rc"))
 
         self.assertEqual(rc_args.prompt_texts, "first prompt,second prompt")
+        self.assertEqual(rc_args.prompt_text, pack.rc_pack.DEFAULT_PROMPT)
 
     def test_rc_args_forward_stream_generation(self) -> None:
         args = pack.parse_args([

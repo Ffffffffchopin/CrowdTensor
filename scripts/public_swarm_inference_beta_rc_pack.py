@@ -320,6 +320,8 @@ def product_beta_command(args: argparse.Namespace, output_dir: Path) -> list[str
     ]
     if args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     return command
 
 
@@ -718,8 +720,6 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
             "generate",
             "--coordinator-url",
             coordinator_url,
-            "--prompt-text",
-            args.prompt_text,
             "--scenario-id",
             "public-swarm-beta-rc",
             "--backend",
@@ -738,6 +738,8 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
         ]
         if args.prompt_texts:
             generate_command.extend(["--prompt-texts", args.prompt_texts])
+        else:
+            generate_command.extend(["--prompt-text", args.prompt_text])
         if args.stream_generation:
             generate_command.append("--stream")
         completed = subprocess.run(
@@ -896,8 +898,6 @@ def generate_existing_command(args: argparse.Namespace, output_dir: Path) -> lis
         "generate",
         "--coordinator-url",
         args.coordinator_url,
-        "--prompt-text",
-        args.prompt_text,
         "--scenario-id",
         "public-swarm-beta-rc",
         "--backend",
@@ -916,6 +916,8 @@ def generate_existing_command(args: argparse.Namespace, output_dir: Path) -> lis
     ]
     if args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if args.stream_generation:
         command.append("--stream")
     return command

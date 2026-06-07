@@ -262,10 +262,6 @@ def rc_args(args: argparse.Namespace, output_dir: Path) -> argparse.Namespace:
         args.hf_model_id,
         "--gpu-report",
         args.gpu_report,
-        "--prompt-text",
-        args.prompt_text,
-        "--prompt-texts",
-        args.prompt_texts,
         "--scenario-id",
         args.scenario_id,
         "--request-count",
@@ -292,6 +288,10 @@ def rc_args(args: argparse.Namespace, output_dir: Path) -> argparse.Namespace:
         str(args.http_timeout),
         "--json",
     ]
+    if args.prompt_texts:
+        argv.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        argv.extend(["--prompt-text", args.prompt_text])
     if args.hf_cache_dir:
         argv.extend(["--hf-cache-dir", args.hf_cache_dir])
     if args.observer_token:

@@ -3958,6 +3958,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-text", command)
             return completed({
                 "schema": "public_real_llm_swarm_beta_v1",
                 "ok": True,
@@ -4082,6 +4083,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("usable_swarm_inference_pack.py", command[1])
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-text", command)
             return completed({
                 "schema": "usable_swarm_inference_v1",
                 "ok": True,
@@ -5907,6 +5909,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("public_swarm_inference_v2_pack.py", command[1])
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-text", command)
             return completed({
                 "schema": "public_swarm_inference_v2",
                 "ok": True,
@@ -7117,6 +7120,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("public_swarm_inference_beta_rc_pack.py", command[1])
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-text", command)
             return completed({
                 "schema": "public_swarm_inference_beta_rc_v1",
                 "ok": True,
@@ -7225,6 +7229,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("public_swarm_product_beta_pack.py", command[1])
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-text", command)
             return completed({
                 "schema": "public_swarm_product_beta_v1",
                 "ok": True,

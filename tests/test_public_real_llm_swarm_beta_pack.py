@@ -635,6 +635,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
             if "public_swarm_product_beta_pack.py" in joined:
                 self.assertIn("--prompt-texts", command)
                 self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+                self.assertNotIn("--prompt-text", command)
                 return completed(product_payload)
             if "public_swarm_gpu_inference_beta_pack.py" in joined:
                 return completed(check.fake_gpu_payload())

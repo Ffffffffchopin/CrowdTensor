@@ -2838,8 +2838,6 @@ def build_public_swarm_inference_beta_rc(args: argparse.Namespace, *, runner: Ru
         args.hf_model_id,
         "--gpu-report",
         args.gpu_report,
-        "--prompt-text",
-        args.prompt_text,
         "--scenario-id",
         args.scenario_id,
         "--request-count",
@@ -2868,6 +2866,8 @@ def build_public_swarm_inference_beta_rc(args: argparse.Namespace, *, runner: Ru
     ]
     if getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if getattr(args, "stream_generation", False):
         command.append("--stream-generation")
     if args.hf_cache_dir:
@@ -2938,8 +2938,6 @@ def build_public_swarm_product_beta(args: argparse.Namespace, *, runner: Runner 
         args.hf_model_id,
         "--gpu-report",
         args.gpu_report,
-        "--prompt-text",
-        args.prompt_text,
         "--scenario-id",
         args.scenario_id,
         "--request-count",
@@ -2968,6 +2966,8 @@ def build_public_swarm_product_beta(args: argparse.Namespace, *, runner: Runner 
     ]
     if getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if getattr(args, "stream_generation", False):
         command.append("--stream-generation")
     if args.hf_cache_dir:
@@ -3074,8 +3074,6 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
         args.public_swarm_v2_backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
         "--request-count",
         str(args.request_count),
         "--max-new-tokens",
@@ -3104,6 +3102,8 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
     ]
     if getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if getattr(args, "stream_generation", False):
         command.append("--stream-generation")
     if args.hf_cache_dir:
@@ -3158,8 +3158,6 @@ def build_usable_swarm_inference(args: argparse.Namespace, *, runner: Runner = s
         args.backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
         "--max-new-tokens",
         str(args.max_new_tokens),
         "--startup-timeout",
@@ -3178,6 +3176,8 @@ def build_usable_swarm_inference(args: argparse.Namespace, *, runner: Runner = s
     ]
     if getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if getattr(args, "stream_generation", False):
         command.append("--stream-generation")
     if args.hf_cache_dir:
@@ -3246,8 +3246,6 @@ def build_public_swarm_inference_v2(args: argparse.Namespace, *, runner: Runner 
         args.backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
         "--max-new-tokens",
         str(args.max_new_tokens),
         "--startup-timeout",
@@ -3260,6 +3258,8 @@ def build_public_swarm_inference_v2(args: argparse.Namespace, *, runner: Runner 
     ]
     if getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if getattr(args, "stream_generation", False):
         command.append("--stream-generation")
     if getattr(args, "fresh_external_report", False):
@@ -5080,8 +5080,6 @@ def build_p2p_swarm_inference_v06(args: argparse.Namespace, *, runner: Runner = 
         args.backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
         "--max-new-tokens",
         str(args.max_new_tokens),
         "--startup-timeout",
@@ -5104,6 +5102,8 @@ def build_p2p_swarm_inference_v06(args: argparse.Namespace, *, runner: Runner = 
         command.extend(["--peer-secret", args.peer_secret])
     if getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if getattr(args, "stream_generation", False):
         command.append("--stream-generation")
     if getattr(args, "require_signed", False):
@@ -5270,8 +5270,6 @@ def build_real_p2p_swarm_inference_core_rc(args: argparse.Namespace, *, runner: 
         args.backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
         "--max-new-tokens",
         str(args.max_new_tokens),
         "--startup-timeout",
@@ -5294,6 +5292,8 @@ def build_real_p2p_swarm_inference_core_rc(args: argparse.Namespace, *, runner: 
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     if getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if getattr(args, "stream_generation", False):
         command.append("--stream-generation")
     if args.peer_secret:

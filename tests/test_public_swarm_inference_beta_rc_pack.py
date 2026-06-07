@@ -193,6 +193,7 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
             calls.append(command)
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-text", command)
             return subprocess.CompletedProcess(
                 args=command,
                 returncode=0,

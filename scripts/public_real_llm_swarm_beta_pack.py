@@ -852,10 +852,6 @@ def run_product_local(args: argparse.Namespace, *, output_dir: Path, runner: Run
         args.bind_host,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
-        "--prompt-texts",
-        args.prompt_texts,
         "--request-count",
         str(args.request_count),
         "--max-new-tokens",
@@ -880,6 +876,10 @@ def run_product_local(args: argparse.Namespace, *, output_dir: Path, runner: Run
         str(args.http_timeout),
         "--json",
     ]
+    if args.prompt_texts:
+        command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     if args.stream_generation:
@@ -953,8 +953,6 @@ def run_public_swarm_v2_local(args: argparse.Namespace, *, output_dir: Path, run
         args.public_swarm_v2_backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
         "--prompt-texts",
         args.prompt_texts or f"{args.prompt_text},CrowdTensor v2 batch proof",
         "--max-new-tokens",
