@@ -550,8 +550,10 @@ def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
         counts = progress.get("observed_token_counts") or []
         observed = _safe_int(progress.get("max_observed_token_count")) or max((_safe_int(count) for count in counts), default=0)
         target = _safe_int(progress.get("target_token_count") or progress.get("max_new_tokens"))
+        request_item = per_request[0] if per_request and isinstance(per_request[0], dict) else {}
         lines.append(
             "  stream_progress: "
+            f"request={stream_request_label(request_item)} "
             f"tokens={observed}/{target} "
             f"counts={progress.get('observed_token_counts') or []} "
             f"complete={progress.get('stream_progress_complete')}"
@@ -563,12 +565,15 @@ def stream_request_label(item: dict[str, Any]) -> str:
     if not item:
         return "missing"
     request_id = str(item.get("request_id") or "").strip()
-    if request_id:
+    if request_id and request_id != "<redacted>":
         return request_id[:24]
     prompt_hash = str(item.get("prompt_hash") or "").strip()
-    if prompt_hash:
+    if prompt_hash and prompt_hash != "<redacted>":
         return prompt_hash[:24]
-    return str(item.get("request_key") or "unknown")[:24]
+    request_key = str(item.get("request_key") or "").strip()
+    if request_key and request_key != "<redacted>":
+        return request_key[:24]
+    return "unknown"
 
 
 def utc_now() -> str:

@@ -86,14 +86,14 @@ keeping `output_request.raw_generated_text_public` false in JSON and saved
 artifacts. Existing-swarm runs also include a safe `wait_progress` summary with
 poll count, accepted rows, endpoint readiness, observed token progress, batch
 request progress, and safe last-error type so timeouts are actionable without
-exposing raw text; both `infer` and `generate` include `operator_action` suggestions for
-checking tokens, Miner health, admin API access, or timeout limits. They also
+exposing raw text; both `infer` and `generate` include `operator_action`
+suggestions for checking tokens, Miner health, admin API access, or timeout
+limits. They also label stream progress with safe request ids or hash prefixes,
 print per-request token/target progress for bounded batch streams, mark missing
-stream slots, label rows with safe request ids or hash prefixes, and print
-`next[...]` lines with safe follow-up commands. Human `infer` and `generate`
-output use your current local prompt so the next command is directly
-copyable; JSON reports and saved artifacts keep raw prompts and token values
-replaced with placeholders. Coordinator/session failure `detail` fields are
+stream slots, and print `next[...]` lines with safe follow-up commands. Human
+`infer` and `generate` output use your current local prompt so the next command
+is directly copyable; JSON reports and saved artifacts keep raw prompts and
+token values replaced with placeholders. Coordinator/session failure `detail` fields are
 redacted the same way, even if a remote endpoint echoes prompt text or tokens.
 When `ready_to_submit` is present, read
 `readiness_label` and `next_step` first:

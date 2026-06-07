@@ -60,6 +60,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "max_observed_token_count": 2,
             "target_token_count": 2,
             "stream_progress_complete": True,
+            "per_request_progress": [{"request_key": "req-single"}],
         }
         batch = {
             "target_token_count": 2,
@@ -84,7 +85,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(
             cli.stream_progress_lines(single),
-            ["  stream_progress: tokens=2/2 counts=[1, 2] complete=True"],
+            ["  stream_progress: request=req-single tokens=2/2 counts=[1, 2] complete=True"],
         )
         self.assertEqual(
             cli.stream_progress_lines(batch),
@@ -98,6 +99,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.stream_request_label({"prompt_hash": "sha256:abcdef1234567890zz"}),
             "sha256:abcdef1234567890z",
         )
+        self.assertEqual(cli.stream_request_label({"request_key": "<redacted>"}), "unknown")
 
     def test_local_proof_success_summarizes_steps_and_artifacts(self) -> None:
         calls: list[list[str]] = []
@@ -3383,6 +3385,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("raw final text", encoded)
         self.assertNotIn('"generated_token_ids":', encoded)
         self.assertNotIn("admin-secret", encoded)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  stream_progress: request=unknown tokens=3/3 counts=[1, 2, 3] complete=True", rendered)
+        self.assertNotIn("raw final text", rendered)
+        self.assertNotIn("admin-secret", rendered)
 
     def test_product_generate_batch_stream_requires_each_prompt_progress(self) -> None:
         args = cli.parse_args([
