@@ -9517,6 +9517,12 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
             file=sys.stderr,
             flush=True,
         )
+    elif not str(getattr(args, "admin_token", "") or "").strip():
+        print(
+            "CrowdTensor infer: checking credentials and request requirements before submitting work.",
+            file=sys.stderr,
+            flush=True,
+        )
     elif bool(getattr(args, "dry_run", False)):
         print(
             "CrowdTensor infer: checking the existing route before submitting work.",
@@ -9541,6 +9547,12 @@ def print_generate_start_hint(args: argparse.Namespace) -> None:
     if bool(getattr(args, "dry_run", False)):
         print(
             "CrowdTensor generate: checking route and stage readiness before submitting work.",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif not str(getattr(args, "admin_token", "") or "").strip():
+        print(
+            "CrowdTensor generate: checking credentials and request requirements before submitting work.",
             file=sys.stderr,
             flush=True,
         )

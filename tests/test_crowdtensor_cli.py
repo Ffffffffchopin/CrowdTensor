@@ -1169,6 +1169,42 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
+    def test_generate_without_admin_token_prints_credential_start_hint(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor prompt"
+
+        def fake_build_product_generate(args: object) -> dict[str, object]:
+            self.assertEqual(getattr(args, "admin_token"), "")
+            return {
+                "schema": "public_swarm_product_cli_v1",
+                "ok": False,
+                "mode": "generate",
+                "operator_action": "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.",
+                "output_dir": str(output_dir),
+                "diagnosis_codes": ["admin_token_required"],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_product_generate", side_effect=fake_build_product_generate):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "generate",
+                    prompt,
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--output-dir",
+                    str(output_dir),
+                    "--max-new-tokens",
+                    "2",
+                ])
+
+        self.assertEqual(raised.exception.code, 1)
+        progress = stderr.getvalue()
+        self.assertIn("checking credentials and request requirements", progress)
+        self.assertNotIn("submitting a bounded generation request", progress)
+        self.assertNotIn(prompt, progress)
+
     def test_generate_review_next_fallback_cleans_batch_prompt_conflict(self) -> None:
         prompts = "first private prompt,second private prompt"
         report = {
@@ -5800,6 +5836,48 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         self.assertEqual(stderr.getvalue(), "")
         self.assertIn('"schema": "crowdtensor_infer_cli_v1"', stdout.getvalue())
+
+    def test_infer_existing_without_admin_token_prints_credential_start_hint(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor user prompt"
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            self.assertEqual(getattr(args, "infer_mode"), "existing")
+            self.assertEqual(getattr(args, "admin_token"), "")
+            return {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": False,
+                "mode": "existing",
+                "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "generation": {"generated_token_count": 0, "max_new_tokens": 2},
+                "route": {"route_source": "coordinator-url", "route_ready": True},
+                "operator_action": "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.",
+                "output_dir": str(output_dir),
+                "diagnosis_codes": ["admin_token_required"],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "infer",
+                    prompt,
+                    "--mode",
+                    "existing",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--output-dir",
+                    str(output_dir),
+                    "--max-new-tokens",
+                    "2",
+                ])
+
+        self.assertEqual(raised.exception.code, 1)
+        progress = stderr.getvalue()
+        self.assertIn("checking credentials and request requirements", progress)
+        self.assertNotIn("submitting to the existing swarm", progress)
+        self.assertNotIn(prompt, progress)
 
     def test_infer_local_batch_forwards_only_prompt_texts_to_product_loopback(self) -> None:
         output_dir = Path(self._tmp_dir())
