@@ -346,6 +346,25 @@ def local_coordinator_port_from_url(coordinator_url: str, default: int = 8787) -
         return default
 
 
+def is_loopback_coordinator_url(coordinator_url: str = "") -> bool:
+    try:
+        host = str(urlparse(str(coordinator_url or "")).hostname or "").lower()
+    except (TypeError, ValueError):
+        return False
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def local_startup_coordinator_url(coordinator_url: str = "", *, default_port: int = 8787) -> str:
+    try:
+        parsed = urlparse(str(coordinator_url or ""))
+        port = int(parsed.port or default_port)
+    except (TypeError, ValueError):
+        port = default_port
+    if not is_loopback_coordinator_url(coordinator_url) or port < 1024 or port > 65535:
+        port = default_port
+    return f"http://127.0.0.1:{port}"
+
+
 def local_infer_command_line(item: dict[str, Any], report: dict[str, Any]) -> str:
     command = item.get("command") if isinstance(item.get("command"), list) else []
     prompt = str(report.get("local_prompt_text") or "")
@@ -4731,6 +4750,10 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
     if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
         return "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm."
     if "coordinator_ready_failed" in codes:
+        route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
+        coordinator_url = str(route.get("coordinator_url") or getattr(args, "coordinator_url", "") or "")
+        if coordinator_url and not is_loopback_coordinator_url(coordinator_url):
+            return "Coordinator route exists but remote /ready is not reachable; verify --coordinator-url, network access, and the remote Coordinator service, then rerun --dry-run."
         return "Coordinator route exists but /ready is not reachable; start the Coordinator or fix --coordinator-url, then rerun --dry-run."
     if "stage_preflight_not_checked" in codes:
         return "Fix the route or Coordinator readiness first, then rerun --dry-run with --observer-token to verify stage0/stage1."
@@ -4864,8 +4887,23 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         p2pd_command.append("--run")
         commands.append(command_entry("start P2P discovery daemon", p2pd_command))
     route_missing = "coordinator_route_missing" in codes
-    suggested_coordinator_url = coordinator_url or (
-        "http://127.0.0.1:8787" if route_missing and not use_p2p else ""
+    startup_needed = {
+        "generate_route_unavailable",
+        "coordinator_route_missing",
+        "coordinator_ready_failed",
+        "stage_preflight_not_checked",
+        "stage_preflight_failed",
+    }
+    needs_startup_commands = bool(not ok and codes.intersection(startup_needed))
+    use_local_startup_route = bool(
+        needs_startup_commands
+        and not use_p2p
+        and (route_missing or not coordinator_url or is_loopback_coordinator_url(coordinator_url))
+    )
+    suggested_coordinator_url = (
+        local_startup_coordinator_url(coordinator_url)
+        if use_local_startup_route
+        else (coordinator_url or ("http://127.0.0.1:8787" if route_missing and not use_p2p else ""))
     )
     dry_run_command = _infer_command_args(
         args,
@@ -4894,15 +4932,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         submit_command,
         requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
     )
-    startup_needed = {
-        "generate_route_unavailable",
-        "coordinator_route_missing",
-        "coordinator_ready_failed",
-        "stage_preflight_not_checked",
-        "stage_preflight_failed",
-    }
-    needs_startup_commands = bool(not ok and codes.intersection(startup_needed))
-    if needs_startup_commands:
+    if use_p2p or use_local_startup_route:
         local_port = local_coordinator_port_from_url(suggested_coordinator_url or coordinator_url)
         serve_args = argparse.Namespace(
             profile="gpu-generation" if getattr(args, "backend", "cpu") == "cuda" else "cpu-real-llm",
@@ -8188,6 +8218,10 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
     if "p2p_discovery_unreachable" in codes:
         return "Start the P2P discovery daemon with crowdtensor p2pd --run, or pass --coordinator-url for a direct Coordinator route."
     if "coordinator_ready_failed" in codes:
+        route = report.get("route") if isinstance(report.get("route"), dict) else {}
+        coordinator_url = str(route.get("coordinator_url") or "")
+        if coordinator_url and not is_loopback_coordinator_url(coordinator_url):
+            return "Coordinator route exists but remote /ready failed; verify --coordinator-url, network access, and the remote Coordinator service, then rerun generate --dry-run."
         return "Coordinator route exists but /ready failed; start or restart the Coordinator and retry generate --dry-run."
     if "stage_preflight_not_checked" in codes:
         return "Fix the route or Coordinator readiness first, then rerun generate --dry-run with --observer-token to verify stage0/stage1."
@@ -8246,8 +8280,23 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         p2pd_command.append("--run")
         commands.append(command_entry("start P2P discovery daemon", p2pd_command))
     route_missing = "coordinator_route_missing" in codes
-    suggested_coordinator_url = coordinator_url or (
-        "http://127.0.0.1:8787" if route_missing and not p2p_enabled else ""
+    startup_codes = {
+        "generate_route_unavailable",
+        "coordinator_route_missing",
+        "coordinator_ready_failed",
+        "stage_preflight_not_checked",
+        "stage_preflight_failed",
+    }
+    needs_startup_commands = bool(codes.intersection(startup_codes))
+    use_local_startup_route = bool(
+        needs_startup_commands
+        and not p2p_enabled
+        and (route_missing or not coordinator_url or is_loopback_coordinator_url(coordinator_url))
+    )
+    suggested_coordinator_url = (
+        local_startup_coordinator_url(coordinator_url)
+        if use_local_startup_route
+        else (coordinator_url or ("http://127.0.0.1:8787" if route_missing and not p2p_enabled else ""))
     )
     route_command = _product_cli_generate_command(
         p2p=p2p_enabled,
@@ -8296,13 +8345,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         if p2p_enabled or suggested_coordinator_url or coordinator_url
         else None
     )
-    if (
-        "generate_route_unavailable" in codes
-        or "coordinator_route_missing" in codes
-        or "coordinator_ready_failed" in codes
-        or "stage_preflight_not_checked" in codes
-        or "stage_preflight_failed" in codes
-    ):
+    if p2p_enabled or use_local_startup_route:
         local_port = local_coordinator_port_from_url(suggested_coordinator_url or coordinator_url)
         serve_args = argparse.Namespace(
             profile="gpu-generation" if backend == "cuda" else "cpu-real-llm",

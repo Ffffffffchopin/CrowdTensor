@@ -1605,6 +1605,69 @@ class CrowdTensorCliTests(unittest.TestCase):
         labels = [item["label"] for item in report["next_commands"]]
         self.assertIn("submit generation after checks pass", labels)
 
+    def test_product_generate_low_loopback_port_suggests_safe_local_startup_port(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:9",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--dry-run",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
+            next_lines,
+        )
+        self.assertFalse(any("--port 9 --run" in line for line in next_lines))
+        self.assertFalse(any("--coordinator-url http://127.0.0.1:9" in line for line in next_lines))
+
+    def test_product_generate_remote_ready_failure_keeps_remote_route_commands(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "https://coordinator.example:9443",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--dry-run",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
+        self.assertIn("remote /ready failed", report["operator_action"])
+        self.assertIn("remote Coordinator service", report["operator_action"])
+        self.assertEqual(report["recommended_next_command"]["label"], "check generation route")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertFalse(any(line.startswith("crowdtensor serve ") for line in next_lines))
+        self.assertFalse(any(line.startswith("crowdtensor join ") for line in next_lines))
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url https://coordinator.example:9443 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url https://coordinator.example:9443 --prompt-text '<prompt>'",
+            next_lines,
+        )
+
     def test_p2pd_top_level_prints_daemon_command(self) -> None:
         args = cli.parse_args([
             "p2pd",
@@ -7738,6 +7801,77 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "crowdtensor join --coordinator-url http://127.0.0.1:8792 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+
+    def test_infer_existing_low_loopback_port_suggests_safe_local_startup_port(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:9",
+            "--dry-run",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
+            next_lines,
+        )
+        self.assertFalse(any("--port 9 --run" in line for line in next_lines))
+        self.assertFalse(any("--coordinator-url http://127.0.0.1:9" in line for line in next_lines))
+
+    def test_infer_existing_remote_ready_failure_keeps_remote_route_commands(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "https://coordinator.example:9443",
+            "--dry-run",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_ready_failed", report["diagnosis_codes"])
+        self.assertIn("remote /ready is not reachable", report["operator_action"])
+        self.assertIn("remote Coordinator service", report["operator_action"])
+        self.assertEqual(report["recommended_next_command"]["label"], "check existing swarm")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertFalse(any(line.startswith("crowdtensor serve ") for line in next_lines))
+        self.assertFalse(any(line.startswith("crowdtensor join ") for line in next_lines))
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url https://coordinator.example:9443 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
+            next_lines,
+        )
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --coordinator-url https://coordinator.example:9443",
             next_lines,
         )
 
