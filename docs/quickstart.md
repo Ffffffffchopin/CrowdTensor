@@ -93,10 +93,11 @@ endpoint readiness, observed token progress, and batch request progress for safe
 timeout debugging; `infer` and `generate` turn that progress into a concrete
 `operator_action`.
 Human output also includes per-request token/target progress for bounded batch
-streams, marks missing stream slots, and prints `next[...]` lines with safe,
-copyable follow-up commands. Human `infer` and `generate` output use your
-current local prompt in those next commands; JSON reports and saved artifacts
-keep raw prompts and token values represented as placeholders.
+streams, marks missing stream slots, labels rows with safe request ids or hash
+prefixes, and prints `next[...]` lines with safe, copyable follow-up commands.
+Human `infer` and `generate` output use your current local prompt in those next
+commands; JSON reports and saved artifacts keep raw prompts and token values
+represented as placeholders.
 If `ready_to_submit` is printed, use its `label` and `next_step` before submitting:
 `verified` means route, Coordinator, and distinct stage Miners were checked;
 `partial` means the request shape can submit but stage Miners still need

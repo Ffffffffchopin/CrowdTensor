@@ -534,8 +534,10 @@ def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
             counts = item.get("observed_token_counts") or []
             observed = _safe_int(item.get("max_observed_token_count")) or max((_safe_int(count) for count in counts), default=0)
             item_target = _safe_int(item.get("target_token_count")) or target
+            request_label = stream_request_label(item)
             lines.append(
                 f"  stream[{index}]: "
+                f"request={request_label} "
                 f"tokens={observed}/{item_target} "
                 f"counts={counts} "
                 f"complete={bool(item.get('stream_progress_complete'))} "
@@ -552,6 +554,18 @@ def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
             f"complete={progress.get('stream_progress_complete')}"
         )
     return lines
+
+
+def stream_request_label(item: dict[str, Any]) -> str:
+    if not item:
+        return "missing"
+    request_id = str(item.get("request_id") or "").strip()
+    if request_id:
+        return request_id[:24]
+    prompt_hash = str(item.get("prompt_hash") or "").strip()
+    if prompt_hash:
+        return prompt_hash[:24]
+    return str(item.get("request_key") or "unknown")[:24]
 
 
 def utc_now() -> str:
