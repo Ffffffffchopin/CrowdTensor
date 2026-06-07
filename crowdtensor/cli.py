@@ -583,6 +583,18 @@ def wait_progress_text(wait_progress: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def step_status_text(step: dict[str, Any]) -> str:
+    parts = [
+        f"name={step.get('name')}",
+        f"ok={step.get('ok')}",
+        f"returncode={step.get('returncode')}",
+    ]
+    error = str(step.get("error") or "").strip()
+    if error:
+        parts.append(f"error={error}")
+    return " ".join(parts)
+
+
 def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
     per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
     lines = []
@@ -4272,6 +4284,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
     stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
     wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
+    step = summary.get("step") if isinstance(summary.get("step"), dict) else {}
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
         "# CrowdTensor Infer Summary",
@@ -4313,6 +4326,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         )
     if wait_progress:
         lines.append(f"- Wait: `{wait_progress_text(wait_progress)}`")
+    if step:
+        lines.append(f"- Step: `{step_status_text(step)}`")
     if local_output:
         lines.append(
             "- Local output: "
@@ -8556,6 +8571,9 @@ def print_infer(report: dict[str, Any]) -> None:
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     if wait_progress:
         print(f"  wait: {wait_progress_text(wait_progress)}")
+    step = report.get("step") if isinstance(report.get("step"), dict) else {}
+    if step:
+        print(f"  step: {step_status_text(step)}")
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")

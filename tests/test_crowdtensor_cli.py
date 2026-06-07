@@ -5088,10 +5088,19 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("<redacted>", report["step"]["stderr_tail"])
         self.assertIn("<redacted>", report["step"]["stdout_tail"])
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  step: name=crowdtensor_infer_local_product_loopback ok=False returncode=1 error=command emitted no JSON object", rendered)
+        self.assertNotIn(prompt, rendered)
+        self.assertNotIn("runtime echoed", rendered)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- Step: `name=crowdtensor_infer_local_product_loopback ok=False returncode=1 error=command emitted no JSON object`", markdown)
         self.assertNotIn(prompt, markdown)
+        self.assertNotIn("runtime echoed", markdown)
 
     def test_infer_full_evidence_uses_public_swarm_v2_local_gate(self) -> None:
         output_dir = Path(self._tmp_dir())
