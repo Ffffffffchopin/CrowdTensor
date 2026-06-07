@@ -721,6 +721,20 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
 
+    def test_generate_rejects_ambiguous_prompt_sources(self) -> None:
+        cases = [
+            ["generate", "positional prompt", "--prompt-text", "flag prompt"],
+            ["generate", "positional prompt", "--prompt-texts", "first prompt,second prompt"],
+            ["generate", "--prompt-text", "flag prompt", "--prompt-texts", "first prompt,second prompt"],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
+                cli.parse_args(argv)
+            self.assertEqual(
+                str(raised.exception),
+                "generate accepts one prompt source: positional prompt, --prompt-text, or --prompt-texts",
+            )
+
     def test_product_generate_dry_run_has_safe_default_prompt(self) -> None:
         args = cli.parse_args([
             "generate",

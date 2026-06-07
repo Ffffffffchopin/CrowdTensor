@@ -9631,7 +9631,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     generate.add_argument("prompt_text_arg", nargs="?", default="", help="optional prompt text, equivalent to --prompt-text")
-    generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=DEFAULT_PRODUCT_GENERATE_PROMPT)
+    generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None)
     generate.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
     generate.add_argument("--scenario-id", default="public-swarm-product-rc")
     generate.add_argument("--max-new-tokens", type=int, default=16)
@@ -11504,8 +11504,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if args.idle_sleep <= 0:
             raise SystemExit("--idle-sleep must be positive")
     if args.command == "generate":
+        prompt_sources = [
+            name
+            for name, value in [
+                ("positional prompt", args.prompt_text_arg),
+                ("--prompt-text", args.prompt_text),
+                ("--prompt-texts", args.prompt_texts),
+            ]
+            if str(value or "").strip()
+        ]
+        if len(prompt_sources) > 1:
+            raise SystemExit("generate accepts one prompt source: positional prompt, --prompt-text, or --prompt-texts")
         if args.prompt_text_arg:
             args.prompt_text = args.prompt_text_arg
+        elif not args.prompt_texts and args.prompt_text is None:
+            args.prompt_text = DEFAULT_PRODUCT_GENERATE_PROMPT
+        elif args.prompt_text is None:
+            args.prompt_text = ""
         if args.max_new_tokens < 1 or args.max_new_tokens > 32:
             raise SystemExit("--max-new-tokens must be between 1 and 32")
         try:
