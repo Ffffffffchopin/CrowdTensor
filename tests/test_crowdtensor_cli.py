@@ -174,6 +174,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("printed", rendered)
         self.assertIn("follow-up preflight", rendered)
         self.assertIn("Use one prompt source at a time: positional prompt, --prompt-text/--prompt", rendered)
+        self.assertIn("--prompt-file for a UTF-8 single prompt file", rendered)
+        self.assertIn("crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8", rendered)
         self.assertIn("ambiguous mixes are rejected", rendered)
         self.assertIn("output_request.include_output", rendered)
         self.assertIn("output_request.raw_generated_text_public false", rendered)
@@ -244,6 +246,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("follow-up preflight", rendered)
         self.assertIn("skipped is request-shape only", rendered)
         self.assertIn("Use one prompt source at a time: positional prompt, --prompt-text/--prompt", rendered)
+        self.assertIn("--prompt-file for a UTF-8 single prompt file", rendered)
+        self.assertIn("crowdtensor generate --prompt-file prompt.txt", rendered)
         self.assertIn("ambiguous mixes are rejected", rendered)
         self.assertIn("output_request.include_output", rendered)
         self.assertIn("output_request.raw_generated_text_public false", rendered)
@@ -1326,6 +1330,85 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
+    def test_generate_main_prints_prompt_file_without_expanding_prompt(self) -> None:
+        prompt = "Prompt file private text"
+        prompt_file = Path(self._tmp_dir()) / "prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+
+        def fake_build_product_generate(args: object) -> dict[str, object]:
+            self.assertEqual(getattr(args, "prompt_text"), prompt)
+            self.assertEqual(getattr(args, "prompt_file"), str(prompt_file))
+            return {
+                "schema": "public_swarm_product_cli_v1",
+                "ok": True,
+                "mode": "generate",
+                "diagnosis_codes": ["generate_dry_run_ready"],
+                "route": {"route_source": "coordinator-url", "coordinator_url_present": True, "missing_capabilities": []},
+                "next_commands": [
+                    cli.command_entry(
+                        "check generation route",
+                        [
+                            "crowdtensor",
+                            "generate",
+                            "--max-new-tokens",
+                            "16",
+                            "--coordinator-url",
+                            "http://127.0.0.1:8787",
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    )
+                ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check generation route",
+                        [
+                            "crowdtensor",
+                            "generate",
+                            "--max-new-tokens",
+                            "16",
+                            "--coordinator-url",
+                            "http://127.0.0.1:8787",
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    ),
+                    "reason": "verify_stage_miners",
+                    "source_index": 1,
+                },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check generation route",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run",
+                    "public_artifact_safe": True,
+                },
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_product_generate", side_effect=fake_build_product_generate):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "generate",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--prompt-file",
+                    str(prompt_file),
+                    "--dry-run",
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertIn(f"--prompt-file {prompt_file}", rendered)
+        self.assertNotIn("--prompt-text '<prompt>'", rendered)
+        self.assertNotIn(prompt, rendered)
+        self.assertNotIn(prompt, progress)
+
     def test_generate_without_admin_token_prints_credential_start_hint(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompt = "CrowdTensor prompt"
@@ -1409,6 +1492,30 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
 
+    def test_generate_accepts_prompt_file_without_persisting_prompt_text(self) -> None:
+        prompt = "Prompt file product request"
+        prompt_file = Path(self._tmp_dir()) / "prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        args = cli.parse_args([
+            "generate",
+            "--prompt-file",
+            str(prompt_file),
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "2",
+            "--json",
+        ])
+
+        self.assertEqual(args.prompt_text, prompt)
+        self.assertEqual(args.prompt_file, str(prompt_file))
+        report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["session_request"]["prompt_chars"], len(prompt))
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        self.assertIn("prompt_hash", json.dumps(report, sort_keys=True))
+
     def test_infer_accepts_prompt_text_alias_like_generate(self) -> None:
         prompt = "CrowdTensor flag prompt"
         args = cli.parse_args([
@@ -1427,18 +1534,53 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(args.prompt_text_arg, "")
         self.assertEqual(args.prompt_texts, "")
 
+    def test_infer_accepts_prompt_file_without_persisting_prompt_text(self) -> None:
+        prompt = "Infer prompt file request"
+        prompt_file = Path(self._tmp_dir()) / "prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        args = cli.parse_args([
+            "infer",
+            "--prompt-file",
+            str(prompt_file),
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--observer-token",
+            "observer-secret",
+            "--dry-run",
+            "--json",
+        ])
+
+        self.assertEqual(args.prompt_text, prompt)
+        self.assertEqual(args.prompt_file, str(prompt_file))
+        with patch.object(cli, "request_json_url", return_value={
+            "schema": "ready_v1",
+            "service": "crowdtensord-coordinator",
+            "protocol": "runtime_contract_v1",
+        }):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["prompt"]["raw_prompt_public"])
+        self.assertEqual(report["prompt"]["prompt_count"], 1)
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+
     def test_generate_rejects_ambiguous_prompt_sources(self) -> None:
+        prompt_file = Path(self._tmp_dir()) / "prompt.txt"
+        prompt_file.write_text("file prompt", encoding="utf-8")
         cases = [
             ["generate", "positional prompt", "--prompt-text", "flag prompt"],
             ["generate", "positional prompt", "--prompt-texts", "first prompt,second prompt"],
             ["generate", "--prompt-text", "flag prompt", "--prompt-texts", "first prompt,second prompt"],
+            ["generate", "--prompt-file", str(prompt_file), "--prompt-text", "flag prompt"],
+            ["generate", "positional prompt", "--prompt-file", str(prompt_file)],
         ]
         for argv in cases:
             with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
                 cli.parse_args(argv)
             self.assertEqual(
                 str(raised.exception),
-                "generate accepts one prompt source: positional prompt, --prompt-text, or --prompt-texts",
+                "generate accepts one prompt source: positional prompt, --prompt-text, --prompt-file, or --prompt-texts",
             )
 
     def test_product_generate_dry_run_has_safe_default_prompt(self) -> None:
@@ -7987,6 +8129,94 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(f"next[1] check existing swarm: crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
+    def test_infer_main_prints_prompt_file_without_expanding_prompt(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "Infer file private text"
+        prompt_file = output_dir / "prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            self.assertEqual(getattr(args, "prompt_text"), prompt)
+            self.assertEqual(getattr(args, "prompt_file"), str(prompt_file))
+            return {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": True,
+                "mode": "existing",
+                "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "generation": {"generated_token_count": 8, "max_new_tokens": 8, "generated_text_hash": "sha256:generated"},
+                "route": {"route_source": "coordinator-url", "route_ready": True, "distinct_stage_miners": True},
+                "stream": {},
+                "local_output": {},
+                "output_dir": str(output_dir),
+                "next_commands": [
+                    cli.command_entry(
+                        "check existing swarm",
+                        [
+                            "crowdtensor",
+                            "infer",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--mode",
+                            "existing",
+                            "--output-dir",
+                            str(output_dir),
+                            "--dry-run",
+                        ],
+                    )
+                ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check existing swarm",
+                        [
+                            "crowdtensor",
+                            "infer",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--mode",
+                            "existing",
+                            "--output-dir",
+                            str(output_dir),
+                            "--dry-run",
+                        ],
+                    ),
+                    "reason": "verify_stage_miners",
+                    "source_index": 1,
+                },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check existing swarm",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": f"crowdtensor infer '<prompt>' --mode existing --output-dir {output_dir} --dry-run",
+                    "public_artifact_safe": True,
+                },
+                "diagnosis_codes": ["crowdtensor_infer_ready"],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "infer",
+                    "--prompt-file",
+                    str(prompt_file),
+                    "--mode",
+                    "existing",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--admin-token",
+                    "admin-secret",
+                    "--output-dir",
+                    str(output_dir),
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertIn(f"--prompt-file {prompt_file}", rendered)
+        self.assertNotIn("infer '<prompt>'", rendered)
+        self.assertNotIn(prompt, rendered)
+        self.assertNotIn(prompt, progress)
+
     def test_infer_main_prints_copyable_local_batch_prompts_without_persisting_them(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompt = "first prompt"
@@ -9387,17 +9617,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("second private prompt", encoded)
 
     def test_infer_rejects_ambiguous_prompt_sources(self) -> None:
+        prompt_file = Path(self._tmp_dir()) / "prompt.txt"
+        prompt_file.write_text("file prompt", encoding="utf-8")
         cases = [
             ["infer", "positional prompt", "--prompt-text", "flag prompt"],
             ["infer", "positional prompt", "--prompt-texts", "first prompt,second prompt"],
             ["infer", "--prompt", "flag prompt", "--prompt-texts", "first prompt,second prompt"],
+            ["infer", "--prompt-file", str(prompt_file), "--prompt-text", "flag prompt"],
+            ["infer", "positional prompt", "--prompt-file", str(prompt_file)],
         ]
         for argv in cases:
             with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
                 cli.parse_args(argv)
             self.assertEqual(
                 str(raised.exception),
-                "infer accepts one prompt source: positional prompt, --prompt-text/--prompt, or --prompt-texts",
+                "infer accepts one prompt source: positional prompt, --prompt-text/--prompt, --prompt-file, or --prompt-texts",
             )
 
     def test_infer_existing_dry_run_with_observer_token_blocks_missing_stage_state(self) -> None:
