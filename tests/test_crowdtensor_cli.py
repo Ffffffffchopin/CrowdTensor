@@ -2838,7 +2838,15 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Recommended next: `submit generation` reason=`set_admin_token` command=`crowdtensor generate --max-new-tokens 2",
+            "- Review next: `label=submit generation reason=set_admin_token command=CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
+            markdown,
+        )
+        self.assertIn(
+            "- Recommended next: `submit generation` reason=`set_admin_token` command=`CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
+            markdown,
+        )
+        self.assertIn(
+            "2. `submit generation`: `CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
             markdown,
         )
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
@@ -3000,7 +3008,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Review next: `label=submit generation reason=rerun_generation command=crowdtensor generate --max-new-tokens 2",
+            "- Review next: `label=submit generation reason=rerun_generation command=CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
             markdown,
         )
         self.assertIn(
@@ -3008,7 +3016,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Recommended next: `submit generation` reason=`rerun_generation` command=`crowdtensor generate --max-new-tokens 2",
+            "- Recommended next: `submit generation` reason=`rerun_generation` command=`CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
             markdown,
         )
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
@@ -3046,7 +3054,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            "  review_next: label=submit generation reason=rerun_generation command=crowdtensor generate --max-new-tokens 2",
+            "  review_next: label=submit generation reason=rerun_generation command=CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 2",
             rendered,
         )
         self.assertIn(
@@ -6250,7 +6258,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn(
-            "  review_next: label=submit inference reason=rerun_inference command=crowdtensor infer '<prompt>' --mode existing",
+            "  review_next: label=submit inference reason=rerun_inference command=CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
             stdout.getvalue(),
         )
         self.assertIn(
@@ -6421,7 +6429,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Review next: `label=submit inference reason=rerun_inference command=crowdtensor infer '<prompt>' --mode existing",
+            "- Review next: `label=submit inference reason=rerun_inference command=CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
             markdown,
         )
         self.assertIn(
@@ -6445,7 +6453,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Recommended next: `submit inference` reason=`rerun_inference` command=`crowdtensor infer '<prompt>' --mode existing",
+            "- Recommended next: `submit inference` reason=`rerun_inference` command=`CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
             markdown,
         )
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
@@ -7799,7 +7807,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Recommended next: `submit inference` reason=`submit_verified_inference` command=`crowdtensor infer '<prompt>' --mode existing",
+            "- Recommended next: `submit inference` reason=`submit_verified_inference` command=`CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
             markdown,
         )
         self.assertNotIn("observer-secret", markdown)

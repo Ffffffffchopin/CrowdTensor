@@ -815,12 +815,22 @@ def review_summary_text(summary: dict[str, Any]) -> str:
 def review_next_command_text(summary: dict[str, Any]) -> str:
     requires_env = summary.get("requires_env") if isinstance(summary.get("requires_env"), list) else []
     suffix = f" requires={','.join(str(name) for name in requires_env)}" if requires_env else ""
+    raw_command = str(summary.get("next_command") or "")
+    command = (
+        human_next_command_line({"command_line": raw_command, "requires_env": requires_env}, raw_command)
+        if raw_command
+        else "none"
+    )
     return (
         f"label={summary.get('recommended_label') or 'none'} "
         f"reason={summary.get('recommended_reason') or 'none'} "
-        f"command={summary.get('next_command') or 'none'}"
+        f"command={command}"
         f"{suffix}"
     )
+
+
+def markdown_command_line(item: dict[str, Any]) -> str:
+    return human_next_command_line(item, str(item.get("command_line") or ""))
 
 
 def display_review_summary(
@@ -5169,7 +5179,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             "- Recommended next: "
             f"`{recommended.get('label')}` "
             f"reason=`{recommended.get('reason')}` "
-            f"command=`{recommended.get('command_line')}`"
+            f"command=`{markdown_command_line(recommended)}`"
             f"{suffix}"
         )
     if source_report.get("summary_path") or source_report.get("summary_markdown_path"):
@@ -5197,7 +5207,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
                 continue
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f" requires={','.join(str(name) for name in requires_env)}" if requires_env else ""
-            lines.append(f"{index}. `{item.get('label')}`: `{item.get('command_line')}`{suffix}")
+            lines.append(f"{index}. `{item.get('label')}`: `{markdown_command_line(item)}`{suffix}")
     else:
         lines.append("None.")
     lines.extend([
@@ -8197,7 +8207,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             "- Recommended next: "
             f"`{recommended.get('label')}` "
             f"reason=`{recommended.get('reason')}` "
-            f"command=`{recommended.get('command_line')}`"
+            f"command=`{markdown_command_line(recommended)}`"
             f"{suffix}"
         )
     lines.extend([
@@ -8219,7 +8229,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
                 continue
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
             suffix = f" requires={','.join(str(name) for name in requires_env)}" if requires_env else ""
-            lines.append(f"{index}. `{item.get('label')}`: `{item.get('command_line')}`{suffix}")
+            lines.append(f"{index}. `{item.get('label')}`: `{markdown_command_line(item)}`{suffix}")
     else:
         lines.append("None.")
     lines.extend([
