@@ -712,6 +712,55 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(f"next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
+    def test_generate_main_prints_copyable_batch_prompt_without_single_prompt_placeholder(self) -> None:
+        prompts = "first private prompt,second private prompt"
+
+        def fake_build_product_generate(args: object) -> dict[str, object]:
+            del args
+            return {
+                "schema": "public_swarm_product_cli_v1",
+                "ok": True,
+                "mode": "generate",
+                "diagnosis_codes": ["generate_dry_run_ready"],
+                "route": {"route_source": "coordinator-url", "coordinator_url_present": True, "missing_capabilities": []},
+                "next_commands": [
+                    cli.command_entry(
+                        "check generation route",
+                        [
+                            "crowdtensor",
+                            "generate",
+                            "--max-new-tokens",
+                            "16",
+                            "--coordinator-url",
+                            "http://127.0.0.1:8787",
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--prompt-texts",
+                            cli.INFER_BATCH_PROMPTS_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    )
+                ],
+            }
+
+        stdout = io.StringIO()
+        with patch.object(cli, "build_product_generate", side_effect=fake_build_product_generate):
+            with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "generate",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--prompt-texts",
+                    prompts,
+                    "--dry-run",
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn(f"--prompt-texts '{prompts}' --dry-run", rendered)
+        self.assertNotIn("--prompt-text '<prompt>'", rendered)
+        self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
+
     def test_generate_accepts_positional_prompt_like_infer(self) -> None:
         prompt = "CrowdTensor positional prompt"
         args = cli.parse_args([

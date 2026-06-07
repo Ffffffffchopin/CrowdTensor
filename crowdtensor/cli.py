@@ -371,7 +371,19 @@ def local_generate_command_line(item: dict[str, Any], report: dict[str, Any]) ->
     prompt_texts = str(report.get("local_prompt_texts") or "")
     rendered = [str(part) for part in command]
     if prompt_texts:
-        rendered = [prompt_texts if part == INFER_BATCH_PROMPTS_PLACEHOLDER else part for part in rendered]
+        filtered: list[str] = []
+        skip_next = False
+        for part in rendered:
+            if skip_next:
+                skip_next = False
+                continue
+            if part == "--prompt-text":
+                skip_next = True
+                continue
+            if part == INFER_PROMPT_PLACEHOLDER:
+                continue
+            filtered.append(prompt_texts if part == INFER_BATCH_PROMPTS_PLACEHOLDER else part)
+        rendered = filtered
     elif prompt:
         rendered = [prompt if part == INFER_PROMPT_PLACEHOLDER else part for part in rendered]
     return command_line(rendered)
