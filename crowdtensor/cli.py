@@ -454,6 +454,26 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
     return notes
 
 
+def markdown_prompt_input_hint(command_text: str) -> str:
+    has_prompt = INFER_PROMPT_PLACEHOLDER in command_text
+    has_batch = INFER_BATCH_PROMPTS_PLACEHOLDER in command_text
+    if not has_prompt and not has_batch:
+        return ""
+    if has_prompt and has_batch:
+        placeholders = f"`{INFER_PROMPT_PLACEHOLDER}` and `{INFER_BATCH_PROMPTS_PLACEHOLDER}`"
+        noun = "local prompt inputs"
+    elif has_batch:
+        placeholders = f"`{INFER_BATCH_PROMPTS_PLACEHOLDER}`"
+        noun = "local prompts"
+    else:
+        placeholders = f"`{INFER_PROMPT_PLACEHOLDER}`"
+        noun = "local prompt"
+    return (
+        f"- Prompt input: saved Markdown keeps {placeholders} placeholders; "
+        f"terminal `review_next` / `recommended_next` render your {noun} for copy/paste when available."
+    )
+
+
 def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
@@ -485,6 +505,9 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
         lines.append(f"- Recommended: `{recommended_label}`{reason}")
     if command:
         lines.append(f"- Copy command: `{command}`")
+        prompt_hint = markdown_prompt_input_hint(command)
+        if prompt_hint:
+            lines.append(prompt_hint)
     if requires_env:
         lines.append(f"- Requires env: `{', '.join(str(name) for name in requires_env)}`")
     if operator_action:
