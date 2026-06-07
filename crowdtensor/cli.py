@@ -854,12 +854,15 @@ def format_p2p_status(p2p: dict[str, Any]) -> str:
 
 
 def output_request_text(output_request: dict[str, Any]) -> str:
+    raw_generation_public = output_request.get("raw_generated_text_public")
+    if raw_generation_public is None:
+        raw_generation_public = output_request.get("raw_generation_public")
     public_artifact_safe = output_request.get("public_artifact_safe")
     if public_artifact_safe is None:
-        public_artifact_safe = not bool(output_request.get("raw_generated_text_public"))
+        public_artifact_safe = not bool(raw_generation_public)
     return (
         f"include_output={bool(output_request.get('include_output'))} "
-        f"raw_generated_text_public={bool(output_request.get('raw_generated_text_public'))} "
+        f"raw_generated_text_public={bool(raw_generation_public)} "
         f"public_artifact_safe={bool(public_artifact_safe)}"
     )
 
@@ -954,11 +957,17 @@ def infer_trace_text(trace: dict[str, Any]) -> str:
 
 
 def shareable_summary_text(summary: dict[str, Any]) -> str:
+    raw_generation_public = summary.get("raw_generated_text_public")
+    if raw_generation_public is None:
+        raw_generation_public = summary.get("raw_generation_public")
+    generation_ids_public = summary.get("generated_token_ids_public")
+    if generation_ids_public is None:
+        generation_ids_public = summary.get("generation_ids_public")
     return (
         f"saved_artifacts={bool(summary.get('saved_artifacts_public_safe'))} "
         f"raw_prompt_public={bool(summary.get('raw_prompt_public'))} "
-        f"raw_generated_text_public={bool(summary.get('raw_generated_text_public'))} "
-        f"generated_token_ids_public={bool(summary.get('generated_token_ids_public'))} "
+        f"raw_generated_text_public={bool(raw_generation_public)} "
+        f"generated_token_ids_public={bool(generation_ids_public)} "
         f"local_output_display_only={bool(summary.get('local_output_display_only'))} "
         f"answer_scope_state={summary.get('answer_scope_state') or 'unknown'} "
         f"local_answer_terminal_only={bool(summary.get('local_answer_terminal_only'))}"
@@ -11307,12 +11316,21 @@ def print_public_swarm_inference_alpha(report: dict[str, Any]) -> None:
 
 def print_public_swarm_inference_alpha_rc(report: dict[str, Any]) -> None:
     rc = report.get("release_candidate") if isinstance(report.get("release_candidate"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Public Swarm Inference Alpha RC")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {rc.get('ready')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):

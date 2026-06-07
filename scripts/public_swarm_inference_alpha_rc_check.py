@@ -94,6 +94,55 @@ def validate_report(payload: dict[str, Any], *, mode: str) -> None:
     for key in ["cpu_only", "not_production", "not_p2p", "not_large_model_serving"]:
         if safety.get(key) is not True:
             raise SystemExit(f"missing safety flag {key}: {safety}")
+    output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    if output_request.get("include_output") is not False:
+        raise SystemExit(f"output_request include_output mismatch: {output_request}")
+    if output_request.get("raw_prompt_public") is not False:
+        raise SystemExit(f"output_request raw_prompt_public mismatch: {output_request}")
+    if output_request.get("raw_generation_public") is not False:
+        raise SystemExit(f"output_request raw_generation_public mismatch: {output_request}")
+    if output_request.get("generation_ids_public") is not False:
+        raise SystemExit(f"output_request generation_ids_public mismatch: {output_request}")
+    if output_request.get("local_output_display_only") is not False:
+        raise SystemExit(f"output_request local_output_display_only mismatch: {output_request}")
+    if output_request.get("public_artifact_safe") is not True:
+        raise SystemExit(f"output_request public_artifact_safe mismatch: {output_request}")
+    answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    if answer_scope.get("scope_state") != "no-local-answer":
+        raise SystemExit(f"answer_scope state mismatch: {answer_scope}")
+    if answer_scope.get("visible_in_terminal") is not False:
+        raise SystemExit(f"answer_scope visible_in_terminal mismatch: {answer_scope}")
+    if answer_scope.get("terminal_only") is not False:
+        raise SystemExit(f"answer_scope terminal_only mismatch: {answer_scope}")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        raise SystemExit(f"answer_scope saved_json_display mismatch: {answer_scope}")
+    if answer_scope.get("saved_markdown_display") != "hash-only":
+        raise SystemExit(f"answer_scope saved_markdown_display mismatch: {answer_scope}")
+    if answer_scope.get("raw_prompt_public") is not False:
+        raise SystemExit(f"answer_scope raw_prompt_public mismatch: {answer_scope}")
+    if answer_scope.get("raw_generation_public") is not False:
+        raise SystemExit(f"answer_scope raw_generation_public mismatch: {answer_scope}")
+    if answer_scope.get("generation_ids_public") is not False:
+        raise SystemExit(f"answer_scope generation_ids_public mismatch: {answer_scope}")
+    if answer_scope.get("public_artifact_safe") is not True:
+        raise SystemExit(f"answer_scope public_artifact_safe mismatch: {answer_scope}")
+    shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    if shareable.get("saved_artifacts_public_safe") is not True:
+        raise SystemExit(f"shareable saved_artifacts_public_safe mismatch: {shareable}")
+    if shareable.get("raw_prompt_public") is not False:
+        raise SystemExit(f"shareable raw_prompt_public mismatch: {shareable}")
+    if shareable.get("raw_generation_public") is not False:
+        raise SystemExit(f"shareable raw_generation_public mismatch: {shareable}")
+    if shareable.get("generation_ids_public") is not False:
+        raise SystemExit(f"shareable generation_ids_public mismatch: {shareable}")
+    if shareable.get("local_output_display_only") is not False:
+        raise SystemExit(f"shareable local_output_display_only mismatch: {shareable}")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        raise SystemExit(f"shareable answer_scope_state mismatch: {shareable}")
+    if shareable.get("local_answer_terminal_only") is not False:
+        raise SystemExit(f"shareable local_answer_terminal_only mismatch: {shareable}")
+    if shareable.get("public_artifact_safe") is not True:
+        raise SystemExit(f"shareable public_artifact_safe mismatch: {shareable}")
     artifacts = payload.get("artifacts") or {}
     for name in ["public_swarm_inference_alpha_rc_json", "public_swarm_inference_alpha_rc_markdown"]:
         artifact = artifacts.get(name) or {}
