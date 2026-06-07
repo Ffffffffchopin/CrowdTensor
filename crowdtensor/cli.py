@@ -777,6 +777,18 @@ def output_request_text(output_request: dict[str, Any]) -> str:
     )
 
 
+def output_display_text(display: dict[str, Any]) -> str:
+    return (
+        f"terminal={display.get('terminal_display')} "
+        f"terminal_text={bool(display.get('terminal_text_available'))} "
+        f"saved={display.get('saved_artifact_display')} "
+        f"json_stdout={display.get('json_stdout_display')} "
+        f"include_output={bool(display.get('include_output_requested'))} "
+        f"raw_public={bool(display.get('raw_generated_text_public'))} "
+        f"public_artifact_safe={bool(display.get('public_artifact_safe'))}"
+    )
+
+
 def prompt_summary_text(prompt: dict[str, Any]) -> str:
     return (
         f"count={prompt.get('prompt_count')} "
@@ -4196,6 +4208,40 @@ def _generate_result_from_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _output_display_from_report(report: dict[str, Any]) -> dict[str, Any]:
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    result = report.get("result") if isinstance(report.get("result"), dict) else {}
+    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    terminal_text_available = bool(
+        local_output.get("generated_text")
+        or any(isinstance(item, dict) and item.get("generated_text") for item in outputs)
+    )
+    json_mode = bool(report.get("json_mode"))
+    terminal_display = str(
+        result.get("display")
+        or (
+            "local-private"
+            if terminal_text_available
+            else ("hash-only-json" if json_mode else "hash-only")
+        )
+    )
+    return {
+        "terminal_text_available": terminal_text_available,
+        "terminal_display": terminal_display,
+        "saved_artifact_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "include_output_requested": bool(output_request.get("include_output")),
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Non-JSON human output may show local generated text; JSON stdout and saved "
+            "Markdown/JSON remain hash-only and redacted."
+        ),
+    }
+
+
 def _shareable_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
     saved_summary = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
@@ -4589,6 +4635,14 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         result["public_artifact_safe"] = True
         if result.get("display") == "local-private":
             result["display"] = "hash-only"
+    output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
+    if output_display:
+        output_display["terminal_text_available"] = False
+        output_display["saved_artifact_display"] = "hash-only"
+        output_display["json_stdout_display"] = "hash-only-json"
+        output_display["raw_generated_text_public"] = False
+        output_display["generated_token_ids_public"] = False
+        output_display["public_artifact_safe"] = True
     return summary
 
 
@@ -5144,6 +5198,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
     source_report = summary.get("source_report") if isinstance(summary.get("source_report"), dict) else {}
@@ -5172,6 +5227,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             f"hash=`{generation.get('generated_text_hash')}`"
         ),
         f"- Result: `{infer_result_text(result)}`",
+        f"- Output display: `{output_display_text(output_display)}`",
         f"- Trace: `{infer_trace_text(trace)}`",
         f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{route.get('route_ready')}`",
@@ -5532,6 +5588,7 @@ def _infer_summary_from_payload(
             "Coordinator-backed, read-only, tiny/small-model scoped; not production Hivemind/Petals parity or large-model serving.",
         ],
     }
+    summary["output_display"] = _output_display_from_report(summary)
     summary["shareable_summary"] = _shareable_summary_from_report(summary, kind="infer")
     summary["issue_summary"] = _issue_summary_from_report(summary, kind="infer")
     artifacts = {
@@ -8185,6 +8242,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
     output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
     ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
@@ -8209,6 +8267,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             f"hash=`{generation.get('generated_text_hash')}`"
         ),
         f"- Result: `{infer_result_text(result)}`",
+        f"- Output display: `{output_display_text(output_display)}`",
         f"- Trace: `{infer_trace_text(trace)}`",
         f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{bool(route.get('usable_now') or route.get('coordinator_url_present'))}`",
@@ -8565,6 +8624,7 @@ def _finalize_product_generate_report(
     ))
     report.setdefault("trace", _generate_trace_from_report(report))
     report.setdefault("result", _generate_result_from_report(report))
+    report.setdefault("output_display", _output_display_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
     if output_dir is not None:
@@ -9414,6 +9474,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     result = report.get("result") if isinstance(report.get("result"), dict) else {}
     if result:
         print(f"  result: {infer_result_text(result)}")
+    output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
+    if output_display:
+        print(f"  output_display: {output_display_text(output_display)}")
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
@@ -9708,6 +9771,9 @@ def print_infer(report: dict[str, Any]) -> None:
     result = report.get("result") if isinstance(report.get("result"), dict) else {}
     if result:
         print(f"  result: {infer_result_text(result)}")
+    output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
+    if output_display:
+        print(f"  output_display: {output_display_text(output_display)}")
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
@@ -11327,6 +11393,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The result line summarizes completion state, token count, output count,\n"
             "generated-text hash, and display safety: local-private for terminal-only\n"
             "text, hash-only for redacted summaries, and hash-only-json for JSON stdout.\n\n"
+            "The output_display line makes the display policy explicit: non-JSON human output\n"
+            "may show local generated text, while JSON stdout and saved Markdown/JSON stay\n"
+            "hash-only and redacted. --include-output records that local display was requested;\n"
+            "it does not make raw generated text public.\n\n"
             "The issue line summarizes state, primary diagnosis, next step, safe progress,\n"
             "and whether a redacted detail is available for blocked or timeout runs.\n\n"
             "The artifacts line points to the first Markdown summary to inspect and lists the\n"
@@ -11359,7 +11429,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
     infer.add_argument("--hf-cache-dir", default="")
     infer.add_argument("--stream", action="store_true", help="request safe stream-progress evidence")
-    infer.add_argument("--include-output", action="store_true", help="show raw generated text only in local human output; JSON and saved artifacts still suppress it")
+    infer.add_argument("--include-output", action="store_true", help="request local human display of generated text; JSON and saved artifacts still suppress it")
     infer.add_argument("--dry-run", action="store_true", help="existing mode only: check route/session readiness without submitting an inference task")
     infer.add_argument("--full-evidence", action="store_true", help="use the full local Public Swarm v2 gate instead of the faster product loopback path")
     infer.add_argument("--coordinator-url", default="")
@@ -11508,6 +11578,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The result line summarizes completion state, token count, output count,\n"
             "generated-text hash, and display safety: local-private for terminal-only\n"
             "text, hash-only for redacted summaries, and hash-only-json for JSON stdout.\n\n"
+            "The output_display line makes the display policy explicit: non-JSON human output\n"
+            "may show local generated text, while JSON stdout and saved Markdown/JSON stay\n"
+            "hash-only and redacted. --include-output records that local display was requested;\n"
+            "it does not make raw generated text public.\n\n"
             "The issue line summarizes state, primary diagnosis, next step, safe progress,\n"
             "and whether a redacted detail is available for blocked or timeout runs.\n\n"
             "The artifacts line points to the first Markdown summary to inspect and lists the\n"
@@ -11551,7 +11625,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     generate.add_argument("--admin-results-limit", type=int, default=50)
     generate.add_argument("--dry-run", action="store_true", help="check route/session readiness without submitting a generation task")
     generate.add_argument("--skip-live-preflight", action="store_true", help="dry-run only: skip Coordinator /ready and /state checks for CI-safe protocol/package checks")
-    generate.add_argument("--include-output", action="store_true", help="show raw generated text only in local human output; JSON/public reports expose hashes only")
+    generate.add_argument("--include-output", action="store_true", help="request local human display of generated text; JSON/public reports expose hashes only")
     generate.add_argument("--stream", action="store_true", help="emit safe per-token progress while waiting for the final result")
     generate.add_argument("--json", action="store_true")
 
