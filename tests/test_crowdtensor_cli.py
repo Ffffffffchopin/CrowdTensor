@@ -6080,7 +6080,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_real_llm_swarm_beta(report)
         rendered = stdout.getvalue()
         self.assertIn(
-            "  review: state=blocked next=review_diagnostics inspect=public_real_llm_swarm_beta.md support=support_bundle.json not_completed=1 public_artifact_safe=True",
+            "  review: state=blocked next=review_diagnostics inspect=public_real_llm_swarm_beta.md support=support_bundle.json recommended=none not_completed=1 public_artifact_safe=True",
             rendered,
         )
         self.assertIn("  inspect_first: public_real_llm_swarm_beta.md", rendered)
@@ -6223,11 +6223,21 @@ class CrowdTensorCliTests(unittest.TestCase):
             "review_summary": {
                 "state": "ready",
                 "ready": True,
-                "next_step": "share_public_artifacts",
+                "next_step": "run_beta_report_check",
                 "inspect_first": "public_real_llm_swarm_beta.md",
                 "support_bundle": "support_bundle.json",
+                "recommended_check_command": {
+                    "label": "validate beta report",
+                    "command_line": "crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json --output-dir dist/beta-check --max-new-tokens 16 --json",
+                    "check_source": "beta-report",
+                },
                 "not_completed_count": 0,
                 "public_artifact_safe": True,
+            },
+            "recommended_check_command": {
+                "label": "validate beta report",
+                "command_line": "crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json --output-dir dist/beta-check --max-new-tokens 16 --json",
+                "check_source": "beta-report",
             },
             "operator_action": [
                 "Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.",
@@ -6247,9 +6257,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  p2p tokens: 16/16", output)
         self.assertIn("  public_swarm_v2 tokens: 16/16 accepted_rows=32/32", output)
         self.assertIn(
-            "  review: state=ready next=share_public_artifacts inspect=public_real_llm_swarm_beta.md support=support_bundle.json not_completed=0 public_artifact_safe=True",
+            "  review: state=ready next=run_beta_report_check inspect=public_real_llm_swarm_beta.md support=support_bundle.json recommended=validate beta report not_completed=0 public_artifact_safe=True",
             output,
         )
+        self.assertIn("  recommended_check: crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json", output)
         self.assertIn("  inspect_first: public_real_llm_swarm_beta.md", output)
         self.assertIn(
             "  artifacts: inspect=public_real_llm_swarm_beta.md json=public_real_llm_swarm_beta.json support=support_bundle.json runbook=PUBLIC_REAL_LLM_SWARM_BETA.md shareable=public_real_llm_swarm_beta.json,public_real_llm_swarm_beta.md,support_bundle.json public_artifact_safe=True",
@@ -6334,7 +6345,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertIn("  ready: False", output)
         self.assertIn(
-            "  review: state=blocked next=review_not_completed inspect=public_real_llm_swarm_beta.md support=support_bundle.json not_completed=3 public_artifact_safe=True",
+            "  review: state=blocked next=review_not_completed inspect=public_real_llm_swarm_beta.md support=support_bundle.json recommended=none not_completed=3 public_artifact_safe=True",
             output,
         )
         self.assertIn("  public_swarm_v2 tokens: 8/16 accepted_rows=16/32", output)

@@ -1009,11 +1009,13 @@ def review_summary_text(summary: dict[str, Any]) -> str:
 
 
 def release_review_summary_text(summary: dict[str, Any]) -> str:
+    recommended = summary.get("recommended_check_command") if isinstance(summary.get("recommended_check_command"), dict) else {}
     return (
         f"state={summary.get('state') or 'unknown'} "
         f"next={summary.get('next_step') or 'none'} "
         f"inspect={summary.get('inspect_first') or 'none'} "
         f"support={summary.get('support_bundle') or 'none'} "
+        f"recommended={recommended.get('label') or 'none'} "
         f"not_completed={_safe_int(summary.get('not_completed_count'))} "
         f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
     )
@@ -11796,6 +11798,11 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    recommended_check = (
+        report.get("recommended_check_command")
+        if isinstance(report.get("recommended_check_command"), dict)
+        else review_summary.get("recommended_check_command") if isinstance(review_summary.get("recommended_check_command"), dict) else {}
+    )
     raw_operator_actions = report.get("operator_action")
     if isinstance(raw_operator_actions, list):
         operator_actions = [str(item) for item in raw_operator_actions]
@@ -11817,6 +11824,8 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     print(f"  model: {beta.get('hf_model_id')} tokens={beta.get('max_new_tokens')}")
     if review_summary:
         print(f"  review: {release_review_summary_text(review_summary)}")
+    if recommended_check:
+        print(f"  recommended_check: {recommended_check.get('command_line')}")
     if review_summary.get("inspect_first"):
         print(f"  inspect_first: {review_summary.get('inspect_first')}")
     if artifact_summary:
