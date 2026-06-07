@@ -469,6 +469,14 @@ def output_request_text(output_request: dict[str, Any]) -> str:
     )
 
 
+def local_output_text(local_output: dict[str, Any]) -> str:
+    return (
+        f"available={bool(local_output.get('generated_text') or local_output.get('outputs'))} "
+        f"display_only={bool(local_output.get('display_only'))} "
+        f"public_artifact_safe={bool(local_output.get('public_artifact_safe'))}"
+    )
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -7783,6 +7791,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  output_request: {output_request_text(output_request)}")
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    if local_output.get("generated_text") or outputs:
+        print(f"  local_output: {local_output_text(local_output)}")
     if len(outputs) <= 1 and local_output.get("generated_text"):
         print(f"  output: {local_output.get('generated_text')}")
     elif outputs:
@@ -7997,6 +8007,8 @@ def print_infer(report: dict[str, Any]) -> None:
         print(f"  output_request: {output_request_text(output_request)}")
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    if local_output.get("generated_text") or outputs:
+        print(f"  local_output: {local_output_text(local_output)}")
     if len(outputs) <= 1 and local_output.get("generated_text"):
         print(f"  output: {local_output.get('generated_text')}")
     if len(outputs) > 1:

@@ -3558,6 +3558,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  output_request: include_output=True raw_generated_text_public=False public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(
+            "  local_output: available=True display_only=True public_artifact_safe=False",
+            rendered,
+        )
         self.assertIn("  output:  readable beta text", rendered)
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
@@ -4384,6 +4388,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False", stdout.getvalue())
         self.assertIn(
             "  output_request: include_output=True raw_generated_text_public=False public_artifact_safe=True",
+            stdout.getvalue(),
+        )
+        self.assertIn(
+            "  local_output: available=True display_only=True public_artifact_safe=False",
             stdout.getvalue(),
         )
         self.assertIn("Raw generated text is shown only in local human output", stdout.getvalue())
