@@ -217,9 +217,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("saved artifacts", rendered)
         self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("existing mode only: check route/session readiness", rendered)
-        self.assertIn("mutually exclusive with positional", rendered)
-        self.assertIn("prompt and --prompt-texts", rendered)
-        self.assertIn("mutually exclusive with single-prompt sources", rendered)
+        self.assertIn("optional single prompt text; mutually exclusive with", rendered)
+        self.assertIn("single prompt text; mutually exclusive with other", rendered)
+        self.assertIn("other prompt sources", rendered)
+        self.assertIn("comma-separated bounded batch of up to 4 prompts", rendered)
         self.assertIn("request local human display of generated text", rendered)
         self.assertIn("not production", rendered)
 
@@ -294,9 +295,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("redacted detail is available", rendered)
         self.assertIn("check route/session readiness without submitting a", rendered)
         self.assertIn("generation task", rendered)
-        self.assertIn("mutually exclusive with positional", rendered)
-        self.assertIn("prompt and --prompt-texts", rendered)
-        self.assertIn("mutually exclusive with single-prompt sources", rendered)
+        self.assertIn("optional single prompt text; mutually exclusive with", rendered)
+        self.assertIn("single prompt text; mutually exclusive with other", rendered)
+        self.assertIn("other prompt sources", rendered)
+        self.assertIn("comma-separated bounded batch of up to 4 prompts", rendered)
         self.assertIn("request local human display of generated text", rendered)
         self.assertIn("not production", rendered)
 
@@ -626,6 +628,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("--prompt-stdin", rendered)
             self.assertIn("--prompt-texts-file prompts.txt", rendered)
             self.assertIn("UTF-8 single", rendered)
+            self.assertIn("Single prompts are capped at 256 characters", rendered)
+            self.assertIn("batch files accept", rendered)
+            self.assertIn("up to 4 non-empty prompt lines", rendered)
             self.assertIn("crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8", rendered)
             self.assertIn('echo "your prompt" | crowdtensor infer --prompt-stdin --max-new-tokens 8', rendered)
             self.assertIn("crowdtensor infer --prompt-texts-file prompts.txt --max-new-tokens 8 --stream", rendered)
@@ -1718,6 +1723,27 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
         self.assertIn("prompt_hash", json.dumps(report, sort_keys=True))
 
+    def test_generate_rejects_long_prompt_file_without_echoing_prompt(self) -> None:
+        private_prompt = "x" * 257
+        prompt_file = Path(self._tmp_dir()) / "long-prompt.txt"
+        prompt_file.write_text(private_prompt, encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["generate", "--prompt-file", str(prompt_file)])
+
+        error = str(raised.exception)
+        self.assertEqual(error, "prompt_file must be at most 256 characters")
+        self.assertNotIn(private_prompt, error)
+
+    def test_generate_rejects_long_prompt_stdin_without_echoing_prompt(self) -> None:
+        private_prompt = "x" * 257
+        with patch.object(cli.sys, "stdin", io.StringIO(private_prompt)):
+            with self.assertRaises(SystemExit) as raised:
+                cli.parse_args(["generate", "--prompt-stdin"])
+
+        error = str(raised.exception)
+        self.assertEqual(error, "prompt_stdin must be at most 256 characters")
+        self.assertNotIn(private_prompt, error)
+
     def test_generate_accepts_prompt_texts_file_without_persisting_prompt_text(self) -> None:
         prompts = ["Prompt file batch, with comma", "Second batch prompt"]
         prompt_file = Path(self._tmp_dir()) / "prompts.txt"
@@ -1850,6 +1876,27 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["prompt"]["raw_prompt_public"])
         self.assertEqual(report["prompt"]["prompt_count"], 1)
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+
+    def test_infer_rejects_long_prompt_file_without_echoing_prompt(self) -> None:
+        private_prompt = "x" * 257
+        prompt_file = Path(self._tmp_dir()) / "long-infer-prompt.txt"
+        prompt_file.write_text(private_prompt, encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["infer", "--prompt-file", str(prompt_file)])
+
+        error = str(raised.exception)
+        self.assertEqual(error, "prompt_file must be at most 256 characters")
+        self.assertNotIn(private_prompt, error)
+
+    def test_infer_rejects_long_prompt_stdin_without_echoing_prompt(self) -> None:
+        private_prompt = "x" * 257
+        with patch.object(cli.sys, "stdin", io.StringIO(private_prompt)):
+            with self.assertRaises(SystemExit) as raised:
+                cli.parse_args(["infer", "--prompt-stdin"])
+
+        error = str(raised.exception)
+        self.assertEqual(error, "prompt_stdin must be at most 256 characters")
+        self.assertNotIn(private_prompt, error)
 
     def test_infer_accepts_prompt_texts_file_without_persisting_prompt_text(self) -> None:
         prompts = ["Infer batch prompt, with comma", "Second infer prompt"]

@@ -300,6 +300,8 @@ def read_prompt_file(path_value: str) -> str:
     text = text.strip()
     if not text:
         raise ValueError("prompt_file is empty")
+    if len(text) > MAX_PROMPT_CHARS:
+        raise ValueError(f"prompt_file must be at most {MAX_PROMPT_CHARS} characters")
     return text
 
 
@@ -312,6 +314,8 @@ def read_prompt_stdin(stream: Any | None = None) -> str:
     text = str(text or "").strip()
     if not text:
         raise ValueError("prompt_stdin is empty")
+    if len(text) > MAX_PROMPT_CHARS:
+        raise ValueError(f"prompt_stdin must be at most {MAX_PROMPT_CHARS} characters")
     return text
 
 
@@ -12690,13 +12694,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    infer.add_argument("prompt_text_arg", nargs="?", default="", help="optional single prompt text; mutually exclusive with --prompt-text/--prompt, --prompt-texts, and --prompt-texts-file")
+    infer.add_argument("prompt_text_arg", nargs="?", default="", help="optional single prompt text; mutually exclusive with other prompt sources")
     infer.add_argument("--mode", dest="infer_mode", choices=["local", "existing"], default="local")
     infer.add_argument("--output-dir", default="dist/infer")
-    infer.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with positional prompt and --prompt-texts")
+    infer.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with other prompt sources")
     infer.add_argument("--prompt-file", default="", help="read a single prompt from a UTF-8 text file; mutually exclusive with other prompt sources")
     infer.add_argument("--prompt-stdin", action="store_true", help="read a single prompt from stdin; mutually exclusive with other prompt sources")
-    infer.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; mutually exclusive with single-prompt sources")
+    infer.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; mutually exclusive with other prompt sources")
     infer.add_argument("--prompt-texts-file", default="", help="read up to 4 prompts from a UTF-8 text file, one non-empty line per prompt; mutually exclusive with other prompt sources")
     infer.add_argument("--max-new-tokens", type=int, default=8)
     infer.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
@@ -12890,12 +12894,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    generate.add_argument("prompt_text_arg", nargs="?", default="", help="optional single prompt text; mutually exclusive with --prompt-text/--prompt, --prompt-texts, and --prompt-texts-file")
+    generate.add_argument("prompt_text_arg", nargs="?", default="", help="optional single prompt text; mutually exclusive with other prompt sources")
     generate.add_argument("--output-dir", default="dist/generate")
-    generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with positional prompt and --prompt-texts")
+    generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with other prompt sources")
     generate.add_argument("--prompt-file", default="", help="read a single prompt from a UTF-8 text file; mutually exclusive with other prompt sources")
     generate.add_argument("--prompt-stdin", action="store_true", help="read a single prompt from stdin; mutually exclusive with other prompt sources")
-    generate.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; mutually exclusive with single-prompt sources")
+    generate.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts; mutually exclusive with other prompt sources")
     generate.add_argument("--prompt-texts-file", default="", help="read up to 4 prompts from a UTF-8 text file, one non-empty line per prompt; mutually exclusive with other prompt sources")
     generate.add_argument("--scenario-id", default="public-swarm-product-rc")
     generate.add_argument("--max-new-tokens", type=int, default=16)

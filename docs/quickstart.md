@@ -97,8 +97,9 @@ Pick one prompt source per command: positional prompt,
 prompt file, `--prompt-stdin` for an explicit stdin single prompt, or
 `--prompt-texts` for a bounded comma-separated batch. Use
 `--prompt-texts-file prompts.txt` for a UTF-8 batch file with one prompt per
-non-empty line. The CLI rejects
-mixed prompt sources instead of guessing. Reports expose
+non-empty line. Single prompts are capped at 256 characters; batch files accept
+up to 4 non-empty prompt lines. The CLI rejects mixed prompt sources instead of
+guessing. Reports expose
 `output_request.include_output` while keeping
 `output_request.raw_generated_text_public` false in JSON and saved artifacts.
 
