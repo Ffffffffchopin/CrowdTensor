@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,10 @@ P2P_SCHEMA = "petals_class_p2p_candidate_v1"
 PUBLIC_SWARM_V2_SCHEMA = "public_swarm_inference_v2"
 REAL_LLM_INTERNET_BETA_SCHEMA = "real_llm_internet_beta_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
+
+
+def shell_command(parts: list[str]) -> str:
+    return shlex.join([str(part) for part in parts])
 
 MODE_RELEASE = "release"
 MODE_LOCAL_SMOKE = "local-smoke"
@@ -1410,8 +1415,30 @@ def write_runbook(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
         "Run the aggregate check before sharing the result:",
         "",
         "```bash",
-        f"crowdtensor public-real-llm-swarm-beta release --output-dir {output_dir} --max-new-tokens {args.max_new_tokens} --http-timeout 30 --json",
-        f"crowdtensor public-real-llm-swarm-beta check --beta-report {output_dir / 'public_real_llm_swarm_beta.json'} --output-dir {output_dir}-check --max-new-tokens {args.max_new_tokens} --json",
+        shell_command([
+            "crowdtensor",
+            "public-real-llm-swarm-beta",
+            "release",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            str(args.max_new_tokens),
+            "--http-timeout",
+            "30",
+            "--json",
+        ]),
+        shell_command([
+            "crowdtensor",
+            "public-real-llm-swarm-beta",
+            "check",
+            "--beta-report",
+            str(output_dir / "public_real_llm_swarm_beta.json"),
+            "--output-dir",
+            f"{output_dir}-check",
+            "--max-new-tokens",
+            str(args.max_new_tokens),
+            "--json",
+        ]),
         "```",
         "",
         "A ready release reports `public_real_llm_swarm_beta_ready`, `public_swarm_v2_16_token_generation_ready`, `public_real_llm_swarm_beta_kv_cache_ready`, `public_real_llm_swarm_beta_v2_batch_ready`, and `public_real_llm_swarm_beta_v2_stream_ready`. A ready check reports `public_real_llm_swarm_beta_check_ready`, records `check_source: beta-report`, and writes `public_real_llm_swarm_beta_check.json` with safe artifact paths.",
@@ -1602,7 +1629,7 @@ def recommended_check_command(report: dict[str, Any]) -> dict[str, Any]:
     return {
         "label": "validate beta report",
         "reason": "check_current_beta_report",
-        "command_line": " ".join(command),
+        "command_line": shell_command(command),
         "beta_report": str(beta_report),
         "output_dir": str(check_dir),
         "check_source": "beta-report",

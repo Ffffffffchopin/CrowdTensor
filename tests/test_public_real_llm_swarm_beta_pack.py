@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -341,6 +342,37 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertNotIn('"generated_text":', encoded)
         self.assertNotIn('"generated_token_ids":', encoded)
         self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN=", encoded)
+
+    def test_recommended_check_command_quotes_paths_with_spaces(self) -> None:
+        output_dir = self._tmp_dir() / "beta output"
+
+        command = pack.recommended_check_command({
+            "mode": "release",
+            "output_dir": str(output_dir),
+            "beta": {
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "max_new_tokens": 16,
+            },
+        })
+
+        self.assertIn("--beta-report", command["command_line"])
+        self.assertIn("beta output/public_real_llm_swarm_beta.json", command["command_line"])
+        self.assertIn("'", command["command_line"])
+        self.assertEqual(
+            shlex.split(command["command_line"]),
+            [
+                "crowdtensor",
+                "public-real-llm-swarm-beta",
+                "check",
+                "--beta-report",
+                str(output_dir / "public_real_llm_swarm_beta.json"),
+                "--output-dir",
+                f"{output_dir}-check",
+                "--max-new-tokens",
+                "16",
+                "--json",
+            ],
+        )
 
     def test_release_filters_superseded_product_child_blockers_when_product_path_ready(self) -> None:
         output_dir = self._tmp_dir()
