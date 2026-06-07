@@ -3550,6 +3550,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(human_report["ok"], human_report)
         self.assertTrue(human_report["output_request"]["include_output"])
         self.assertEqual(human_report["local_output"]["generated_text"], " readable beta text")
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(human_report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  output_request: include_output=True raw_generated_text_public=False public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn("  output:  readable beta text", rendered)
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
             [item["command_line"] for item in human_report["next_commands"]],
@@ -4371,6 +4380,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False", stdout.getvalue())
+        self.assertIn(
+            "  output_request: include_output=True raw_generated_text_public=False public_artifact_safe=True",
+            stdout.getvalue(),
+        )
         self.assertIn("Raw generated text is shown only in local human output", stdout.getvalue())
         self.assertIn("next[1] check existing swarm", stdout.getvalue())
         self.assertIn("next[2] submit inference", stdout.getvalue())

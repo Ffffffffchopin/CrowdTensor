@@ -458,6 +458,17 @@ def format_p2p_status(p2p: dict[str, Any]) -> str:
     return " ".join(str(part) for part in parts)
 
 
+def output_request_text(output_request: dict[str, Any]) -> str:
+    public_artifact_safe = output_request.get("public_artifact_safe")
+    if public_artifact_safe is None:
+        public_artifact_safe = not bool(output_request.get("raw_generated_text_public"))
+    return (
+        f"include_output={bool(output_request.get('include_output'))} "
+        f"raw_generated_text_public={bool(output_request.get('raw_generated_text_public'))} "
+        f"public_artifact_safe={bool(public_artifact_safe)}"
+    )
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -7765,6 +7776,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"ledger={wait_progress.get('ledger_endpoint_ready')} "
             f"stream={wait_progress.get('stream_endpoint_ready')}"
         )
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
     if len(outputs) <= 1 and local_output.get("generated_text"):
@@ -7976,6 +7990,9 @@ def print_infer(report: dict[str, Any]) -> None:
             f"ledger={wait_progress.get('ledger_endpoint_ready')} "
             f"stream={wait_progress.get('stream_endpoint_ready')}"
         )
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
     if len(outputs) <= 1 and local_output.get("generated_text"):
