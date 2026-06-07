@@ -789,6 +789,21 @@ def output_display_text(display: dict[str, Any]) -> str:
     )
 
 
+def print_local_output_block(report: dict[str, Any]) -> bool:
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    has_output = bool(local_output.get("generated_text") or outputs)
+    if has_output:
+        print(f"  local_output: {local_output_text(local_output)}")
+    if len(outputs) <= 1 and local_output.get("generated_text"):
+        print(f"  output: {local_output.get('generated_text')}")
+    elif outputs:
+        for index, item in enumerate(outputs, start=1):
+            if isinstance(item, dict) and item.get("generated_text"):
+                print(f"  output[{index}]: {item.get('generated_text')}")
+    return has_output
+
+
 def prompt_summary_text(prompt: dict[str, Any]) -> str:
     return (
         f"count={prompt.get('prompt_count')} "
@@ -9477,6 +9492,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
     output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
     if output_display:
         print(f"  output_display: {output_display_text(output_display)}")
+    print_local_output_block(report)
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
@@ -9526,16 +9542,6 @@ def print_product_generate(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
-    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
-    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
-    if local_output.get("generated_text") or outputs:
-        print(f"  local_output: {local_output_text(local_output)}")
-    if len(outputs) <= 1 and local_output.get("generated_text"):
-        print(f"  output: {local_output.get('generated_text')}")
-    elif outputs:
-        for index, item in enumerate(outputs, start=1):
-            if isinstance(item, dict) and item.get("generated_text"):
-                print(f"  output[{index}]: {item.get('generated_text')}")
     route = report.get("route") if isinstance(report.get("route"), dict) else {}
     if route:
         print(
@@ -9774,6 +9780,7 @@ def print_infer(report: dict[str, Any]) -> None:
     output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
     if output_display:
         print(f"  output_display: {output_display_text(output_display)}")
+    print_local_output_block(report)
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
@@ -9845,15 +9852,6 @@ def print_infer(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
-    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
-    if local_output.get("generated_text") or outputs:
-        print(f"  local_output: {local_output_text(local_output)}")
-    if len(outputs) <= 1 and local_output.get("generated_text"):
-        print(f"  output: {local_output.get('generated_text')}")
-    if len(outputs) > 1:
-        for index, item in enumerate(outputs, start=1):
-            if isinstance(item, dict) and item.get("generated_text"):
-                print(f"  output[{index}]: {item.get('generated_text')}")
     if local_output.get("note"):
         print(f"  note: {local_output.get('note')}")
     elif report.get("local_output_note"):

@@ -3250,6 +3250,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  output_display: terminal=local-private terminal_text=True saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True",
             rendered,
         )
+        self.assertLess(rendered.index("  output: local generated text must stay local"), rendered.index("  trace: "))
         self.assertIn(f"  output_dir: {output_dir}", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
@@ -5190,6 +5191,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("  output:  readable beta text", rendered)
+        self.assertLess(rendered.index("  output:  readable beta text"), rendered.index("  trace: "))
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
             [item["command_line"] for item in human_report["next_commands"]],
@@ -6525,6 +6527,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  local_output: available=True display_only=True public_artifact_safe=False",
             stdout.getvalue(),
         )
+        self.assertLess(stdout.getvalue().index("  output: local text only"), stdout.getvalue().index("  trace: "))
         self.assertIn(
             f"  saved_summary: {output_dir / 'infer_summary.json'} markdown={output_dir / 'infer_summary.md'} raw_generated_text_redacted=True public_artifact_safe=True",
             stdout.getvalue(),
