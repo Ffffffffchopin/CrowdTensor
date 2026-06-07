@@ -9866,6 +9866,48 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "swarm_inference_beta_v1")
 
+    def test_print_swarm_infer_beta_outputs_scope_summary(self) -> None:
+        report = {
+            "schema": "swarm_inference_beta_v1",
+            "cli_schema": "swarm_inference_beta_cli_v1",
+            "ok": True,
+            "mode": "live",
+            "output_request": {
+                "include_output": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "visible_in_terminal": False,
+                "terminal_only": False,
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "output_dir": str(Path(self._tmp_dir())),
+            "diagnosis_codes": ["swarm_inference_beta_live_ready"],
+            "artifacts": {},
+        }
+        with patch("builtins.print") as mocked_print:
+            cli.print_swarm_inference_beta(report)
+
+        rendered = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("output_request: include_output=False", rendered)
+        self.assertIn("raw_generated_text_public=False", rendered)
+        self.assertIn("answer_scope: state=no-local-answer", rendered)
+        self.assertIn("generated_token_ids_public=False", rendered)
+        self.assertIn("shareable: saved_artifacts=True", rendered)
+
     def test_swarm_session_wraps_public_alpha_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []

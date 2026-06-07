@@ -240,6 +240,60 @@ def write_external_beta(path: Path) -> None:
     }, sort_keys=True), encoding="utf-8")
 
 
+def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    if output_request.get("include_output") is not False:
+        errors.append(f"{label}:output_request_include_output_mismatch")
+    if output_request.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:output_request_raw_prompt_public_mismatch")
+    if output_request.get("raw_generated_text_public") is not False:
+        errors.append(f"{label}:output_request_raw_generated_text_public_mismatch")
+    if output_request.get("generated_token_ids_public") is not False:
+        errors.append(f"{label}:output_request_generated_token_ids_public_mismatch")
+    if output_request.get("local_output_display_only") is not False:
+        errors.append(f"{label}:output_request_local_output_display_only_mismatch")
+    if output_request.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:output_request_public_artifact_safe_mismatch")
+    answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    if answer_scope.get("scope_state") != "no-local-answer":
+        errors.append(f"{label}:answer_scope_state_mismatch")
+    if answer_scope.get("visible_in_terminal") is not False:
+        errors.append(f"{label}:answer_scope_visible_in_terminal_mismatch")
+    if answer_scope.get("terminal_only") is not False:
+        errors.append(f"{label}:answer_scope_terminal_only_mismatch")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        errors.append(f"{label}:answer_scope_saved_json_display_mismatch")
+    if answer_scope.get("saved_markdown_display") != "hash-only":
+        errors.append(f"{label}:answer_scope_saved_markdown_display_mismatch")
+    if answer_scope.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:answer_scope_raw_prompt_public_mismatch")
+    if answer_scope.get("raw_generated_text_public") is not False:
+        errors.append(f"{label}:answer_scope_raw_generated_text_public_mismatch")
+    if answer_scope.get("generated_token_ids_public") is not False:
+        errors.append(f"{label}:answer_scope_generated_token_ids_public_mismatch")
+    if answer_scope.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:answer_scope_public_artifact_safe_mismatch")
+    shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    if shareable.get("saved_artifacts_public_safe") is not True:
+        errors.append(f"{label}:shareable_saved_artifacts_public_safe_mismatch")
+    if shareable.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:shareable_raw_prompt_public_mismatch")
+    if shareable.get("raw_generated_text_public") is not False:
+        errors.append(f"{label}:shareable_raw_generated_text_public_mismatch")
+    if shareable.get("generated_token_ids_public") is not False:
+        errors.append(f"{label}:shareable_generated_token_ids_public_mismatch")
+    if shareable.get("local_output_display_only") is not False:
+        errors.append(f"{label}:shareable_local_output_display_only_mismatch")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        errors.append(f"{label}:shareable_answer_scope_state_mismatch")
+    if shareable.get("local_answer_terminal_only") is not False:
+        errors.append(f"{label}:shareable_local_answer_terminal_only_mismatch")
+    if shareable.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:shareable_public_artifact_safe_mismatch")
+    return errors
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check Swarm Inference Beta without external side effects.")
     parser.add_argument("--output-dir", default="")
@@ -339,7 +393,23 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
     missing = sorted((required - verify_codes) | (live_required - live_codes))
     serialized = json.dumps({"prepare": prepare, "verify": verify, "collect": collect, "live": live, "clean": clean}, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in serialized]
-    ok = bool(prepare.get("ok") and verify.get("ok") and collect.get("ok") and live.get("ok") and clean.get("ok") and not missing and not leaks)
+    scope_errors = (
+        output_scope_errors("prepare", prepare)
+        + output_scope_errors("verify", verify)
+        + output_scope_errors("collect", collect)
+        + output_scope_errors("live", live)
+        + output_scope_errors("clean", clean)
+    )
+    ok = bool(
+        prepare.get("ok")
+        and verify.get("ok")
+        and collect.get("ok")
+        and live.get("ok")
+        and clean.get("ok")
+        and not missing
+        and not leaks
+        and not scope_errors
+    )
     return {
         "schema": SCHEMA,
         "ok": ok,
@@ -351,6 +421,7 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
         "clean_ok": clean.get("ok"),
         "missing_codes": missing,
         "sensitive_leaks": leaks,
+        "scope_errors": scope_errors,
         "diagnosis_codes": sorted((verify_codes | live_codes) | {"swarm_inference_beta_check_ready"} if ok else (verify_codes | live_codes) | {"swarm_inference_beta_check_failed"}),
         "artifacts": {
             "swarm_inference_beta_prepare_json": pack.artifact_entry(
