@@ -516,6 +516,75 @@ def _infer_recommended_next_command(
     return _pick_next_command(next_commands, lambda item: True, reason="next_available_command")
 
 
+def _generate_recommended_next_command(
+    next_commands: list[dict[str, Any]],
+    *,
+    ok: bool,
+    dry_run: bool,
+    ready_to_submit: dict[str, Any],
+    diagnosis_codes: set[str],
+) -> dict[str, Any]:
+    if not next_commands:
+        return {}
+    label = lambda item: str(item.get("label") or "")
+    starts = lambda prefix: lambda item: label(item).startswith(prefix)
+    equals = lambda value: lambda item: label(item) == value
+    if "hf_dependencies_missing" in diagnosis_codes or "product_swarm_mvp_hf_runtime_missing" in diagnosis_codes:
+        found = _pick_next_command(next_commands, equals("install Hugging Face runtime"), reason="install_missing_runtime")
+        if found:
+            return found
+    if "p2p_discovery_unreachable" in diagnosis_codes:
+        found = _pick_next_command(next_commands, equals("start P2P discovery daemon"), reason="start_discovery")
+        if found:
+            return found
+    if "generation_timeout" in diagnosis_codes:
+        found = _pick_next_command(next_commands, equals("retry generation with longer timeout"), reason="retry_timeout")
+        if found:
+            return found
+    if dry_run:
+        next_step = str(ready_to_submit.get("next_step") or "")
+        if next_step == "submit":
+            found = _pick_next_command(next_commands, starts("submit generation"), reason="submit_verified_generation")
+            if found:
+                return found
+        if next_step == "run_stage_preflight":
+            found = _pick_next_command(next_commands, equals("check generation route"), reason="verify_stage_miners")
+            if found:
+                return found
+        if next_step in {"run_live_preflight", "submit_with_caution"}:
+            found = _pick_next_command(next_commands, equals("check generation route"), reason="confirm_live_preflight")
+            if found:
+                return found
+    if not ok:
+        startup_codes = {
+            "generate_route_unavailable",
+            "coordinator_route_missing",
+            "coordinator_ready_failed",
+            "stage_preflight_not_checked",
+            "stage_preflight_failed",
+        }
+        if diagnosis_codes.intersection(startup_codes):
+            for expected_label, reason in [
+                ("start Coordinator", "start_coordinator"),
+                ("start stage0 Miner", "start_stage0_miner"),
+                ("check generation route", "check_generation_route"),
+            ]:
+                found = _pick_next_command(next_commands, equals(expected_label), reason=reason)
+                if found:
+                    return found
+        if "admin_token_required" in diagnosis_codes:
+            found = _pick_next_command(next_commands, starts("submit generation"), reason="set_admin_token")
+            if found:
+                return found
+        found = _pick_next_command(next_commands, lambda item: True, reason="follow_operator_action")
+        if found:
+            return found
+    found = _pick_next_command(next_commands, starts("submit generation"), reason="rerun_generation")
+    if found:
+        return found
+    return _pick_next_command(next_commands, lambda item: True, reason="next_available_command")
+
+
 def _infer_prompt_redaction_values(args: argparse.Namespace) -> list[str]:
     values: list[str] = []
     try:
@@ -3872,8 +3941,9 @@ def _infer_trace_from_payload(
     }
 
 
-def _infer_user_status(
+def _user_inference_status(
     *,
+    kind: str,
     ok: bool,
     dry_run: bool,
     result: dict[str, Any],
@@ -3886,11 +3956,11 @@ def _infer_user_status(
     recommended_label = str(recommended_next_command.get("label") or "")
     if ok and not dry_run:
         state = "completed"
-        headline = "Inference completed."
+        headline = f"{kind} completed."
         next_step = "rerun_or_review_artifacts"
     elif ok and dry_run and next_step == "submit":
         state = "preflight-ready"
-        headline = "Preflight passed; submit inference next."
+        headline = f"Preflight passed; submit {kind.lower()} next."
     elif ok and dry_run and next_step:
         state = "preflight-partial"
         headline = str(ready_to_submit.get("readiness_summary") or "Preflight is partial; run the recommended check next.")
@@ -3913,6 +3983,53 @@ def _infer_user_status(
         "has_operator_action": bool(operator_action),
         "public_artifact_safe": True,
     }
+
+
+def _infer_user_status(
+    *,
+    ok: bool,
+    dry_run: bool,
+    result: dict[str, Any],
+    ready_to_submit: dict[str, Any],
+    operator_action: str,
+    recommended_next_command: dict[str, Any],
+) -> dict[str, Any]:
+    return _user_inference_status(
+        kind="Inference",
+        ok=ok,
+        dry_run=dry_run,
+        result=result,
+        ready_to_submit=ready_to_submit,
+        operator_action=operator_action,
+        recommended_next_command=recommended_next_command,
+    )
+
+
+def _generate_user_status(
+    *,
+    report: dict[str, Any],
+    recommended_next_command: dict[str, Any],
+) -> dict[str, Any]:
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    result = {
+        "status": (
+            "complete"
+            if report.get("ok") and not report.get("dry_run")
+            else ("preflight" if report.get("ok") and report.get("dry_run") else "blocked")
+        ),
+        "generated_token_count": generation.get("generated_token_count"),
+        "max_new_tokens": generation.get("max_new_tokens"),
+    }
+    ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
+    return _user_inference_status(
+        kind="Generation",
+        ok=bool(report.get("ok")),
+        dry_run=bool(report.get("dry_run")),
+        result=result,
+        ready_to_submit=ready_to_submit,
+        operator_action=str(report.get("operator_action") or ""),
+        recommended_next_command=recommended_next_command,
+    )
 
 
 def _iter_infer_generated_text_candidates(value: Any, *, _seen: set[int] | None = None) -> list[dict[str, Any]]:
@@ -7545,6 +7662,7 @@ def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]
 
 def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
+    user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -7559,6 +7677,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         "",
         f"- OK: `{bool(summary.get('ok'))}`",
         f"- Dry run: `{bool(summary.get('dry_run'))}`",
+        f"- Status: `{infer_user_status_text(user_status)}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         (
             "- Generation: "
@@ -7848,6 +7967,18 @@ def _finalize_product_generate_report(
 ) -> dict[str, Any]:
     report.setdefault("operator_action", _product_generate_operator_action(report))
     report.setdefault("next_commands", _product_generate_next_commands(report))
+    recommended_next_command = _generate_recommended_next_command(
+        report.get("next_commands") if isinstance(report.get("next_commands"), list) else [],
+        ok=bool(report.get("ok")),
+        dry_run=bool(report.get("dry_run")),
+        ready_to_submit=report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {},
+        diagnosis_codes=set(str(code) for code in (report.get("diagnosis_codes") or [])),
+    )
+    report.setdefault("recommended_next_command", recommended_next_command)
+    report.setdefault("user_status", _generate_user_status(
+        report=report,
+        recommended_next_command=recommended_next_command,
+    ))
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
         report.setdefault("saved_summary", {
@@ -8654,6 +8785,9 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
 def print_product_generate(report: dict[str, Any]) -> None:
     print("CrowdTensor generate")
     print(f"  ok: {report.get('ok')}")
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:

@@ -770,6 +770,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             report["operator_action"],
             "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
         )
+        self.assertEqual(report["user_status"]["state"], "preflight-partial")
+        self.assertEqual(report["user_status"]["next_step"], "run_live_preflight")
+        self.assertEqual(report["user_status"]["recommended_label"], "check generation route")
         labels = [item["label"] for item in report["next_commands"]]
         self.assertIn("submit generation after live preflight", labels)
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -787,11 +790,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
+        self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
+        self.assertEqual(persisted["user_status"]["next_step"], "run_live_preflight")
         self.assertNotIn("CrowdTensor prompt", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("# CrowdTensor Generate Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Dry run: `True`", markdown)
+        self.assertIn(
+            "- Status: `preflight-partial: Request shape is valid, but live readiness was skipped. next=run_live_preflight recommendation=check generation route public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("Generation request shape is valid", markdown)
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertIn("`check generation route`", markdown)
@@ -802,6 +811,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
+        self.assertIn(
+            "  status: preflight-partial: Request shape is valid, but live readiness was skipped. next=run_live_preflight recommendation=check generation route public_artifact_safe=True",
+            rendered,
+        )
         self.assertIn("  stream: requested=True events=0 dry_run=True", rendered)
         self.assertIn(
             f"  saved_summary: {output_dir / 'generate_summary.json'} markdown={output_dir / 'generate_summary.md'} raw_generated_text_redacted=True public_artifact_safe=True",
@@ -1049,10 +1062,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(("GET", "http://127.0.0.1:8787", "/ready"), calls)
         self.assertIn(("GET", "http://127.0.0.1:8787", "/state"), calls)
         self.assertEqual(report["operator_action"], "Dry-run is verified; run the printed submit generation next command.")
+        self.assertEqual(report["user_status"]["state"], "preflight-ready")
+        self.assertEqual(report["user_status"]["headline"], "Preflight passed; submit generation next.")
+        self.assertEqual(report["user_status"]["next_step"], "submit")
+        self.assertEqual(report["user_status"]["recommended_label"], "submit generation")
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
+        self.assertIn(
+            "  status: preflight-ready: Preflight passed; submit generation next. next=submit recommendation=submit generation public_artifact_safe=True",
+            rendered,
+        )
         self.assertIn("  route: source=coordinator-url coordinator=True catalog_missing=not_used", rendered)
         self.assertIn("  coordinator_ready: True service=crowdtensord protocol=runtime_contract_v1", rendered)
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
@@ -1117,6 +1138,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             report["operator_action"],
             "Generation can be submitted, but stage0/stage1 were not fully verified; run the printed stage-preflight next command with --observer-token before the submit next command.",
         )
+        self.assertEqual(report["user_status"]["state"], "preflight-partial")
+        self.assertEqual(
+            report["user_status"]["headline"],
+            "Request can be submitted, but stage Miner readiness is not fully verified.",
+        )
+        self.assertEqual(report["user_status"]["next_step"], "run_stage_preflight")
+        self.assertEqual(report["user_status"]["recommended_label"], "check generation route")
         labels = [item["label"] for item in report["next_commands"]]
         self.assertIn("check generation route", labels)
         self.assertIn("submit generation after stage preflight", labels)
@@ -1128,6 +1156,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
+        self.assertIn(
+            "  status: preflight-partial: Request can be submitted, but stage Miner readiness is not fully verified. next=run_stage_preflight recommendation=check generation route public_artifact_safe=True",
+            rendered,
+        )
         self.assertIn(
             "  stage_preflight: checked=False ok=None matched_miners=None missing=not_checked reason=observer_token_missing source=not-checked",
             rendered,
@@ -1270,9 +1302,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("stage_preflight_skipped", report["diagnosis_codes"])
         self.assertNotIn("generate_dry_run_ready", report["diagnosis_codes"])
         self.assertIn("Coordinator route exists", report["operator_action"])
+        self.assertEqual(report["user_status"]["state"], "blocked")
+        self.assertIn("Coordinator route exists", report["user_status"]["headline"])
+        self.assertEqual(report["user_status"]["next_step"], "fix_blockers")
+        self.assertEqual(report["user_status"]["recommended_label"], "start Coordinator")
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
+        self.assertIn(
+            "  status: blocked: Coordinator route exists but /ready failed; start or restart the Coordinator and retry generate --dry-run. next=fix_blockers recommendation=start Coordinator public_artifact_safe=True",
+            stdout.getvalue(),
+        )
         self.assertIn(
             "  coordinator_ready: False service=None protocol=None error=OSError",
             stdout.getvalue(),
@@ -2322,6 +2362,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("admin_token_required", report["diagnosis_codes"])
         self.assertEqual(report["operator_action"], "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.")
+        self.assertEqual(report["user_status"]["state"], "blocked")
+        self.assertEqual(report["user_status"]["headline"], "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.")
+        self.assertEqual(report["user_status"]["next_step"], "fix_blockers")
+        self.assertTrue(report["user_status"]["recommended_label"].startswith("submit generation"))
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
         self.assertTrue(report["artifacts"]["generate_summary"]["present"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -2332,9 +2376,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(any("CROWDTENSOR_ADMIN_TOKEN" in item.get("requires_env", []) for item in report["next_commands"]))
         persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
         self.assertIn("admin_token_required", persisted["diagnosis_codes"])
+        self.assertEqual(persisted["user_status"]["state"], "blocked")
         self.assertNotIn("CrowdTensor prompt", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("- OK: `False`", markdown)
+        self.assertIn(
+            "- Status: `blocked: Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN. next=fix_blockers recommendation=submit generation public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.", markdown)
         self.assertNotIn("CrowdTensor prompt", markdown)
 
@@ -2404,6 +2453,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["session"]["hf_model_id"], "distilgpt2")
         self.assertEqual(report["generation"]["generated_token_count"], 2)
         self.assertEqual(report["generation"]["max_new_tokens"], 2)
+        self.assertEqual(report["user_status"]["state"], "completed")
+        self.assertEqual(report["user_status"]["headline"], "Generation completed.")
+        self.assertEqual(report["user_status"]["next_step"], "rerun_or_review_artifacts")
+        self.assertEqual(report["user_status"]["recommended_label"], "submit generation")
         self.assertTrue(report["wait_progress"]["session_created"])
         self.assertTrue(report["wait_progress"]["ledger_endpoint_ready"])
         self.assertEqual(report["wait_progress"]["accepted_rows_seen"], 1)
@@ -2414,8 +2467,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("admin-secret", encoded)
         self.assertIn(("GET", "/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit=50&session_id=real-llm-session-test"), calls)
         persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["user_status"]["state"], "completed")
         self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Status: `completed: Generation completed. next=rerun_or_review_artifacts recommendation=submit generation public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("- Generation: `2/2` hash=`sha256:generated`", markdown)
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertNotIn("local generated text must stay local", markdown)
@@ -2423,6 +2481,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
+        self.assertIn(
+            "  status: completed: Generation completed. next=rerun_or_review_artifacts recommendation=submit generation public_artifact_safe=True",
+            rendered,
+        )
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
     def test_product_generate_human_output_is_not_persisted_to_summary(self) -> None:
