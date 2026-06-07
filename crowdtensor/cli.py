@@ -4915,8 +4915,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
     commands.append(submit_command_entry)
     if "generation_timeout" in codes:
         wait_progress = payload.get("wait_progress") if isinstance(payload.get("wait_progress"), dict) else {}
-        retry_command = submit_command[:]
-        retry_command.extend(["--timeout-seconds", str(_retry_timeout_seconds(wait_progress))])
+        retry_command = _command_with_timeout(submit_command, _retry_timeout_seconds(wait_progress))
         commands.append(command_entry(
             "retry inference with longer timeout",
             retry_command,
@@ -7942,6 +7941,19 @@ def _retry_timeout_seconds(wait_progress: dict[str, Any]) -> int:
     return min(max(current * 2, current + 60, 120), 1800)
 
 
+def _command_with_timeout(command: list[str], timeout_seconds: int) -> list[str]:
+    updated = list(command)
+    if "--timeout-seconds" in updated:
+        index = updated.index("--timeout-seconds")
+        if index + 1 < len(updated):
+            updated[index + 1] = str(timeout_seconds)
+        else:
+            updated.append(str(timeout_seconds))
+        return updated
+    updated.extend(["--timeout-seconds", str(timeout_seconds)])
+    return updated
+
+
 def _safe_stream_payload_event(event: dict[str, Any], *, max_new_tokens: int) -> dict[str, Any]:
     try:
         generated_count = int(event.get("generated_token_count") or 0)
@@ -8319,7 +8331,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             )
         )
         wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
-        retry_command.extend(["--timeout-seconds", str(_retry_timeout_seconds(wait_progress))])
+        retry_command = _command_with_timeout(retry_command, _retry_timeout_seconds(wait_progress))
         commands.append(command_entry(
             "retry generation with longer timeout",
             retry_command,

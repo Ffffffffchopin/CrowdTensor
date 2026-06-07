@@ -3083,6 +3083,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         retry = next(item for item in report["next_commands"] if item["label"] == "retry generation with longer timeout")
         self.assertEqual(retry["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
+        self.assertEqual(retry["command"].count("--timeout-seconds"), 1)
+        self.assertEqual(retry["command"][retry["command"].index("--timeout-seconds") + 1], "120")
+        self.assertNotIn("--timeout-seconds 1 --timeout-seconds 120", retry["command_line"])
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn("CrowdTensor prompt", encoded)
         self.assertNotIn("admin-secret", encoded)
@@ -6911,10 +6914,10 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "/admin/results was not reachable",
             ),
         ]
-        for wait_progress, expected in cases:
+        for case_index, (wait_progress, expected) in enumerate(cases):
             with self.subTest(expected=expected):
                 output_dir = Path(self._tmp_dir())
-                args = cli.parse_args([
+                argv = [
                     "infer",
                     "CrowdTensor user prompt",
                     "--mode",
@@ -6928,7 +6931,11 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "--max-new-tokens",
                     "4",
                     "--json",
-                ])
+                ]
+                if case_index == 0:
+                    argv.extend(["--timeout-seconds", "90"])
+                    wait_progress = {**wait_progress, "timeout_seconds": 90}
+                args = cli.parse_args(argv)
                 payload = {
                     "schema": "public_swarm_product_cli_v1",
                     "ok": False,
@@ -6945,18 +6952,22 @@ class CrowdTensorCliTests(unittest.TestCase):
                 self.assertIn(expected, report["operator_action"])
                 self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
                 next_lines = [item["command_line"] for item in report["next_commands"]]
+                expected_retry_timeout = "180" if case_index == 0 else "240"
                 self.assertIn(
-                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds 240",
+                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds {expected_retry_timeout}",
                     next_lines,
                 )
                 retry = next(item for item in report["next_commands"] if item["label"] == "retry inference with longer timeout")
                 self.assertEqual(retry["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
+                self.assertEqual(retry["command"].count("--timeout-seconds"), 1)
+                self.assertEqual(retry["command"][retry["command"].index("--timeout-seconds") + 1], expected_retry_timeout)
+                self.assertNotIn("--timeout-seconds 90 --timeout-seconds 180", retry["command_line"])
                 self.assertNotIn("CrowdTensor user prompt", json.dumps(report["next_commands"], sort_keys=True))
                 self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
                 persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
                 self.assertIn(expected, persisted["operator_action"])
                 self.assertIn(
-                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds 240",
+                    f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 4 --coordinator-url http://127.0.0.1:8787 --timeout-seconds {expected_retry_timeout}",
                     [item["command_line"] for item in persisted["next_commands"]],
                 )
 
