@@ -5695,6 +5695,47 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, markdown)
         self.assertNotIn("runtime echoed", markdown)
 
+    def test_infer_local_source_serve_start_failure_is_actionable(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor private prompt"
+        args = cli.parse_args([
+            "infer",
+            prompt,
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "8",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(command[command.index("--prompt-text") + 1], prompt)
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": False,
+                "mode": "local-loopback",
+                "diagnosis_codes": ["serve_start_failed", "public_report_safety_failed"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("serve_start_failed", report["diagnosis_codes"])
+        self.assertEqual(report["issue_summary"]["primary_code"], "serve_start_failed")
+        self.assertEqual(report["review_summary"]["primary_code"], "serve_start_failed")
+        self.assertIn("loopback Coordinator", report["operator_action"])
+        self.assertIn("--coordinator-port", report["operator_action"])
+        self.assertEqual(report["user_status"]["recommended_label"], "run local inference")
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["issue_summary"]["primary_code"], "serve_start_failed")
+        self.assertIn("loopback Coordinator", persisted["operator_action"])
+        self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("primary=serve_start_failed", markdown)
+        self.assertIn("loopback Coordinator", markdown)
+        self.assertNotIn(prompt, markdown)
+
     def test_infer_full_evidence_uses_public_swarm_v2_local_gate(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([

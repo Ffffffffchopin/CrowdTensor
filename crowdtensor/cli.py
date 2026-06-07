@@ -4293,6 +4293,7 @@ def _primary_diagnosis_code(codes: list[str], *, ok: bool, state: str) -> str:
         "stage_preflight_failed",
         "stage_preflight_not_checked",
         "admin_token_required",
+        "serve_start_failed",
         "generation_timeout",
         "crowdtensor_infer_source_report_missing",
     ]
@@ -4761,6 +4762,8 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
         return "Start or rejoin distinct stage0 and stage1 Miners, then rerun --dry-run with --observer-token to verify /state."
     if "admin_token_required" in codes:
         return "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN."
+    if "serve_start_failed" in codes:
+        return "Local inference could not start its loopback Coordinator; retry with a fresh --output-dir or a different --coordinator-port, then inspect the child product-swarm-mvp report if it still fails."
     if "generation_timeout" in codes:
         return _infer_wait_progress_action(payload)
     if "crowdtensor_infer_source_report_missing" in codes:
