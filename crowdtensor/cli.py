@@ -774,6 +774,7 @@ def review_summary_text(summary: dict[str, Any]) -> str:
         f"inspect={summary.get('inspect_first') or 'none'} "
         f"recommended={summary.get('recommended_label') or 'none'} "
         f"primary={summary.get('primary_code') or 'none'} "
+        f"attention={summary.get('attention') or 'none'} "
         f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
     )
 
@@ -4098,6 +4099,8 @@ def _review_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[st
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
+    ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
     next_commands = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     command_count = len([item for item in next_commands if isinstance(item, dict) and item.get("command_line")])
     recommended_label = str(
@@ -4105,6 +4108,14 @@ def _review_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[st
         or user_status.get("recommended_label")
         or ""
     )
+    warning_codes = ready_to_submit.get("warning_codes") if isinstance(ready_to_submit.get("warning_codes"), list) else []
+    attention = str(stream.get("issue_summary") or "")
+    if not attention and warning_codes:
+        attention = ",".join(str(code) for code in warning_codes)
+    if not attention and bool(issue_summary.get("safe_detail_present")):
+        attention = "redacted_detail_available"
+    if not attention and report.get("operator_action") and user_status.get("state") != "completed":
+        attention = "operator_action"
     return {
         "kind": kind,
         "state": user_status.get("state") or ("completed" if report.get("ok") else "blocked"),
@@ -4113,6 +4124,7 @@ def _review_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[st
         "recommended_label": recommended_label,
         "recommended_reason": recommended.get("reason") or "",
         "primary_code": issue_summary.get("primary_code") or "",
+        "attention": attention,
         "inspect_first": artifact_summary.get("inspect_first") or "",
         "summary_json": artifact_summary.get("summary_json") or "",
         "summary_markdown": artifact_summary.get("summary_markdown") or "",
@@ -10934,7 +10946,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The artifacts line points to the first Markdown summary to inspect and lists the\n"
             "redacted JSON/Markdown artifact paths without exposing prompts or generated text.\n\n"
             "Start with the review/review_summary line: it combines state, next step, first\n"
-            "artifact to inspect, recommended command label, and primary diagnosis code.\n\n"
+            "artifact to inspect, recommended command label, primary diagnosis code, and\n"
+            "attention warnings such as incomplete stream evidence.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not a permissionless P2P network."
         ),
@@ -11106,7 +11119,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The artifacts line points to the first Markdown summary to inspect and lists the\n"
             "redacted JSON/Markdown artifact paths without exposing prompts or generated text.\n\n"
             "Start with the review/review_summary line: it combines state, next step, first\n"
-            "artifact to inspect, recommended command label, and primary diagnosis code.\n\n"
+            "artifact to inspect, recommended command label, primary diagnosis code, and\n"
+            "attention warnings such as incomplete stream evidence.\n\n"
             "Boundaries: Coordinator-backed, read-only, tiny/small-model scoped; not production\n"
             "Hivemind/Petals parity, not large-model serving, and not arbitrary public prompt serving."
         ),

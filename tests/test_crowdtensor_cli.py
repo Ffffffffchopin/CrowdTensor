@@ -183,6 +183,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("redacted JSON/Markdown artifact paths", rendered)
         self.assertIn("Start with the review/review_summary line", rendered)
         self.assertIn("recommended command label", rendered)
+        self.assertIn("attention warnings such as incomplete stream evidence", rendered)
         self.assertIn("existing mode only: check route/session readiness", rendered)
         self.assertIn("mutually exclusive with positional", rendered)
         self.assertIn("prompt and --prompt-texts", rendered)
@@ -226,6 +227,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("redacted JSON/Markdown artifact paths", rendered)
         self.assertIn("Start with the review/review_summary line", rendered)
         self.assertIn("recommended command label", rendered)
+        self.assertIn("attention warnings such as incomplete stream evidence", rendered)
         self.assertIn("redacted detail is available", rendered)
         self.assertIn("check route/session readiness without submitting a", rendered)
         self.assertIn("generation task", rendered)
@@ -545,8 +547,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("Start by reading the `review` line", rendered)
             self.assertIn("`review_summary`", rendered)
             self.assertIn("Then use the `status` line", rendered)
-            self.assertIn("`user_status` for detail", rendered)
-            self.assertIn("`preflight-ready` means submit", rendered)
+            self.assertIn("`user_status`", rendered)
+            self.assertIn("for detail", rendered)
+            self.assertIn("`preflight-ready` means", rendered)
+            self.assertIn("submit next", rendered)
             self.assertIn("`preflight-partial` means run the", rendered)
             self.assertIn("recommended check first", rendered)
             self.assertIn("`recommended_next` plus `next[...]`", rendered)
@@ -556,6 +560,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("`artifact_summary`", rendered)
             self.assertIn("`review_summary`", rendered)
             self.assertIn("current state, next step, first artifact", rendered)
+            self.assertIn("`attention` value for warnings", rendered)
             self.assertIn("first Markdown summary to inspect", rendered)
             self.assertIn("accepted ledger rows", rendered)
             self.assertIn("primary diagnosis code", rendered)
@@ -820,6 +825,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["inspect_first"], str(output_dir / "generate_summary.md"))
         self.assertEqual(report["review_summary"]["recommended_label"], "check generation route")
         self.assertEqual(report["review_summary"]["primary_code"], "coordinator_ready_preflight_skipped")
+        self.assertEqual(report["review_summary"]["attention"], "coordinator_preflight_skipped,stage_preflight_skipped")
         self.assertTrue(report["review_summary"]["has_recommended_command"])
         self.assertTrue(report["review_summary"]["public_artifact_safe"])
         self.assertIsNone(report["trace"]["session_id"])
@@ -884,7 +890,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            f"- Review: `state=preflight-partial next=run_live_preflight inspect={output_dir / 'generate_summary.md'} recommended=check generation route primary=coordinator_ready_preflight_skipped public_artifact_safe=True`",
+            f"- Review: `state=preflight-partial next=run_live_preflight inspect={output_dir / 'generate_summary.md'} recommended=check generation route primary=coordinator_ready_preflight_skipped attention=coordinator_preflight_skipped,stage_preflight_skipped public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -928,7 +934,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            f"  review: state=preflight-partial next=run_live_preflight inspect={output_dir / 'generate_summary.md'} recommended=check generation route primary=coordinator_ready_preflight_skipped public_artifact_safe=True",
+            f"  review: state=preflight-partial next=run_live_preflight inspect={output_dir / 'generate_summary.md'} recommended=check generation route primary=coordinator_ready_preflight_skipped attention=coordinator_preflight_skipped,stage_preflight_skipped public_artifact_safe=True",
             rendered,
         )
         self.assertIn(
@@ -2676,6 +2682,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["inspect_first"], str(output_dir / "generate_summary.md"))
         self.assertEqual(report["review_summary"]["recommended_label"], "submit generation")
         self.assertEqual(report["review_summary"]["primary_code"], "public_swarm_generate_ready")
+        self.assertEqual(report["review_summary"]["attention"], "")
         self.assertTrue(report["review_summary"]["has_recommended_command"])
         self.assertTrue(report["review_summary"]["public_artifact_safe"])
         self.assertNotIn("admin-secret", encoded)
@@ -2700,7 +2707,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            f"- Review: `state=completed next=rerun_or_review_artifacts inspect={output_dir / 'generate_summary.md'} recommended=submit generation primary=public_swarm_generate_ready public_artifact_safe=True`",
+            f"- Review: `state=completed next=rerun_or_review_artifacts inspect={output_dir / 'generate_summary.md'} recommended=submit generation primary=public_swarm_generate_ready attention=none public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -2741,7 +2748,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            f"  review: state=completed next=rerun_or_review_artifacts inspect={output_dir / 'generate_summary.md'} recommended=submit generation primary=public_swarm_generate_ready public_artifact_safe=True",
+            f"  review: state=completed next=rerun_or_review_artifacts inspect={output_dir / 'generate_summary.md'} recommended=submit generation primary=public_swarm_generate_ready attention=none public_artifact_safe=True",
             rendered,
         )
         self.assertIn(
@@ -5807,7 +5814,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn(
-            f"  review: state=completed next=rerun_or_review_artifacts inspect={output_dir / 'infer_summary.md'} recommended=submit inference primary=crowdtensor_infer_ready public_artifact_safe=True",
+            f"  review: state=completed next=rerun_or_review_artifacts inspect={output_dir / 'infer_summary.md'} recommended=submit inference primary=crowdtensor_infer_ready attention=none public_artifact_safe=True",
             stdout.getvalue(),
         )
         self.assertIn(
@@ -5885,6 +5892,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["inspect_first"], str(output_dir / "infer_summary.md"))
         self.assertEqual(report["review_summary"]["recommended_label"], "submit inference")
         self.assertEqual(report["review_summary"]["primary_code"], "crowdtensor_infer_ready")
+        self.assertEqual(report["review_summary"]["attention"], "")
         self.assertTrue(report["review_summary"]["has_recommended_command"])
         self.assertTrue(report["review_summary"]["public_artifact_safe"])
         self.assertEqual(report["artifacts"]["source_generate_summary"]["path"], "generate/generate_summary.json")
@@ -5969,7 +5977,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            f"- Review: `state=completed next=rerun_or_review_artifacts inspect={output_dir / 'infer_summary.md'} recommended=submit inference primary=crowdtensor_infer_ready public_artifact_safe=True`",
+            f"- Review: `state=completed next=rerun_or_review_artifacts inspect={output_dir / 'infer_summary.md'} recommended=submit inference primary=crowdtensor_infer_ready attention=none public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -6364,6 +6372,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertFalse(report["stream"]["ready"])
         self.assertEqual(report["stream"]["issue_summary"], "request[2]=req-2:1/2")
+        self.assertEqual(report["review_summary"]["attention"], "request[2]=req-2:1/2")
+        self.assertEqual(report["review_summary"]["state"], "completed")
         self.assertEqual(
             report["operator_action"],
             "Inference completed, but stream progress is incomplete (request[2]=req-2:1/2); rerun with --stream if you need live token evidence.",
@@ -6381,6 +6391,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
+        self.assertIn("  review: state=completed", rendered)
+        self.assertIn("attention=request[2]=req-2:1/2", rendered)
         self.assertIn("  stream[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
         self.assertIn("  stream[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False", rendered)
         self.assertIn("  stream_issue: request[2]=req-2:1/2", rendered)
@@ -6390,6 +6402,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn('"generated_token_ids": [1]', encoded)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["stream"]["issue_summary"], "request[2]=req-2:1/2")
+        self.assertEqual(persisted["review_summary"]["attention"], "request[2]=req-2:1/2")
         self.assertEqual(persisted["trace"]["stream_event_count"], 3)
         self.assertEqual(
             [(row["request_id"], row["prompt_hash"]) for row in persisted["trace"]["request_trace"]],
@@ -6401,6 +6414,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn("must not leak", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("attention=request[2]=req-2:1/2", markdown)
         self.assertIn("- Stream issue: `request[2]=req-2:1/2`", markdown)
         self.assertIn("Inference completed, but stream progress is incomplete", markdown)
         self.assertIn("Replace `<prompt-1>,<prompt-2>` with your comma-separated local prompts before running saved commands.", markdown)
