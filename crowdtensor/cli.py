@@ -796,11 +796,11 @@ def print_local_output_block(report: dict[str, Any]) -> bool:
     if has_output:
         print(f"  local_output: {local_output_text(local_output)}")
     if len(outputs) <= 1 and local_output.get("generated_text"):
-        print(f"  output: {local_output.get('generated_text')}")
+        print(f"  answer: {local_output.get('generated_text')}")
     elif outputs:
         for index, item in enumerate(outputs, start=1):
             if isinstance(item, dict) and item.get("generated_text"):
-                print(f"  output[{index}]: {item.get('generated_text')}")
+                print(f"  answer[{index}]: {item.get('generated_text')}")
     return has_output
 
 

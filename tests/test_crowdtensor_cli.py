@@ -3244,13 +3244,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
-        self.assertIn("  output: local generated text must stay local", rendered)
+        self.assertIn("  answer: local generated text must stay local", rendered)
         self.assertIn("  result: status=complete tokens=2/2 outputs=1 display=local-private", rendered)
         self.assertIn(
             "  output_display: terminal=local-private terminal_text=True saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True",
             rendered,
         )
-        self.assertLess(rendered.index("  output: local generated text must stay local"), rendered.index("  trace: "))
+        self.assertLess(rendered.index("  answer: local generated text must stay local"), rendered.index("  trace: "))
         self.assertIn(f"  output_dir: {output_dir}", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
@@ -5190,8 +5190,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  local_output: available=True display_only=True public_artifact_safe=False",
             rendered,
         )
-        self.assertIn("  output:  readable beta text", rendered)
-        self.assertLess(rendered.index("  output:  readable beta text"), rendered.index("  trace: "))
+        self.assertIn("  answer:  readable beta text", rendered)
+        self.assertLess(rendered.index("  answer:  readable beta text"), rendered.index("  trace: "))
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
             [item["command_line"] for item in human_report["next_commands"]],
@@ -5367,9 +5367,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_product_generate(human_report)
         rendered = stdout.getvalue()
         self.assertIn("  batch: requests=2 observed=2 ready=True", rendered)
-        self.assertNotIn("  output:  raw one", rendered)
-        self.assertIn("  output[1]:  raw one", rendered)
-        self.assertIn("  output[2]:  raw two", rendered)
+        self.assertNotIn("  answer:  raw one", rendered)
+        self.assertIn("  answer[1]:  raw one", rendered)
+        self.assertIn("  answer[2]:  raw two", rendered)
         self.assertTrue(json_report["ok"], json_report)
         self.assertEqual(json_report["result"]["display"], "hash-only-json")
         self.assertEqual(json_report["result"]["output_count"], 2)
@@ -6527,7 +6527,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  local_output: available=True display_only=True public_artifact_safe=False",
             stdout.getvalue(),
         )
-        self.assertLess(stdout.getvalue().index("  output: local text only"), stdout.getvalue().index("  trace: "))
+        self.assertLess(stdout.getvalue().index("  answer: local text only"), stdout.getvalue().index("  trace: "))
         self.assertIn(
             f"  saved_summary: {output_dir / 'infer_summary.json'} markdown={output_dir / 'infer_summary.md'} raw_generated_text_redacted=True public_artifact_safe=True",
             stdout.getvalue(),
@@ -7030,9 +7030,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  batch: requests=2 observed=2 ready=True", rendered)
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=2/2 requests=2/2 batch_ready=True ledger=True stream=False", rendered)
-        self.assertNotIn("  output:  first output", rendered)
-        self.assertIn("  output[1]:  first output", rendered)
-        self.assertIn("  output[2]:  second output", rendered)
+        self.assertNotIn("  answer:  first output", rendered)
+        self.assertIn("  answer[1]:  first output", rendered)
+        self.assertIn("  answer[2]:  second output", rendered)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["output_count"], 2)
         self.assertEqual([row["generated_text"] for row in persisted["local_output"]["outputs"]], ["", ""])
@@ -7353,9 +7353,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_infer(report)
 
         rendered = stdout.getvalue()
-        self.assertNotIn("  output:  first answer", rendered)
-        self.assertIn("  output[1]:  first answer", rendered)
-        self.assertIn("  output[2]:  second answer", rendered)
+        self.assertNotIn("  answer:  first answer", rendered)
+        self.assertIn("  answer[1]:  first answer", rendered)
+        self.assertIn("  answer[2]:  second answer", rendered)
 
     def test_infer_failure_includes_operator_action(self) -> None:
         output_dir = Path(self._tmp_dir())
