@@ -175,6 +175,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("output_request.include_output", rendered)
         self.assertIn("output_request.raw_generated_text_public false", rendered)
         self.assertIn("The trace line summarizes session, request count, ledger rows, stream events", rendered)
+        self.assertIn("The result line summarizes completion state", rendered)
+        self.assertIn("local-private versus hash-only display", rendered)
         self.assertIn("safe per-request ids or prompt hashes", rendered)
         self.assertIn("never exposes raw prompt text", rendered)
         self.assertIn("The issue line summarizes state, primary diagnosis, next step, safe progress", rendered)
@@ -225,6 +227,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("output_request.include_output", rendered)
         self.assertIn("output_request.raw_generated_text_public false", rendered)
         self.assertIn("The trace line summarizes session, request count, ledger rows, stream events", rendered)
+        self.assertIn("The result line summarizes completion state", rendered)
+        self.assertIn("local-private versus hash-only display", rendered)
         self.assertIn("safe per-request ids or prompt hashes", rendered)
         self.assertIn("never exposes raw prompt text", rendered)
         self.assertIn("The issue line summarizes state, primary diagnosis, next step, safe progress", rendered)
@@ -565,6 +569,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("recommended check first", rendered)
             self.assertIn("`recommended_next` plus `next[...]`", rendered)
             self.assertIn("`trace`", rendered)
+            self.assertIn("`result`", rendered)
+            self.assertIn("completion state, token count, output count", rendered)
+            self.assertIn("local-private versus hash-only display", rendered)
             self.assertIn("`issue`", rendered)
             self.assertIn("`issue_summary`", rendered)
             self.assertIn("`artifact_summary`", rendered)
@@ -2692,6 +2699,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["session"]["hf_model_id"], "distilgpt2")
         self.assertEqual(report["generation"]["generated_token_count"], 2)
         self.assertEqual(report["generation"]["max_new_tokens"], 2)
+        self.assertEqual(report["result"]["status"], "complete")
+        self.assertEqual(report["result"]["generated_token_count"], 2)
+        self.assertEqual(report["result"]["max_new_tokens"], 2)
+        self.assertEqual(report["result"]["output_count"], 1)
+        self.assertEqual(report["result"]["display"], "hash-only")
+        self.assertEqual(report["result"]["generated_text_hash"], "sha256:generated")
+        self.assertTrue(report["result"]["public_artifact_safe"])
         self.assertEqual(report["user_status"]["state"], "completed")
         self.assertEqual(report["user_status"]["headline"], "Generation completed.")
         self.assertEqual(report["user_status"]["next_step"], "rerun_or_review_artifacts")
@@ -2747,6 +2761,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["trace"]["session_id"], "real-llm-session-test")
         self.assertEqual(persisted["trace"]["accepted_rows_seen"], 1)
         self.assertEqual(persisted["trace"]["request_count"], 1)
+        self.assertEqual(persisted["result"]["status"], "complete")
+        self.assertEqual(persisted["result"]["generated_token_count"], 2)
+        self.assertEqual(persisted["result"]["max_new_tokens"], 2)
+        self.assertEqual(persisted["result"]["output_count"], 1)
+        self.assertEqual(persisted["result"]["display"], "hash-only")
+        self.assertTrue(persisted["result"]["public_artifact_safe"])
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertTrue(persisted["shareable_summary"]["saved_artifacts_public_safe"])
         self.assertEqual(persisted["issue_summary"]["state"], "completed")
@@ -2781,6 +2801,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Generation: `2/2` hash=`sha256:generated`", markdown)
+        self.assertIn("- Result: `status=complete tokens=2/2 outputs=1 display=hash-only hash=sha256:generated public_artifact_safe=True`", markdown)
         self.assertIn(
             "- Trace: `session=real-llm-session-test requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True`",
             markdown,
@@ -2818,6 +2839,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  issue: state=completed primary=public_swarm_generate_ready next=rerun_or_review_artifacts progress=`polls=",
+            rendered,
+        )
+        self.assertIn(
+            "  result: status=complete tokens=2/2 outputs=1 display=hash-only hash=sha256:generated public_artifact_safe=True",
             rendered,
         )
         self.assertIn(
@@ -2889,12 +2914,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["local_output"]["generated_text"], "local generated text must stay local")
         self.assertFalse(report["local_output"]["public_artifact_safe"])
+        self.assertEqual(report["result"]["status"], "complete")
+        self.assertEqual(report["result"]["output_count"], 1)
+        self.assertEqual(report["result"]["display"], "local-private")
+        self.assertFalse(report["result"]["public_artifact_safe"])
         persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
         self.assertTrue(persisted["local_output"]["public_artifact_safe"])
+        self.assertEqual(persisted["result"]["status"], "complete")
+        self.assertEqual(persisted["result"]["output_count"], 1)
+        self.assertEqual(persisted["result"]["display"], "hash-only")
+        self.assertTrue(persisted["result"]["public_artifact_safe"])
         self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- Result: `status=complete tokens=2/2 outputs=1 display=hash-only", markdown)
         self.assertIn(
             "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1`",
             markdown,
@@ -2909,6 +2943,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
         self.assertIn("  output: local generated text must stay local", rendered)
+        self.assertIn("  result: status=complete tokens=2/2 outputs=1 display=local-private", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
     def test_product_generate_timeout_reports_safe_wait_progress(self) -> None:

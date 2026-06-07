@@ -4053,6 +4053,51 @@ def _generate_trace_from_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _generate_result_from_report(report: dict[str, Any]) -> dict[str, Any]:
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
+    session_request = report.get("session_request") if isinstance(report.get("session_request"), dict) else {}
+    wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
+    generated_tokens = _safe_int(generation.get("generated_token_count"))
+    max_new_tokens = _safe_int(generation.get("max_new_tokens") or session_request.get("max_new_tokens"))
+    expected_request_count = _safe_int(
+        batch.get("expected_request_count")
+        or batch.get("request_count")
+        or session_request.get("request_count"),
+        1,
+    )
+    observed_request_count = max(
+        _safe_int(batch.get("observed_request_count")),
+        _generation_observed_request_count(generation),
+        _safe_int(wait_progress.get("observed_request_count")),
+    )
+    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    display_output_count = len(outputs) if outputs else (1 if local_output.get("generated_text") else 0)
+    output_count = display_output_count or observed_request_count or (expected_request_count if report.get("ok") and not report.get("dry_run") else 0)
+    has_local_display_output = bool(local_output.get("generated_text") or outputs)
+    if report.get("dry_run"):
+        status = "preflight" if report.get("ok") else "blocked"
+    elif report.get("ok"):
+        status = "complete"
+    elif generated_tokens > 0 or observed_request_count > 0:
+        status = "partial"
+    else:
+        status = "blocked"
+    display = "local-private" if has_local_display_output else "hash-only"
+    return {
+        "status": status,
+        "generated_token_count": generated_tokens,
+        "max_new_tokens": max_new_tokens,
+        "generated_text_hash": generation.get("generated_text_hash"),
+        "output_count": output_count,
+        "display": display,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": not has_local_display_output,
+    }
+
+
 def _shareable_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
     saved_summary = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
@@ -7932,6 +7977,7 @@ def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]
 
 def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
+    result = summary.get("result") if isinstance(summary.get("result"), dict) else {}
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
     review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
@@ -7965,6 +8011,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
             f"hash=`{generation.get('generated_text_hash')}`"
         ),
+        f"- Result: `{infer_result_text(result)}`",
         f"- Trace: `{infer_trace_text(trace)}`",
         f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{bool(route.get('usable_now') or route.get('coordinator_url_present'))}`",
@@ -8298,6 +8345,7 @@ def _finalize_product_generate_report(
         recommended_next_command=recommended_next_command,
     ))
     report.setdefault("trace", _generate_trace_from_report(report))
+    report.setdefault("result", _generate_result_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
     if output_dir is not None:
@@ -9137,6 +9185,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"{generation.get('generated_token_count')}/{generation.get('max_new_tokens')} "
             f"hash={generation.get('generated_text_hash')}"
         )
+    result = report.get("result") if isinstance(report.get("result"), dict) else {}
+    if result:
+        print(f"  result: {infer_result_text(result)}")
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
@@ -10978,6 +11029,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The trace line summarizes session, request count, ledger rows, stream events,\n"
             "and safe per-request ids or prompt hashes; it never exposes raw prompt text,\n"
             "generated text, generated token ids, credentials, or activations.\n\n"
+            "The result line summarizes completion state, token count, output count,\n"
+            "generated-text hash, and local-private versus hash-only display.\n\n"
             "The issue line summarizes state, primary diagnosis, next step, safe progress,\n"
             "and whether a redacted detail is available for blocked or timeout runs.\n\n"
             "The artifacts line points to the first Markdown summary to inspect and lists the\n"
@@ -11154,6 +11207,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The trace line summarizes session, request count, ledger rows, stream events,\n"
             "and safe per-request ids or prompt hashes; it never exposes raw prompt text,\n"
             "generated text, generated token ids, credentials, or activations.\n\n"
+            "The result line summarizes completion state, token count, output count,\n"
+            "generated-text hash, and local-private versus hash-only display.\n\n"
             "The issue line summarizes state, primary diagnosis, next step, safe progress,\n"
             "and whether a redacted detail is available for blocked or timeout runs.\n\n"
             "The artifacts line points to the first Markdown summary to inspect and lists the\n"

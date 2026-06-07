@@ -97,6 +97,9 @@ The `trace` line in human output and the `trace` object in JSON/Markdown give a
 safe troubleshooting summary: session id, request count, accepted ledger rows,
 stream event count, and per-request ids or prompt hashes. It never includes raw
 prompt text, generated text, generated token ids, credentials, or activations.
+The `result` line and JSON/Markdown `result` object summarize completion state, token count, output count,
+generated-text hash, and local-private versus hash-only display without
+exposing generated text in shareable artifacts.
 The `issue` line and JSON/Markdown `issue_summary` object condense the current
 state, primary diagnosis code, next step, safe progress text, and whether a
 redacted detail is available, so blocked or timeout runs have one place to read
