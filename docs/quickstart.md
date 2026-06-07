@@ -92,10 +92,9 @@ Existing-swarm reports include `wait_progress` with poll count, accepted rows,
 endpoint readiness, observed token progress, batch request progress, and safe
 last-error type for timeout debugging; `infer` and `generate` turn that progress
 into a concrete `operator_action`.
-Human output labels stream progress with safe request ids or hash prefixes,
-includes per-request token/target progress for bounded batch streams, marks
-missing stream slots, and prints `next[...]` lines with safe, copyable follow-up
-commands.
+Live and summary stream progress use safe request ids or hash prefixes, include
+per-request token/target progress for bounded batch streams, mark missing stream
+slots, and print `next[...]` lines with safe, copyable follow-up commands.
 Human `infer` and `generate` output use your current local prompt in those next
 commands; JSON reports and saved artifacts keep raw prompts and token values
 represented as placeholders.

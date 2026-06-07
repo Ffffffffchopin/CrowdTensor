@@ -576,6 +576,14 @@ def stream_request_label(item: dict[str, Any]) -> str:
     return "unknown"
 
 
+def stream_event_text(event: dict[str, Any]) -> str:
+    return (
+        f"stream request={stream_request_label(event)} "
+        f"{event.get('generated_token_count')}/{event.get('max_new_tokens')} "
+        f"hash={event.get('generated_text_hash')}"
+    )
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -7677,12 +7685,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                                 stream_events.append(safe_event)
                                 stream_seen_keys.add(stream_key)
                                 if not args.json:
-                                    print(
-                                        "stream "
-                                        f"{safe_event.get('generated_token_count')}/{safe_event.get('max_new_tokens')} "
-                                        f"hash={safe_event.get('generated_text_hash')}",
-                                        flush=True,
-                                    )
+                                    print(stream_event_text(safe_event), flush=True)
         query = f"/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit={args.admin_results_limit}"
         if session_id:
             query += f"&session_id={session_id}"
@@ -7736,12 +7739,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                             else "admin-results-ledger-fallback"
                         )
                         if not args.json:
-                            print(
-                                "stream "
-                                f"{event.get('generated_token_count')}/{event.get('max_new_tokens')} "
-                                f"hash={event.get('generated_text_hash')}",
-                                flush=True,
-                            )
+                            print(stream_event_text(event), flush=True)
             for row in ledger_rows:
                 row_generation = safe_generation_summary(row, max_new_tokens=args.max_new_tokens)
                 if (

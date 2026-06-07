@@ -3743,6 +3743,101 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  stream[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False", rendered)
         self.assertIn("  stream[2]: request=missing tokens=0/2 counts=[] complete=False missing=True", rendered)
 
+    def test_product_generate_live_stream_prints_safe_request_labels(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--prompt-texts",
+            "first private prompt,second private prompt",
+            "--admin-token",
+            "admin-secret",
+            "--max-new-tokens",
+            "1",
+            "--stream",
+        ])
+
+        def event(request_id: str, prompt_hash: str) -> dict:
+            return {
+                "schema": "session_stream_event_v1",
+                "session_id": "real-llm-session-live-stream",
+                "request_id": request_id,
+                "prompt_hash": prompt_hash,
+                "generated_token_count": 1,
+                "max_new_tokens": 1,
+                "generation_step": 0,
+                "generated_text_hash": f"sha256:{request_id}",
+                "generated_text": "must not leak",
+                "generated_token_ids": [101],
+            }
+
+        final_row = {
+            "validation": {
+                "request_count": 2,
+                "generated_token_count": 1,
+                "max_new_tokens": 1,
+                "generated_text_hash": "sha256:batch",
+                "decoded_tokens_match": True,
+                "inference_results": [
+                    {
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 1,
+                        "max_new_tokens": 1,
+                        "generated_text_hash": "sha256:req-1",
+                        "decoded_tokens_match": True,
+                    },
+                    {
+                        "request_id": "req-2",
+                        "prompt_hash": "sha256:p2",
+                        "generated_token_count": 1,
+                        "max_new_tokens": 1,
+                        "generated_text_hash": "sha256:req-2",
+                        "decoded_tokens_match": True,
+                    },
+                ],
+            }
+        }
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del base_url, payload, admin_token, timeout
+            if method == "POST":
+                return {
+                    "schema": "real_llm_sharded_session_v1",
+                    "session_id": "real-llm-session-live-stream",
+                    "workload_type": "real_llm_sharded_infer",
+                    "max_new_tokens": 1,
+                    "backend": "hf_transformers_cpu",
+                    "request_count": 2,
+                }
+            if path.startswith("/admin/session-stream"):
+                return {
+                    "schema": "admin_session_stream_v1",
+                    "events": [event("req-1", "sha256:p1"), event("req-2", "sha256:p2")],
+                }
+            return {"results": [final_row]}
+
+        stdout = io.StringIO()
+        with patch.object(cli, "request_json_url", side_effect=fake_request), contextlib.redirect_stdout(stdout):
+            report = cli.build_product_generate(args)
+
+        rendered = stdout.getvalue()
+        self.assertTrue(report["ok"], report)
+        self.assertIn("stream request=req-1 1/1 hash=sha256:req-1", rendered)
+        self.assertIn("stream request=req-2 1/1 hash=sha256:req-2", rendered)
+        self.assertNotIn("first private prompt", rendered)
+        self.assertNotIn("second private prompt", rendered)
+        self.assertNotIn("must not leak", rendered)
+        self.assertNotIn("generated_token_ids", rendered)
+
     def test_product_generate_batch_stream_ledger_fallback_expands_batch_rows(self) -> None:
         args = cli.parse_args([
             "generate",
@@ -3755,7 +3850,6 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--max-new-tokens",
             "2",
             "--stream",
-            "--json",
         ])
 
         def batch_row(count: int) -> dict:
@@ -3822,10 +3916,12 @@ class CrowdTensorCliTests(unittest.TestCase):
                 raise cli.HTTPError(path, 404, "not found", {}, None)
             return {"results": [batch_row(2), batch_row(1)]}
 
-        with patch.object(cli, "request_json_url", side_effect=fake_request):
+        stdout = io.StringIO()
+        with patch.object(cli, "request_json_url", side_effect=fake_request), contextlib.redirect_stdout(stdout):
             report = cli.build_product_generate(args)
 
-        encoded = json.dumps(report, sort_keys=True)
+        rendered = stdout.getvalue()
+        stream_encoded = json.dumps(report["stream"], sort_keys=True)
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["stream"]["source"], "admin-results-ledger-fallback")
         self.assertFalse(report["stream"]["endpoint_ready"])
@@ -3835,9 +3931,15 @@ class CrowdTensorCliTests(unittest.TestCase):
             [("req-1", 1), ("req-2", 1), ("req-1", 2), ("req-2", 2)],
         )
         self.assertTrue(report["stream"]["progress"]["per_request_progress_complete"])
-        self.assertNotIn("raw one", encoded)
-        self.assertNotIn("raw two", encoded)
-        self.assertNotIn('"generated_token_ids":', encoded)
+        self.assertIn("stream request=req-1 1/2 hash=sha256:req-1-1", rendered)
+        self.assertIn("stream request=req-2 1/2 hash=sha256:req-2-1", rendered)
+        self.assertIn("stream request=req-1 2/2 hash=sha256:req-1-2", rendered)
+        self.assertIn("stream request=req-2 2/2 hash=sha256:req-2-2", rendered)
+        self.assertNotIn(" raw one", rendered)
+        self.assertNotIn(" raw two", rendered)
+        self.assertNotIn("raw one", stream_encoded)
+        self.assertNotIn("raw two", stream_encoded)
+        self.assertNotIn('"generated_token_ids":', stream_encoded)
 
     def test_product_generate_stream_orders_descending_ledger_progress(self) -> None:
         args = cli.parse_args([

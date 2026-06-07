@@ -88,7 +88,7 @@ poll count, accepted rows, endpoint readiness, observed token progress, batch
 request progress, and safe last-error type so timeouts are actionable without
 exposing raw text; both `infer` and `generate` include `operator_action`
 suggestions for checking tokens, Miner health, admin API access, or timeout
-limits. They also label stream progress with safe request ids or hash prefixes,
+limits. Live and summary stream progress use safe request ids or hash prefixes,
 print per-request token/target progress for bounded batch streams, mark missing
 stream slots, and print `next[...]` lines with safe follow-up commands. Human
 `infer` and `generate` output use your current local prompt so the next command
