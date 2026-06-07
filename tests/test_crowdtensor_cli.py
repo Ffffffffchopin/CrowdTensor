@@ -786,6 +786,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Generation request shape is valid", markdown)
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertIn("`check generation route`", markdown)
+        self.assertIn("Replace `<prompt>` with your local prompt before running saved commands.", markdown)
+        self.assertIn("Set required environment variables before running commands: `CROWDTENSOR_ADMIN_TOKEN, CROWDTENSOR_OBSERVER_TOKEN`.", markdown)
         self.assertNotIn("CrowdTensor prompt", markdown)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -5389,6 +5391,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Generation: `16/16` hash=`sha256:generated`", markdown)
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertIn("`submit inference`", markdown)
+        self.assertIn("Replace `<prompt>` with your local prompt before running saved commands.", markdown)
+        self.assertIn("Set required environment variables before running commands: `CROWDTENSOR_ADMIN_TOKEN, CROWDTENSOR_OBSERVER_TOKEN`.", markdown)
         self.assertNotIn("local text only", markdown)
         self.assertNotIn("CrowdTensor user prompt", markdown)
 
@@ -5714,6 +5718,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("- Stream issue: `request[2]=req-2:1/2`", markdown)
         self.assertIn("Inference completed, but stream progress is incomplete", markdown)
+        self.assertIn("Replace `<prompt-1>,<prompt-2>` with your comma-separated local prompts before running saved commands.", markdown)
         self.assertNotIn("must not leak", markdown)
         self.assertNotIn("first prompt", markdown)
         self.assertNotIn("second prompt", markdown)

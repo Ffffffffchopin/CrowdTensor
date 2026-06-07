@@ -398,6 +398,29 @@ def local_generate_command_line(item: dict[str, Any], report: dict[str, Any]) ->
     return command_line(rendered)
 
 
+def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
+    command_text = "\n".join(
+        str(item.get("command_line") or "")
+        for item in next_commands
+        if isinstance(item, dict)
+    )
+    requires_env = sorted({
+        str(name)
+        for item in next_commands
+        if isinstance(item, dict) and isinstance(item.get("requires_env"), list)
+        for name in item.get("requires_env") or []
+        if str(name)
+    })
+    notes: list[str] = []
+    if INFER_PROMPT_PLACEHOLDER in command_text:
+        notes.append(f"- Replace `{INFER_PROMPT_PLACEHOLDER}` with your local prompt before running saved commands.")
+    if INFER_BATCH_PROMPTS_PLACEHOLDER in command_text:
+        notes.append(f"- Replace `{INFER_BATCH_PROMPTS_PLACEHOLDER}` with your comma-separated local prompts before running saved commands.")
+    if requires_env:
+        notes.append(f"- Set required environment variables before running commands: `{', '.join(requires_env)}`.")
+    return notes
+
+
 def stage_preflight_missing_text(stage_preflight: dict[str, Any]) -> str:
     missing = stage_preflight.get("missing_capabilities") if isinstance(stage_preflight.get("missing_capabilities"), list) else []
     if missing:
@@ -4235,6 +4258,10 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         "",
     ])
     next_commands = summary.get("next_commands") if isinstance(summary.get("next_commands"), list) else []
+    command_notes = markdown_next_command_notes(next_commands)
+    if command_notes:
+        lines.extend(command_notes)
+        lines.append("")
     if next_commands:
         for index, item in enumerate(next_commands, start=1):
             if not isinstance(item, dict):
@@ -7089,6 +7116,10 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         "",
     ])
     next_commands = summary.get("next_commands") if isinstance(summary.get("next_commands"), list) else []
+    command_notes = markdown_next_command_notes(next_commands)
+    if command_notes:
+        lines.extend(command_notes)
+        lines.append("")
     if next_commands:
         for index, item in enumerate(next_commands, start=1):
             if not isinstance(item, dict):
