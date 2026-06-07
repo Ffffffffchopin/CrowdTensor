@@ -82,9 +82,12 @@ when you want the broader Public Swarm v2 gate instead of the faster user path.
 In human mode, `infer` and `generate` print a short safe stderr start hint before
 long-running checks so the terminal does not look idle; `--json` keeps stdout
 machine-readable.
-When generated text is available in human mode, the terminal prints it as
-`answer:` or `answer[n]:` before `answer_scope` and `local_output` safety
-metadata. `answer_scope.scope_state` uses stable values such as
+In human mode, the terminal prints `answer_scope` so the answer display state is
+explicit: whether any answer text is visible in the terminal and whether saved
+JSON/Markdown stay hash-only. When generated text is available, the terminal
+prints it as `answer:` or `answer[n]:` before `answer_scope` and `local_output`
+safety metadata; when no local answer text is available, the terminal still
+prints `answer_scope=no-local-answer`. `answer_scope.scope_state` uses stable values such as
 `terminal-visible`, `saved-terminal-redacted`, `json-suppressed`, and
 `no-local-answer`; the Markdown `What To Do Next` and `Details` sections repeat
 that saved JSON and Markdown contain no generated text. `local_output` includes

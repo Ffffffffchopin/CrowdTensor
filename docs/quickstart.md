@@ -84,8 +84,12 @@ real inference request; it also checks the Coordinator `/ready` endpoint. Pass
 read `/state` and verify visible stage0/stage1 Miner capabilities.
 Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
-redacted. When human output shows generated text, it prints `answer:` or
-`answer[n]:` before `answer_scope` and `local_output` safety metadata.
+redacted. In human mode, the terminal prints `answer_scope` so the answer
+display state is explicit: whether any answer text is visible in the terminal
+and whether saved JSON/Markdown stay hash-only. When generated text is
+available, the terminal prints it as `answer:` or `answer[n]:` before
+`answer_scope` and `local_output` safety metadata; when no local answer text is
+available, the terminal still prints `answer_scope=no-local-answer`.
 `answer_scope.scope_state` uses stable values such as `terminal-visible`,
 `saved-terminal-redacted`, `json-suppressed`, and `no-local-answer`; the
 Markdown `What To Do Next` and `Details` sections repeat that saved JSON and
