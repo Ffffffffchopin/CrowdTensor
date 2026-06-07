@@ -334,6 +334,86 @@ def summarize_release_readiness(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Public Swarm Operator Preview artifacts summarize operator-path readiness "
+            "with counts, hashes, retained/live evidence, release readiness, and support diagnostics only. "
+            "Run `crowdtensor generate` in human mode to see a local answer."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Operator Preview report is shareable operator-path evidence, not a local "
+            "answer transcript; raw prompts, generated text, generated token ids, "
+            "activations, leases, credentials, private env files, and runtime state are excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": "Share public_swarm_operator_preview.json/md and support_bundle.json; they contain hashes/counts and readiness evidence, not raw prompts or answers.",
+    }
+
+
+def output_request_text(summary: dict[str, Any]) -> str:
+    return (
+        f"include_output={bool(summary.get('include_output'))} "
+        f"raw_generated_text_public={bool(summary.get('raw_generated_text_public'))} "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
+    )
+
+
+def answer_scope_text(answer_scope: dict[str, Any]) -> str:
+    return (
+        f"state={answer_scope.get('scope_state') or 'unknown'} "
+        f"terminal_only={bool(answer_scope.get('terminal_only'))} "
+        f"visible_in_terminal={bool(answer_scope.get('visible_in_terminal'))} "
+        f"saved_json={answer_scope.get('saved_json_display')} "
+        f"saved_markdown={answer_scope.get('saved_markdown_display')} "
+        f"public_artifact_safe={bool(answer_scope.get('public_artifact_safe'))}"
+    )
+
+
+def shareable_summary_text(summary: dict[str, Any]) -> str:
+    return (
+        f"saved_artifacts={bool(summary.get('saved_artifacts_public_safe'))} "
+        f"raw_prompt_public={bool(summary.get('raw_prompt_public'))} "
+        f"raw_generated_text_public={bool(summary.get('raw_generated_text_public'))} "
+        f"generated_token_ids_public={bool(summary.get('generated_token_ids_public'))} "
+        f"local_output_display_only={bool(summary.get('local_output_display_only'))} "
+        f"answer_scope_state={summary.get('answer_scope_state') or 'unknown'} "
+        f"local_answer_terminal_only={bool(summary.get('local_answer_terminal_only'))}"
+    )
+
+
 def import_gpu_report(path_value: str) -> dict[str, Any]:
     return live_preview_pack.import_gpu_report(path_value)
 
@@ -421,6 +501,9 @@ def support_bundle_artifact(output_dir: Path, report: dict[str, Any]) -> dict[st
         "diagnosis_codes": report.get("diagnosis_codes") or [],
         "operator_preview": report.get("operator_preview") or {},
         "artifacts": report.get("artifacts") or {},
+        "output_request": report.get("output_request"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety") or {},
         "limitations": report.get("limitations") or [],
     }))
@@ -848,6 +931,9 @@ def common_report(
         "operator_action": operator_actions(mode, external_blocked=bool(live_attempt_blocked)),
         "limitations": limitations(),
     }
+    report["output_request"] = output_request_summary()
+    report["answer_scope"] = answer_scope_summary()
+    report["shareable_summary"] = shareable_summary()
     if live_evidence_summary is not None:
         report["payload_summaries"]["retained_live_evidence"] = live_evidence_summary
     if live_attempt_blocked is not None:
@@ -936,6 +1022,9 @@ def build_live_kaggle(args: argparse.Namespace, *, output_dir: Path, runner: Run
 
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
     report["artifacts"]["gpu_generation_evidence_json"] = artifact_entry(
         Path(report.get("gpu_report_path") or DEFAULT_GPU_REPORT),
         output_dir,
@@ -962,6 +1051,9 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
 
 def render_markdown(report: dict[str, Any]) -> str:
     preview = report.get("operator_preview") if isinstance(report.get("operator_preview"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
         "# CrowdTensor Public Swarm v0.1 Operator Preview",
         "",
@@ -981,6 +1073,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- external_runtime_verified: `{preview.get('external_runtime_verified')}`",
         f"- external_runtime_blocked: `{preview.get('external_runtime_blocked')}`",
         f"- output_dir: `{report.get('output_dir')}`",
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
         "## Diagnosis",
         "",
@@ -1132,6 +1232,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def print_human(report: dict[str, Any]) -> None:
     preview = report.get("operator_preview") if isinstance(report.get("operator_preview"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Public Swarm v0.1 Operator Preview")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -1139,6 +1242,12 @@ def print_human(report: dict[str, Any]) -> None:
     print(f"  ready: {preview.get('ready')}")
     print(f"  external_runtime_verified: {preview.get('external_runtime_verified')}")
     print(f"  external_runtime_blocked: {preview.get('external_runtime_blocked')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+    if shareable:
+        print(f"  shareable: {shareable_summary_text(shareable)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 

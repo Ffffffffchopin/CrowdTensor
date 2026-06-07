@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Public Swarm v0.1 Operator Preview now surfaces top-level `output_request`, `answer_scope.scope_state: no-local-answer`, and `shareable_summary.answer_scope_state` in redacted JSON, Markdown, terminal summaries, and Support Bundle output for `operator-preview local-smoke/package/live-kaggle/evidence-import`.
 - Public Swarm Developer Preview now surfaces top-level `output_request`, `answer_scope.scope_state: no-local-answer`, and `shareable_summary.answer_scope_state` in redacted JSON, Markdown, terminal summaries, and Support Bundle output for the ordinary `preview local/package/external-existing/evidence-import` aggregate.
 - Public Swarm Product Beta now surfaces top-level `output_request`, `answer_scope.scope_state: no-local-answer`, and `shareable_summary.answer_scope_state` in redacted JSON, Markdown, terminal summaries, and Support Bundle output for the ordinary `serve` / `join` / `generate` product-path aggregate.
 - Public Real-LLM Swarm Beta now surfaces top-level `output_request`, `answer_scope.scope_state: no-local-answer`, and `shareable_summary.answer_scope_state` in redacted JSON, Markdown, terminal summaries, and Support Bundle output so the top-level installable aggregate is clearly shareable evidence rather than a local answer transcript.

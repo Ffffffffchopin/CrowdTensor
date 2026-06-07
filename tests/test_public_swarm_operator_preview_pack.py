@@ -24,6 +24,34 @@ class PublicSwarmOperatorPreviewPackTests(unittest.TestCase):
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["schema"], "public_swarm_operator_preview_check_v1")
+        report = json.loads((Path(result["output_dir"]) / "operator-preview" / "public_swarm_operator_preview.json").read_text(encoding="utf-8"))
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (Path(result["output_dir"]) / "operator-preview" / "public_swarm_operator_preview.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn(
+            "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            markdown,
+        )
+        support = json.loads((Path(result["output_dir"]) / "operator-preview" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
     def test_check_builds_ready_package(self) -> None:
         result = check.run_check(check.parse_args([
@@ -261,6 +289,9 @@ class PublicSwarmOperatorPreviewPackTests(unittest.TestCase):
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN=admin-secret", encoded)
         self.assertTrue(report["ok"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
 
 if __name__ == "__main__":

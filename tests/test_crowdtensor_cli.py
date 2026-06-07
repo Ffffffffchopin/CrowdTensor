@@ -10597,6 +10597,65 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "public_swarm_operator_preview_v1")
 
+    def test_public_swarm_operator_preview_prints_output_scope(self) -> None:
+        report = {
+            "schema": "public_swarm_operator_preview_v1",
+            "cli_schema": "public_swarm_operator_preview_cli_v1",
+            "ok": True,
+            "mode": "local-smoke",
+            "output_dir": "dist/operator-preview",
+            "operator_preview": {
+                "ready": True,
+                "serve_join_generate_ready": True,
+                "cpu_fallback_ready": True,
+                "live_preview_ready": True,
+                "external_runtime_verified": False,
+                "external_runtime_blocked": False,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "diagnosis_codes": ["public_swarm_operator_preview_ready"],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_swarm_operator_preview(report)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            output,
+        )
+
     def test_swarm_trial_wraps_pack_and_redacts_tokens(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []
