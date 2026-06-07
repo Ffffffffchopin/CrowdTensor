@@ -916,6 +916,17 @@ def build_fake_local_model_variant(output_dir: Path, *, model_id: str, tokens: i
     return pack.build_report(args, runner=fake_runner)
 
 
+def artifact_path(payload: dict[str, Any], name: str, fallback: str) -> str:
+    output_dir = Path(str(payload.get("output_dir") or ""))
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
+    raw_path = str(artifact.get("path") or "")
+    if raw_path:
+        path = Path(raw_path)
+        return str(path if path.is_absolute() else output_dir / path)
+    return str(output_dir / fallback)
+
+
 def run_check(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir) if args.output_dir else Path(tempfile.mkdtemp(prefix="crowdtensor_public_real_llm_beta_check_"))
     if args.mode == pack.MODE_LOCAL_MODEL_VARIANT:
@@ -934,7 +945,18 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
         "beta_ok": payload.get("ok"),
         "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"] if not errors else ["public_real_llm_swarm_beta_check_blocked"],
         "artifacts": {
-            "public_real_llm_swarm_beta_json": str(Path(payload.get("output_dir", "")) / "public_real_llm_swarm_beta.json"),
+            "public_real_llm_swarm_beta_json": artifact_path(
+                payload,
+                "public_real_llm_swarm_beta_json",
+                "public_real_llm_swarm_beta.json",
+            ),
+            "public_real_llm_swarm_beta_markdown": artifact_path(
+                payload,
+                "public_real_llm_swarm_beta_markdown",
+                "public_real_llm_swarm_beta.md",
+            ),
+            "support_bundle_json": artifact_path(payload, "support_bundle_json", "support_bundle.json"),
+            "runbook": artifact_path(payload, "runbook", "PUBLIC_REAL_LLM_SWARM_BETA.md"),
         },
     }
     write(output_dir / "public_real_llm_swarm_beta_check.json", json.dumps(result, indent=2, sort_keys=True) + "\n")

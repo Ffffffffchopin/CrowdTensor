@@ -1698,6 +1698,17 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["include_output"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        artifacts = result["artifacts"]
+        for artifact_name in [
+            "public_real_llm_swarm_beta_json",
+            "public_real_llm_swarm_beta_markdown",
+            "support_bundle_json",
+            "runbook",
+        ]:
+            self.assertTrue(Path(artifacts[artifact_name]).is_file(), artifacts[artifact_name])
+        self.assertTrue(artifacts["public_real_llm_swarm_beta_markdown"].endswith("public_real_llm_swarm_beta.md"))
+        self.assertTrue(artifacts["support_bundle_json"].endswith("support_bundle.json"))
+        self.assertTrue(artifacts["runbook"].endswith("PUBLIC_REAL_LLM_SWARM_BETA.md"))
 
     def test_pack_cli_and_check_default_to_final_16_token_contract(self) -> None:
         pack_args = pack.parse_args(["release"])
