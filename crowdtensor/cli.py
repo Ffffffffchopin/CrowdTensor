@@ -4967,11 +4967,29 @@ def _answer_scope_from_report(report: dict[str, Any]) -> dict[str, Any]:
         local_output.get("generated_text")
         or any(isinstance(item, dict) and item.get("generated_text") for item in outputs)
     )
+    result = report.get("result") if isinstance(report.get("result"), dict) else {}
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    result_output_count = _safe_int(result.get("output_count"))
+    generated_token_count = _safe_int(generation.get("generated_token_count"))
+    generated_text_hash = str(generation.get("generated_text_hash") or "")
+    generated_output_available = bool(
+        result.get("status") == "complete"
+        and (
+            result_output_count > 0
+            or generated_token_count > 0
+            or generated_text_hash
+        )
+    )
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     local_output_note = str(report.get("local_output_note") or local_output.get("note") or "")
     json_suppressed = (
-        bool(output_request.get("include_output"))
-        and "suppressed in JSON/public output" in local_output_note
+        (bool(output_request.get("include_output")) and "suppressed in JSON/public output" in local_output_note)
+        or (
+            report.get("schema") == INFER_CLI_SCHEMA
+            and bool(report.get("json_mode"))
+            and generated_output_available
+            and not visible_in_terminal
+        )
     )
     scope_state = (
         "terminal-visible"
@@ -6369,6 +6387,7 @@ def _infer_summary_from_payload(
         "generated_at": utc_now(),
         "ok": ok,
         "mode": mode,
+        "json_mode": bool(getattr(args, "json", False)),
         "dry_run": dry_run,
         "output_dir": str(output_dir),
         "prompt": {
