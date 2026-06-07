@@ -338,6 +338,20 @@ def human_next_command_line(item: dict[str, Any], command_line_text: str) -> str
     return f"{' '.join(prefixes)} {command_line_text}" if prefixes else command_line_text
 
 
+def p2p_discovery_daemon_command(
+    *,
+    backend: str = "lite",
+    peer_bootstrap: str = "",
+    swarm_id: str = "default",
+) -> list[str]:
+    port = str(local_coordinator_port_from_url(peer_bootstrap, default=8888 if backend == "real" else 8788))
+    command = ["crowdtensor", "p2p-daemon" if backend == "real" else "p2pd", "--port", port]
+    if str(swarm_id or "default") != "default":
+        command.extend(["--swarm-id", str(swarm_id)])
+    command.append("--run")
+    return command
+
+
 def local_coordinator_port_from_url(coordinator_url: str, default: int = 8787) -> int:
     try:
         parsed = urlparse(str(coordinator_url or ""))
@@ -4748,7 +4762,7 @@ def _infer_operator_action(args: argparse.Namespace, payload: dict[str, Any], *,
     if "hf_dependencies_missing" in codes or "product_swarm_mvp_hf_runtime_missing" in codes or "transformers" in detail:
         return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
     if "p2p_discovery_unreachable" in codes:
-        return "Start the P2P discovery daemon with crowdtensor p2pd --run, or pass --coordinator-url for a direct Coordinator route."
+        return "Start the matching P2P discovery daemon from next_commands, or pass --coordinator-url for a direct Coordinator route."
     if "generate_route_unavailable" in codes or "coordinator_route_missing" in codes:
         return "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm."
     if "coordinator_ready_failed" in codes:
@@ -4911,11 +4925,14 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
     use_p2p = bool(getattr(args, "p2p", False) or peer_bootstrap)
     swarm_id = str(getattr(args, "swarm_id", "") or "default")
     if "p2p_discovery_unreachable" in codes:
-        p2pd_command = ["crowdtensor", "p2pd", "--port", str(local_coordinator_port_from_url(peer_bootstrap, default=8788))]
-        if swarm_id != "default":
-            p2pd_command.extend(["--swarm-id", swarm_id])
-        p2pd_command.append("--run")
-        commands.append(command_entry("start P2P discovery daemon", p2pd_command))
+        commands.append(command_entry(
+            "start P2P discovery daemon",
+            p2p_discovery_daemon_command(
+                backend=str(getattr(args, "p2p_backend", "lite") or "lite"),
+                peer_bootstrap=peer_bootstrap,
+                swarm_id=swarm_id,
+            ),
+        ))
     route_missing = "coordinator_route_missing" in codes
     startup_needed = {
         "generate_route_unavailable",
@@ -7378,7 +7395,7 @@ def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> lis
         elif name == "observer":
             value = str(getattr(args, "observer_token", "") or "")
         elif name == "peer":
-            value = str(getattr(args, "peer_secret", "") or "")
+            value = str(getattr(args, "peer_secret", "") or "") if getattr(args, "p2p", False) else ""
         if value and env_name not in requirements:
             requirements.append(env_name)
     return requirements
@@ -7771,7 +7788,6 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             }
     if not coordinator_url:
         local_coordinator_url = "http://127.0.0.1:8787"
-        p2p_port = local_coordinator_port_from_url(p2p_bootstrap, default=8788)
         serve_args = argparse.Namespace(
             profile="gpu-generation" if args.backend == "cuda" else "cpu-real-llm",
             bind_host="127.0.0.1",
@@ -7779,7 +7795,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             port=8787,
             state_dir="state",
             admin_token="",
-            miner_token="",
+            miner_token=args.miner_token,
             observer_token="",
             hf_model_id=args.hf_model_id,
             hf_cache_dir=args.hf_cache_dir,
@@ -7791,7 +7807,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             peer_id="",
             peer_url="",
             ttl_seconds=args.ttl_seconds,
-            peer_secret="",
+            peer_secret=args.peer_secret,
             http_timeout=args.http_timeout,
             i_understand_public_bind=False,
             run=True,
@@ -7806,8 +7822,20 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             "ok": False,
             "mode": "join",
             "next_commands": [
-                command_entry("start P2P discovery daemon", ["crowdtensor", "p2pd", "--port", str(p2p_port), "--run"]),
-                command_entry("start local Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
+                command_entry(
+                    "start P2P discovery daemon",
+                    p2p_discovery_daemon_command(
+                        backend=p2p_backend if args.p2p else "lite",
+                        peer_bootstrap=p2p_bootstrap,
+                        swarm_id=str(getattr(args, "swarm_id", "default") or "default"),
+                    ),
+                    requires_env=_product_env_requirements(p2p_join_args, ["peer"]),
+                ),
+                command_entry(
+                    "start local Coordinator",
+                    _product_cli_serve_command(serve_args, include_run=True),
+                    requires_env=_product_env_requirements(serve_args, ["admin", "miner", "observer", "peer"]),
+                ),
                 *_product_join_next_commands(args, coordinator_url=local_coordinator_url),
                 *(
                     []
@@ -7816,6 +7844,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
                         command_entry(
                             "discover through P2P",
                             _product_cli_join_command(p2p_join_args, coordinator_url="", include_run=True),
+                            requires_env=_product_env_requirements(p2p_join_args, ["miner", "peer"]),
                         )
                     ]
                 ),
@@ -7912,7 +7941,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
 def _product_join_operator_action(report: dict[str, Any]) -> str:
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     if "p2p_discovery_unreachable" in codes:
-        return "Start the P2P discovery daemon with crowdtensor p2pd --run, or use a direct --coordinator-url."
+        return "Start the matching P2P discovery daemon from next_commands, or use a direct --coordinator-url."
     if "coordinator_route_missing" in codes:
         return "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery."
     if "p2p_stage_miner_announce_failed" in codes or "real_p2p_stage_miner_announce_failed" in codes:
@@ -8246,7 +8275,7 @@ def _product_generate_operator_action(report: dict[str, Any]) -> str:
     if "hf_dependencies_missing" in codes or "transformers" in detail:
         return "Install optional runtime dependencies with: python -m pip install -e '.[hf]'"
     if "p2p_discovery_unreachable" in codes:
-        return "Start the P2P discovery daemon with crowdtensor p2pd --run, or pass --coordinator-url for a direct Coordinator route."
+        return "Start the matching P2P discovery daemon from next_commands, or pass --coordinator-url for a direct Coordinator route."
     if "coordinator_ready_failed" in codes:
         route = report.get("route") if isinstance(report.get("route"), dict) else {}
         coordinator_url = str(route.get("coordinator_url") or "")
@@ -8304,11 +8333,14 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             ["python", "-m", "pip", "install", "-e", ".[hf]"],
         ))
     if "p2p_discovery_unreachable" in codes:
-        p2pd_command = ["crowdtensor", "p2pd", "--port", str(local_coordinator_port_from_url(peer_bootstrap, default=8788))]
-        if swarm_id != "default":
-            p2pd_command.extend(["--swarm-id", swarm_id])
-        p2pd_command.append("--run")
-        commands.append(command_entry("start P2P discovery daemon", p2pd_command))
+        commands.append(command_entry(
+            "start P2P discovery daemon",
+            p2p_discovery_daemon_command(
+                backend=p2p_backend,
+                peer_bootstrap=peer_bootstrap,
+                swarm_id=swarm_id,
+            ),
+        ))
     route_missing = "coordinator_route_missing" in codes
     startup_codes = {
         "generate_route_unavailable",

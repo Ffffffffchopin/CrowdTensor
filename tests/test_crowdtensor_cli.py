@@ -1947,6 +1947,92 @@ class CrowdTensorCliTests(unittest.TestCase):
             1,
         )
 
+    def test_product_join_real_p2p_discovery_unreachable_suggests_real_daemon(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--p2p",
+            "--p2p-backend",
+            "real",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8899",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--peer-secret",
+            "p2p-secret-value",
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_provider_catalog", side_effect=OSError("offline")):
+            report = cli.build_product_join(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["p2p"]["backend"], "real")
+        self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2p-daemon --port 8899 --run", next_lines)
+        self.assertFalse(any(line.startswith("crowdtensor p2pd ") for line in next_lines))
+        self.assertNotIn("p2p-secret-value", json.dumps(report, sort_keys=True))
+
+    def test_product_join_missing_p2p_route_preserves_secret_env_requirements(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--p2p",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8799",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--miner-token",
+            "miner-secret",
+            "--peer-secret",
+            "p2p-secret-value",
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_peer_catalog", side_effect=OSError("offline")):
+            report = cli.build_product_join(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertFalse(report["ok"], report)
+        self.assertNotIn("miner-secret", encoded)
+        self.assertNotIn("p2p-secret-value", encoded)
+        p2pd = report["next_commands"][0]
+        self.assertEqual(p2pd["label"], "start P2P discovery daemon")
+        self.assertEqual(p2pd["requires_env"], ["CROWDTENSOR_P2P_PEER_SECRET"])
+        local_coordinator = report["next_commands"][1]
+        self.assertEqual(local_coordinator["label"], "start local Coordinator")
+        self.assertEqual(
+            local_coordinator["requires_env"],
+            ["CROWDTENSOR_MINER_TOKEN", "CROWDTENSOR_P2P_PEER_SECRET"],
+        )
+        start_this_miner = report["next_commands"][2]
+        self.assertEqual(start_this_miner["label"], "start this Miner")
+        self.assertEqual(
+            start_this_miner["requires_env"],
+            ["CROWDTENSOR_MINER_TOKEN", "CROWDTENSOR_P2P_PEER_SECRET"],
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_join(report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "CROWDTENSOR_P2P_PEER_SECRET=${CROWDTENSOR_P2P_PEER_SECRET:?set CROWDTENSOR_P2P_PEER_SECRET} "
+            "crowdtensor p2pd --port 8799 --run",
+            rendered,
+        )
+        self.assertIn(
+            "CROWDTENSOR_MINER_TOKEN=${CROWDTENSOR_MINER_TOKEN:?set CROWDTENSOR_MINER_TOKEN} "
+            "CROWDTENSOR_P2P_PEER_SECRET=${CROWDTENSOR_P2P_PEER_SECRET:?set CROWDTENSOR_P2P_PEER_SECRET} "
+            "crowdtensor serve --profile cpu-real-llm",
+            rendered,
+        )
+        self.assertIn("# requires CROWDTENSOR_MINER_TOKEN, CROWDTENSOR_P2P_PEER_SECRET", rendered)
+        self.assertNotIn("miner-secret", rendered)
+        self.assertNotIn("p2p-secret-value", rendered)
+
     def test_product_join_missing_route_without_discovery_returns_actionable_report(self) -> None:
         args = cli.parse_args([
             "join",
@@ -2159,6 +2245,32 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor generate --max-new-tokens 2 --p2p --swarm-id public-swarm-v2 --peer-bootstrap http://127.0.0.1:8799 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
             next_lines,
         )
+
+    def test_product_generate_real_p2p_discovery_unreachable_suggests_real_daemon(self) -> None:
+        args = cli.parse_args([
+            "generate",
+            "CrowdTensor prompt",
+            "--p2p",
+            "--p2p-backend",
+            "real",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8899",
+            "--max-new-tokens",
+            "2",
+            "--dry-run",
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_provider_catalog", side_effect=OSError("offline")):
+            report = cli.build_product_generate(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["p2p"]["backend"], "real")
+        self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2p-daemon --port 8899 --run", next_lines)
+        self.assertFalse(any(line.startswith("crowdtensor p2pd ") for line in next_lines))
+        self.assertNotIn("CrowdTensor prompt", json.dumps(report, sort_keys=True))
 
     def test_product_generate_p2p_dry_run_filters_coordinator_by_model_id(self) -> None:
         args = cli.parse_args([
@@ -7313,6 +7425,41 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["p2p"]["discovery"]["error"], "OSError")
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         self.assertNotIn("admin-secret", json.dumps(persisted, sort_keys=True))
+
+    def test_infer_existing_real_p2p_discovery_unreachable_suggests_real_daemon(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--mode",
+            "existing",
+            "--p2p",
+            "--p2p-backend",
+            "real",
+            "--peer-bootstrap",
+            "http://127.0.0.1:8899",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(cli, "fetch_provider_catalog", side_effect=OSError("offline")), patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("session creation should be blocked when discovery is offline"),
+        ):
+            report = cli.build_infer(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["p2p"]["backend"], "real")
+        self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn("crowdtensor p2p-daemon --port 8899 --run", next_lines)
+        self.assertFalse(any(line.startswith("crowdtensor p2pd ") for line in next_lines))
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
+        self.assertNotIn("admin-secret", json.dumps(report, sort_keys=True))
 
     def test_infer_existing_dry_run_preflights_without_admin_token(self) -> None:
         output_dir = Path(self._tmp_dir())
