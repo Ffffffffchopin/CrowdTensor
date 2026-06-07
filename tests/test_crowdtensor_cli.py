@@ -801,6 +801,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Status: `preflight-partial: Request shape is valid, but live readiness was skipped. next=run_live_preflight recommendation=check generation route public_artifact_safe=True`",
             markdown,
         )
+        self.assertIn(
+            "- Recommended next: `check generation route` reason=`confirm_live_preflight` command=`crowdtensor generate --max-new-tokens 16",
+            markdown,
+        )
+        self.assertIn("requires=`CROWDTENSOR_OBSERVER_TOKEN`", markdown)
         self.assertIn("Generation request shape is valid", markdown)
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertIn("`check generation route`", markdown)
@@ -2431,6 +2436,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Status: `blocked: Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN. next=fix_blockers recommendation=submit generation public_artifact_safe=True`",
             markdown,
         )
+        self.assertIn(
+            "- Recommended next: `submit generation` reason=`set_admin_token` command=`crowdtensor generate --max-new-tokens 2",
+            markdown,
+        )
+        self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN.", markdown)
         self.assertNotIn("CrowdTensor prompt", markdown)
 
@@ -2521,6 +2531,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Status: `completed: Generation completed. next=rerun_or_review_artifacts recommendation=submit generation public_artifact_safe=True`",
             markdown,
         )
+        self.assertIn(
+            "- Recommended next: `submit generation` reason=`rerun_generation` command=`crowdtensor generate --max-new-tokens 2",
+            markdown,
+        )
+        self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Generation: `2/2` hash=`sha256:generated`", markdown)
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertNotIn("local generated text must stay local", markdown)

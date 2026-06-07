@@ -7672,6 +7672,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
     stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
     wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
+    recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     lines = [
         "# CrowdTensor Generate Summary",
         "",
@@ -7710,6 +7711,16 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
     if summary.get("operator_action"):
         lines.append(f"- Action: {summary.get('operator_action')}")
+    if recommended:
+        requires_env = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
+        suffix = f" requires=`{','.join(str(name) for name in requires_env)}`" if requires_env else ""
+        lines.append(
+            "- Recommended next: "
+            f"`{recommended.get('label')}` "
+            f"reason=`{recommended.get('reason')}` "
+            f"command=`{recommended.get('command_line')}`"
+            f"{suffix}"
+        )
     lines.extend([
         f"- Saved JSON: `{saved_summary.get('path')}`",
         f"- Output request: `{output_request_text(output_request)}`",
