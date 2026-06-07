@@ -4394,6 +4394,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  local_output: available=True display_only=True public_artifact_safe=False",
             stdout.getvalue(),
         )
+        self.assertIn(
+            f"  saved_summary: {output_dir / 'infer_summary.json'} raw_generated_text_redacted=True public_artifact_safe=True",
+            stdout.getvalue(),
+        )
         self.assertIn("Raw generated text is shown only in local human output", stdout.getvalue())
         self.assertIn("next[1] check existing swarm", stdout.getvalue())
         self.assertIn("next[2] submit inference", stdout.getvalue())
@@ -4412,6 +4416,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["output_request"]["include_output"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["saved_summary"]["path"], str(output_dir / "infer_summary.json"))
+        self.assertTrue(report["saved_summary"]["raw_generated_text_redacted"])
+        self.assertTrue(report["saved_summary"]["public_artifact_safe"])
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
         self.assertFalse(report["local_output"]["public_artifact_safe"])
         self.assertEqual(
@@ -4420,6 +4427,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["wait_progress"]["max_observed_token_count"], 16)
+        self.assertEqual(persisted["saved_summary"]["path"], str(output_dir / "infer_summary.json"))
+        self.assertTrue(persisted["saved_summary"]["raw_generated_text_redacted"])
+        self.assertTrue(persisted["saved_summary"]["public_artifact_safe"])
         self.assertTrue(persisted["output_request"]["include_output"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertEqual(persisted["local_output"]["generated_text"], "")

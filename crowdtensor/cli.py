@@ -4154,6 +4154,11 @@ def _infer_summary_from_payload(
             "raw_generated_text_public": False,
             "public_artifact_safe": True,
         },
+        "saved_summary": {
+            "path": str(output_dir / "infer_summary.json"),
+            "raw_generated_text_redacted": True,
+            "public_artifact_safe": True,
+        },
         "local_output": {
             "available": has_local_display_output,
             "generated_text": generated_text if generated_text else "",
@@ -8019,6 +8024,14 @@ def print_infer(report: dict[str, Any]) -> None:
         print(f"  note: {local_output.get('note')}")
     elif report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
+    saved_summary = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
+    if saved_summary:
+        print(
+            "  saved_summary: "
+            f"{saved_summary.get('path')} "
+            f"raw_generated_text_redacted={saved_summary.get('raw_generated_text_redacted')} "
+            f"public_artifact_safe={saved_summary.get('public_artifact_safe')}"
+        )
     print(f"  output_dir: {report.get('output_dir')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
