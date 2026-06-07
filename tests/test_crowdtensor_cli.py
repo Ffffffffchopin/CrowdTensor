@@ -4234,6 +4234,57 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         self.assertTrue(calls)
 
+    def test_infer_local_batch_forwards_only_prompt_texts_to_product_loopback(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "8",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("product_swarm_mvp_check.py", command[1])
+            self.assertNotIn("--prompt-text", command)
+            self.assertIn("--prompt-texts", command)
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "generation": {
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "generated_text_hash": "sha256:generated",
+                    "decoded_tokens_match": True,
+                    "request_count": 2,
+                    "batch_generation_ready": True,
+                },
+                "batch": {
+                    "enabled": True,
+                    "request_count": 2,
+                    "observed_request_count": 2,
+                    "batch_generation_ready": True,
+                },
+                "stage_assignment": {"distinct_stage_miners": True},
+                "ledger": {"accepted_rows": 16},
+                "diagnosis_codes": ["product_swarm_mvp_ready", "product_swarm_mvp_batch_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["batch"]["enabled"])
+        self.assertEqual(report["prompt"]["prompt_count"], 2)
+        self.assertTrue(calls)
+
     def test_infer_full_evidence_uses_public_swarm_v2_local_gate(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
@@ -4270,6 +4321,60 @@ class CrowdTensorCliTests(unittest.TestCase):
         report = cli.build_infer(args, runner=fake_runner)
 
         self.assertTrue(report["ok"], report)
+
+    def test_infer_full_evidence_batch_forwards_only_prompt_texts(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--full-evidence",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "16",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertNotIn("--prompt-text", command)
+            self.assertIn("--prompt-texts", command)
+            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "readiness": {
+                    "local_p2p_generate": {
+                        "route_ready": True,
+                        "distinct_stage_miners": True,
+                        "generation": {
+                            "generated_token_count": 16,
+                            "max_new_tokens": 16,
+                            "generated_text_hash": "sha256:generated",
+                            "request_count": 2,
+                            "batch_generation_ready": True,
+                        },
+                        "batch": {
+                            "enabled": True,
+                            "request_count": 2,
+                            "observed_request_count": 2,
+                            "batch_generation_ready": True,
+                        },
+                    }
+                },
+                "diagnosis_codes": ["public_swarm_inference_v2_ready", "public_swarm_v2_batch_generation_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["batch"]["enabled"])
+        self.assertEqual(report["prompt"]["prompt_count"], 2)
+        self.assertTrue(calls)
 
     def test_infer_local_preserves_safe_stream_progress(self) -> None:
         output_dir = Path(self._tmp_dir())

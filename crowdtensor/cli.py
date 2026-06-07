@@ -4303,8 +4303,6 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             args.backend,
             "--hf-model-id",
             args.hf_model_id,
-            "--prompt-text",
-            args.prompt_text,
             "--max-new-tokens",
             str(args.max_new_tokens),
             "--startup-timeout",
@@ -4320,6 +4318,8 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         ]
         if args.prompt_texts:
             command.extend(["--prompt-texts", args.prompt_texts])
+        else:
+            command.extend(["--prompt-text", args.prompt_text])
         if args.stream:
             command.append("--stream-generation")
         if args.hf_cache_dir:
@@ -4385,8 +4385,6 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         args.backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-text",
-        args.prompt_text,
         "--max-new-tokens",
         str(args.max_new_tokens),
         "--startup-timeout",
@@ -4399,6 +4397,8 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
     ]
     if args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
+    else:
+        command.extend(["--prompt-text", args.prompt_text])
     if args.stream:
         command.append("--stream-generation")
     if args.hf_cache_dir:
