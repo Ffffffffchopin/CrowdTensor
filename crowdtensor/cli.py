@@ -3786,9 +3786,11 @@ def build_public_swarm_product_beta(args: argparse.Namespace, *, runner: Runner 
 
 
 def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    mode = getattr(args, "public_real_llm_swarm_beta_mode", "release")
+    if mode == "check":
+        return build_public_real_llm_swarm_beta_check(args, runner=runner)
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    mode = getattr(args, "public_real_llm_swarm_beta_mode", "release")
     command = [
         sys.executable,
         str(SCRIPTS_DIR / "public_real_llm_swarm_beta_pack.py"),
@@ -3977,6 +3979,96 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
             "Coordinator-backed Public Real-LLM Swarm Inference Beta; not production Hivemind/Petals parity",
             "Does not provide Coordinator-free P2P execution, production NAT traversal, economics, anti-Sybil security, or large-model serving",
         ],
+    })
+
+
+def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "public_real_llm_swarm_beta_check.py"),
+        "--mode",
+        "local-model-variant" if getattr(args, "hf_model_id", "") != "sshleifer/tiny-gpt2" else "release",
+        "--output-dir",
+        str(output_dir),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--hf-model-id",
+        args.hf_model_id,
+        "--json",
+    ]
+    step, payload = run_json_step(
+        "public_real_llm_swarm_beta_check",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(float(args.timeout_seconds), 60.0) + 600.0,
+    )
+    if payload:
+        payload = sanitize(redact_values(payload))
+        payload.setdefault("cli_schema", PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA)
+        payload.setdefault("cli_mode", "check")
+        payload.setdefault("mode", "check")
+        return payload
+    return sanitize({
+        "schema": "public_real_llm_swarm_beta_check_v1",
+        "cli_schema": PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA,
+        "cli_mode": "check",
+        "ok": False,
+        "mode": "check",
+        "output_dir": str(output_dir),
+        "step": step,
+        "errors": ["public real LLM swarm beta check command returned no JSON report"],
+        "diagnosis_codes": ["public_real_llm_swarm_beta_check_failed"],
+        "artifact_summary": {
+            "schema": "public_real_llm_swarm_beta_check_artifact_summary_v1",
+            "inspect_first": str(output_dir / "beta" / "public_real_llm_swarm_beta.md"),
+            "machine_readable": str(output_dir / "beta" / "public_real_llm_swarm_beta.json"),
+            "support_bundle": str(output_dir / "beta" / "support_bundle.json"),
+            "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
+            "public_artifact_safe": True,
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        },
+        "review_summary": {
+            "schema": "public_real_llm_swarm_beta_check_review_summary_v1",
+            "state": "blocked",
+            "ready": False,
+            "next_step": "review_diagnostics",
+            "inspect_first": str(output_dir / "beta" / "public_real_llm_swarm_beta.md"),
+            "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
+            "error_count": 1,
+            "error_preview": ["public real LLM swarm beta check command returned no JSON report"],
+            "public_artifact_safe": True,
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+        },
+        "operator_action": "Inspect the CLI step payload, then rerun public-real-llm-swarm-beta check with --json after fixing the check failure.",
+        "output_request": {
+            "include_output": False,
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "public_artifact_safe": True,
+        },
+        "answer_scope": {
+            "scope_state": "no-local-answer",
+            "terminal_only": False,
+            "visible_in_terminal": False,
+            "saved_json_display": "validation-only",
+            "public_artifact_safe": True,
+        },
+        "shareable_summary": {
+            "saved_artifacts_public_safe": True,
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "answer_scope_state": "no-local-answer",
+            "public_artifact_safe": True,
+        },
     })
 
 
@@ -11757,6 +11849,82 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    raw_operator_action = report.get("operator_action")
+    operator_actions = [str(item) for item in raw_operator_action] if isinstance(raw_operator_action, list) else []
+    if raw_operator_action and not operator_actions:
+        operator_actions = [str(raw_operator_action)]
+    errors = [str(item) for item in report.get("errors")] if isinstance(report.get("errors"), list) else []
+    print("CrowdTensor Public Real-LLM Swarm Beta Check")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  cli_schema: {report.get('cli_schema')}")
+    print(f"  mode: {report.get('mode')}")
+    print(f"  cli_mode: {report.get('cli_mode') or 'check'}")
+    print(f"  max_new_tokens: {report.get('max_new_tokens')}")
+    if review:
+        print(
+            "  review: "
+            f"state={review.get('state') or 'unknown'} "
+            f"next={review.get('next_step') or 'none'} "
+            f"inspect={review.get('inspect_first') or 'none'} "
+            f"check={review.get('check_json') or 'none'} "
+            f"errors={_safe_int(review.get('error_count'))} "
+            f"public_artifact_safe={bool(review.get('public_artifact_safe'))}"
+        )
+    if artifact_summary:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary.get('inspect_first') or 'none'} "
+            f"json={artifact_summary.get('machine_readable') or 'none'} "
+            f"support={artifact_summary.get('support_bundle') or 'none'} "
+            f"check={artifact_summary.get('check_json') or 'none'} "
+            f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
+        )
+    if output_request:
+        print(
+            "  output_request: "
+            f"include_output={bool(output_request.get('include_output'))} "
+            f"raw_prompt_public={bool(output_request.get('raw_prompt_public'))} "
+            f"raw_generated_text_public={bool(output_request.get('raw_generated_text_public'))} "
+            f"generated_token_ids_public={bool(output_request.get('generated_token_ids_public'))} "
+            f"public_artifact_safe={bool(output_request.get('public_artifact_safe'))}"
+        )
+    if answer_scope:
+        print(
+            "  answer_scope: "
+            f"state={answer_scope.get('scope_state') or 'unknown'} "
+            f"saved_json={answer_scope.get('saved_json_display')} "
+            f"public_artifact_safe={bool(answer_scope.get('public_artifact_safe'))}"
+        )
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    if operator_actions:
+        print("  operator_action:")
+        for item in operator_actions[:4]:
+            print(f"    - {item}")
+        if len(operator_actions) > 4:
+            print(f"    - ... {len(operator_actions) - 4} more")
+    print(f"  output: {report.get('output_dir')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    if errors:
+        print("  errors:")
+        for item in errors[:12]:
+            print(f"    - {item}")
+        if len(errors) > 12:
+            print(f"    - ... {len(errors) - 12} more")
+    for name, artifact in sorted((report.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+        else:
+            print(f"  artifact {name}: {artifact}")
+
+
 def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     usable = report.get("usable_swarm") if isinstance(report.get("usable_swarm"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
@@ -13165,7 +13333,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  local-smoke         run only a local product-path smoke\n"
             "  local-model-variant prove the local model variant without external validation claims\n"
             "  package             generate the runbook/package without proving live readiness\n"
-            "  evidence-import     aggregate retained reports from --*-report inputs\n\n"
+            "  evidence-import     aggregate retained reports from --*-report inputs\n"
+            "  check               run the final validation check and write public_real_llm_swarm_beta_check.json\n\n"
             "Review path: open public_real_llm_swarm_beta.md first, then support_bundle.json for\n"
             "diagnostics. Safe shareable files are public_real_llm_swarm_beta.json,\n"
             "public_real_llm_swarm_beta.md, and support_bundle.json. Do not share private env\n"
@@ -13178,6 +13347,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         epilog=(
             "examples:\n"
             "  crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16 --http-timeout 30 --json\n"
+            "  crowdtensor public-real-llm-swarm-beta check --output-dir dist/public-real-llm-swarm-beta-check --json\n"
             "  crowdtensor public-real-llm-swarm-beta package --output-dir dist/public-real-llm-package --json\n"
             "  crowdtensor public-real-llm-swarm-beta evidence-import --public-swarm-v2-report dist/v2.json --json\n"
             "\n"
@@ -13188,7 +13358,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     public_real_llm_swarm_beta.add_argument(
         "public_real_llm_swarm_beta_mode",
-        choices=["release", "local-smoke", "local-model-variant", "package", "evidence-import"],
+        choices=["release", "local-smoke", "local-model-variant", "package", "evidence-import", "check"],
         nargs="?",
         default="release",
     )
@@ -14497,16 +14667,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             if missing:
                 raise SystemExit(f"external-existing requires: {', '.join('--' + item.replace('_', '-') for item in missing)}")
     if args.command == "public-real-llm-swarm-beta":
-        try:
-            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from exc
-        if args.request_count < 1 or args.request_count > 4:
-            raise SystemExit("--request-count must be between 1 and 4")
-        if args.cpu_request_count < 1 or args.cpu_request_count > 4:
-            raise SystemExit("--cpu-request-count must be between 1 and 4")
-        if args.external_llm_request_count < 1 or args.external_llm_request_count > 4:
-            raise SystemExit("--external-llm-request-count must be between 1 and 4")
+        if args.public_real_llm_swarm_beta_mode != "check":
+            try:
+                parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+            if args.request_count < 1 or args.request_count > 4:
+                raise SystemExit("--request-count must be between 1 and 4")
+            if args.cpu_request_count < 1 or args.cpu_request_count > 4:
+                raise SystemExit("--cpu-request-count must be between 1 and 4")
+            if args.external_llm_request_count < 1 or args.external_llm_request_count > 4:
+                raise SystemExit("--external-llm-request-count must be between 1 and 4")
         if args.max_new_tokens < 2 or args.max_new_tokens > 32:
             raise SystemExit("--max-new-tokens must be between 2 and 32")
         if (
@@ -15318,6 +15489,11 @@ def main(argv: list[str] | None = None) -> None:
         summary = build_public_real_llm_swarm_beta(args)
         if args.json:
             print(json.dumps(summary, sort_keys=True))
+        elif (
+            getattr(args, "public_real_llm_swarm_beta_mode", "") == "check"
+            or summary.get("schema") == "public_real_llm_swarm_beta_check_v1"
+        ):
+            print_public_real_llm_swarm_beta_check(summary)
         else:
             print_public_real_llm_swarm_beta(summary)
         raise SystemExit(0 if summary.get("ok") else 1)

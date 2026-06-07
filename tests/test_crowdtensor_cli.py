@@ -5776,6 +5776,174 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
 
+    def test_public_real_llm_swarm_beta_cli_wraps_check(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "check",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_real_llm_swarm_beta_check.py", command[1])
+            self.assertIn("--mode", command)
+            self.assertEqual(command[command.index("--mode") + 1], "release")
+            self.assertIn("--output-dir", command)
+            self.assertEqual(command[command.index("--output-dir") + 1], str(output_dir.resolve()))
+            self.assertIn("--max-new-tokens", command)
+            self.assertEqual(command[command.index("--max-new-tokens") + 1], "16")
+            self.assertIn("--hf-model-id", command)
+            self.assertEqual(command[command.index("--hf-model-id") + 1], "sshleifer/tiny-gpt2")
+            self.assertIn("--json", command)
+            return completed({
+                "schema": "public_real_llm_swarm_beta_check_v1",
+                "ok": True,
+                "mode": "release",
+                "max_new_tokens": 16,
+                "output_dir": str(output_dir),
+                "errors": [],
+                "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"],
+                "artifact_summary": {
+                    "inspect_first": str(output_dir / "public_real_llm_swarm_beta.md"),
+                    "machine_readable": str(output_dir / "public_real_llm_swarm_beta.json"),
+                    "support_bundle": str(output_dir / "support_bundle.json"),
+                    "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
+                    "public_artifact_safe": True,
+                },
+                "review_summary": {
+                    "state": "ready",
+                    "ready": True,
+                    "next_step": "review_checked_artifacts",
+                    "inspect_first": str(output_dir / "public_real_llm_swarm_beta.md"),
+                    "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
+                    "error_count": 0,
+                    "public_artifact_safe": True,
+                },
+                "operator_action": "Open inspect_first for the checked Markdown, support_bundle for diagnostics, and check_json for the validation record.",
+                "output_request": {
+                    "include_output": False,
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "no-local-answer",
+                    "visible_in_terminal": False,
+                    "saved_json_display": "validation-only",
+                    "public_artifact_safe": True,
+                },
+                "shareable_summary": {
+                    "saved_artifacts_public_safe": True,
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "answer_scope_state": "no-local-answer",
+                },
+                "artifacts": {
+                    "public_real_llm_swarm_beta_json": str(output_dir / "public_real_llm_swarm_beta.json"),
+                },
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "public_real_llm_swarm_beta_check_v1")
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+        self.assertEqual(report["cli_mode"], "check")
+        self.assertEqual(report["mode"], "release")
+        self.assertEqual(report["review_summary"]["next_step"], "review_checked_artifacts")
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_real_llm_swarm_beta_check(report)
+        rendered = stdout.getvalue()
+        self.assertIn("CrowdTensor Public Real-LLM Swarm Beta Check", rendered)
+        self.assertIn("  cli_mode: check", rendered)
+        self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
+        self.assertIn("  artifacts: inspect=", rendered)
+        self.assertIn("  output_request: include_output=False raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False public_artifact_safe=True", rendered)
+        self.assertIn("  answer_scope: state=no-local-answer saved_json=validation-only public_artifact_safe=True", rendered)
+        self.assertIn("  operator_action:", rendered)
+        self.assertIn("  artifact public_real_llm_swarm_beta_json:", rendered)
+        self.assertNotIn("  model: None", rendered)
+
+    def test_public_real_llm_swarm_beta_check_uses_local_model_variant_for_custom_model(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "check",
+            "--output-dir",
+            str(output_dir),
+            "--hf-model-id",
+            "distilgpt2",
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_check.py", command[1])
+            self.assertEqual(command[command.index("--mode") + 1], "local-model-variant")
+            self.assertEqual(command[command.index("--hf-model-id") + 1], "distilgpt2")
+            return completed({
+                "schema": "public_real_llm_swarm_beta_check_v1",
+                "ok": True,
+                "mode": "local-model-variant",
+                "max_new_tokens": 16,
+                "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_mode"], "check")
+        self.assertEqual(report["mode"], "local-model-variant")
+
+    def test_public_real_llm_swarm_beta_check_failure_includes_review_guidance(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "check",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_check.py", command[1])
+            return subprocess.CompletedProcess(command, 1, stdout="check failed before json\n", stderr="validation failed\n")
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["schema"], "public_real_llm_swarm_beta_check_v1")
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+        self.assertEqual(report["cli_mode"], "check")
+        self.assertEqual(report["review_summary"]["state"], "blocked")
+        self.assertEqual(report["review_summary"]["next_step"], "review_diagnostics")
+        self.assertEqual(report["review_summary"]["error_count"], 1)
+        self.assertIn("public real LLM swarm beta check command returned no JSON report", report["errors"])
+        self.assertIn("public-real-llm-swarm-beta check", report["operator_action"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertIn("validation failed", report["step"]["stderr_tail"])
+        self.assertNotIn("validation failed", json.dumps(report["review_summary"], sort_keys=True))
+        self.assertNotIn("validation failed", json.dumps(report["operator_action"], sort_keys=True))
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_real_llm_swarm_beta_check(report)
+        rendered = stdout.getvalue()
+        self.assertIn("CrowdTensor Public Real-LLM Swarm Beta Check", rendered)
+        self.assertIn("  review: state=blocked next=review_diagnostics", rendered)
+        self.assertIn("  errors:", rendered)
+        self.assertIn("    - public real LLM swarm beta check command returned no JSON report", rendered)
+        self.assertNotIn("  model: None", rendered)
+
     def test_public_real_llm_swarm_beta_cli_failure_includes_review_guidance(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
@@ -5830,6 +5998,16 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "one,two,three,four,five",
             ])
 
+    def test_public_real_llm_swarm_beta_check_skips_prompt_batch_validation(self) -> None:
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "check",
+            "--prompt-texts",
+            "one,two,three,four,five",
+        ])
+
+        self.assertEqual(args.public_real_llm_swarm_beta_mode, "check")
+
     def test_public_real_llm_swarm_beta_help_shows_modes_artifacts_and_boundaries(self) -> None:
         stdout = io.StringIO()
 
@@ -5847,6 +6025,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("local-model-variant prove the local model variant", rendered)
         self.assertIn("package             generate the runbook/package", rendered)
         self.assertIn("evidence-import     aggregate retained reports", rendered)
+        self.assertIn("check               run the final validation check", rendered)
         self.assertIn("Review path: open public_real_llm_swarm_beta.md first", rendered)
         self.assertIn("support_bundle.json", rendered)
         self.assertIn("Safe shareable files", rendered)
@@ -5855,6 +6034,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("If ok is false, start with the Not Completed section", rendered)
         self.assertIn("printed not_completed lines", rendered)
         self.assertIn("crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16", rendered)
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check --output-dir", rendered)
         self.assertIn("not production", rendered)
         self.assertIn("not Coordinator-free P2P", rendered)
         self.assertIn("not large-model serving", rendered)
