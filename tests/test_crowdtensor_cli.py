@@ -159,7 +159,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Run the shortest user-facing CrowdTensor inference path.", rendered)
         self.assertIn("examples:", rendered)
         self.assertIn('crowdtensor infer "your prompt" --max-new-tokens 8 --stream', rendered)
-        self.assertIn("Reports include action and next[...] lines", rendered)
+        self.assertIn("Reports include action, recommended_next, and next[...] lines", rendered)
         self.assertIn("ready_to_submit labels mean", rendered)
         self.assertIn("ready_to_submit.next_step is the script-friendly", rendered)
         self.assertIn("stage_preflight_unknown means rerun the stage preflight", rendered)
@@ -4996,6 +4996,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["result"]["max_new_tokens"], 8)
         self.assertEqual(report["result"]["display"], "hash-only-json")
         self.assertTrue(report["result"]["public_artifact_safe"])
+        self.assertEqual(report["recommended_next_command"]["label"], "run broader local evidence")
+        self.assertEqual(report["recommended_next_command"]["reason"], "collect_broader_evidence")
         self.assertEqual(report["route"]["route_source"], "local-product-loopback")
         self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -5014,6 +5016,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["status"], "complete")
         self.assertEqual(persisted["result"]["display"], "hash-only-json")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
+        self.assertEqual(persisted["recommended_next_command"]["label"], "run broader local evidence")
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         self.assertTrue(calls)
 
@@ -5447,6 +5450,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Raw generated text is shown only in local human output", stdout.getvalue())
         self.assertIn("next[1] check existing swarm", stdout.getvalue())
         self.assertIn("next[2] submit inference", stdout.getvalue())
+        self.assertIn(
+            "recommended_next: submit inference reason=rerun_inference CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
+            stdout.getvalue(),
+        )
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer", stdout.getvalue())
         self.assertIn("# requires CROWDTENSOR_ADMIN_TOKEN", stdout.getvalue())
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -5499,6 +5506,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["output_count"], 1)
         self.assertEqual(persisted["result"]["display"], "hash-only")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
+        self.assertEqual(persisted["recommended_next_command"]["label"], "submit inference")
+        self.assertEqual(persisted["recommended_next_command"]["reason"], "rerun_inference")
+        self.assertEqual(persisted["recommended_next_command"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
+        self.assertIn(cli.INFER_PROMPT_PLACEHOLDER, persisted["recommended_next_command"]["command_line"])
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted["recommended_next_command"], sort_keys=True))
         self.assertEqual(
             persisted["local_output_note"],
             "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
@@ -5515,6 +5527,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Result: `status=complete tokens=16/16 outputs=1 display=hash-only hash=sha256:generated public_artifact_safe=True`",
             markdown,
         )
+        self.assertIn(
+            "- Recommended next: `submit inference` reason=`rerun_inference` command=`crowdtensor infer '<prompt>' --mode existing",
+            markdown,
+        )
+        self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Wait: `polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False`", markdown)
         self.assertIn(
             "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=``",
@@ -5571,6 +5588,23 @@ class CrowdTensorCliTests(unittest.TestCase):
                         ],
                     )
                 ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check existing swarm",
+                        [
+                            "crowdtensor",
+                            "infer",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--mode",
+                            "existing",
+                            "--output-dir",
+                            str(output_dir),
+                            "--dry-run",
+                        ],
+                    ),
+                    "reason": "verify_stage_miners",
+                    "source_index": 1,
+                },
                 "diagnosis_codes": ["crowdtensor_infer_ready"],
             }
 
@@ -5592,6 +5626,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(f"recommended_next: check existing swarm reason=verify_stage_miners crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertIn(f"next[1] check existing swarm: crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
@@ -5631,6 +5666,27 @@ class CrowdTensorCliTests(unittest.TestCase):
                         ],
                     )
                 ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check existing swarm",
+                        [
+                            "crowdtensor",
+                            "infer",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--mode",
+                            "existing",
+                            "--output-dir",
+                            str(output_dir),
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--prompt-texts",
+                            cli.INFER_BATCH_PROMPTS_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    ),
+                    "reason": "verify_stage_miners",
+                    "source_index": 1,
+                },
                 "diagnosis_codes": ["crowdtensor_infer_ready"],
             }
 
@@ -5653,6 +5709,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(
+            f"recommended_next: check existing swarm reason=verify_stage_miners crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '{prompt_texts}' --dry-run",
+            rendered,
+        )
         self.assertIn(
             f"next[1] check existing swarm: crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '{prompt_texts}' --dry-run",
             rendered,
@@ -6264,6 +6324,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "Start a Coordinator and two stage Miners, or pass --coordinator-url/--peer-bootstrap for an existing swarm.",
         )
         next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertEqual(report["recommended_next_command"]["label"], "start Coordinator")
+        self.assertEqual(report["recommended_next_command"]["reason"], "start_coordinator")
         self.assertIn(
             "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
             next_lines,
@@ -6286,6 +6348,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertIn("coordinator_route_missing", persisted["diagnosis_codes"])
+        self.assertEqual(persisted["recommended_next_command"]["label"], "start Coordinator")
 
     def test_infer_existing_missing_admin_token_returns_actionable_report(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -6444,6 +6507,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         next_commands = report["next_commands"]
         self.assertTrue(any("CROWDTENSOR_OBSERVER_TOKEN" in item.get("requires_env", []) for item in next_commands))
+        self.assertEqual(report["recommended_next_command"]["label"], "check existing swarm")
+        self.assertEqual(report["recommended_next_command"]["reason"], "verify_stage_miners")
+        self.assertEqual(report["recommended_next_command"]["requires_env"], ["CROWDTENSOR_OBSERVER_TOKEN"])
         next_lines = [item["command_line"] for item in next_commands]
         self.assertIn(
             f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --stream --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
@@ -6468,6 +6534,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("crowdtensor_infer_preflight_partial", persisted["diagnosis_codes"])
         self.assertNotIn("crowdtensor_infer_preflight_ready", persisted["diagnosis_codes"])
         self.assertFalse(persisted["local_output"]["available"])
+        self.assertEqual(persisted["recommended_next_command"]["label"], "check existing swarm")
+        self.assertEqual(persisted["recommended_next_command"]["reason"], "verify_stage_miners")
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(
             "- Ready to submit: label=`partial` next_step=`run_stage_preflight` fully_verified=`False`",
@@ -6479,6 +6547,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "- Stage preflight: checked=`False` ok=`None` missing=`not_checked`",
+            markdown,
+        )
+        self.assertIn(
+            "- Recommended next: `check existing swarm` reason=`verify_stage_miners` command=`crowdtensor infer '<prompt>' --mode existing",
             markdown,
         )
         self.assertNotIn("CrowdTensor user prompt", markdown)
@@ -6626,6 +6698,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["ready_to_submit"]["warning_codes"], [])
         self.assertIn("stage_preflight_ready", report["diagnosis_codes"])
         self.assertEqual(report["operator_action"], "Dry-run is verified; run the printed submit inference next command.")
+        self.assertEqual(report["recommended_next_command"]["label"], "submit inference")
+        self.assertEqual(report["recommended_next_command"]["reason"], "submit_verified_inference")
+        self.assertEqual(report["recommended_next_command"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
         self.assertNotIn("observer-secret", json.dumps(report, sort_keys=True))
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -6633,11 +6708,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready next_step=submit warnings=none", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
+        self.assertIn("recommended_next: submit inference reason=submit_verified_inference", rendered)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["stage_preflight"]["ok"])
         self.assertTrue(persisted["ready_to_submit"]["ok"])
         self.assertTrue(persisted["ready_to_submit"]["fully_verified"])
         self.assertEqual(persisted["ready_to_submit"]["readiness_label"], "verified")
+        self.assertEqual(persisted["recommended_next_command"]["label"], "submit inference")
+        self.assertEqual(persisted["recommended_next_command"]["reason"], "submit_verified_inference")
         self.assertNotIn("observer-secret", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(
@@ -6650,6 +6728,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "- Stage preflight: checked=`True` ok=`True` missing=`none`",
+            markdown,
+        )
+        self.assertIn(
+            "- Recommended next: `submit inference` reason=`submit_verified_inference` command=`crowdtensor infer '<prompt>' --mode existing",
             markdown,
         )
         self.assertNotIn("observer-secret", markdown)

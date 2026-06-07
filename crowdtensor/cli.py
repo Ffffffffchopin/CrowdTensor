@@ -421,6 +421,101 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
     return notes
 
 
+def _pick_next_command(
+    next_commands: list[dict[str, Any]],
+    predicate: Callable[[dict[str, Any]], bool],
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    for index, item in enumerate(next_commands, start=1):
+        if predicate(item):
+            recommended = dict(item)
+            recommended["source_index"] = index
+            recommended["reason"] = reason
+            recommended["public_artifact_safe"] = True
+            return recommended
+    return {}
+
+
+def _infer_recommended_next_command(
+    next_commands: list[dict[str, Any]],
+    *,
+    ok: bool,
+    mode: str,
+    dry_run: bool,
+    ready_to_submit: dict[str, Any],
+    diagnosis_codes: set[str],
+    full_evidence: bool,
+) -> dict[str, Any]:
+    if not next_commands:
+        return {}
+    label = lambda item: str(item.get("label") or "")
+    starts = lambda prefix: lambda item: label(item).startswith(prefix)
+    equals = lambda value: lambda item: label(item) == value
+    if "hf_dependencies_missing" in diagnosis_codes or "product_swarm_mvp_hf_runtime_missing" in diagnosis_codes:
+        found = _pick_next_command(next_commands, equals("install Hugging Face runtime"), reason="install_missing_runtime")
+        if found:
+            return found
+    if "p2p_discovery_unreachable" in diagnosis_codes:
+        found = _pick_next_command(next_commands, equals("start P2P discovery daemon"), reason="start_discovery")
+        if found:
+            return found
+    if "generation_timeout" in diagnosis_codes:
+        found = _pick_next_command(next_commands, equals("retry inference with longer timeout"), reason="retry_timeout")
+        if found:
+            return found
+    if dry_run:
+        next_step = str(ready_to_submit.get("next_step") or "")
+        if next_step == "submit":
+            found = _pick_next_command(next_commands, starts("submit inference"), reason="submit_verified_inference")
+            if found:
+                return found
+        if next_step == "run_stage_preflight":
+            found = _pick_next_command(next_commands, equals("check existing swarm"), reason="verify_stage_miners")
+            if found:
+                return found
+        if next_step == "submit_with_caution":
+            found = _pick_next_command(next_commands, equals("check existing swarm"), reason="confirm_live_preflight")
+            if found:
+                return found
+    if not ok:
+        startup_codes = {
+            "generate_route_unavailable",
+            "coordinator_route_missing",
+            "coordinator_ready_failed",
+            "stage_preflight_not_checked",
+            "stage_preflight_failed",
+        }
+        if diagnosis_codes.intersection(startup_codes):
+            for expected_label, reason in [
+                ("start Coordinator", "start_coordinator"),
+                ("start stage0 Miner", "start_stage0_miner"),
+                ("check existing swarm", "check_existing_swarm"),
+            ]:
+                found = _pick_next_command(next_commands, equals(expected_label), reason=reason)
+                if found:
+                    return found
+        if "admin_token_required" in diagnosis_codes:
+            found = _pick_next_command(next_commands, starts("submit inference"), reason="set_admin_token")
+            if found:
+                return found
+        found = _pick_next_command(next_commands, lambda item: True, reason="follow_operator_action")
+        if found:
+            return found
+    if mode == "local":
+        if not full_evidence:
+            found = _pick_next_command(next_commands, equals("run broader local evidence"), reason="collect_broader_evidence")
+            if found:
+                return found
+        found = _pick_next_command(next_commands, equals("run local inference"), reason="rerun_local_inference")
+        if found:
+            return found
+    found = _pick_next_command(next_commands, starts("submit inference"), reason="rerun_inference")
+    if found:
+        return found
+    return _pick_next_command(next_commands, lambda item: True, reason="next_available_command")
+
+
 def _infer_prompt_redaction_values(args: argparse.Namespace) -> list[str]:
     values: list[str] = []
     try:
@@ -4310,6 +4405,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
     wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
     step = summary.get("step") if isinstance(summary.get("step"), dict) else {}
+    recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
         "# CrowdTensor Infer Summary",
@@ -4362,6 +4458,16 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
     if summary.get("operator_action"):
         lines.append(f"- Action: {summary.get('operator_action')}")
+    if recommended:
+        requires_env = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
+        suffix = f" requires=`{','.join(str(name) for name in requires_env)}`" if requires_env else ""
+        lines.append(
+            "- Recommended next: "
+            f"`{recommended.get('label')}` "
+            f"reason=`{recommended.get('reason')}` "
+            f"command=`{recommended.get('command_line')}`"
+            f"{suffix}"
+        )
     if source_report.get("summary_path") or source_report.get("summary_markdown_path"):
         lines.append(
             "- Source generate summary: "
@@ -4527,6 +4633,15 @@ def _infer_summary_from_payload(
         if has_local_display_output
         else ("hash-only-json" if getattr(args, "json", False) else "hash-only")
     )
+    recommended_next_command = _infer_recommended_next_command(
+        next_commands,
+        ok=ok,
+        mode=mode,
+        dry_run=dry_run,
+        ready_to_submit=ready_to_submit,
+        diagnosis_codes=set(str(code) for code in codes),
+        full_evidence=bool(getattr(args, "full_evidence", False)),
+    )
     source_saved_summary = payload.get("saved_summary") if isinstance(payload.get("saved_summary"), dict) else {}
     summary = {
         "schema": INFER_CLI_SCHEMA,
@@ -4617,6 +4732,7 @@ def _infer_summary_from_payload(
             "public_artifact_safe": bool(source_saved_summary.get("public_artifact_safe", True)) if source_saved_summary else True,
         },
         "operator_action": operator_action,
+        "recommended_next_command": recommended_next_command,
         "next_commands": next_commands,
         "step": step or {},
         "diagnosis_codes": sorted(codes),
@@ -8665,6 +8781,17 @@ def print_infer(report: dict[str, Any]) -> None:
     print(f"  output_dir: {report.get('output_dir')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    if recommended and recommended.get("command_line"):
+        requirements = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
+        suffix = f"  # requires {', '.join(str(name) for name in requirements)}" if requirements else ""
+        rendered_command = human_next_command_line(recommended, local_infer_command_line(recommended, report))
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} "
+            f"reason={recommended.get('reason')} "
+            f"{rendered_command}{suffix}"
+        )
     for index, item in enumerate(report.get("next_commands") or [], start=1):
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
@@ -10144,7 +10271,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "across stage0/stage1 workers, prints local display-only output in human mode, and\n"
             "writes redacted infer_summary.json and infer_summary.md files. Use --mode existing\n"
             "to target an already running Coordinator or P2P-discovered swarm.\n"
-            "Reports include action and next[...] lines with copyable follow-up commands.\n"
+            "Reports include action, recommended_next, and next[...] lines with copyable follow-up commands.\n"
             "ready_to_submit labels mean: verified is ready\n"
             "after route, Coordinator, and stage Miner checks; partial can submit but still needs\n"
             "the printed follow-up preflight; blocked needs the printed operator_action;\n"
