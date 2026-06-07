@@ -849,6 +849,24 @@ class CrowdTensorCliTests(unittest.TestCase):
                         ],
                     )
                 ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check generation route",
+                        [
+                            "crowdtensor",
+                            "generate",
+                            "--max-new-tokens",
+                            "16",
+                            "--coordinator-url",
+                            "http://127.0.0.1:8787",
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    ),
+                    "reason": "verify_stage_miners",
+                    "source_index": 1,
+                },
             }
 
         stdout = io.StringIO()
@@ -865,6 +883,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(
+            f"recommended_next: check generation route reason=verify_stage_miners crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run",
+            rendered,
+        )
         self.assertIn(f"next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
@@ -897,6 +919,26 @@ class CrowdTensorCliTests(unittest.TestCase):
                         ],
                     )
                 ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check generation route",
+                        [
+                            "crowdtensor",
+                            "generate",
+                            "--max-new-tokens",
+                            "16",
+                            "--coordinator-url",
+                            "http://127.0.0.1:8787",
+                            "--prompt-text",
+                            cli.INFER_PROMPT_PLACEHOLDER,
+                            "--prompt-texts",
+                            cli.INFER_BATCH_PROMPTS_PLACEHOLDER,
+                            "--dry-run",
+                        ],
+                    ),
+                    "reason": "verify_stage_miners",
+                    "source_index": 1,
+                },
             }
 
         stdout = io.StringIO()
@@ -913,6 +955,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(f"recommended_next: check generation route reason=verify_stage_miners crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-texts '{prompts}' --dry-run", rendered)
         self.assertIn(f"--prompt-texts '{prompts}' --dry-run", rendered)
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
@@ -1079,6 +1122,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
         self.assertIn("  ready_to_submit: True label=verified fully_verified=True route=True coordinator=True stage=ready stage_verification=ready next_step=submit warnings=none", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
+        self.assertIn(
+            "  recommended_next: submit generation reason=submit_verified_generation CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'  # requires CROWDTENSOR_ADMIN_TOKEN",
+            rendered,
+        )
         self.assertIn("  next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}", rendered)
         self.assertIn("# requires CROWDTENSOR_OBSERVER_TOKEN", rendered)
         self.assertIn("  next[2] submit generation: CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>'  # requires CROWDTENSOR_ADMIN_TOKEN", rendered)

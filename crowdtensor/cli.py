@@ -8915,6 +8915,17 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  note: {report.get('local_output_note')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    if recommended and recommended.get("command_line"):
+        requirements = recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else []
+        suffix = f"  # requires {', '.join(str(name) for name in requirements)}" if requirements else ""
+        rendered_command = human_next_command_line(recommended, local_generate_command_line(recommended, report))
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} "
+            f"reason={recommended.get('reason')} "
+            f"{rendered_command}{suffix}"
+        )
     for index, item in enumerate(report.get("next_commands") or [], start=1):
         if isinstance(item, dict) and item.get("command_line"):
             requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
