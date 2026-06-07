@@ -4114,7 +4114,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=`coordinator-validation`",
+            "- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True` count=`1` source=`coordinator-validation`",
             markdown,
         )
         self.assertIn(
@@ -4224,7 +4224,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(tail, json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn(
-            f"- Local output: `available=False display_only=False public_artifact_safe=True truncated=True max_chars={cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} omitted_chars={len(tail)}` count=`1` source=`coordinator-validation`",
+            f"- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True truncated=True max_chars={cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} omitted_chars={len(tail)}` count=`1` source=`coordinator-validation`",
             markdown,
         )
         self.assertIn("Terminal answer text is truncated", markdown)
@@ -8283,7 +8283,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=`local-private-task-state`",
+            "- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True` count=`1` source=`local-private-task-state`",
             markdown,
         )
         self.assertIn(
@@ -8369,7 +8369,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(tail, json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(
-            f"- Local output: `available=False display_only=False public_artifact_safe=True truncated=True max_chars={cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} omitted_chars={len(tail)}` count=`1` source=`local-private-task-state`",
+            f"- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True truncated=True max_chars={cli.LOCAL_OUTPUT_DISPLAY_MAX_CHARS} omitted_chars={len(tail)}` count=`1` source=`local-private-task-state`",
             markdown,
         )
         self.assertIn("Terminal answer text is truncated", markdown)
@@ -8715,7 +8715,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Wait: `polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False`", markdown)
         self.assertIn(
-            "- Local output: `available=False display_only=False public_artifact_safe=True` count=`1` source=``",
+            "- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True` count=`1` source=``",
             markdown,
         )
         self.assertIn(

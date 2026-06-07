@@ -1401,16 +1401,26 @@ def infer_user_status_text(status: dict[str, Any]) -> str:
 
 
 def local_output_text(local_output: dict[str, Any]) -> str:
+    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    output_count = _safe_int(local_output.get("output_count")) or len(outputs)
     available = (
         bool(local_output.get("available"))
         if "available" in local_output
         else bool(local_output.get("generated_text") or local_output.get("outputs"))
+    )
+    saved_redacted = bool(
+        not available
+        and bool(local_output.get("public_artifact_safe"))
+        and output_count > 0
+        and not bool(local_output.get("display_only"))
     )
     parts = [
         f"available={available}",
         f"display_only={bool(local_output.get('display_only'))}",
         f"public_artifact_safe={bool(local_output.get('public_artifact_safe'))}",
     ]
+    if saved_redacted:
+        parts.append("saved_redacted=True")
     if local_output.get("truncated"):
         parts.append("truncated=True")
         if local_output.get("max_chars") is not None:
