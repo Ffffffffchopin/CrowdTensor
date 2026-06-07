@@ -3941,6 +3941,44 @@ def _infer_trace_from_payload(
     }
 
 
+def _generate_trace_from_report(report: dict[str, Any]) -> dict[str, Any]:
+    session = report.get("session") if isinstance(report.get("session"), dict) else {}
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
+    stream_events = stream.get("events") if isinstance(stream.get("events"), list) else []
+    stream_progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
+    session_request = report.get("session_request") if isinstance(report.get("session_request"), dict) else {}
+    wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
+    request_trace = _infer_request_trace_from_payload(
+        report,
+        generation=generation,
+        stream_events=[event for event in stream_events if isinstance(event, dict)],
+        stream_progress=stream_progress,
+        local_output=local_output,
+    )
+    expected_request_count = _safe_int(
+        batch.get("expected_request_count")
+        or batch.get("request_count")
+        or session_request.get("request_count"),
+        1,
+    )
+    return {
+        "session_id": session.get("session_id"),
+        "workload_type": session.get("workload_type"),
+        "request_count": max(expected_request_count, len(request_trace)),
+        "request_trace": request_trace,
+        "accepted_rows_seen": _safe_int(wait_progress.get("accepted_rows_seen")),
+        "stream_event_count": _safe_int(stream.get("event_count")) or len(stream_events),
+        "source": report.get("schema") or PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+    }
+
+
 def _user_inference_status(
     *,
     kind: str,
@@ -7663,6 +7701,7 @@ def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]
 def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
+    trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
     stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
@@ -7687,6 +7726,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
             f"hash=`{generation.get('generated_text_hash')}`"
         ),
+        f"- Trace: `{infer_trace_text(trace)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{bool(route.get('usable_now') or route.get('coordinator_url_present'))}`",
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('batch_generation_ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('stream_generation_ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
@@ -8016,6 +8056,7 @@ def _finalize_product_generate_report(
         report=report,
         recommended_next_command=recommended_next_command,
     ))
+    report.setdefault("trace", _generate_trace_from_report(report))
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
         report.setdefault("saved_summary", {
@@ -8841,6 +8882,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
             f"{generation.get('generated_token_count')}/{generation.get('max_new_tokens')} "
             f"hash={generation.get('generated_text_hash')}"
         )
+    trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
+    if trace:
+        print(f"  trace: {infer_trace_text(trace)}")
     batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
     if batch.get("enabled"):
         print(f"  batch: {batch_status_text(batch)}")

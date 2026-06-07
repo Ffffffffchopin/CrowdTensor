@@ -777,6 +777,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
         self.assertTrue(report["artifacts"]["generate_summary"]["present"])
         self.assertTrue(report["artifacts"]["generate_summary_markdown"]["present"])
+        self.assertIsNone(report["trace"]["session_id"])
+        self.assertEqual(report["trace"]["request_count"], 1)
+        self.assertEqual(report["trace"]["accepted_rows_seen"], 0)
+        self.assertEqual(report["trace"]["stream_event_count"], 0)
+        self.assertEqual(report["trace"]["source"], "public_swarm_product_cli_v1")
+        self.assertFalse(report["trace"]["raw_prompt_public"])
+        self.assertFalse(report["trace"]["raw_generated_text_public"])
+        self.assertFalse(report["trace"]["generated_token_ids_public"])
+        self.assertTrue(report["trace"]["public_artifact_safe"])
+        self.assertEqual(len(report["trace"]["request_trace"]), 1)
+        self.assertEqual(report["trace"]["request_trace"][0]["source"], "session-request")
+        self.assertTrue(report["trace"]["request_trace"][0]["prompt_hash"])
         self.assertEqual(
             report["operator_action"],
             "Generation request shape is valid, but live readiness was skipped; rerun --dry-run without --skip-live-preflight before submitting.",
@@ -803,6 +815,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
         self.assertEqual(persisted["user_status"]["next_step"], "run_live_preflight")
+        self.assertEqual(persisted["trace"]["request_count"], 1)
+        self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertNotIn("CrowdTensor prompt", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("# CrowdTensor Generate Summary", markdown)
@@ -810,6 +824,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Dry run: `True`", markdown)
         self.assertIn(
             "- Status: `preflight-partial: Request shape is valid, but live readiness was skipped. next=run_live_preflight recommendation=check generation route public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn(
+            "- Trace: `session=none requests=1 ledger_rows=0 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -838,6 +856,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn(
             "  status: preflight-partial: Request shape is valid, but live readiness was skipped. next=run_live_preflight recommendation=check generation route public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn(
+            "  trace: session=none requests=1 ledger_rows=0 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True",
             rendered,
         )
         self.assertIn("  stream: requested=True events=0 dry_run=True", rendered)
@@ -2539,12 +2561,29 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["wait_progress"]["accepted_rows_seen"], 1)
         self.assertEqual(report["wait_progress"]["max_observed_token_count"], 2)
         self.assertTrue(report["wait_progress"]["completion_observed"])
+        self.assertEqual(report["trace"]["session_id"], "real-llm-session-test")
+        self.assertEqual(report["trace"]["workload_type"], "real_llm_sharded_infer")
+        self.assertEqual(report["trace"]["request_count"], 1)
+        self.assertEqual(report["trace"]["accepted_rows_seen"], 1)
+        self.assertEqual(report["trace"]["stream_event_count"], 0)
+        self.assertEqual(report["trace"]["source"], "public_swarm_product_cli_v1")
+        self.assertFalse(report["trace"]["raw_prompt_public"])
+        self.assertFalse(report["trace"]["raw_generated_text_public"])
+        self.assertFalse(report["trace"]["generated_token_ids_public"])
+        self.assertTrue(report["trace"]["public_artifact_safe"])
+        self.assertEqual(len(report["trace"]["request_trace"]), 1)
+        self.assertEqual(report["trace"]["request_trace"][0]["source"], "session-request")
+        self.assertTrue(report["trace"]["request_trace"][0]["prompt_hash"])
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
         self.assertTrue(report["artifacts"]["generate_summary_markdown"]["present"])
         self.assertNotIn("admin-secret", encoded)
         self.assertIn(("GET", "/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit=50&session_id=real-llm-session-test"), calls)
         persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["user_status"]["state"], "completed")
+        self.assertEqual(persisted["trace"]["session_id"], "real-llm-session-test")
+        self.assertEqual(persisted["trace"]["accepted_rows_seen"], 1)
+        self.assertEqual(persisted["trace"]["request_count"], 1)
+        self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertNotIn("local generated text must stay local", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn(
@@ -2557,6 +2596,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Generation: `2/2` hash=`sha256:generated`", markdown)
+        self.assertIn(
+            "- Trace: `session=real-llm-session-test requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("## Artifacts", markdown)
         self.assertIn(
             "- `generate_summary`: path=`generate_summary.json` present=`True` kind=`crowdtensor_generate_summary`",
@@ -2570,6 +2613,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn(
             "  status: completed: Generation completed. next=rerun_or_review_artifacts recommendation=submit generation public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn(
+            "  trace: session=real-llm-session-test requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True",
             rendered,
         )
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
