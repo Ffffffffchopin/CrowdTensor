@@ -523,6 +523,28 @@ def wait_progress_text(wait_progress: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
+    per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
+    lines = []
+    if len(per_request) > 1:
+        for index, item in enumerate(per_request, start=1):
+            if not isinstance(item, dict):
+                continue
+            counts = item.get("observed_token_counts") or []
+            lines.append(
+                f"  stream[{index}]: "
+                f"counts={counts} "
+                f"complete={item.get('stream_progress_complete')}"
+            )
+    elif progress:
+        lines.append(
+            "  stream_progress: "
+            f"counts={progress.get('observed_token_counts') or []} "
+            f"complete={progress.get('stream_progress_complete')}"
+        )
+    return lines
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -7870,6 +7892,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
                 f"complete={complete}"
                 f"{request_summary}"
             )
+            for line in stream_progress_lines(progress):
+                print(line)
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     if wait_progress:
         print(f"  wait: {wait_progress_text(wait_progress)}")
@@ -8065,23 +8089,8 @@ def print_infer(report: dict[str, Any]) -> None:
     if stream.get("enabled"):
         print(f"  stream: ready={stream.get('ready')} events={stream.get('event_count')} source={stream.get('source')}")
         progress = stream.get("progress") if isinstance(stream.get("progress"), dict) else {}
-        per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
-        if len(per_request) > 1:
-            for index, item in enumerate(per_request, start=1):
-                if not isinstance(item, dict):
-                    continue
-                counts = item.get("observed_token_counts") or []
-                print(
-                    f"  stream[{index}]: "
-                    f"counts={counts} "
-                    f"complete={item.get('stream_progress_complete')}"
-                )
-        elif progress:
-            print(
-                "  stream_progress: "
-                f"counts={progress.get('observed_token_counts') or []} "
-                f"complete={progress.get('stream_progress_complete')}"
-            )
+        for line in stream_progress_lines(progress):
+            print(line)
     wait_progress = report.get("wait_progress") if isinstance(report.get("wait_progress"), dict) else {}
     if wait_progress:
         print(f"  wait: {wait_progress_text(wait_progress)}")

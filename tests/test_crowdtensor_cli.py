@@ -48,6 +48,30 @@ class CrowdTensorCliTests(unittest.TestCase):
             "polls=2 accepted_rows=1 tokens=4/4 requests=1/2 batch_ready=False ledger=True stream=False",
         )
 
+    def test_stream_progress_lines_renders_single_and_batch_progress(self) -> None:
+        single = {
+            "observed_token_counts": [1, 2],
+            "stream_progress_complete": True,
+        }
+        batch = {
+            "per_request_progress": [
+                {"observed_token_counts": [1, 2], "stream_progress_complete": True},
+                {"observed_token_counts": [1], "stream_progress_complete": False},
+            ]
+        }
+
+        self.assertEqual(
+            cli.stream_progress_lines(single),
+            ["  stream_progress: counts=[1, 2] complete=True"],
+        )
+        self.assertEqual(
+            cli.stream_progress_lines(batch),
+            [
+                "  stream[1]: counts=[1, 2] complete=True",
+                "  stream[2]: counts=[1] complete=False",
+            ],
+        )
+
     def test_local_proof_success_summarizes_steps_and_artifacts(self) -> None:
         calls: list[list[str]] = []
         output_dir = Path(self._tmp_dir())
@@ -3453,10 +3477,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
+        rendered = stdout.getvalue()
         self.assertIn(
             "  stream_events: 4 source=admin-session-stream complete=True requests=2/2",
-            stdout.getvalue(),
+            rendered,
         )
+        self.assertIn("  stream[1]: counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[2]: counts=[1, 2] complete=True", rendered)
         self.assertNotIn("first private prompt", encoded)
         self.assertNotIn("second private prompt", encoded)
         self.assertNotIn("raw one", encoded)
@@ -3555,11 +3582,24 @@ class CrowdTensorCliTests(unittest.TestCase):
         with patch.object(cli, "request_json_url", side_effect=fake_request):
             report = cli.build_product_generate(args)
 
+        encoded = json.dumps(report, sort_keys=True)
         self.assertTrue(report["ok"], report)
         self.assertNotIn("public_swarm_generate_stream_ready", report["diagnosis_codes"])
         self.assertFalse(report["stream"]["stream_generation_ready"])
         self.assertFalse(report["stream"]["progress"]["per_request_progress_complete"])
         self.assertEqual(report["stream"]["event_count"], 3)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_generate(report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  stream_events: 3 source=admin-session-stream complete=False requests=2/2",
+            rendered,
+        )
+        self.assertIn("  stream[1]: counts=[1, 2] complete=True", rendered)
+        self.assertIn("  stream[2]: counts=[1] complete=False", rendered)
+        self.assertNotIn("first private prompt", encoded)
+        self.assertNotIn("second private prompt", encoded)
 
     def test_product_generate_batch_stream_ledger_fallback_expands_batch_rows(self) -> None:
         args = cli.parse_args([

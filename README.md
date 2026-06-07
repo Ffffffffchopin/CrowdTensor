@@ -88,7 +88,8 @@ poll count, accepted rows, endpoint readiness, observed token progress, and
 batch request progress so timeouts are actionable without exposing raw text;
 both `infer` and `generate` include `operator_action` suggestions for
 checking tokens, Miner health, admin API access, or timeout limits. They also
-print `next[...]` lines with safe follow-up commands. Human `infer` and
+print per-request token counts for bounded batch streams and `next[...]` lines
+with safe follow-up commands. Human `infer` and
 `generate` output use your current local prompt so the next command is directly
 copyable; JSON reports and saved artifacts keep raw prompts and token values
 replaced with placeholders. Coordinator/session failure `detail` fields are
