@@ -5725,15 +5725,25 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["primary_code"], "serve_start_failed")
         self.assertIn("loopback Coordinator", report["operator_action"])
         self.assertIn("--coordinator-port", report["operator_action"])
-        self.assertEqual(report["user_status"]["recommended_label"], "run local inference")
+        self.assertEqual(report["user_status"]["recommended_label"], "retry local inference on a fresh port")
+        self.assertEqual(report["recommended_next_command"]["label"], "retry local inference on a fresh port")
+        self.assertEqual(report["recommended_next_command"]["reason"], "follow_operator_action")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode local --output-dir {output_dir} --coordinator-port 9799 --max-new-tokens 8",
+            next_lines,
+        )
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["issue_summary"]["primary_code"], "serve_start_failed")
         self.assertIn("loopback Coordinator", persisted["operator_action"])
+        self.assertEqual(persisted["recommended_next_command"]["label"], "retry local inference on a fresh port")
+        self.assertIn("--coordinator-port 9799", persisted["recommended_next_command"]["command_line"])
         self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("primary=serve_start_failed", markdown)
         self.assertIn("loopback Coordinator", markdown)
+        self.assertIn("--coordinator-port 9799", markdown)
         self.assertNotIn(prompt, markdown)
 
     def test_infer_full_evidence_uses_public_swarm_v2_local_gate(self) -> None:

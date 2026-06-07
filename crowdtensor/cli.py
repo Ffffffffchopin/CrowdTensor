@@ -4781,6 +4781,7 @@ def _infer_command_args(
     include_admin: bool = False,
     include_observer: bool = False,
     coordinator_url_override: str = "",
+    coordinator_port_override: int | None = None,
 ) -> list[str]:
     command = ["crowdtensor", "infer"]
     resolved_mode = mode or getattr(args, "infer_mode", "local")
@@ -4809,6 +4810,14 @@ def _infer_command_args(
         command.append("--stream")
     if bool(getattr(args, "include_output", False)):
         command.append("--include-output")
+    if resolved_mode == "local":
+        coordinator_port = int(
+            coordinator_port_override
+            if coordinator_port_override is not None
+            else getattr(args, "coordinator_port", 9789)
+        )
+        if coordinator_port != 9789:
+            command.extend(["--coordinator-port", str(coordinator_port)])
     use_full_evidence = bool(getattr(args, "full_evidence", False)) if full_evidence is None else bool(full_evidence)
     if resolved_mode == "local" and use_full_evidence:
         max_new_tokens = min(max(max_new_tokens, 8), 32)
@@ -4867,6 +4876,15 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
             ["python", "-m", "pip", "install", "-e", ".[hf]"],
         ))
     if mode == "local":
+        if "serve_start_failed" in codes:
+            try:
+                retry_port = int(getattr(args, "coordinator_port", 9789) or 9789) + 10
+            except (TypeError, ValueError):
+                retry_port = 9799
+            commands.append(command_entry(
+                "retry local inference on a fresh port",
+                _infer_command_args(args, full_evidence=False, coordinator_port_override=retry_port),
+            ))
         commands.append(command_entry(
             "run local inference",
             _infer_command_args(args, full_evidence=False),
