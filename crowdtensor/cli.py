@@ -1142,6 +1142,8 @@ def print_local_output_block(report: dict[str, Any]) -> bool:
         print(f"  answer_scope: {answer_scope_text(answer_scope)}")
     if has_output:
         print(f"  local_output: {local_output_terminal_text(local_output)}")
+    elif _safe_int(local_output.get("output_count")) > 0:
+        print(f"  local_output: {local_output_terminal_text(local_output)}")
     return has_output
 
 

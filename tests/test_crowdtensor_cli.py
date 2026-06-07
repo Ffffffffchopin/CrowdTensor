@@ -4034,6 +4034,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
+            "  local_output: available=False display_only=False public_artifact_safe=True saved_redacted=True count=1 source=none",
+            rendered,
+        )
+        self.assertNotIn("  answer:", rendered)
+        self.assertIn(
             "  trace: session=real-llm-session-test requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True",
             rendered,
         )
@@ -7653,6 +7658,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("- Answer scope: `state=json-suppressed ", markdown)
         self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  local_output: available=False display_only=False public_artifact_safe=True saved_redacted=True count=1 source=none",
+            rendered,
+        )
+        self.assertNotIn("  answer:", rendered)
         self.assertTrue(calls)
 
     def test_infer_main_prints_safe_start_hint_before_human_output(self) -> None:
