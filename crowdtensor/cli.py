@@ -3892,6 +3892,48 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
         payload = sanitize(redact_values(payload))
         payload.setdefault("cli_schema", PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA)
         return payload
+    artifact_summary = {
+        "schema": "public_real_llm_swarm_beta_artifact_summary_v1",
+        "inspect_first": "public_real_llm_swarm_beta.md",
+        "machine_readable": "public_real_llm_swarm_beta.json",
+        "support_bundle": "support_bundle.json",
+        "runbook": "PUBLIC_REAL_LLM_SWARM_BETA.md",
+        "shareable_artifacts": [
+            "public_real_llm_swarm_beta_json",
+            "public_real_llm_swarm_beta_markdown",
+            "support_bundle_json",
+        ],
+        "shareable_paths": [
+            "public_real_llm_swarm_beta.json",
+            "public_real_llm_swarm_beta.md",
+            "support_bundle.json",
+        ],
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": "The pack command did not return a report; inspect the expected Markdown and support bundle paths if they were written.",
+    }
+    review_summary = {
+        "schema": "public_real_llm_swarm_beta_review_summary_v1",
+        "state": "blocked",
+        "ready": False,
+        "next_step": "review_diagnostics",
+        "inspect_first": artifact_summary["inspect_first"],
+        "machine_readable": artifact_summary["machine_readable"],
+        "support_bundle": artifact_summary["support_bundle"],
+        "shareable_paths": artifact_summary["shareable_paths"],
+        "not_completed_count": 1,
+        "not_completed_preview": ["public real LLM swarm beta pack command returned no JSON report"],
+        "operator_action_preview": [
+            "Inspect the CLI step payload, then rerun public-real-llm-swarm-beta with --json after fixing the pack failure.",
+        ],
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": "Blocked: the pack command did not return a JSON report; review diagnostics and rerun the Beta gate.",
+    }
     return sanitize({
         "schema": "public_real_llm_swarm_beta_v1",
         "cli_schema": PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA,
@@ -3900,6 +3942,37 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
         "output_dir": str(output_dir),
         "step": step,
         "diagnosis_codes": ["public_real_llm_swarm_beta_failed"],
+        "not_completed": ["public real LLM swarm beta pack command returned no JSON report"],
+        "artifact_summary": artifact_summary,
+        "review_summary": review_summary,
+        "operator_action": [
+            "Inspect the CLI step payload, then rerun public-real-llm-swarm-beta with --json after fixing the pack failure.",
+        ],
+        "output_request": {
+            "include_output": False,
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "public_artifact_safe": True,
+        },
+        "answer_scope": {
+            "scope_state": "no-local-answer",
+            "terminal_only": False,
+            "visible_in_terminal": False,
+            "saved_json_display": "hash-only",
+            "saved_markdown_display": "hash-only",
+            "public_artifact_safe": True,
+        },
+        "shareable_summary": {
+            "saved_artifacts_public_safe": True,
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "local_output_display_only": False,
+            "answer_scope_state": "no-local-answer",
+            "local_answer_terminal_only": False,
+            "public_artifact_safe": True,
+        },
         "limitations": [
             "Coordinator-backed Public Real-LLM Swarm Inference Beta; not production Hivemind/Petals parity",
             "Does not provide Coordinator-free P2P execution, production NAT traversal, economics, anti-Sybil security, or large-model serving",

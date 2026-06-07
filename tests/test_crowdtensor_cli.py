@@ -5776,6 +5776,49 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
 
+    def test_public_real_llm_swarm_beta_cli_failure_includes_review_guidance(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "release",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_pack.py", command[1])
+            return subprocess.CompletedProcess(command, 1, stdout="pack failed before json\n", stderr="runtime failed\n")
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
+        self.assertEqual(report["review_summary"]["state"], "blocked")
+        self.assertEqual(report["review_summary"]["next_step"], "review_diagnostics")
+        self.assertEqual(report["review_summary"]["inspect_first"], "public_real_llm_swarm_beta.md")
+        self.assertEqual(report["review_summary"]["not_completed_count"], 1)
+        self.assertEqual(report["artifact_summary"]["support_bundle"], "support_bundle.json")
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+        self.assertIn("public real LLM swarm beta pack command returned no JSON report", report["not_completed"])
+        self.assertIn("Inspect the CLI step payload", report["operator_action"][0])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertIn("runtime failed", report["step"]["stderr_tail"])
+        self.assertNotIn("runtime failed", json.dumps(report["review_summary"], sort_keys=True))
+        self.assertNotIn("runtime failed", json.dumps(report["operator_action"], sort_keys=True))
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_real_llm_swarm_beta(report)
+        rendered = stdout.getvalue()
+        self.assertIn(
+            "  review: state=blocked next=review_diagnostics inspect=public_real_llm_swarm_beta.md support=support_bundle.json not_completed=1 public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn("  inspect_first: public_real_llm_swarm_beta.md", rendered)
+        self.assertIn("  not_completed:", rendered)
+
     def test_public_real_llm_swarm_beta_cli_rejects_unbounded_prompt_batch(self) -> None:
         with self.assertRaises(SystemExit):
             cli.parse_args([
