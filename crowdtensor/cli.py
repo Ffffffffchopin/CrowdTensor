@@ -883,16 +883,24 @@ def print_answer_text(label: str, text: Any) -> None:
         print(f"  {' ' * len(label)}  {line}")
 
 
+LOCAL_ANSWER_SCOPE_TEXT = "terminal-only; saved JSON/Markdown keep hashes/redacted generated text."
+
+
 def print_local_output_block(report: dict[str, Any]) -> bool:
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
     has_output = bool(local_output.get("generated_text") or outputs)
+    printed_answer = False
     if len(outputs) <= 1 and local_output.get("generated_text"):
         print_answer_text("answer", local_output.get("generated_text"))
+        printed_answer = True
     elif outputs:
         for index, item in enumerate(outputs, start=1):
             if isinstance(item, dict) and item.get("generated_text"):
                 print_answer_text(f"answer[{index}]", item.get("generated_text"))
+                printed_answer = True
+    if printed_answer:
+        print(f"  answer_scope: {LOCAL_ANSWER_SCOPE_TEXT}")
     if has_output:
         print(f"  local_output: {local_output_terminal_text(local_output)}")
     return has_output

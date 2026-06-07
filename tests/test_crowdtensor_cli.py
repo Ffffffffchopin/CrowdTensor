@@ -3321,6 +3321,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
         self.assertIn("  answer: local generated text must stay local", rendered)
+        self.assertIn(
+            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            rendered,
+        )
         self.assertIn("  result: status=complete tokens=2/2 outputs=1 display=local-private", rendered)
         self.assertIn(
             "  output_display: terminal=local-private terminal_text=True saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True",
@@ -3331,6 +3335,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertLess(rendered.index("  answer: local generated text must stay local"), rendered.index("  local_output: "))
+        self.assertLess(rendered.index("  answer_scope: "), rendered.index("  local_output: "))
         self.assertLess(rendered.index("  answer: local generated text must stay local"), rendered.index("  trace: "))
         self.assertIn(f"  output_dir: {output_dir}", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
@@ -5276,7 +5281,12 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("  answer:  readable beta text", rendered)
+        self.assertIn(
+            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            rendered,
+        )
         self.assertLess(rendered.index("  answer:  readable beta text"), rendered.index("  local_output: "))
+        self.assertLess(rendered.index("  answer_scope: "), rendered.index("  local_output: "))
         self.assertLess(rendered.index("  answer:  readable beta text"), rendered.index("  trace: "))
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --include-output",
@@ -7130,6 +7140,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("  answer:  first output", rendered)
         self.assertIn("  answer[1]:  first output", rendered)
         self.assertIn("  answer[2]:  second output", rendered)
+        self.assertIn(
+            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            rendered,
+        )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["output_count"], 2)
         self.assertEqual([row["generated_text"] for row in persisted["local_output"]["outputs"]], ["", ""])
@@ -7425,6 +7439,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             report["local_output_note"],
             "Raw generated text is suppressed in JSON/public output; rerun without --json for local display.",
         )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        self.assertNotIn("  answer_scope: ", stdout.getvalue())
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["output_request"]["include_output"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
@@ -7472,6 +7490,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("  answer:  first answer", rendered)
         self.assertIn("  answer[1]:  first answer", rendered)
         self.assertIn("  answer[2]:  second answer", rendered)
+        self.assertIn(
+            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            rendered,
+        )
 
     def test_print_infer_multiline_answer_is_indented(self) -> None:
         report = {
@@ -7497,11 +7519,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  answer: first line\n          second line\n", rendered)
         self.assertIn(
+            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            rendered,
+        )
+        self.assertIn(
             "  local_output: available=True display_only=False public_artifact_safe=False count=1 source=local-private-task-state",
             rendered,
         )
         self.assertNotIn("\nsecond line\n", rendered)
         self.assertLess(rendered.index("  answer: first line"), rendered.index("  local_output: "))
+        self.assertLess(rendered.index("  answer_scope: "), rendered.index("  local_output: "))
 
     def test_print_generate_multiline_batch_answers_are_indented(self) -> None:
         report = {
@@ -7533,6 +7560,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  answer[1]: first one\n             second one\n", rendered)
         self.assertIn("  answer[2]: first two\n             second two\n", rendered)
+        self.assertIn(
+            "  answer_scope: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+            rendered,
+        )
         self.assertNotIn("\nsecond one\n", rendered)
         self.assertNotIn("\nsecond two\n", rendered)
 
