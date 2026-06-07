@@ -141,6 +141,62 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     return entry
 
 
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Public Swarm Inference Beta RC artifacts summarize product-path "
+            "readiness, serve/join/generate status, batch/stream progress, "
+            "hashes/counts, P2P-lite discovery, CPU fallback, and diagnostics "
+            "only. They do not include answer text."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Beta RC report is shareable operator evidence, not a local "
+            "answer transcript; raw prompts, generated text, token ids, "
+            "activations, leases, credentials, and private runtime state are "
+            "excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share public_swarm_inference_beta_rc*.json/md artifacts; they "
+            "contain readiness evidence, route status, progress counters, "
+            "hashes, and diagnostics, not raw prompts or answers."
+        ),
+    }
+
+
 def safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -1103,6 +1159,9 @@ def build_common_report(
 
 def render_markdown(report: dict[str, Any]) -> str:
     rc = report.get("rc") if isinstance(report.get("rc"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
         "# CrowdTensor Public Swarm Inference Beta RC",
         "",
@@ -1112,6 +1171,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- output_dir: `{report.get('output_dir')}`",
         f"- ready: `{rc.get('ready')}`",
         f"- max_new_tokens: `{rc.get('max_new_tokens')}`",
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
         "## Diagnosis",
         "",
@@ -1129,6 +1196,9 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: list[str] | None = None) -> dict[str, Any]:
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report, secret_values))
     encoded = json.dumps(report, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in encoded]

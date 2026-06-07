@@ -16,17 +16,46 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
         return Path(tempfile.mkdtemp(prefix="crowdtensor_public_swarm_beta_rc_test_"))
 
     def test_check_builds_ready_local_loopback_rc_with_fake_runner(self) -> None:
+        output_dir = self._tmp_dir()
         result = check.run_check(check.parse_args([
             "--mode",
             "local-loopback",
             "--output-dir",
-            str(self._tmp_dir()),
+            str(output_dir),
             "--max-new-tokens",
             "2",
         ]))
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["schema"], "public_swarm_inference_beta_rc_check_v1")
+        report = json.loads((output_dir / "rc" / "public_swarm_inference_beta_rc.json").read_text(encoding="utf-8"))
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertFalse(report["answer_scope"]["terminal_only"])
+        self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+        self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
+        self.assertFalse(report["answer_scope"]["raw_prompt_public"])
+        self.assertFalse(report["answer_scope"]["raw_generated_text_public"])
+        self.assertFalse(report["answer_scope"]["generated_token_ids_public"])
+        self.assertTrue(report["answer_scope"]["public_artifact_safe"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertFalse(report["shareable_summary"]["raw_prompt_public"])
+        self.assertFalse(report["shareable_summary"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        markdown = (output_dir / "rc" / "public_swarm_inference_beta_rc.md").read_text(encoding="utf-8")
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn(
+            "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
+            markdown,
+        )
 
     def test_check_builds_ready_kaggle_package_rc_with_fake_runner(self) -> None:
         result = check.run_check(check.parse_args([
@@ -601,6 +630,11 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
 
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("admin-secret", encoded)
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertEqual(check.output_scope_errors(report), [])
+        broken = dict(report)
+        broken["output_request"] = {**report["output_request"], "include_output": True}
+        self.assertIn("output_request_include_output_mismatch", check.output_scope_errors(broken))
 
 
 if __name__ == "__main__":
