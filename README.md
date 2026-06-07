@@ -78,10 +78,15 @@ prints the local display-only generated text, and writes a compact
 `infer_summary.json` under `dist/infer`. JSON and public artifacts keep raw
 prompts, generated text, token ids, credentials, and activations out of
 shareable files. Use `--full-evidence` when you want the broader Public Swarm
-v2 gate instead of the faster user path. Existing-swarm runs also include a
-safe `wait_progress` summary with poll count, accepted rows, endpoint readiness,
-and observed token progress so timeouts are actionable without exposing raw
-text; both `infer` and `generate` include `operator_action` suggestions for
+v2 gate instead of the faster user path. Pick one prompt source per command:
+use the positional prompt, `--prompt-text`/`--prompt` for `generate`, or
+`--prompt-texts` for a bounded batch. The CLI rejects mixed prompt sources
+instead of guessing. Reports expose `output_request.include_output` while
+keeping `output_request.raw_generated_text_public` false in JSON and saved
+artifacts. Existing-swarm runs also include a safe `wait_progress` summary with
+poll count, accepted rows, endpoint readiness, and observed token progress so
+timeouts are actionable without exposing raw text; both `infer` and `generate`
+include `operator_action` suggestions for
 checking tokens, Miner health, admin API access, or timeout limits. They also
 print `next[...]` lines with safe follow-up commands. Human `infer` and
 `generate` output use your current local prompt so the next command is directly

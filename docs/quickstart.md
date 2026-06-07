@@ -83,13 +83,18 @@ real inference request; it also checks the Coordinator `/ready` endpoint. Pass
 read `/state` and verify visible stage0/stage1 Miner capabilities.
 Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
 human output prints each result separately while JSON reports keep raw text
-redacted. Existing-swarm reports include `wait_progress` with poll count,
-accepted rows, endpoint readiness, and observed token progress for safe timeout
-debugging; `infer` and `generate` turn that progress into a concrete
-`operator_action`. Human output also includes `next[...]` lines with safe,
-copyable follow-up commands. Human `infer` and `generate` output use your
-current local prompt in those next commands; JSON reports and saved artifacts
-keep raw prompts and token values represented as placeholders.
+redacted. Pick one prompt source per command: positional prompt,
+`--prompt-text`/`--prompt` for `generate`, or `--prompt-texts` for a bounded
+batch. The CLI rejects mixed prompt sources instead of guessing. Reports expose
+`output_request.include_output` while keeping
+`output_request.raw_generated_text_public` false in JSON and saved artifacts.
+Existing-swarm reports include `wait_progress` with poll count, accepted rows,
+endpoint readiness, and observed token progress for safe timeout debugging;
+`infer` and `generate` turn that progress into a concrete `operator_action`.
+Human output also includes `next[...]` lines with safe, copyable follow-up
+commands. Human `infer` and `generate` output use your current local prompt in
+those next commands; JSON reports and saved artifacts keep raw prompts and token
+values represented as placeholders.
 If `ready_to_submit` is printed, use its `label` and `next_step` before submitting:
 `verified` means route, Coordinator, and distinct stage Miners were checked;
 `partial` means the request shape can submit but stage Miners still need
