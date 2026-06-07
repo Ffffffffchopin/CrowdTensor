@@ -1163,6 +1163,26 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
 
+    def test_generate_review_next_fallback_cleans_batch_prompt_conflict(self) -> None:
+        prompts = "first private prompt,second private prompt"
+        report = {
+            "review_summary": {
+                "recommended_label": "check generation route",
+                "recommended_reason": "verify_stage_miners",
+                "next_command": "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '<prompt>' --prompt-texts '<prompt-1>,<prompt-2>' --dry-run",
+                "public_artifact_safe": True,
+            },
+            "local_prompt_texts": prompts,
+        }
+
+        summary = cli.display_review_summary(report, cli.local_generate_command_line)
+
+        self.assertEqual(
+            summary["next_command"],
+            f"crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-texts '{prompts}' --dry-run",
+        )
+        self.assertNotIn("--prompt-text '<prompt>'", cli.review_next_command_text(summary))
+
     def test_generate_accepts_positional_prompt_like_infer(self) -> None:
         prompt = "CrowdTensor positional prompt"
         args = cli.parse_args([
@@ -6359,6 +6379,29 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn("--prompt-text 'first prompt'", rendered)
         self.assertNotIn(cli.INFER_BATCH_PROMPTS_PLACEHOLDER, rendered)
+
+    def test_infer_review_next_fallback_cleans_batch_prompt_conflict(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_texts = "first prompt,second prompt"
+        report = {
+            "review_summary": {
+                "recommended_label": "check existing swarm",
+                "recommended_reason": "verify_stage_miners",
+                "next_command": f"crowdtensor infer '<prompt>' --mode existing --output-dir {output_dir} --prompt-text '<prompt>' --prompt-texts '<prompt-1>,<prompt-2>' --dry-run",
+                "public_artifact_safe": True,
+            },
+            "local_prompt_texts": prompt_texts,
+        }
+
+        summary = cli.display_review_summary(report, cli.local_infer_command_line)
+        rendered = cli.review_next_command_text(summary)
+
+        self.assertEqual(
+            summary["next_command"],
+            f"crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '{prompt_texts}' --dry-run",
+        )
+        self.assertNotIn("infer '<prompt>'", rendered)
+        self.assertNotIn("--prompt-text '<prompt>'", rendered)
 
     def test_infer_existing_batch_outputs_are_display_only(self) -> None:
         output_dir = Path(self._tmp_dir())

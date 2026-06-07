@@ -800,6 +800,18 @@ def display_review_summary(
     local_prompt_present = bool(report.get("local_prompt_text") or report.get("local_prompt_texts"))
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     if not local_prompt_present or not recommended.get("command_line"):
+        if local_prompt_present and summary.get("next_command"):
+            try:
+                fallback_command = shlex.split(str(summary.get("next_command") or ""))
+            except ValueError:
+                fallback_command = []
+            if fallback_command:
+                fallback_item = {"command": fallback_command}
+                rendered = command_line_renderer(fallback_item, report)
+                if rendered:
+                    display_summary = dict(summary)
+                    display_summary["next_command"] = rendered
+                    return display_summary
         return summary
     rendered = command_line_renderer(recommended, report)
     if not rendered:
