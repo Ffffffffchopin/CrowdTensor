@@ -765,7 +765,7 @@ NEXT_REASON_DETAILS = {
     "check_generation_route": "Check the generation route before submitting.",
     "set_admin_token": "Set the admin token before submitting.",
     "follow_operator_action": "Follow the printed action before retrying.",
-    "collect_broader_evidence": "Run the broader local evidence path for stronger proof.",
+    "collect_broader_evidence": "Optionally run the broader local evidence path for stronger proof.",
     "rerun_local_inference": "Rerun the local inference path.",
     "rerun_inference": "Rerun the inference request.",
     "rerun_generation": "Rerun the generation request.",
@@ -844,9 +844,15 @@ def _infer_recommended_next_command(
             return found
     if mode == "local":
         if not full_evidence:
+            found = _pick_next_command(next_commands, equals("optional broader local evidence"), reason="collect_broader_evidence")
+            if found:
+                return found
             found = _pick_next_command(next_commands, equals("run broader local evidence"), reason="collect_broader_evidence")
             if found:
                 return found
+        found = _pick_next_command(next_commands, equals("rerun local inference"), reason="rerun_local_inference")
+        if found:
+            return found
         found = _pick_next_command(next_commands, equals("run local inference"), reason="rerun_local_inference")
         if found:
             return found
@@ -5907,13 +5913,14 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
                 _infer_command_args(args, full_evidence=True),
             ))
             return commands
+        completed_run = bool(ok and not bool(getattr(args, "dry_run", False)))
         commands.append(command_entry(
-            "run local inference",
+            "rerun local inference" if completed_run else "run local inference",
             _infer_command_args(args, full_evidence=False),
         ))
         if not bool(getattr(args, "full_evidence", False)):
             commands.append(command_entry(
-                "run broader local evidence",
+                "optional broader local evidence" if completed_run else "run broader local evidence",
                 _infer_command_args(args, full_evidence=True),
             ))
         return commands

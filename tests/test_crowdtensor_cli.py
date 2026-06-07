@@ -7637,8 +7637,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["answer_scope"]["scope_state"], "json-suppressed")
         self.assertEqual(report["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "json-suppressed")
-        self.assertEqual(report["recommended_next_command"]["label"], "run broader local evidence")
+        self.assertEqual(report["recommended_next_command"]["label"], "optional broader local evidence")
         self.assertEqual(report["recommended_next_command"]["reason"], "collect_broader_evidence")
+        self.assertEqual(
+            report["recommended_next_command"]["reason_detail"],
+            "Optionally run the broader local evidence path for stronger proof.",
+        )
         self.assertEqual(report["route"]["route_source"], "local-product-loopback")
         self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -7650,6 +7654,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode local --output-dir {output_dir} --max-new-tokens 8 --full-evidence",
             next_lines,
         )
+        self.assertEqual([item["label"] for item in report["next_commands"]], [
+            "rerun local inference",
+            "optional broader local evidence",
+        ])
         self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
         self.assertTrue(report["artifacts"]["product_swarm_mvp_report"]["present"] is False)
         self.assertTrue((output_dir / "infer_summary.json").is_file())
@@ -7666,7 +7674,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["answer_scope"]["scope_state"], "json-suppressed")
         self.assertEqual(persisted["answer_scope"]["summary"], cli.SAVED_ANSWER_SCOPE_TEXT)
         self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "json-suppressed")
-        self.assertEqual(persisted["recommended_next_command"]["label"], "run broader local evidence")
+        self.assertEqual(persisted["recommended_next_command"]["label"], "optional broader local evidence")
+        self.assertEqual(
+            persisted["recommended_next_command"]["reason_detail"],
+            "Optionally run the broader local evidence path for stronger proof.",
+        )
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(
@@ -7684,6 +7696,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
+        self.assertIn("recommended_next: optional broader local evidence reason=collect_broader_evidence", rendered)
+        self.assertIn("next[1] rerun local inference", rendered)
+        self.assertIn("next[2] optional broader local evidence", rendered)
         self.assertIn(
             "  local_output: available=False display_only=False public_artifact_safe=True saved_redacted=True count=1 source=none",
             rendered,
