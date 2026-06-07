@@ -1008,6 +1008,30 @@ def review_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def release_review_summary_text(summary: dict[str, Any]) -> str:
+    return (
+        f"state={summary.get('state') or 'unknown'} "
+        f"next={summary.get('next_step') or 'none'} "
+        f"inspect={summary.get('inspect_first') or 'none'} "
+        f"support={summary.get('support_bundle') or 'none'} "
+        f"not_completed={_safe_int(summary.get('not_completed_count'))} "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
+    )
+
+
+def release_artifact_summary_text(summary: dict[str, Any]) -> str:
+    paths = summary.get("shareable_paths") if isinstance(summary.get("shareable_paths"), list) else []
+    shareable = ",".join(str(path) for path in paths) if paths else "none"
+    return (
+        f"inspect={summary.get('inspect_first') or 'none'} "
+        f"json={summary.get('machine_readable') or 'none'} "
+        f"support={summary.get('support_bundle') or 'none'} "
+        f"runbook={summary.get('runbook') or 'none'} "
+        f"shareable={shareable} "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
+    )
+
+
 def review_attention_display_text(summary: dict[str, Any]) -> str:
     return str(summary.get("attention_detail") or attention_display_text(str(summary.get("attention") or "")))
 
@@ -11590,6 +11614,8 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
     product_batch = beta.get("batch") if isinstance(beta.get("batch"), dict) else {}
     product_stream = beta.get("stream") if isinstance(beta.get("stream"), dict) else {}
@@ -11602,6 +11628,12 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {beta.get('ready')}")
     print(f"  model: {beta.get('hf_model_id')} tokens={beta.get('max_new_tokens')}")
+    if review_summary:
+        print(f"  review: {release_review_summary_text(review_summary)}")
+    if review_summary.get("inspect_first"):
+        print(f"  inspect_first: {review_summary.get('inspect_first')}")
+    if artifact_summary:
+        print(f"  artifacts: {release_artifact_summary_text(artifact_summary)}")
     print(f"  cpu_default_ready: {beta.get('cpu_default_ready')}")
     print(f"  external_two_stage_ready: {beta.get('external_two_stage_ready')}")
     print(f"  external_stage_requeue_ready: {beta.get('external_stage_requeue_ready')}")

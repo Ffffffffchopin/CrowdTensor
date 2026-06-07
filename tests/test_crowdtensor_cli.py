@@ -5883,6 +5883,27 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
             },
+            "artifact_summary": {
+                "inspect_first": "public_real_llm_swarm_beta.md",
+                "machine_readable": "public_real_llm_swarm_beta.json",
+                "support_bundle": "support_bundle.json",
+                "runbook": "PUBLIC_REAL_LLM_SWARM_BETA.md",
+                "shareable_paths": [
+                    "public_real_llm_swarm_beta.json",
+                    "public_real_llm_swarm_beta.md",
+                    "support_bundle.json",
+                ],
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "ready",
+                "ready": True,
+                "next_step": "share_public_artifacts",
+                "inspect_first": "public_real_llm_swarm_beta.md",
+                "support_bundle": "support_bundle.json",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
             "diagnosis_codes": ["public_real_llm_swarm_beta_ready"],
             "artifacts": {},
         }
@@ -5896,6 +5917,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  external tokens: 16/16", output)
         self.assertIn("  p2p tokens: 16/16", output)
         self.assertIn("  public_swarm_v2 tokens: 16/16 accepted_rows=32/32", output)
+        self.assertIn(
+            "  review: state=ready next=share_public_artifacts inspect=public_real_llm_swarm_beta.md support=support_bundle.json not_completed=0 public_artifact_safe=True",
+            output,
+        )
+        self.assertIn("  inspect_first: public_real_llm_swarm_beta.md", output)
+        self.assertIn(
+            "  artifacts: inspect=public_real_llm_swarm_beta.md json=public_real_llm_swarm_beta.json support=support_bundle.json runbook=PUBLIC_REAL_LLM_SWARM_BETA.md shareable=public_real_llm_swarm_beta.json,public_real_llm_swarm_beta.md,support_bundle.json public_artifact_safe=True",
+            output,
+        )
         self.assertIn("  public_swarm_v2 real_p2p_local: route=True requeue=True", output)
         self.assertIn("  batch ready: product=True p2p=True v2=True", output)
         self.assertIn("  stream ready: product=True p2p=True v2=True", output)
@@ -5950,6 +5980,15 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "Public Swarm v2 generated token target",
                 "persistent dual-stage KV-cache reuse",
             ],
+            "review_summary": {
+                "state": "blocked",
+                "ready": False,
+                "next_step": "review_not_completed",
+                "inspect_first": "public_real_llm_swarm_beta.md",
+                "support_bundle": "support_bundle.json",
+                "not_completed_count": 3,
+                "public_artifact_safe": True,
+            },
             "artifacts": {},
         }
         stdout = io.StringIO()
@@ -5959,6 +5998,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         output = stdout.getvalue()
 
         self.assertIn("  ready: False", output)
+        self.assertIn(
+            "  review: state=blocked next=review_not_completed inspect=public_real_llm_swarm_beta.md support=support_bundle.json not_completed=3 public_artifact_safe=True",
+            output,
+        )
         self.assertIn("  public_swarm_v2 tokens: 8/16 accepted_rows=16/32", output)
         self.assertIn("  kv_cache hits: stage0=7 stage1=7", output)
         self.assertIn("  not_completed:", output)
