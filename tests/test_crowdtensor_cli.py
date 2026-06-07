@@ -3715,6 +3715,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(human_report)
         rendered = stdout.getvalue()
+        self.assertIn("  batch: requests=2 observed=2 ready=True", rendered)
         self.assertNotIn("  output:  raw one", rendered)
         self.assertIn("  output[1]:  raw one", rendered)
         self.assertIn("  output[2]:  raw two", rendered)
@@ -4607,6 +4608,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
         rendered = stdout.getvalue()
+        self.assertIn("  batch: requests=2 observed=2 ready=True", rendered)
         self.assertNotIn("  output:  first output", rendered)
         self.assertIn("  output[1]:  first output", rendered)
         self.assertIn("  output[2]:  second output", rendered)
@@ -4622,7 +4624,6 @@ class CrowdTensorCliTests(unittest.TestCase):
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
             "infer",
-            "first prompt",
             "--prompt-texts",
             "first prompt,second prompt",
             "--mode",

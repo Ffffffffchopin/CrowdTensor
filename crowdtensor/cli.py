@@ -477,6 +477,14 @@ def local_output_text(local_output: dict[str, Any]) -> str:
     )
 
 
+def batch_status_text(batch: dict[str, Any]) -> str:
+    return (
+        f"requests={batch.get('request_count') or batch.get('expected_request_count')} "
+        f"observed={batch.get('observed_request_count')} "
+        f"ready={batch.get('batch_generation_ready') if 'batch_generation_ready' in batch else batch.get('ready')}"
+    )
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -4076,6 +4084,14 @@ def _infer_summary_from_payload(
         prompts = parse_prompt_texts_arg(str(getattr(args, "prompt_text", "") or ""), str(getattr(args, "prompt_texts", "") or ""))
     except ValueError:
         prompts = [str(getattr(args, "prompt_text", "") or "")]
+    expected_request_count = int(batch.get("expected_request_count") or batch.get("request_count") or len(prompts) or 1)
+    observed_request_count = (
+        batch.get("observed_request_count")
+        or generation.get("observed_request_count")
+        or generation.get("request_count")
+        or len(display_outputs)
+        or (1 if generated_text else 0)
+    )
     dry_run = bool(payload.get("dry_run"))
     if dry_run:
         ok = bool(payload.get("ok") and route.get("route_ready"))
@@ -4113,7 +4129,7 @@ def _infer_summary_from_payload(
         "output_dir": str(output_dir),
         "prompt": {
             "prompt_hash": stable_hash_payload([stable_hash_text(prompt) for prompt in prompts]),
-            "prompt_count": int(batch.get("expected_request_count") or batch.get("request_count") or 1),
+            "prompt_count": expected_request_count,
             "raw_prompt_public": False,
         },
         "model": {
@@ -4134,9 +4150,10 @@ def _infer_summary_from_payload(
         "stage_preflight": annotate_stage_preflight(payload.get("stage_preflight")) if isinstance(payload.get("stage_preflight"), dict) else {},
         "ready_to_submit": ready_to_submit,
         "batch": {
-            "enabled": bool(batch.get("enabled")),
+            "enabled": bool(batch.get("enabled") or expected_request_count > 1),
+            "request_count": expected_request_count,
             "ready": bool(batch.get("batch_generation_ready")),
-            "observed_request_count": batch.get("observed_request_count"),
+            "observed_request_count": observed_request_count,
         },
         "stream": {
             "enabled": bool(stream.get("enabled") or stream.get("requested")),
@@ -7746,11 +7763,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
         )
     batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
     if batch.get("enabled"):
-        print(
-            "  batch: "
-            f"requests={batch.get('request_count')} "
-            f"ready={batch.get('batch_generation_ready')}"
-        )
+        print(f"  batch: {batch_status_text(batch)}")
     stream = report.get("stream") if isinstance(report.get("stream"), dict) else {}
     if stream.get("enabled"):
         if report.get("dry_run"):
@@ -7932,6 +7945,9 @@ def print_infer(report: dict[str, Any]) -> None:
         f"{generation.get('generated_token_count')}/{generation.get('max_new_tokens')} "
         f"hash={generation.get('generated_text_hash')}"
     )
+    batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
+    if batch.get("enabled"):
+        print(f"  batch: {batch_status_text(batch)}")
     route = report.get("route") if isinstance(report.get("route"), dict) else {}
     stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
     print(
