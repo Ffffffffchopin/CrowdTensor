@@ -127,6 +127,12 @@ limits. Live and summary stream progress use safe request ids or hash prefixes,
 print per-request token/target progress for bounded batch streams, mark missing
 stream slots, print `stream_issue` when a request is missing or incomplete, and
 print `recommended_next` plus `next[...]` lines with safe follow-up commands.
+The adjacent `runtime_options` line records safe wait/retry controls:
+`timeout_seconds`, `poll_interval`, `http_timeout`, and
+`admin_results_limit`. Timeout retry commands preserve non-default
+poll/http/result-limit values while only extending `--timeout-seconds`, so slow
+remote swarms stay debuggable without exposing prompts, generated text,
+credentials, or tokens.
 The `trace` line in human output and the `trace` object in JSON/Markdown give a
 safe troubleshooting summary: session id, request count, accepted ledger rows,
 stream event count, and per-request ids or prompt hashes. It never includes raw
