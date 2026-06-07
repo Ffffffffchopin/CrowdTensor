@@ -5776,6 +5776,65 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "one,two,three,four,five",
             ])
 
+    def test_public_real_llm_swarm_beta_prints_output_scope(self) -> None:
+        report = {
+            "schema": "public_real_llm_swarm_beta_v1",
+            "cli_schema": "public_real_llm_swarm_beta_cli_v1",
+            "ok": True,
+            "mode": "release",
+            "output_dir": "dist/beta",
+            "beta": {
+                "ready": True,
+                "cpu_default_ready": True,
+                "external_two_stage_ready": True,
+                "external_stage_requeue_ready": True,
+                "p2p_ready_product_beta": True,
+                "cuda_optional_fail_closed_ready": True,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_generated_text_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "diagnosis_codes": ["public_real_llm_swarm_beta_ready"],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_public_real_llm_swarm_beta(report)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            output,
+        )
+
     def test_usable_swarm_cli_wraps_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
