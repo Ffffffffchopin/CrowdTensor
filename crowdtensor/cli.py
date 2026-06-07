@@ -9304,6 +9304,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     if artifact_summary:
         print(f"  artifacts: {artifact_summary_text(artifact_summary)}")
+    if report.get("output_dir"):
+        print(f"  output_dir: {report.get('output_dir')}")
     if report.get("local_output_note"):
         print(f"  note: {report.get('local_output_note')}")
     if report.get("operator_action"):

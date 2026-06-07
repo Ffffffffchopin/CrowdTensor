@@ -990,6 +990,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"  artifacts: inspect={output_dir / 'generate_summary.md'} json={output_dir / 'generate_summary.json'} markdown={output_dir / 'generate_summary.md'} present=2/2 public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(f"  output_dir: {output_dir}", rendered)
         self.assertNotIn("stream_events: None", rendered)
 
     def test_generate_main_prints_copyable_local_prompt_without_persisting_it(self) -> None:
@@ -2857,6 +2858,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"  artifacts: inspect={output_dir / 'generate_summary.md'} json={output_dir / 'generate_summary.json'} markdown={output_dir / 'generate_summary.md'} present=2/2 public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(f"  output_dir: {output_dir}", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
     def test_product_generate_human_output_is_not_persisted_to_summary(self) -> None:
@@ -2944,6 +2946,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  output: local generated text must stay local", rendered)
         self.assertIn("  result: status=complete tokens=2/2 outputs=1 display=local-private", rendered)
+        self.assertIn(f"  output_dir: {output_dir}", rendered)
         self.assertIn(f"markdown={output_dir / 'generate_summary.md'}", rendered)
 
     def test_product_generate_timeout_reports_safe_wait_progress(self) -> None:
