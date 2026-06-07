@@ -62,9 +62,10 @@ crowdtensor infer "CrowdTensor routes small models across home compute"
 
 It starts the fast local product loopback route, runs tiny GPT split inference,
 prints the local display-only generated text, and writes a compact
-`infer_summary.json` under `dist/infer`. JSON mode and saved reports keep raw
-prompts and generated text redacted. Use `--full-evidence` when you want the
-broader Public Swarm v2 gate instead of the faster user path.
+`infer_summary.json` plus a safe `infer_summary.md` under `dist/infer`. JSON
+mode, Markdown, and saved reports keep raw prompts and generated text redacted.
+Use `--full-evidence` when you want the broader Public Swarm v2 gate instead
+of the faster user path.
 
 For machine-readable output:
 

@@ -4196,6 +4196,61 @@ def _infer_ready_to_submit(
     )
 
 
+def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
+    generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
+    route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
+    batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
+    stream = summary.get("stream") if isinstance(summary.get("stream"), dict) else {}
+    output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
+    lines = [
+        "# CrowdTensor Infer Summary",
+        "",
+        f"- OK: `{bool(summary.get('ok'))}`",
+        f"- Mode: `{summary.get('mode')}`",
+        f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
+        (
+            "- Generation: "
+            f"`{generation.get('generated_token_count')}/{generation.get('max_new_tokens')}` "
+            f"hash=`{generation.get('generated_text_hash')}`"
+        ),
+        f"- Route: source=`{route.get('route_source')}` ready=`{route.get('route_ready')}`",
+        f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{batch.get('observed_request_count')}/{batch.get('request_count')}` ready=`{batch.get('ready')}`",
+        f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
+    ]
+    if stream.get("issue_summary"):
+        lines.append(f"- Stream issue: `{stream.get('issue_summary')}`")
+    if summary.get("operator_action"):
+        lines.append(f"- Action: {summary.get('operator_action')}")
+    lines.extend([
+        f"- Saved JSON: `{saved_summary.get('path')}`",
+        f"- Output request: `{output_request_text(output_request)}`",
+        "",
+        "## Next Commands",
+        "",
+    ])
+    next_commands = summary.get("next_commands") if isinstance(summary.get("next_commands"), list) else []
+    if next_commands:
+        for index, item in enumerate(next_commands, start=1):
+            if not isinstance(item, dict):
+                continue
+            requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
+            suffix = f" requires={','.join(str(name) for name in requires_env)}" if requires_env else ""
+            lines.append(f"{index}. `{item.get('label')}`: `{item.get('command_line')}`{suffix}")
+    else:
+        lines.append("None.")
+    lines.extend([
+        "",
+        "## Safety",
+        "",
+        "- Raw prompts are not public.",
+        "- Raw generated text and generated token ids are redacted from saved artifacts.",
+        "- This is Coordinator-backed, read-only, tiny/small-model scoped inference evidence; not production Hivemind/Petals parity or large-model serving.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def _infer_summary_from_payload(
     args: argparse.Namespace,
     payload: dict[str, Any],
@@ -4344,6 +4399,7 @@ def _infer_summary_from_payload(
         },
         "saved_summary": {
             "path": str(output_dir / "infer_summary.json"),
+            "markdown_path": str(output_dir / "infer_summary.md"),
             "raw_generated_text_redacted": True,
             "public_artifact_safe": True,
         },
@@ -4387,6 +4443,12 @@ def _infer_summary_from_payload(
             "present": True,
             "schema": INFER_CLI_SCHEMA,
             "ok": ok,
+        },
+        "infer_summary_markdown": {
+            "kind": "crowdtensor_infer_summary_markdown",
+            "path": "infer_summary.md",
+            "present": True,
+            "ok": ok,
         }
     }
     if mode == "local":
@@ -4412,6 +4474,10 @@ def _infer_summary_from_payload(
     _strip_infer_local_output_text(persisted_summary)
     (output_dir / "infer_summary.json").write_text(
         json.dumps(sanitize(redact_values(persisted_summary)), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "infer_summary.md").write_text(
+        render_infer_summary_markdown(sanitize(redact_values(persisted_summary))),
         encoding="utf-8",
     )
     return sanitize(redact_values(summary))
@@ -8207,6 +8273,7 @@ def print_infer(report: dict[str, Any]) -> None:
         print(
             "  saved_summary: "
             f"{saved_summary.get('path')} "
+            f"markdown={saved_summary.get('markdown_path')} "
             f"raw_generated_text_redacted={saved_summary.get('raw_generated_text_redacted')} "
             f"public_artifact_safe={saved_summary.get('public_artifact_safe')}"
         )
@@ -9690,9 +9757,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Run the shortest user-facing CrowdTensor inference path.\n\n"
             "Default mode starts the fast local product loopback proof, runs a tiny real GPT split\n"
             "across stage0/stage1 workers, prints local display-only output in human mode, and\n"
-            "writes a redacted infer_summary.json. Use --mode existing to target an already\n"
-            "running Coordinator or P2P-discovered swarm. Reports include action and next[...] lines\n"
-            "with copyable follow-up commands. ready_to_submit labels mean: verified is ready\n"
+            "writes redacted infer_summary.json and infer_summary.md files. Use --mode existing\n"
+            "to target an already running Coordinator or P2P-discovered swarm.\n"
+            "Reports include action and next[...] lines with copyable follow-up commands.\n"
+            "ready_to_submit labels mean: verified is ready\n"
             "after route, Coordinator, and stage Miner checks; partial can submit but still needs\n"
             "the printed follow-up preflight; blocked needs the printed operator_action;\n"
             "skipped is request-shape only. ready_to_submit.next_step is the script-friendly\n"

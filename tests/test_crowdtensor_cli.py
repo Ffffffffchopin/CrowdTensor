@@ -5193,7 +5193,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn(
-            f"  saved_summary: {output_dir / 'infer_summary.json'} raw_generated_text_redacted=True public_artifact_safe=True",
+            f"  saved_summary: {output_dir / 'infer_summary.json'} markdown={output_dir / 'infer_summary.md'} raw_generated_text_redacted=True public_artifact_safe=True",
             stdout.getvalue(),
         )
         self.assertIn("Raw generated text is shown only in local human output", stdout.getvalue())
@@ -5215,8 +5215,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "infer_summary.json"))
+        self.assertEqual(report["saved_summary"]["markdown_path"], str(output_dir / "infer_summary.md"))
         self.assertTrue(report["saved_summary"]["raw_generated_text_redacted"])
         self.assertTrue(report["saved_summary"]["public_artifact_safe"])
+        self.assertTrue(report["artifacts"]["infer_summary_markdown"]["present"])
         self.assertEqual(report["local_output"]["generated_text"], "local text only")
         self.assertFalse(report["local_output"]["public_artifact_safe"])
         self.assertEqual(
@@ -5226,8 +5228,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["wait_progress"]["max_observed_token_count"], 16)
         self.assertEqual(persisted["saved_summary"]["path"], str(output_dir / "infer_summary.json"))
+        self.assertEqual(persisted["saved_summary"]["markdown_path"], str(output_dir / "infer_summary.md"))
         self.assertTrue(persisted["saved_summary"]["raw_generated_text_redacted"])
         self.assertTrue(persisted["saved_summary"]["public_artifact_safe"])
+        self.assertTrue(persisted["artifacts"]["infer_summary_markdown"]["present"])
         self.assertTrue(persisted["output_request"]["include_output"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertEqual(persisted["local_output"]["generated_text"], "")
@@ -5237,6 +5241,15 @@ class CrowdTensorCliTests(unittest.TestCase):
             persisted["local_output_note"],
             "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
         )
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("# CrowdTensor Infer Summary", markdown)
+        self.assertIn("- OK: `True`", markdown)
+        self.assertIn("- Mode: `existing`", markdown)
+        self.assertIn("- Generation: `16/16` hash=`sha256:generated`", markdown)
+        self.assertIn("Raw generated text and generated token ids are redacted", markdown)
+        self.assertIn("`submit inference`", markdown)
+        self.assertNotIn("local text only", markdown)
+        self.assertNotIn("CrowdTensor user prompt", markdown)
 
     def test_infer_main_prints_copyable_local_prompt_without_persisting_it(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -5557,6 +5570,12 @@ class CrowdTensorCliTests(unittest.TestCase):
             "Inference completed, but stream progress is incomplete (request[2]=req-2:1/2); rerun with --stream if you need live token evidence.",
         )
         self.assertNotIn("must not leak", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- Stream issue: `request[2]=req-2:1/2`", markdown)
+        self.assertIn("Inference completed, but stream progress is incomplete", markdown)
+        self.assertNotIn("must not leak", markdown)
+        self.assertNotIn("first prompt", markdown)
+        self.assertNotIn("second prompt", markdown)
 
     def test_infer_existing_recomputes_missing_stream_issue_summary(self) -> None:
         output_dir = Path(self._tmp_dir())

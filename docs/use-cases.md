@@ -22,7 +22,7 @@ You get:
 - A fast local Coordinator and two-stage Miner loopback proof.
 - Real tiny GPT split inference.
 - Local terminal output for the generated text.
-- A compact user-facing `infer_summary.json`.
+- A compact user-facing `infer_summary.json` and safe `infer_summary.md`.
 - Decoded-token correctness checks.
 - Stage assignment and distinct Miner evidence.
 - Redacted artifacts under `dist/`.
