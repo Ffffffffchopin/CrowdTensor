@@ -4084,7 +4084,11 @@ def _generate_result_from_report(report: dict[str, Any]) -> dict[str, Any]:
         status = "partial"
     else:
         status = "blocked"
-    display = "local-private" if has_local_display_output else "hash-only"
+    display = (
+        "local-private"
+        if has_local_display_output
+        else ("hash-only-json" if report.get("json_mode") else "hash-only")
+    )
     return {
         "status": status,
         "generated_token_count": generated_tokens,
@@ -8710,6 +8714,7 @@ def _attach_infer_existing_preflight(payload: dict[str, Any], args: argparse.Nam
 def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir_explicit = bool(getattr(args, "output_dir_explicit", False))
+    json_mode = bool(getattr(args, "json", False))
     prompt_texts = parse_prompt_texts_arg(args.prompt_text, getattr(args, "prompt_texts", ""))
     prompt_text = prompt_texts[0]
     batch_enabled = len(prompt_texts) > 1
@@ -8769,6 +8774,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": bool(route.get("usable_now") if args.p2p else route.get("coordinator_url_present")),
             "mode": "generate",
+            "json_mode": json_mode,
             "dry_run": True,
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
@@ -8813,6 +8819,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
+            "json_mode": json_mode,
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
@@ -8841,6 +8848,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
+            "json_mode": json_mode,
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
@@ -8855,6 +8863,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
+            "json_mode": json_mode,
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
@@ -8896,6 +8905,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
             "mode": "generate",
+            "json_mode": json_mode,
             "output_dir": str(output_dir),
             "output_dir_explicit": output_dir_explicit,
             "session_request": session_request,
@@ -9075,6 +9085,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": ok,
         "mode": "generate",
+        "json_mode": json_mode,
         "dry_run": False,
         "output_dir": str(output_dir),
         "output_dir_explicit": output_dir_explicit,
