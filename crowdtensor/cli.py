@@ -601,9 +601,15 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
     })
     notes: list[str] = []
     if INFER_PROMPT_PLACEHOLDER in command_text:
-        notes.append(f"- Replace `{INFER_PROMPT_PLACEHOLDER}` with your local prompt before running saved commands.")
+        notes.append(
+            f"- Prompt placeholder `{INFER_PROMPT_PLACEHOLDER}` is redacted; prefer rerunning with "
+            "`--prompt-file prompt.txt` or `--prompt-stdin` instead of pasting prompt text into saved commands."
+        )
     if INFER_BATCH_PROMPTS_PLACEHOLDER in command_text:
-        notes.append(f"- Replace `{INFER_BATCH_PROMPTS_PLACEHOLDER}` with your comma-separated local prompts before running saved commands.")
+        notes.append(
+            f"- Batch placeholder `{INFER_BATCH_PROMPTS_PLACEHOLDER}` is redacted; prefer rerunning with "
+            "`--prompt-texts-file prompts.txt` for multi-prompt saved commands."
+        )
     if requires_env:
         notes.append(f"- Set required environment variables before running commands: `{', '.join(requires_env)}`.")
     return notes
@@ -625,8 +631,8 @@ def markdown_prompt_input_hint(command_text: str) -> str:
         noun = "local prompt"
     return (
         f"- Prompt input: saved Markdown keeps {placeholders} placeholders; "
-        f"terminal `review_next` / `recommended_next` render your {noun} for copy/paste when available, "
-        "or a `printf` pipe placeholder for `--prompt-stdin`."
+        f"terminal `review_next` / `recommended_next` render safe local prompt sources for copy/paste when available, "
+        "and saved commands should prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file`."
     )
 
 

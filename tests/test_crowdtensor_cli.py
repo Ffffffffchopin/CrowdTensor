@@ -1084,7 +1084,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Reason: Run live preflight before submitting because readiness was skipped.", markdown)
         self.assertIn("- Copy command: `crowdtensor generate --max-new-tokens 16", markdown)
         self.assertIn(
-            "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render your local prompt for copy/paste when available, or a `printf` pipe placeholder for `--prompt-stdin`.",
+            "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render safe local prompt sources for copy/paste when available, and saved commands should prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file`.",
             markdown,
         )
         self.assertIn("- Requires env: `CROWDTENSOR_OBSERVER_TOKEN`", markdown)
@@ -1135,7 +1135,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn("`check generation route`", markdown)
-        self.assertIn("Replace `<prompt>` with your local prompt before running saved commands.", markdown)
+        self.assertIn("Prompt placeholder `<prompt>` is redacted; prefer rerunning with `--prompt-file prompt.txt` or `--prompt-stdin` instead of pasting prompt text into saved commands.", markdown)
         self.assertIn("Set required environment variables before running commands: `CROWDTENSOR_ADMIN_TOKEN, CROWDTENSOR_OBSERVER_TOKEN`.", markdown)
         self.assertNotIn("CrowdTensor prompt", markdown)
         stdout = io.StringIO()
@@ -8516,7 +8516,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Reason: Rerun the inference request.", markdown)
         self.assertIn("- Copy command: `CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing", markdown)
         self.assertIn(
-            "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render your local prompt for copy/paste when available, or a `printf` pipe placeholder for `--prompt-stdin`.",
+            "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render safe local prompt sources for copy/paste when available, and saved commands should prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file`.",
             markdown,
         )
         self.assertIn("- Requires env: `CROWDTENSOR_ADMIN_TOKEN`", markdown)
@@ -8589,7 +8589,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("Raw generated text and generated token ids are redacted", markdown)
         self.assertIn("`submit inference`", markdown)
-        self.assertIn("Replace `<prompt>` with your local prompt before running saved commands.", markdown)
+        self.assertIn("Prompt placeholder `<prompt>` is redacted; prefer rerunning with `--prompt-file prompt.txt` or `--prompt-stdin` instead of pasting prompt text into saved commands.", markdown)
         self.assertIn("Set required environment variables before running commands: `CROWDTENSOR_ADMIN_TOKEN, CROWDTENSOR_OBSERVER_TOKEN`.", markdown)
         self.assertNotIn("local text only", markdown)
         self.assertNotIn("CrowdTensor user prompt", markdown)
@@ -9364,10 +9364,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Stream issue: `request[2]=req-2:1/2`", markdown)
         self.assertIn("Inference completed, but stream progress is incomplete", markdown)
         self.assertIn(
-            "- Prompt input: saved Markdown keeps `<prompt-1>,<prompt-2>` placeholders; terminal `review_next` / `recommended_next` render your local prompts for copy/paste when available, or a `printf` pipe placeholder for `--prompt-stdin`.",
+            "- Prompt input: saved Markdown keeps `<prompt-1>,<prompt-2>` placeholders; terminal `review_next` / `recommended_next` render safe local prompt sources for copy/paste when available, and saved commands should prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file`.",
             markdown,
         )
-        self.assertIn("Replace `<prompt-1>,<prompt-2>` with your comma-separated local prompts before running saved commands.", markdown)
+        self.assertIn("Batch placeholder `<prompt-1>,<prompt-2>` is redacted; prefer rerunning with `--prompt-texts-file prompts.txt` for multi-prompt saved commands.", markdown)
         self.assertNotIn("must not leak", markdown)
         self.assertNotIn("first prompt", markdown)
         self.assertNotIn("second prompt", markdown)
