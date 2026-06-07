@@ -1077,6 +1077,7 @@ def local_output_terminal_text(local_output: dict[str, Any]) -> str:
 
 def answer_scope_text(answer_scope: dict[str, Any]) -> str:
     return (
+        f"state={answer_scope.get('scope_state') or 'unknown'} "
         f"terminal_only={bool(answer_scope.get('terminal_only'))} "
         f"visible_in_terminal={bool(answer_scope.get('visible_in_terminal'))} "
         f"saved_json={answer_scope.get('saved_json_display')} "
@@ -4403,7 +4404,13 @@ def _answer_scope_from_report(report: dict[str, Any]) -> dict[str, Any]:
         bool(output_request.get("include_output"))
         and "suppressed in JSON/public output" in local_output_note
     )
+    scope_state = (
+        "terminal-visible"
+        if visible_in_terminal
+        else ("json-suppressed" if json_suppressed else "no-local-answer")
+    )
     return {
+        "scope_state": scope_state,
         "terminal_only": visible_in_terminal,
         "visible_in_terminal": visible_in_terminal,
         "saved_json_display": "hash-only",
@@ -4825,7 +4832,13 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         output_display["public_artifact_safe"] = True
     answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
     had_terminal_answer = bool(answer_scope.get("visible_in_terminal"))
+    original_scope_state = str(answer_scope.get("scope_state") or "")
     if answer_scope:
+        answer_scope["scope_state"] = (
+            "saved-terminal-redacted"
+            if had_terminal_answer
+            else (original_scope_state or "no-local-answer")
+        )
         answer_scope["visible_in_terminal"] = False
         answer_scope["terminal_only"] = False
         answer_scope["saved_json_display"] = "hash-only"
@@ -11605,8 +11618,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "When local text is shown, the terminal prints it as answer: or answer[n]: before\n"
             "answer_scope and local_output safety metadata with safe count/source fields such as\n"
             "local-private-task-state or coordinator-validation; saved artifacts keep\n"
-            "hashes/placeholders only. answer_scope distinguishes terminal-visible answers from\n"
-            "saved reports, and Markdown repeats that saved JSON/Markdown contain no generated text.\n\n"
+            "hashes/placeholders only. answer_scope.scope_state uses stable values such as\n"
+            "terminal-visible, saved-terminal-redacted, json-suppressed, and no-local-answer;\n"
+            "Markdown repeats that saved JSON/Markdown contain no generated text.\n\n"
             "The output_display line makes the display policy explicit: non-JSON human output\n"
             "may show local generated text, while JSON stdout and saved Markdown/JSON stay\n"
             "hash-only and redacted. --include-output records that local display was requested;\n"
@@ -11795,8 +11809,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "When local text is shown, the terminal prints it as answer: or answer[n]: before\n"
             "answer_scope and local_output safety metadata with safe count/source fields such as\n"
             "local-private-task-state or coordinator-validation; saved artifacts keep\n"
-            "hashes/placeholders only. answer_scope distinguishes terminal-visible answers from\n"
-            "saved reports, and Markdown repeats that saved JSON/Markdown contain no generated text.\n\n"
+            "hashes/placeholders only. answer_scope.scope_state uses stable values such as\n"
+            "terminal-visible, saved-terminal-redacted, json-suppressed, and no-local-answer;\n"
+            "Markdown repeats that saved JSON/Markdown contain no generated text.\n\n"
             "The output_display line makes the display policy explicit: non-JSON human output\n"
             "may show local generated text, while JSON stdout and saved Markdown/JSON stay\n"
             "hash-only and redacted. --include-output records that local display was requested;\n"
