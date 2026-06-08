@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -78,6 +79,373 @@ def create_session(args: argparse.Namespace) -> dict[str, Any]:
         payload=payload,
         admin_token=args.admin_token,
     )
+
+
+def stable_hash(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def redacted_micro_request_trace(trace: Any) -> list[dict[str, Any]]:
+    if not isinstance(trace, list):
+        return []
+    sanitized: list[dict[str, Any]] = []
+    for item in trace:
+        if not isinstance(item, dict):
+            continue
+        output_text = item.get("output_text") or item.get("generated_text")
+        token_ids = item.get("generated_token_ids")
+        sanitized.append({
+            "request_id": item.get("request_id"),
+            "prompt_hash": item.get("prompt_hash"),
+            "activation_hash": item.get("activation_hash"),
+            "output_hash": item.get("output_hash") or (stable_hash(output_text) if output_text else None),
+            "baseline_match": item.get("baseline_match"),
+            "decoded_tokens_match": item.get("decoded_tokens_match"),
+            "generation_step": item.get("generation_step"),
+            "generated_token_count": item.get("generated_token_count") or (len(token_ids) if isinstance(token_ids, list) else None),
+            "generated_text_hash": stable_hash(output_text) if output_text else item.get("generated_text_hash"),
+            "generated_text_redacted": bool(output_text),
+            "generated_token_ids_redacted": isinstance(token_ids, list),
+        })
+    return sanitized
+
+
+def generated_text_hash(value: Any) -> str | None:
+    if value is None:
+        return None
+    return stable_hash(str(value))
+
+
+def micro_artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "micro_llm_sharded_evidence.md",
+        "summary_json": output_dir / "micro_llm_sharded_evidence.json",
+        "summary_markdown": output_dir / "micro_llm_sharded_evidence.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    return {
+        "schema": "micro_llm_sharded_artifact_summary_v1",
+        "inspect_first": str(paths["inspect_first"]),
+        "summary_json": str(paths["summary_json"]),
+        "summary_markdown": str(paths["summary_markdown"]),
+        "support_bundle": str(paths["support_bundle"]),
+        "shareable_paths": [str(path) for path in paths.values()],
+        "artifact_count": len(paths),
+        "present_artifact_count": sum(1 for path in paths.values() if path.is_file()),
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Open inspect_first first, then support_bundle for diagnostics. "
+            "Artifacts contain stage readiness, decoded-token match, hashes, and counts only."
+        ),
+    }
+
+
+def micro_prompt_scope_summary(args: argparse.Namespace | None = None, report: dict[str, Any] | None = None) -> dict[str, Any]:
+    session = report.get("session") if isinstance(report, dict) and isinstance(report.get("session"), dict) else {}
+    prompt_count = session.get("prompt_request_count") or session.get("request_count")
+    source = "default-micro-llm-prompts"
+    if args is not None and str(getattr(args, "prompt_texts", "") or ""):
+        source = "local-inline-prompt-batch"
+        prompt_count = len([item for item in str(getattr(args, "prompt_texts", "") or "").split(",") if item])
+    try:
+        prompt_count = int(prompt_count or 0)
+    except (TypeError, ValueError):
+        prompt_count = 0
+    return {
+        "source": source,
+        "prompt_count": prompt_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": source.startswith("local-"),
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Prompt source and count are reported for operator context; raw prompt text is kept out of public artifacts."
+        ),
+    }
+
+
+def micro_output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Micro-LLM sharded evidence records decoded-token match, counts, and hashes only; "
+            "raw prompts, generated text, token ids, and intermediate tensors are excluded."
+        ),
+    }
+
+
+def micro_answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "hash-only",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-count-redacted",
+        "saved_markdown_display": "hash-count-redacted",
+        "json_stdout_display": "hash-count-redacted",
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "The report proves micro-LLM split inference with decoded-token match and hashes; "
+            "it does not save or print the raw answer text."
+        ),
+    }
+
+
+def micro_shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "hash-only",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share micro_llm_sharded_evidence.json/md and support_bundle.json; they include readiness, "
+            "stage assignment, redaction status, and hashes/counts only."
+        ),
+    }
+
+
+def micro_not_completed_items(report: dict[str, Any]) -> list[str]:
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []) if code)
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    artifact = report.get("artifact") if isinstance(report.get("artifact"), dict) else {}
+    assignment = report.get("stage_assignment") if isinstance(report.get("stage_assignment"), dict) else {}
+    requeue = (
+        ((report.get("observability") if isinstance(report.get("observability"), dict) else {}).get("requeue_summary"))
+        if isinstance((report.get("observability") if isinstance(report.get("observability"), dict) else {}).get("requeue_summary"), dict)
+        else {}
+    )
+    items: list[tuple[str, Any]] = [
+        ("micro-LLM sharded inference ready", report.get("ok") is True and "micro_llm_sharded_ready" in codes),
+        ("stage 0 accepted", "stage_0_accepted" in codes),
+        ("stage 1 accepted", "stage_1_accepted" in codes),
+        ("activation transport ready", "activation_transport_ready" in codes),
+        ("baseline match ready", "baseline_match" in codes),
+        ("decoded tokens match ready", "decoded_tokens_match" in codes),
+        ("raw generated text redacted", safety.get("generated_text_redacted") is True),
+        ("generated token ids redacted", safety.get("generated_token_ids_redacted") is True),
+        ("raw activation redacted", safety.get("raw_activation_redacted") is True),
+        ("read-only safety boundary present", safety.get("read_only") is True),
+        ("redaction safety present", safety.get("redaction_ok") is True),
+        ("not production boundary present", safety.get("not_production") is True),
+    ]
+    if artifact.get("schema"):
+        items.append(("micro-LLM artifact ready", "micro_llm_artifact_ready" in codes or artifact.get("loaded") is True))
+    if assignment.get("required_distinct_stage_miners"):
+        items.extend([
+            ("distinct stage miners ready", assignment.get("distinct_stage_miners") is True),
+            ("stage assignment valid", assignment.get("stage_assignment_valid") is True),
+        ])
+    if requeue.get("enabled"):
+        items.append(("stage requeue ready", "stage_requeue_ready" in codes))
+    for process in ((report.get("observability") or {}).get("processes") or []):
+        if isinstance(process, dict) and process.get("ok") is not True and process.get("expected_failure") is not True:
+            items.append((f"miner process {process.get('miner_id') or 'unknown'} passed", False))
+    return [label for label, ready in items if ready is not True]
+
+
+def micro_command_entry(label: str, command: list[Any], *, reason: str = "", side_effectful: bool = False) -> dict[str, Any]:
+    entry = base.command_entry(label, command, reason=reason, side_effectful=side_effectful)
+    return entry
+
+
+def micro_sharded_command(args: argparse.Namespace, output_dir: Path) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "micro-llm-shard-infer",
+        "--output-dir",
+        str(output_dir),
+        "--port",
+        getattr(args, "port", 9860),
+        "--request-count",
+        getattr(args, "request_count", 4),
+        "--decode-steps",
+        getattr(args, "decode_steps", 4),
+        "--failure-mode",
+        getattr(args, "failure_mode", base.FAILURE_NONE),
+        "--stage-mode",
+        getattr(args, "stage_mode", "both"),
+        "--json",
+    ]
+    if getattr(args, "micro_llm_artifact", ""):
+        command.extend(["--micro-llm-artifact", getattr(args, "micro_llm_artifact")])
+    if getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", "<local-prompts-redacted>"])
+    if getattr(args, "require_distinct_stage_miners", False):
+        command.append("--require-distinct-stage-miners")
+    return command
+
+
+def micro_recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    missing: list[str],
+) -> dict[str, Any]:
+    if report.get("ok") is True:
+        return micro_command_entry(
+            "inspect micro-LLM sharded evidence",
+            base.artifact_command(output_dir, "micro_llm_sharded_evidence.md"),
+            reason="review_artifacts",
+        )
+    return micro_command_entry(
+        "rerun micro-LLM sharded inference",
+        micro_sharded_command(args, output_dir),
+        reason="fix_micro_llm_sharded_blockers" if missing else "rerun_micro_llm_sharded_inference",
+        side_effectful=True,
+    )
+
+
+def micro_next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    commands = [
+        micro_command_entry(
+            "inspect shareable summary",
+            base.artifact_command(output_dir, "micro_llm_sharded_evidence.md"),
+            reason="review_artifacts",
+        ),
+        micro_command_entry(
+            "inspect support bundle",
+            base.artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    refresh = micro_command_entry(
+        "refresh micro-LLM sharded inference",
+        micro_sharded_command(args, output_dir),
+        reason="refresh_micro_llm_sharded_inference",
+        side_effectful=True,
+    )
+    if all(item.get("command_line") != refresh.get("command_line") for item in commands):
+        commands.append(refresh)
+    return commands
+
+
+def micro_user_status(report: dict[str, Any], *, recommended: dict[str, Any], missing: list[str]) -> dict[str, Any]:
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    if report.get("ok") is True and not missing:
+        state = "ready"
+        headline = "Micro-LLM sharded inference evidence is ready."
+        next_step = "review_artifacts"
+    else:
+        state = "blocked"
+        headline = "Micro-LLM sharded inference evidence needs attention."
+        next_step = "fix_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "generated_token_count": generation.get("generated_token_count"),
+        "decode_steps": generation.get("decode_steps"),
+        "public_artifact_safe": True,
+    }
+
+
+def micro_review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    artifacts = micro_artifact_summary(output_dir)
+    ready = bool(report.get("ok") is True and not missing)
+    return {
+        "schema": "micro_llm_sharded_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "ready": ready,
+        "next_step": "review_artifacts" if ready else "fix_micro_llm_sharded_blockers",
+        "inspect_first": artifacts["inspect_first"],
+        "support_bundle": artifacts["support_bundle"],
+        "recommended_next_command": recommended,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": (report.get("diagnosis_codes") or ["none"])[0],
+        "not_completed_count": len(missing),
+        "not_completed": list(missing),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
+def micro_support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return base.support_bundle.sanitize({
+        "schema": "micro_llm_sharded_support_bundle_v1",
+        "generated_at": base.utc_now(),
+        "ok": report.get("ok"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "not_completed": report.get("not_completed"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
+        "session": report.get("session"),
+        "artifact": report.get("artifact"),
+        "generation": report.get("generation"),
+        "stage_assignment": report.get("stage_assignment"),
+        "observability": report.get("observability"),
+        "safety": report.get("safety"),
+        "limitations": report.get("limitations"),
+    })
+
+
+def attach_micro_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path | None = None) -> dict[str, Any]:
+    if output_dir is None:
+        output_dir = Path.cwd()
+    report["output_request"] = micro_output_request_summary()
+    report["prompt_scope"] = micro_prompt_scope_summary(args, report)
+    report["answer_scope"] = micro_answer_scope_summary()
+    report["shareable_summary"] = micro_shareable_summary()
+    missing = micro_not_completed_items(report)
+    report["not_completed"] = missing
+    recommended = micro_recommended_next_command(report, args, output_dir=output_dir, missing=missing)
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = micro_next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = micro_user_status(report, recommended=recommended, missing=missing)
+    report["review_summary"] = micro_review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = micro_artifact_summary(output_dir)
+    return report
 
 
 def build_report(
@@ -171,6 +539,10 @@ def build_report(
         codes.append("artifact_loaded")
     if artifact_summary["schema"] == "micro_llm_artifact_v1":
         codes.append("micro_llm_artifact_ready")
+    generated_text = stage1_validation.get("generated_text")
+    generated_token_count = stage1_validation.get("generated_token_count")
+    if generated_token_count is None and isinstance(generated_text, str):
+        generated_token_count = len(generated_text.split())
     distinct_requirement_met = not getattr(args, "require_distinct_stage_miners", False) or distinct_stage_miners
     if stage0_ok and stage1_ok and baseline_match and decoded_tokens_match and activation_ready and read_only and redaction_ok:
         if distinct_requirement_met:
@@ -190,7 +562,7 @@ def build_report(
             codes.append("activation_transport_failed")
         if not read_only or not redaction_ok:
             codes.append("safety_failed")
-    return {
+    report = {
         "schema": SCHEMA,
         "generated_at": base.utc_now(),
         "ok": "micro_llm_sharded_ready" in codes and (
@@ -211,6 +583,14 @@ def build_report(
             "prompt_request_count": session.get("prompt_request_count"),
         },
         "artifact": artifact_summary,
+        "generation": {
+            "decode_steps": session.get("decode_steps"),
+            "generated_token_count": generated_token_count,
+            "generated_text_hash": generated_text_hash(generated_text),
+            "generated_text_redacted": True,
+            "generated_token_ids_redacted": True,
+            "decoded_tokens_match": decoded_tokens_match,
+        },
         "stage_summary": {
             "stage_0": {
                 "task_id": stage0.get("task_id"),
@@ -232,9 +612,10 @@ def build_report(
                 "decoded_tokens_match": decoded_tokens_match,
                 "request_count": stage1_validation.get("request_count"),
                 "decode_steps": stage1_validation.get("decode_steps"),
-                "generated_token_count": stage1_validation.get("generated_token_count"),
-                "generated_text": stage1_validation.get("generated_text"),
-                "request_trace": stage1_validation.get("request_trace"),
+                "generated_token_count": generated_token_count,
+                "generated_text_hash": generated_text_hash(generated_text),
+                "generated_text_redacted": True,
+                "request_trace": redacted_micro_request_trace(stage1_validation.get("request_trace")),
                 "artifact_hash": stage1_validation.get("artifact_hash"),
                 "elapsed_ms": (stage1.get("metrics") or {}).get("elapsed_ms"),
             },
@@ -260,6 +641,8 @@ def build_report(
             "read_only": read_only,
             "redaction_ok": redaction_ok,
             "raw_activation_redacted": "activation_results" not in raw_public and "hidden_state" not in raw_public,
+            "generated_text_redacted": True,
+            "generated_token_ids_redacted": True,
             "not_production": True,
         },
         "limitations": [
@@ -267,12 +650,21 @@ def build_report(
             "Not GPU/TPU pooling, P2P routing, GGUF/llama.cpp serving, or arbitrary prompt serving",
         ],
     }
+    return attach_micro_user_guidance(report, args)
 
 
 def render_markdown(report: dict[str, Any]) -> str:
     session = report.get("session") or {}
     stage = report.get("stage_summary") or {}
-    return "\n".join([
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    lines = [
         "# CrowdTensor Micro-LLM Sharded Inference Evidence",
         "",
         f"Schema: `{report.get('schema')}`",
@@ -280,6 +672,53 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Session: `{session.get('session_id')}`",
         f"Workload: `{report.get('workload_type')}`",
         f"Decode steps: `{session.get('decode_steps')}`",
+        "",
+        "## Review",
+        "",
+        f"- status: `{user.get('state')}` {user.get('headline') or ''}",
+        f"- state: `{review.get('state')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- support bundle: `{review.get('support_bundle')}`",
+        f"- recommended next: `{recommended.get('command_line') or 'none'}`",
+        f"- public artifact safe: `{review.get('public_artifact_safe')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    for item in report.get("next_commands") or []:
+        if isinstance(item, dict):
+            lines.append(f"- {item.get('label')}: `{item.get('command_line')}`")
+    if not report.get("next_commands"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifacts.get('inspect_first')}`",
+        f"- summary JSON: `{artifacts.get('summary_json')}`",
+        f"- support bundle: `{artifacts.get('support_bundle')}`",
+        f"- present artifacts: `{artifacts.get('present_artifact_count')}/{artifacts.get('artifact_count')}`",
+        "",
+        "## Not Completed",
+        "",
+    ])
+    for item in report.get("not_completed") or []:
+        lines.append(f"- {item}")
+    if not report.get("not_completed"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{base.prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope.get('summary') or 'Public artifacts exclude raw prompt text.'}",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no raw generated text.'}",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
         "## Diagnosis",
         "",
@@ -293,6 +732,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "CPU-only deterministic micro-LLM two-stage pipeline; not production Swarm Inference, GPU pooling, P2P routing, or GGUF/llama.cpp serving.",
         "",
     ])
+    return "\n".join(lines)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -351,11 +791,42 @@ def main() -> None:
     try:
         args = parse_args()
         report = run_evidence(args)
+        output_dir = Path(args.json_out).resolve().parent if args.json_out else Path.cwd()
+        report = attach_micro_user_guidance(report, args, output_dir=output_dir)
+        report.setdefault("artifacts", {})
+        report["artifacts"]["micro_llm_sharded_evidence_json"] = base.artifact_entry(
+            Path(args.json_out) if args.json_out else output_dir / "micro_llm_sharded_evidence.json",
+            output_dir,
+            kind="micro_llm_sharded_evidence",
+            schema=SCHEMA,
+            ok=report.get("ok"),
+        )
+        report["artifacts"]["micro_llm_sharded_evidence_markdown"] = base.artifact_entry(
+            Path(args.markdown_out) if args.markdown_out else output_dir / "micro_llm_sharded_evidence.md",
+            output_dir,
+            kind="micro_llm_sharded_evidence_markdown",
+        )
+        report["artifacts"]["support_bundle_json"] = base.artifact_entry(
+            output_dir / "support_bundle.json",
+            output_dir,
+            kind="micro_llm_sharded_support_bundle",
+            schema="micro_llm_sharded_support_bundle_v1",
+        )
         base.write_json(report, args.json_out)
         if args.markdown_out:
             output = Path(args.markdown_out)
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(render_markdown(report), encoding="utf-8")
+        support_path = output_dir / "support_bundle.json"
+        base.write_json(micro_support_bundle_payload(report), str(support_path))
+        if args.json_out:
+            report["artifacts"]["micro_llm_sharded_evidence_json"]["present"] = Path(args.json_out).is_file()
+        if args.markdown_out:
+            report["artifacts"]["micro_llm_sharded_evidence_markdown"]["present"] = Path(args.markdown_out).is_file()
+        report["artifacts"]["support_bundle_json"]["present"] = support_path.is_file()
+        report["artifact_summary"] = micro_artifact_summary(output_dir)
+        base.write_json(micro_support_bundle_payload(report), str(support_path))
+        base.write_json(report, args.json_out)
         print(json.dumps(report, sort_keys=True))
         raise SystemExit(0 if report.get("ok") else 1)
     except SystemExit:

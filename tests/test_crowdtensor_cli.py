@@ -15243,6 +15243,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("--stage-mode", command)
             self.assertIn("--micro-llm-artifact", command)
             self.assertIn("4", command)
+            evidence_json = Path(command[command.index("--json-out") + 1])
+            evidence_md = Path(command[command.index("--markdown-out") + 1])
+            evidence_json.write_text("{}", encoding="utf-8")
+            evidence_md.write_text("# evidence\n", encoding="utf-8")
+            (evidence_json.parent / "support_bundle.json").write_text("{}", encoding="utf-8")
             return completed({
                 "schema": "micro_llm_sharded_evidence_v1",
                 "ok": True,
@@ -15255,8 +15260,87 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "activation_transport_ready",
                 ],
                 "session": {"session_id": "micro-llm-session-test", "stage_count": 2, "decode_steps": 4},
+                "generation": {
+                    "decode_steps": 4,
+                    "generated_token_count": 4,
+                    "generated_text_hash": "sha256:micro",
+                    "generated_text_redacted": True,
+                    "generated_token_ids_redacted": True,
+                    "decoded_tokens_match": True,
+                },
                 "stage_summary": {"stage_1": {"baseline_match": True, "decoded_tokens_match": True}},
                 "safety": {"read_only": True, "redaction_ok": True},
+                "output_request": {
+                    "include_output": False,
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "public_artifact_safe": True,
+                },
+                "prompt_scope": {
+                    "source": "local-inline-prompt-batch",
+                    "prompt_count": 1,
+                    "inline_prompt_text": False,
+                    "terminal_next_commands_local_private": True,
+                    "saved_artifacts_prompt_placeholders": True,
+                    "prompt_file_path_public": False,
+                    "raw_prompt_public": False,
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "hash-only",
+                    "terminal_only": False,
+                    "visible_in_terminal": False,
+                    "saved_json_display": "hash-count-redacted",
+                    "saved_markdown_display": "hash-count-redacted",
+                    "public_artifact_safe": True,
+                },
+                "shareable_summary": {
+                    "saved_artifacts_public_safe": True,
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "local_output_display_only": False,
+                    "answer_scope_state": "hash-only",
+                    "local_answer_terminal_only": False,
+                },
+                "user_status": {
+                    "state": "ready",
+                    "headline": "Micro-LLM sharded inference evidence is ready.",
+                    "next_step": "review_artifacts",
+                    "recommended_label": "inspect micro-LLM sharded evidence",
+                    "public_artifact_safe": True,
+                },
+                "review_summary": {
+                    "schema": "micro_llm_sharded_review_summary_v1",
+                    "state": "ready",
+                    "ready": True,
+                    "next_step": "review_artifacts",
+                    "inspect_first": str(evidence_md),
+                    "support_bundle": str(evidence_json.parent / "support_bundle.json"),
+                    "recommended_label": "inspect micro-LLM sharded evidence",
+                    "primary_code": "micro_llm_sharded_ready",
+                    "public_artifact_safe": True,
+                },
+                "recommended_next_command": {
+                    "label": "inspect micro-LLM sharded evidence",
+                    "command_line": f"sed -n 1,220p {evidence_md}",
+                    "public_artifact_safe": True,
+                },
+                "next_commands": [
+                    {"label": "inspect shareable summary", "command_line": f"sed -n 1,220p {evidence_md}", "public_artifact_safe": True},
+                    {"label": "inspect support bundle", "command_line": f"sed -n 1,220p {evidence_json.parent / 'support_bundle.json'}", "public_artifact_safe": True},
+                ],
+                "not_completed": [],
+                "artifact_summary": {
+                    "inspect_first": str(evidence_md),
+                    "summary_json": str(evidence_json),
+                    "summary_markdown": str(evidence_md),
+                    "support_bundle": str(evidence_json.parent / "support_bundle.json"),
+                    "artifact_count": 4,
+                    "present_artifact_count": 4,
+                    "public_artifact_safe": True,
+                },
             })
 
         args = cli.parse_args([
@@ -15277,8 +15361,114 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(summary["ok"], summary)
         self.assertEqual(summary["schema"], "micro_llm_sharded_cli_v1")
         self.assertIn("micro_llm_sharded_ready", summary["diagnosis_codes"])
+        self.assertEqual(summary["user_status"]["state"], "ready")
+        self.assertEqual(summary["review_summary"]["schema"], "micro_llm_sharded_review_summary_v1")
+        self.assertFalse(summary["output_request"]["raw_generated_text_public"])
+        self.assertEqual(summary["answer_scope"]["scope_state"], "hash-only")
+        self.assertTrue(summary["artifacts"]["support_bundle_json"]["present"])
         self.assertTrue(summary["artifacts"]["micro_llm_sharded_cli_summary"]["present"])
         self.assertTrue(calls)
+
+    def test_print_micro_llm_shard_infer_outputs_user_guidance(self) -> None:
+        report = {
+            "schema": "micro_llm_sharded_cli_v1",
+            "ok": True,
+            "output_dir": "dist/micro-llm-shard-infer",
+            "failure_mode": "none",
+            "diagnosis_codes": ["micro_llm_sharded_ready"],
+            "session": {"session_id": "micro-session", "stage_count": 2, "decode_steps": 4},
+            "stage_summary": {
+                "stage_0": {"task_id": "stage0", "miner_id": "m0", "activation_count": 1},
+                "stage_1": {"task_id": "stage1", "miner_id": "m1", "baseline_match": True, "decoded_tokens_match": True},
+            },
+            "user_status": {
+                "state": "ready",
+                "headline": "Micro-LLM sharded inference evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect micro-LLM sharded evidence",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "micro_llm_sharded_review_summary_v1",
+                "state": "ready",
+                "ready": True,
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/micro-llm-shard-infer/micro_llm_sharded_evidence.md",
+                "recommended_label": "inspect micro-LLM sharded evidence",
+                "primary_code": "micro_llm_sharded_ready",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect micro-LLM sharded evidence",
+                "command_line": "sed -n 1,220p dist/micro-llm-shard-infer/micro_llm_sharded_evidence.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p dist/micro-llm-shard-infer/micro_llm_sharded_evidence.md",
+                    "public_artifact_safe": True,
+                }
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/micro-llm-shard-infer/micro_llm_sharded_evidence.md",
+                "support_bundle": "dist/micro-llm-shard-infer/support_bundle.json",
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "public_artifact_safe": True,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "prompt_scope": {
+                "source": "default-micro-llm-prompts",
+                "prompt_count": 1,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "hash-only",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-count-redacted",
+                "saved_markdown_display": "hash-count-redacted",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "hash-only",
+                "local_answer_terminal_only": False,
+            },
+            "not_completed": [],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_micro_llm_sharded_inference(report)
+        output = stdout.getvalue()
+
+        self.assertIn("  status: ready", output)
+        self.assertIn("  review: state=ready next=review_artifacts", output)
+        self.assertIn("  recommended_next: sed -n 1,220p", output)
+        self.assertIn("  next[1] inspect shareable summary:", output)
+        self.assertIn("  artifacts: inspect=dist/micro-llm-shard-infer/micro_llm_sharded_evidence.md present=4/4", output)
+        self.assertIn("  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
+        self.assertIn("  prompt_scope: source=default-micro-llm-prompts count=1", output)
+        self.assertIn("  answer_scope: state=hash-only", output)
+        self.assertIn("  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False", output)
 
     def test_micro_llm_artifact_cli_builds_artifact(self) -> None:
         output_dir = Path(self._tmp_dir())
