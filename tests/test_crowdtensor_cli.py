@@ -1799,6 +1799,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("answer_scope: state=shareable-terminal-redacted", rendered)
+        self.assertIn(f"output_display_note: {cli.SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT}", rendered)
         self.assertIn("local_output: available=False display_only=False public_artifact_safe=True", rendered)
         self.assertNotIn(prompt, stderr.getvalue())
 
@@ -4860,6 +4861,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  output_display: terminal=local-private terminal_text=True saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(f"  output_display_note: {cli.LOCAL_OUTPUT_DISPLAY_SCOPE_TEXT}", rendered)
         self.assertIn(
             "  local_output: available=True display_only=True public_artifact_safe=False count=1 source=coordinator-validation",
             rendered,
@@ -10714,6 +10716,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("answer_scope: state=shareable-terminal-redacted", rendered)
         self.assertIn("output_display: terminal=shareable-terminal-redacted", rendered)
+        self.assertIn(f"output_display_note: {cli.SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT}", rendered)
         self.assertIn("result: status=complete tokens=2/2 outputs=1 display=hash-only hash=sha256:generated public_artifact_safe=True", rendered)
         self.assertIn("local_output: available=False display_only=False public_artifact_safe=True saved_redacted=True", rendered)
         self.assertNotIn(prompt, progress)

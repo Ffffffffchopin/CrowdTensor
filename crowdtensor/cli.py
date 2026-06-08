@@ -11576,6 +11576,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
     output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
     if output_display:
         print(f"  output_display: {output_display_text(output_display)}")
+        if output_display.get("summary"):
+            print(f"  output_display_note: {output_display.get('summary')}")
     answer_scope_printed = print_local_output_block(report)
     print_answer_scope_line(report, already_printed=answer_scope_printed)
     shareable_terminal = report.get("shareable_terminal") if isinstance(report.get("shareable_terminal"), dict) else {}
@@ -11886,6 +11888,8 @@ def print_infer(report: dict[str, Any]) -> None:
     output_display = report.get("output_display") if isinstance(report.get("output_display"), dict) else {}
     if output_display:
         print(f"  output_display: {output_display_text(output_display)}")
+        if output_display.get("summary"):
+            print(f"  output_display_note: {output_display.get('summary')}")
     answer_scope_printed = print_local_output_block(report)
     print_answer_scope_line(report, already_printed=answer_scope_printed)
     shareable_terminal = report.get("shareable_terminal") if isinstance(report.get("shareable_terminal"), dict) else {}
