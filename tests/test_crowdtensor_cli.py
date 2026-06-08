@@ -18773,6 +18773,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertEqual(command[command.index("--mode") + 1], "local-generated")
             self.assertIn("--base-port", command)
             self.assertIn("--hf-model-id", command)
+            self.assertIn("--real-llm-backend", command)
+            self.assertIn("--real-llm-partition-mode", command)
             return completed({
                 "schema": "real_llm_internet_alpha_v1",
                 "ok": True,
@@ -18795,6 +18797,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             "9188",
             "--request-count",
             "1",
+            "--real-llm-backend",
+            "cuda",
+            "--real-llm-partition-mode",
+            "stage-local",
         ])
         summary = cli.build_real_llm_internet_alpha(args, runner=fake_runner)
 
@@ -18851,6 +18857,118 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "real_llm_internet_alpha_v1")
+
+    def test_print_real_llm_internet_alpha_outputs_guidance_summary(self) -> None:
+        report = {
+            "schema": "real_llm_internet_alpha_v1",
+            "cli_schema": "real_llm_internet_alpha_cli_v1",
+            "ok": True,
+            "mode": "local-generated",
+            "coordinator_url": "http://127.0.0.1:9186",
+            "output_dir": "/tmp/real-llm-internet-alpha",
+            "user_status": {
+                "state": "ready",
+                "headline": "Real Internet Swarm Inference Alpha evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Real Internet Alpha evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "real_llm_internet_alpha_review_summary_v1",
+                "state": "ready",
+                "headline": "Real Internet Swarm Inference Alpha evidence is ready.",
+                "next_step": "review_artifacts",
+                "inspect_first": "/tmp/real-llm-internet-alpha/real_llm_internet_alpha.md",
+                "support_bundle": "/tmp/real-llm-internet-alpha/support_bundle.json",
+                "recommended_label": "inspect Real Internet Alpha evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p /tmp/real-llm-internet-alpha/real_llm_internet_alpha.md",
+                "attention": "none",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Real Internet Alpha evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p /tmp/real-llm-internet-alpha/real_llm_internet_alpha.md",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p /tmp/real-llm-internet-alpha/real_llm_internet_alpha.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p /tmp/real-llm-internet-alpha/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "present_artifact_count": 4,
+                "artifact_count": 4,
+                "support_bundle": "/tmp/real-llm-internet-alpha/support_bundle.json",
+                "public_artifact_safe": True,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "prompt_scope": {
+                "source": "built-in-default-prompts",
+                "prompt_count": 2,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "terminal_logs_local_private": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "hash-only",
+                "saved_markdown_display": "hash-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "no-local-answer",
+                "local_answer_terminal_only": False,
+            },
+            "runtime_classification": {
+                "local_generated_stage_upload_standins": True,
+                "package_only": False,
+                "external_runtime_verified": False,
+                "stage_requeue_verified": True,
+            },
+            "diagnosis_codes": ["real_llm_internet_alpha_ready"],
+            "artifacts": {},
+        }
+
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            cli.print_real_llm_internet_alpha(report)
+
+        output = stream.getvalue()
+        self.assertIn("status: ready", output)
+        self.assertIn("review: state=ready", output)
+        self.assertIn("recommended_next: inspect Real Internet Alpha evidence", output)
+        self.assertIn("next[1] inspect shareable summary", output)
+        self.assertIn("artifacts: present=4/4", output)
+        self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
+        self.assertIn("terminal_next_commands_local_private=False", output)
+        self.assertIn("answer_scope: state=no-local-answer", output)
+        self.assertIn("shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False", output)
 
     def test_real_llm_internet_beta_wraps_beta_pack(self) -> None:
         output_dir = Path(self._tmp_dir())

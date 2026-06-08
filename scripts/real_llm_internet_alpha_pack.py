@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -54,8 +55,16 @@ SECRET_FRAGMENTS = (
     "real_llm_sharded_result",
     "output_text",
     "Bearer ",
+    "SOURCE_TARBALL_B64",
+    "MINER_ENV_TEXT",
+    "operator.private.env",
+    "miner.private.env",
+    "miner_registry.json",
     "CrowdTensor routes",
     "A miner returns",
+    '"generated_text":',
+    '"generated_token_ids":',
+    '"prompt_text":',
 )
 
 
@@ -95,6 +104,148 @@ def load_json(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Real Internet Swarm Inference Alpha artifacts summarize tiny GPT split "
+            "readiness, stage requeue evidence, generation hashes/counts, and "
+            "diagnostics only. They do not include answer text."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "hash-only",
+        "json_stdout_display": "hash-only-json",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Alpha report is shareable operator evidence, not a local answer "
+            "transcript; raw prompts, generated text, token ids, activations, "
+            "leases, credentials, private env files, and raw runtime state are "
+            "excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share real_llm_internet_alpha*.json/md artifacts; they contain "
+            "readiness evidence, generation hashes/counts, and diagnostics, not "
+            "raw prompts or answers."
+        ),
+    }
+
+
+def prompt_scope_summary(report: dict[str, Any] | None = None) -> dict[str, Any]:
+    workload = report.get("workload") if isinstance(report, dict) and isinstance(report.get("workload"), dict) else {}
+    try:
+        prompt_count = int(workload.get("prompt_text_count") or len(DEFAULT_PROMPTS))
+    except (TypeError, ValueError):
+        prompt_count = len(DEFAULT_PROMPTS)
+    return {
+        "source": "built-in-default-prompts",
+        "prompt_count": prompt_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Real Internet Swarm Inference Alpha uses fixed built-in validation prompts; "
+            "public artifacts record prompt count/source only and exclude raw prompt text."
+        ),
+    }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
+def shell_command(parts: list[Any]) -> str:
+    rendered: list[str] = []
+    for part in parts:
+        text = str(part)
+        if not text:
+            continue
+        if text.startswith("$") and text[1:].replace("_", "").isalnum():
+            rendered.append(text)
+        else:
+            rendered.append(shlex.quote(text))
+    return " ".join(rendered)
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    requires_private_credentials: bool = False,
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if requires_private_credentials:
+        entry["requires_private_credentials"] = True
+        entry["credential_note"] = (
+            "Use local private Coordinator credentials when running this command; "
+            "credential values are intentionally excluded from public artifacts."
+        )
+    if side_effectful:
+        entry["side_effectful"] = True
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
 
 
 def redact_text(text: str, secret_values: list[str] | None = None) -> str:
@@ -431,6 +582,27 @@ def base_artifacts(output_dir: Path, *, ok: bool | None = None) -> dict[str, Any
     }
 
 
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "real_llm_internet_alpha.md",
+        "summary_json": output_dir / "real_llm_internet_alpha.json",
+        "summary_markdown": output_dir / "real_llm_internet_alpha.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    present = sum(1 for path in paths.values() if path.is_file())
+    return {
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": present,
+        "shareable_paths": [
+            str(paths["summary_json"]),
+            str(paths["summary_markdown"]),
+            str(paths["support_bundle"]),
+        ],
+        "public_artifact_safe": True,
+    }
+
+
 def child_artifacts(output_dir: Path, live_dir: Path, requeue_dirs: dict[str, Path], *, ok: bool | None = None) -> dict[str, Any]:
     artifacts = {
         "real_llm_live_rc_json": artifact_entry(
@@ -490,8 +662,376 @@ def safety_summary(args: argparse.Namespace, *, stage_requeue_verified: bool) ->
     }
 
 
+def real_llm_internet_alpha_command(args: argparse.Namespace, output_dir: Path, mode: str) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "real-llm-internet-alpha",
+        "--mode",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--public-host",
+        getattr(args, "public_host", DEFAULT_PUBLIC_HOST),
+        "--bind-host",
+        getattr(args, "bind_host", "0.0.0.0"),
+        "--port",
+        str(getattr(args, "port", DEFAULT_PORT)),
+        "--base-port",
+        str(getattr(args, "base_port", DEFAULT_REQUEUE_BASE_PORT)),
+        "--miner-id",
+        getattr(args, "miner_id", "internet-real-llm"),
+        "--request-count",
+        str(getattr(args, "request_count", 1)),
+        "--max-new-tokens",
+        str(getattr(args, "max_new_tokens", 1)),
+        "--hf-model-id",
+        getattr(args, "hf_model_id", DEFAULT_MODEL_ID),
+        "--real-llm-backend",
+        getattr(args, "real_llm_backend", REAL_LLM_BACKEND_CPU),
+        "--real-llm-partition-mode",
+        getattr(args, "real_llm_partition_mode", "full"),
+        "--timeout-seconds",
+        str(getattr(args, "timeout_seconds", 300.0)),
+        "--remote-timeout-seconds",
+        str(getattr(args, "remote_timeout_seconds", 180.0)),
+        "--startup-timeout",
+        str(getattr(args, "startup_timeout", 30.0)),
+        "--process-exit-timeout",
+        str(getattr(args, "process_exit_timeout", 20.0)),
+        "--poll-interval",
+        str(getattr(args, "poll_interval", 1.0)),
+        "--http-timeout",
+        str(getattr(args, "http_timeout", 30.0)),
+        "--lease-seconds",
+        str(getattr(args, "lease_seconds", 15.0)),
+        "--compute-seconds",
+        str(getattr(args, "compute_seconds", 0.2)),
+        "--heartbeat-interval",
+        str(getattr(args, "heartbeat_interval", 0.1)),
+        "--idle-sleep",
+        str(getattr(args, "idle_sleep", 0.5)),
+        "--max-request-attempts",
+        str(getattr(args, "max_request_attempts", 120)),
+    ]
+    if getattr(args, "hf_cache_dir", ""):
+        command.extend(["--hf-cache-dir", "HF_CACHE_DIR"])
+    if mode == MODE_EXTERNAL_EXISTING:
+        command.extend([
+            "--coordinator-url",
+            getattr(args, "coordinator_url", "") or "COORDINATOR_URL",
+            "--observer-token",
+            "$CROWDTENSOR_OBSERVER_TOKEN",
+            "--admin-token",
+            "$CROWDTENSOR_ADMIN_TOKEN",
+        ])
+    elif getattr(args, "coordinator_url", ""):
+        command.extend(["--coordinator-url", "COORDINATOR_URL"])
+    if getattr(args, "skip_requeue", False):
+        command.append("--skip-requeue")
+    command.append("--json")
+    return command
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    runtime = report.get("runtime_classification") if isinstance(report.get("runtime_classification"), dict) else {}
+    codes = set(report.get("diagnosis_codes") or [])
+    mode = str(report.get("mode") or "")
+    existing = [str(item) for item in (report.get("not_completed") or []) if str(item)]
+    items: list[tuple[str, Any]] = [("Real Internet Alpha report ready", report.get("ok"))]
+    if mode == MODE_LOCAL_GENERATED:
+        items.extend([
+            ("Live RC ready", "real_llm_live_rc_ready" in codes),
+            ("local stage requeue ready", "real_llm_stage_requeue_ready" in codes and runtime.get("stage_requeue_verified") is True),
+            ("stage0 requeue ready", "stage0_requeue_ready" in codes or "stage_requeue_ready" in codes),
+            ("stage1 requeue ready", "stage1_requeue_ready" in codes or "stage_requeue_ready" in codes),
+            ("local generated stand-ins classified", runtime.get("local_generated_stage_upload_standins") is True),
+        ])
+    elif mode == MODE_PACKAGE:
+        items.extend([
+            ("package artifacts ready", "real_llm_internet_alpha_package_ready" in codes),
+            ("Live RC prepare ready", "real_llm_live_rc_prepare_ready" in codes),
+            ("package-only classification present", runtime.get("package_only") is True),
+            ("external verification still pending", "real_llm_internet_alpha_ready" in codes),
+        ])
+    else:
+        items.extend([
+            ("external runtime verified", runtime.get("external_runtime_verified") is True or "external_runtime_verified" in codes),
+            ("real LLM Internet Alpha ready", "real_llm_internet_alpha_ready" in codes),
+        ])
+    for step in report.get("steps") or []:
+        if isinstance(step, dict) and step.get("ok") is not True:
+            items.append((f"step {step.get('name') or 'step'} passed", False))
+    missing = list(existing)
+    seen = set(missing)
+    for label, ready in items:
+        if ready is True or label in seen:
+            continue
+        missing.append(label)
+        seen.add(label)
+    return missing
+
+
+def recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    missing: list[str],
+) -> dict[str, Any]:
+    mode = str(report.get("mode") or args.mode)
+    if report.get("ok") and mode == MODE_LOCAL_GENERATED:
+        return command_entry(
+            "inspect Real Internet Alpha evidence",
+            artifact_command(output_dir, "real_llm_internet_alpha.md"),
+            reason="review_artifacts",
+        )
+    if report.get("ok") and mode == MODE_PACKAGE:
+        return command_entry(
+            "verify external Alpha runtime",
+            real_llm_internet_alpha_command(args, output_dir, MODE_EXTERNAL_EXISTING),
+            reason="run_external_existing_after_package",
+            requires_private_credentials=True,
+            side_effectful=True,
+        )
+    if report.get("ok"):
+        return command_entry(
+            "inspect Real Internet Alpha evidence",
+            artifact_command(output_dir, "real_llm_internet_alpha.md"),
+            reason="review_artifacts",
+        )
+    if mode == MODE_PACKAGE:
+        return command_entry(
+            "rerun Alpha package proof",
+            real_llm_internet_alpha_command(args, output_dir, MODE_PACKAGE),
+            reason="fix_package_blockers" if missing else "rerun_package",
+            side_effectful=True,
+        )
+    if mode == MODE_EXTERNAL_EXISTING:
+        return command_entry(
+            "rerun external Alpha verification",
+            real_llm_internet_alpha_command(args, output_dir, MODE_EXTERNAL_EXISTING),
+            reason="fix_external_runtime_blockers" if missing else "rerun_external_existing",
+            requires_private_credentials=True,
+            side_effectful=True,
+        )
+    return command_entry(
+        "rerun local Alpha proof",
+        real_llm_internet_alpha_command(args, output_dir, MODE_LOCAL_GENERATED),
+        reason="fix_local_requeue_blockers" if missing else "rerun_local_generated",
+        side_effectful=True,
+    )
+
+
+def next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    mode = str(report.get("mode") or args.mode)
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "real_llm_internet_alpha.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if report.get("ok"):
+        commands.append(command_entry(
+            f"refresh {mode} proof",
+            real_llm_internet_alpha_command(args, output_dir, mode),
+            reason="refresh_real_internet_alpha",
+            requires_private_credentials=mode == MODE_EXTERNAL_EXISTING,
+            side_effectful=True,
+        ))
+    else:
+        commands.append(dict(recommended))
+    if mode == MODE_PACKAGE:
+        commands.append(dict(recommended))
+    elif mode != MODE_EXTERNAL_EXISTING:
+        commands.append(command_entry(
+            "prepare external Alpha package",
+            real_llm_internet_alpha_command(args, output_dir, MODE_PACKAGE),
+            reason="prepare_external_stage_uploads",
+            side_effectful=True,
+        ))
+    return commands
+
+
+def user_status(*, ready: bool, mode: str, recommended: dict[str, Any], missing: list[str]) -> dict[str, Any]:
+    if ready and mode == MODE_PACKAGE:
+        state = "package-ready"
+        headline = "Real Internet Swarm Inference Alpha package artifacts are ready; external verification is next."
+        next_step = "run_external_existing_verification"
+    elif ready:
+        state = "ready"
+        headline = "Real Internet Swarm Inference Alpha evidence is ready."
+        next_step = "review_artifacts"
+    elif mode == MODE_PACKAGE:
+        state = "package-blocked"
+        headline = "Real Internet Alpha package preparation needs attention."
+        next_step = "fix_package_blockers"
+    elif mode == MODE_EXTERNAL_EXISTING:
+        state = "external-existing-blocked"
+        headline = "Real Internet Alpha external verification needs attention."
+        next_step = "fix_external_runtime_blockers"
+    else:
+        state = "local-generated-blocked"
+        headline = "Real Internet Alpha local proof needs attention."
+        next_step = "fix_local_requeue_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    ready = bool(report.get("ok"))
+    mode = str(report.get("mode") or "")
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    return {
+        "schema": "real_llm_internet_alpha_review_summary_v1",
+        "state": "package-ready" if ready and mode == MODE_PACKAGE else ("ready" if ready else "blocked"),
+        "headline": (
+            "Real Internet Swarm Inference Alpha package artifacts are ready; external verification is next."
+            if ready and mode == MODE_PACKAGE
+            else (
+                "Real Internet Swarm Inference Alpha evidence is ready."
+                if ready
+                else "Real Internet Swarm Inference Alpha evidence needs attention."
+            )
+        ),
+        "mode": report.get("mode"),
+        "next_step": "run_external_existing_verification" if ready and mode == MODE_PACKAGE else ("review_artifacts" if ready else "fix_blockers"),
+        "inspect_first": str(output_dir / "real_llm_internet_alpha.md"),
+        "support_bundle": str(output_dir / "support_bundle.json"),
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": (
+            "real_llm_internet_alpha_package_ready"
+            if ready and mode == MODE_PACKAGE
+            else ("real_llm_internet_alpha_ready" if ready else (codes[0] if codes else "real_llm_internet_alpha_blocked"))
+        ),
+        "attention": "external verification pending" if ready and mode == MODE_PACKAGE else ("none" if ready else (missing[0] if missing else "real_llm_internet_alpha_blocked")),
+        "attention_detail": "; ".join(missing[:6]),
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    missing = not_completed_items(report)
+    recommended = recommended_next_command(report, args, output_dir=output_dir, missing=missing)
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or args.mode),
+        recommended=recommended,
+        missing=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def ensure_user_guidance(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    if (
+        isinstance(report.get("recommended_next_command"), dict)
+        and isinstance(report.get("next_commands"), list)
+        and isinstance(report.get("user_status"), dict)
+        and isinstance(report.get("review_summary"), dict)
+    ):
+        report.setdefault("not_completed", not_completed_items(report))
+        report.setdefault("artifact_summary", artifact_summary(output_dir))
+        return report
+    missing = not_completed_items(report)
+    recommended = command_entry(
+        "inspect Real Internet Alpha evidence",
+        artifact_command(output_dir, "real_llm_internet_alpha.md"),
+        reason="review_artifacts" if report.get("ok") else "review_missing_evidence",
+    )
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = [
+        command_entry("inspect shareable summary", artifact_command(output_dir, "real_llm_internet_alpha.md"), reason="review_artifacts"),
+        command_entry("inspect support bundle", artifact_command(output_dir, "support_bundle.json", lines="1,220p"), reason="inspect_diagnostics"),
+    ]
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or ""),
+        recommended=recommended,
+        missing=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "real_llm_internet_alpha_support_bundle_v1",
+        "ok": report.get("ok"),
+        "mode": report.get("mode"),
+        "output_dir": report.get("output_dir"),
+        "coordinator_url": report.get("coordinator_url"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "runtime_classification": report.get("runtime_classification"),
+        "steps": report.get("steps"),
+        "payload_summaries": report.get("payload_summaries"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "not_completed": report.get("not_completed"),
+        "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
+        "safety": report.get("safety"),
+        "limitations": report.get("limitations"),
+        "public_artifact_safe": True,
+    }
+
+
 def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: list[str]) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(report))
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
+    report.setdefault("artifact_summary", artifact_summary(output_dir))
+    report = ensure_user_guidance(report, output_dir=output_dir)
     report = support_bundle.sanitize(redact_values(report, secret_values))
     encoded = json.dumps(report, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in encoded]
@@ -502,12 +1042,33 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
         report["safety_error"] = "real LLM Internet Alpha report contained secret-like fragments"
     json_path = output_dir / "real_llm_internet_alpha.json"
     md_path = output_dir / "real_llm_internet_alpha.md"
-    json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    support_path = output_dir / "support_bundle.json"
+    report.setdefault("artifacts", {})
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_path,
+        output_dir,
+        kind="real_llm_internet_alpha_support_bundle",
+        schema="real_llm_internet_alpha_support_bundle_v1",
+        ok=report.get("ok"),
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
+    write_json(json_path, report)
     md_path.write_text(render_markdown(report), encoding="utf-8")
+    write_json(support_path, support_bundle_payload(report))
     if "artifacts" in report:
         report["artifacts"]["real_llm_internet_alpha_json"]["present"] = True
         report["artifacts"]["real_llm_internet_alpha_markdown"]["present"] = True
-        json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        report["artifacts"]["support_bundle_json"]["present"] = True
+        report["artifact_summary"] = artifact_summary(output_dir)
+        if isinstance(report.get("review_summary"), dict):
+            report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+            report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
+        write_json(json_path, report)
+        md_path.write_text(render_markdown(report), encoding="utf-8")
+        write_json(support_path, support_bundle_payload(report))
     return report
 
 
@@ -601,6 +1162,7 @@ def build_local_generated(args: argparse.Namespace, *, output_dir: Path, runner:
             "No P2P routing, NAT traversal, GPU/TPU pooling, GGUF/llama.cpp serving, large-model serving, training, or arbitrary prompt serving.",
         ],
     }
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     return persist_report(report, output_dir=output_dir, secret_values=secret_values)
 
 
@@ -658,6 +1220,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path, runner: Runner)
             "No P2P routing, NAT traversal, GPU/TPU pooling, GGUF/llama.cpp serving, large-model serving, training, or arbitrary prompt serving.",
         ],
     }
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     return persist_report(report, output_dir=output_dir, secret_values=secret_values)
 
 
@@ -714,6 +1277,7 @@ def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runne
             "No P2P routing, NAT traversal, GPU/TPU pooling, GGUF/llama.cpp serving, large-model serving, training, or arbitrary prompt serving.",
         ],
     }
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     return persist_report(report, output_dir=output_dir, secret_values=secret_values)
 
 
@@ -730,6 +1294,15 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
 def render_markdown(report: dict[str, Any]) -> str:
     runtime = report.get("runtime_classification") or {}
     workload = report.get("workload") or {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
         "# CrowdTensor Real Internet Swarm Inference Alpha",
         "",
@@ -745,15 +1318,66 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- external_runtime_verified: `{runtime.get('external_runtime_verified')}`",
         f"- stage_requeue_verified: `{runtime.get('stage_requeue_verified')}`",
         "",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- status: `{user.get('headline')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
+        f"- recommended command: `{recommended.get('command_line')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    if next_items:
+        lines.extend(
+            (
+                f"- {item.get('label')}: `{item.get('command_line')}`"
+                + (" (requires private credentials; see runbook)" if item.get("requires_private_credentials") else "")
+                + (" side_effectful=`True`" if item.get("side_effectful") else "")
+            )
+            for item in next_items
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- output request note: {output_request.get('summary') or 'Public artifacts summarize inference evidence only and do not include answer text.'}",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope.get('summary') or 'Public artifacts exclude raw prompt text.'}",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no local answer transcript or raw generated text.'}",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifact_report.get('inspect_first')}`",
+        f"- summary JSON: `{artifact_report.get('summary_json')}`",
+        f"- summary Markdown: `{artifact_report.get('summary_markdown')}`",
+        f"- support bundle: `{artifact_report.get('support_bundle')}`",
+        f"- present: `{artifact_report.get('present_artifact_count')}` / `{artifact_report.get('artifact_count')}`",
+        f"- public artifact safe: `{artifact_report.get('public_artifact_safe')}`",
+        "",
         "## Diagnosis",
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
         "",
         "## Steps",
         "",
-    ]
+    ])
     for step in report.get("steps") or []:
         lines.append(f"- `{step.get('name')}`: `{step.get('ok')}` schema=`{step.get('payload_schema')}`")
+    lines.extend(["", "## Not Completed", ""])
+    not_completed = report.get("not_completed") or []
+    lines.extend(f"- {item}" for item in not_completed) if not_completed else lines.append("- none")
     lines.extend(["", "## Artifacts", ""])
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         lines.append(f"- `{name}`: `{artifact.get('path')}` present=`{artifact.get('present')}`")

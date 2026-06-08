@@ -3697,6 +3697,10 @@ def build_real_llm_internet_alpha(args: argparse.Namespace, *, runner: Runner = 
         str(getattr(args, "max_new_tokens", 1)),
         "--hf-model-id",
         args.hf_model_id,
+        "--real-llm-backend",
+        args.real_llm_backend,
+        "--real-llm-partition-mode",
+        args.real_llm_partition_mode,
         "--timeout-seconds",
         str(args.timeout_seconds),
         "--remote-timeout-seconds",
@@ -13346,6 +13350,13 @@ def print_real_llm_live_rc(report: dict[str, Any]) -> None:
 
 
 def print_real_llm_internet_alpha(report: dict[str, Any]) -> None:
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor real Internet Swarm Inference Alpha")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -13353,12 +13364,49 @@ def print_real_llm_internet_alpha(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  coordinator: {report.get('coordinator_url')}")
     print(f"  output: {report.get('output_dir')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if answer_scope:
+        print_answer_scope_block(answer_scope)
+    if shareable_summary:
+        print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     runtime = report.get("runtime_classification") or {}
     print(f"  local stand-in: {runtime.get('local_generated_stage_upload_standins')}")
     print(f"  package only: {runtime.get('package_only')}")
     print(f"  external runtime: {runtime.get('external_runtime_verified')}")
     print(f"  stage requeue: {runtime.get('stage_requeue_verified')}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = ""
+        if item.get("requires_private_credentials"):
+            suffix += " (requires private credentials)"
+        if item.get("side_effectful"):
+            suffix += " side_effectful=True"
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    artifact_summary_value = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
@@ -15397,6 +15445,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     real_internet_alpha.add_argument("--max-new-tokens", type=int, default=1)
     real_internet_alpha.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
     real_internet_alpha.add_argument("--hf-cache-dir", default="")
+    real_internet_alpha.add_argument("--real-llm-backend", choices=["hf_transformers_cpu", "hf_transformers_cuda", "cpu", "cuda", "auto"], default="hf_transformers_cpu")
+    real_internet_alpha.add_argument("--real-llm-partition-mode", choices=["full", "stage-local", "stage_local"], default="full")
     real_internet_alpha.add_argument("--timeout-seconds", type=int, default=300)
     real_internet_alpha.add_argument("--remote-timeout-seconds", type=float, default=180.0)
     real_internet_alpha.add_argument("--startup-timeout", type=float, default=30.0)
