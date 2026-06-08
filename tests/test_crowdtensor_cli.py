@@ -8318,6 +8318,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("evidence-import validates an existing P2P report", normalized)
         self.assertIn("Artifacts are shareable readiness evidence, not answer transcripts", normalized)
 
+    def test_public_swarm_v2_help_explains_modes_and_output_scope(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(["public-swarm-v2", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        normalized = " ".join(rendered.split())
+        self.assertIn("local runs a fresh Usable Swarm v1 p2pd -> serve --p2p -> join stage0/stage1 -> generate --p2p proof", normalized)
+        self.assertIn("local-model-variant validates the requested Hugging Face model locally", normalized)
+        self.assertIn("package writes the runbook and shareable package without running services", normalized)
+        self.assertIn("evidence-import validates retained usable, real-P2P, preview, and optional GPU evidence", normalized)
+        self.assertIn("Artifacts are shareable readiness evidence, not answer transcripts", normalized)
+
     def test_usable_swarm_prints_output_scope(self) -> None:
         report = {
             "schema": "usable_swarm_inference_v1",
@@ -14200,6 +14215,25 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
             },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p public_swarm_inference_v2.md",
+                    "public_artifact_safe": True,
+                },
+                {
+                    "label": "run local v2 proof",
+                    "command_line": "crowdtensor public-swarm-v2 local --max-new-tokens 16 --prompt-text '<prompt>'",
+                    "public_artifact_safe": True,
+                },
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/public-swarm-inference-v2/public_swarm_inference_v2.md",
+                "support_bundle": "dist/public-swarm-inference-v2/support_bundle.json",
+                "present_artifact_count": 5,
+                "artifact_count": 5,
+                "public_artifact_safe": True,
+            },
             "diagnosis_codes": ["public_swarm_inference_v2_ready"],
             "artifacts": {},
         }
@@ -14247,6 +14281,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
+            output,
+        )
+        self.assertIn("  next[1] inspect shareable summary: sed -n 1,220p public_swarm_inference_v2.md", output)
+        self.assertIn("  next[2] run local v2 proof: crowdtensor public-swarm-v2 local --max-new-tokens 16 --prompt-text '<prompt>'", output)
+        self.assertIn("  inspect_first: dist/public-swarm-inference-v2/public_swarm_inference_v2.md", output)
+        self.assertIn(
+            "  artifacts: present=5/5 support=dist/public-swarm-inference-v2/support_bundle.json public_artifact_safe=True",
             output,
         )
 

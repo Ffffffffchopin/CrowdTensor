@@ -225,6 +225,14 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertIn("public_swarm_inference_v2.md", report["review_summary"]["inspect_first"])
         self.assertEqual(report["recommended_next_command"]["reason"], "v2_ready")
         self.assertIn("public_swarm_inference_v2.md", report["recommended_next_command"]["command_line"])
+        self.assertEqual(report["artifact_summary"]["present_artifact_count"], 5)
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+        self.assertIn(str(output_dir / "v2" / "public_swarm_inference_v2.json"), report["artifact_summary"]["shareable_paths"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(f"sed -n 1,220p {output_dir / 'v2' / 'public_swarm_inference_v2.md'}", next_lines)
+        self.assertIn(f"sed -n 1,260p {output_dir / 'v2' / 'PUBLIC_SWARM_INFERENCE_V2.md'}", next_lines)
+        self.assertTrue(any(line.startswith(f"crowdtensor public-swarm-v2 local --output-dir {output_dir / 'v2'}") for line in next_lines))
+        self.assertTrue(all(item["public_artifact_safe"] for item in report["next_commands"]))
         self.assertFalse(report["output_request"]["include_output"])
         self.assertFalse(report["output_request"]["raw_prompt_public"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
@@ -260,6 +268,9 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertIn("## Review", markdown)
         self.assertIn("- state: `ready`", markdown)
         self.assertIn("- recommended: `review v2 evidence` reason=`v2_ready`", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("inspect shareable summary", markdown)
+        self.assertIn("run local v2 proof", markdown)
         self.assertIn(
             "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,
@@ -274,6 +285,8 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
+        self.assertIn("## Artifacts", markdown)
+        self.assertIn("- public artifact safe: `True`", markdown)
         support = json.loads((output_dir / "v2" / "support_bundle.json").read_text(encoding="utf-8"))
         self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
@@ -281,6 +294,8 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertEqual(support["review_summary"]["state"], "ready")
         self.assertEqual(support["user_status"]["state"], "ready")
         self.assertEqual(support["recommended_next_command"]["reason"], "v2_ready")
+        self.assertTrue(support["next_commands"])
+        self.assertEqual(support["artifact_summary"]["present_artifact_count"], 5)
 
     def test_fresh_external_blocks_when_stage_rows_below_token_target(self) -> None:
         output_dir = self._tmp_dir()
@@ -324,6 +339,7 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["recommended_label"], "import fresh external evidence")
         self.assertEqual(report["recommended_next_command"]["reason"], "refresh_external_p2p_evidence")
         self.assertIn("dist/<fresh-real-p2p-run>/real_p2p_swarm_inference_core_rc.json", report["recommended_next_command"]["command_line"])
+        self.assertTrue(any(item["label"] == "import fresh external evidence" for item in report["next_commands"]))
         self.assertNotIn("public_swarm_v2_external_stage_rows_ready", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_v2_fresh_external_runtime_verified", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_inference_v2_ready", report["diagnosis_codes"])

@@ -13873,6 +13873,19 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary:
+        print(f"  inspect_first: {artifact_summary.get('inspect_first')}")
+        print(
+            "  artifacts: "
+            f"present={artifact_summary.get('present_artifact_count')}/{artifact_summary.get('artifact_count')} "
+            f"support={artifact_summary.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
+        )
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -15467,6 +15480,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     public_swarm_v2 = subparsers.add_parser(
         "public-swarm-v2",
         help="Build the Public Swarm Inference v2 artifact for the 16-token P2P path.",
+        description=(
+            "Build the Public Swarm Inference v2 artifact for the ordinary P2P user path. "
+            "local runs a fresh Usable Swarm v1 p2pd -> serve --p2p -> join stage0/stage1 -> generate --p2p proof "
+            "plus v2 route-hardening evidence; local-model-variant validates the requested Hugging Face model locally; "
+            "package writes the runbook and shareable package without running services; evidence-import validates retained "
+            "usable, real-P2P, preview, and optional GPU evidence."
+        ),
+        epilog=(
+            "Artifacts are shareable readiness evidence, not answer transcripts: raw prompts, generated text, token ids, "
+            "activations, credentials, leases, and idempotency material stay out of JSON/Markdown/support bundles. "
+            "Use crowdtensor generate --p2p in human mode to see the local answer."
+        ),
     )
     public_swarm_v2.add_argument("public_swarm_v2_mode", choices=["local", "local-model-variant", "package", "evidence-import"], nargs="?", default="local")
     public_swarm_v2.add_argument("--output-dir", default="dist/public-swarm-inference-v2")
