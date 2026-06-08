@@ -810,13 +810,30 @@ def markdown_prompt_input_hint(command_text: str) -> str:
     has_prompt = INFER_PROMPT_PLACEHOLDER in command_text
     has_batch = INFER_BATCH_PROMPTS_PLACEHOLDER in command_text
     has_stdin = "--prompt-stdin" in command_text
-    if not has_prompt and not has_batch and not has_stdin:
+    has_prompt_file = f"--prompt-file {INFER_PROMPT_FILE_PLACEHOLDER}" in command_text
+    has_prompt_texts_file = f"--prompt-texts-file {INFER_PROMPT_TEXTS_FILE_PLACEHOLDER}" in command_text
+    if not has_prompt and not has_batch and not has_stdin and not has_prompt_file and not has_prompt_texts_file:
         return ""
     if has_stdin:
         stdin_command = stdin_safe_command_line(command_text)
         return (
             "- Prompt input: this command reads stdin. Safe copy form: "
             f"`{stdin_command}`. Replace `{INFER_PROMPT_PLACEHOLDER}` locally; saved Markdown does not include raw prompt text."
+        )
+    if has_prompt_file and has_prompt_texts_file:
+        return (
+            "- Prompt input: saved Markdown keeps `prompt.txt` and `prompts.txt` placeholders; "
+            "replace them with local prompt file paths before rerunning."
+        )
+    if has_prompt_file:
+        return (
+            "- Prompt input: saved Markdown keeps the `prompt.txt` placeholder; "
+            "replace it with a local prompt file path before rerunning."
+        )
+    if has_prompt_texts_file:
+        return (
+            "- Prompt input: saved Markdown keeps the `prompts.txt` placeholder; "
+            "replace it with a local batch prompt file path before rerunning."
         )
     if has_prompt and has_batch:
         placeholders = f"`{INFER_PROMPT_PLACEHOLDER}` and `{INFER_BATCH_PROMPTS_PLACEHOLDER}`"
@@ -867,6 +884,7 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
     recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
+    shareable_terminal = summary.get("shareable_terminal") if isinstance(summary.get("shareable_terminal"), dict) else {}
     state = str(user_status.get("state") or review_summary.get("state") or issue_summary.get("state") or "unknown")
     headline = str(user_status.get("headline") or issue_summary.get("headline") or "")
     next_step = str(user_status.get("next_step") or review_summary.get("next_step") or issue_summary.get("next_step") or "none")
@@ -906,6 +924,11 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
                 lines.append(
                     "- Terminal prompt scope: this stdin command is safe to copy from saved Markdown after replacing "
                     "`<prompt>` locally; saved JSON/Markdown do not include raw prompt text."
+                )
+            elif shareable_terminal.get("enabled"):
+                lines.append(
+                    "- Terminal prompt scope: `--shareable-terminal` hid inline prompts, local prompt file paths, "
+                    "and local answer text from terminal logs; saved JSON/Markdown keep placeholders."
                 )
             else:
                 lines.append(

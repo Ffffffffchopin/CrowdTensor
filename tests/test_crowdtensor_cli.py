@@ -12951,8 +12951,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         source_markdown = (output_dir / "generate" / "generate_summary.md").read_text(encoding="utf-8")
         shareable_line = "- Shareable terminal: `enabled=True prompt_sources_redacted=True answer_text_redacted=False public_artifact_safe=True`"
+        shareable_prompt_scope = (
+            "- Terminal prompt scope: `--shareable-terminal` hid inline prompts, local prompt file paths, "
+            "and local answer text from terminal logs; saved JSON/Markdown keep placeholders."
+        )
+        local_private_prompt_scope = "Treat terminal logs as local-private"
         self.assertIn(shareable_line, markdown)
         self.assertIn(shareable_line, source_markdown)
+        self.assertIn(shareable_prompt_scope, markdown)
+        self.assertIn(shareable_prompt_scope, source_markdown)
+        self.assertNotIn(local_private_prompt_scope, markdown)
+        self.assertNotIn(local_private_prompt_scope, source_markdown)
         self.assertNotIn(str(prompt_file), markdown)
         self.assertNotIn(str(prompt_file), source_markdown)
 
