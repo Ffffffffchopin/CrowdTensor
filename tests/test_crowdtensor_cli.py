@@ -1322,12 +1322,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  action: Generation request shape is valid, but live readiness was skipped", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
         self.assertIn(f"  inspect_first: {output_dir / 'generate_summary.md'}", rendered)
-        self.assertLess(rendered.index("  review: "), rendered.index("  ok: "))
         self.assertLess(rendered.index("  review_next: "), rendered.index("  inspect_first: "))
         self.assertLess(rendered.index("  inspect_first: "), rendered.index("  attention: "))
         self.assertLess(rendered.index("  review: "), rendered.index("  status: "))
         self.assertLess(rendered.index("  attention: "), rendered.index("  action: "))
-        self.assertLess(rendered.index("  action: "), rendered.index("  diagnosis: "))
+        self.assertLess(rendered.index("  action: "), rendered.index("  ok: "))
+        self.assertLess(rendered.index("  ok: "), rendered.index("  diagnosis: "))
         self.assertIn(
             "  trace: session=none requests=1 ledger_rows=0 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True",
             rendered,
@@ -8904,10 +8904,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"  review: state=completed next=rerun_or_review_artifacts inspect={output_dir / 'infer_summary.md'} recommended=rerun inference primary=crowdtensor_infer_ready attention=none public_artifact_safe=True",
             stdout.getvalue(),
         )
-        self.assertLess(stdout.getvalue().index("  review: "), stdout.getvalue().index("  ok: "))
         self.assertLess(stdout.getvalue().index("  review_next: "), stdout.getvalue().index("  inspect_first: "))
-        self.assertLess(stdout.getvalue().index("  inspect_first: "), stdout.getvalue().index("  ok: "))
+        self.assertLess(stdout.getvalue().index("  inspect_first: "), stdout.getvalue().index("  status: "))
         self.assertLess(stdout.getvalue().index("  review: "), stdout.getvalue().index("  status: "))
+        self.assertLess(stdout.getvalue().index("  status: "), stdout.getvalue().index("  ok: "))
         self.assertIn(
             "  review_next: label=rerun inference reason=rerun_inference command=CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
             stdout.getvalue(),
@@ -10032,7 +10032,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertLess(rendered.index("  review_next: "), rendered.index("  inspect_first: "))
         self.assertLess(rendered.index("  inspect_first: "), rendered.index("  attention: "))
         self.assertLess(rendered.index("  attention: "), rendered.index("  action: "))
-        self.assertLess(rendered.index("  action: "), rendered.index("  model: "))
+        self.assertLess(rendered.index("  action: "), rendered.index("  ok: "))
+        self.assertLess(rendered.index("  ok: "), rendered.index("  model: "))
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("must not leak", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)
@@ -11285,10 +11286,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  status: preflight-ready: Preflight passed; submit inference next. next=submit recommendation=submit inference public_artifact_safe=True",
             rendered,
         )
-        self.assertLess(rendered.index("  review: "), rendered.index("  ok: "))
         self.assertLess(rendered.index("  review_next: "), rendered.index("  inspect_first: "))
-        self.assertLess(rendered.index("  inspect_first: "), rendered.index("  ok: "))
+        self.assertLess(rendered.index("  inspect_first: "), rendered.index("  status: "))
         self.assertLess(rendered.index("  review: "), rendered.index("  status: "))
+        self.assertLess(rendered.index("  status: "), rendered.index("  ok: "))
         self.assertIn("  ready_to_submit: ready label=verified fully_verified=True route=True coordinator=ready stage=ready stage_verification=ready next_step=submit warnings=none", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
         self.assertIn("recommended_next: submit inference reason=submit_verified_inference", rendered)
