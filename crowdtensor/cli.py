@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -149,6 +150,16 @@ CLEANUP_REPORT_PATTERNS = (
 PROTECTED_REPO_PARTS = {".git", ".venv", "venv", "state"}
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def find_available_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _flag_explicit(argv: list[str], flag: str) -> bool:
+    return any(part == flag or part.startswith(f"{flag}=") for part in argv)
 
 
 def request_json_url(
@@ -1112,13 +1123,20 @@ def output_request_text(output_request: dict[str, Any]) -> str:
 
 
 def runtime_options_text(options: dict[str, Any]) -> str:
-    return (
+    text = (
         f"timeout_seconds={options.get('timeout_seconds')} "
         f"poll_interval={options.get('poll_interval')} "
         f"http_timeout={options.get('http_timeout')} "
         f"admin_results_limit={options.get('admin_results_limit')} "
         f"public_artifact_safe={bool(options.get('public_artifact_safe', True))}"
     )
+    if options.get("coordinator_port") is not None:
+        text += (
+            f" coordinator_port={options.get('coordinator_port')} "
+            f"coordinator_port_auto={bool(options.get('coordinator_port_auto'))} "
+            f"coordinator_port_explicit={bool(options.get('coordinator_port_explicit'))}"
+        )
+    return text
 
 
 def output_display_text(display: dict[str, Any]) -> str:
@@ -5870,12 +5888,14 @@ def _infer_command_args(
     if bool(getattr(args, "include_output", False)):
         command.append("--include-output")
     if resolved_mode == "local":
-        coordinator_port = int(
-            coordinator_port_override
-            if coordinator_port_override is not None
-            else getattr(args, "coordinator_port", 9789)
-        )
-        if coordinator_port != 9789:
+        coordinator_port_explicit = bool(getattr(args, "coordinator_port_explicit", False))
+        if coordinator_port_override is not None:
+            coordinator_port = int(coordinator_port_override)
+        elif coordinator_port_explicit:
+            coordinator_port = int(getattr(args, "coordinator_port", 9789) or 9789)
+        else:
+            coordinator_port = 9789
+        if coordinator_port_override is not None or coordinator_port_explicit:
             command.extend(["--coordinator-port", str(coordinator_port)])
     use_full_evidence = bool(getattr(args, "full_evidence", False)) if full_evidence is None else bool(full_evidence)
     if resolved_mode == "local" and use_full_evidence:
@@ -5952,10 +5972,13 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         ))
     if mode == "local":
         if "serve_start_failed" in codes:
-            try:
-                retry_port = int(getattr(args, "coordinator_port", 9789) or 9789) + 10
-            except (TypeError, ValueError):
-                retry_port = 9799
+            if bool(getattr(args, "coordinator_port_explicit", False)):
+                try:
+                    retry_port = int(getattr(args, "coordinator_port", 9789) or 9789) + 10
+                except (TypeError, ValueError):
+                    retry_port = 9799
+            else:
+                retry_port = find_available_loopback_port()
             commands.append(command_entry(
                 "retry local inference on a fresh port",
                 _infer_command_args(args, full_evidence=False, coordinator_port_override=retry_port),
@@ -6591,6 +6614,9 @@ def _infer_summary_from_payload(
             "poll_interval": float(getattr(args, "poll_interval", 1.0) or 1.0),
             "http_timeout": float(getattr(args, "http_timeout", 30.0) or 30.0),
             "admin_results_limit": int(getattr(args, "admin_results_limit", 50) or 50),
+            "coordinator_port": int(getattr(args, "coordinator_port", 9789) or 9789),
+            "coordinator_port_auto": bool(getattr(args, "coordinator_port_auto", False)),
+            "coordinator_port_explicit": bool(getattr(args, "coordinator_port_explicit", False)),
             "public_artifact_safe": True,
         },
         "saved_summary": {
@@ -6639,6 +6665,9 @@ def _infer_summary_from_payload(
             "Coordinator-backed, read-only, tiny/small-model scoped; not production Hivemind/Petals parity or large-model serving.",
         ],
     }
+    if mode != "local":
+        for key in ["coordinator_port", "coordinator_port_auto", "coordinator_port_explicit"]:
+            summary["runtime_options"].pop(key, None)
     summary["output_display"] = _output_display_from_report(summary)
     summary["answer_scope"] = _answer_scope_from_report(summary)
     summary["shareable_summary"] = _shareable_summary_from_report(summary, kind="infer")
@@ -6713,6 +6742,15 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
     output_dir.mkdir(parents=True, exist_ok=True)
     mode = getattr(args, "infer_mode", "local")
     prompt_redactions = _infer_prompt_redaction_values(args)
+    local_loopback_port = int(getattr(args, "coordinator_port", 9789) or 9789)
+    local_loopback_port_auto = False
+    local_loopback_port_explicit = bool(getattr(args, "coordinator_port_explicit", False))
+    if mode == "local" and not bool(getattr(args, "full_evidence", False)) and not local_loopback_port_explicit:
+        local_loopback_port = find_available_loopback_port()
+        args.coordinator_port = local_loopback_port
+        local_loopback_port_auto = True
+    args.coordinator_port_auto = local_loopback_port_auto
+    args.coordinator_port_explicit = local_loopback_port_explicit
     if mode == "existing":
         generate_args = argparse.Namespace(
             prompt_text=args.prompt_text,
@@ -6755,7 +6793,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             "--output-dir",
             str(output_dir / "product-swarm-mvp"),
             "--port",
-            str(args.coordinator_port),
+            str(local_loopback_port),
             "--backend",
             args.backend,
             "--hf-model-id",
@@ -12985,6 +13023,7 @@ def print_remote_cli_report(report: dict[str, Any], *, title: str) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
         prog="crowdtensor",
         description="CrowdTensor user-facing command line tools.",
@@ -13014,6 +13053,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "across stage0/stage1 workers, prints local display-only output in human mode, and\n"
             "writes redacted infer_summary.json and infer_summary.md files. Use --mode existing\n"
             "to target an already running Coordinator or P2P-discovered swarm.\n"
+            "Default local runs auto-select an available loopback Coordinator port; pass\n"
+            "--coordinator-port only when you need a reproducible fixed local port.\n"
             "In non-JSON mode, the CLI prints a short safe stderr start hint before long-running\n"
             "checks; --json keeps stdout machine-readable.\n"
             "Start with the status/user_status line: completed means done, preflight-ready\n"
@@ -15166,6 +15207,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_demo_kaggle_real.add_argument("--task-id", default="")
     remote_demo_kaggle_real.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    if getattr(args, "command", "") == "infer":
+        args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
     if args.command in {"local-proof", "infer", "serve", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):

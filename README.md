@@ -79,6 +79,9 @@ prints the local display-only generated text, and writes a compact
 Markdown, and public artifacts keep raw prompts, generated text, token ids,
 credentials, and activations out of shareable files. Use `--full-evidence`
 when you want the broader Public Swarm v2 gate instead of the faster user path.
+Default local `infer` auto-selects an available loopback Coordinator port so
+nearby local smoke runs do not collide; pass `--coordinator-port` only when you
+need a fixed reproducible local port.
 In human mode, `infer` and `generate` print a short safe stderr start hint before
 long-running checks so the terminal does not look idle; `--json` keeps stdout
 machine-readable.

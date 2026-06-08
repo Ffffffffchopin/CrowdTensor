@@ -66,6 +66,9 @@ prints the local display-only generated text, and writes a compact
 mode, Markdown, and saved reports keep raw prompts and generated text redacted.
 Use `--full-evidence` when you want the broader Public Swarm v2 gate instead
 of the faster user path.
+Default local `infer` auto-selects an available loopback Coordinator port so
+nearby local smoke runs do not collide; pass `--coordinator-port` only when you
+need a fixed reproducible local port.
 
 For machine-readable output:
 
