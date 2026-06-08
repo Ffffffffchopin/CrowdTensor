@@ -20,6 +20,30 @@ def completed(payload: dict, returncode: int = 0) -> subprocess.CompletedProcess
     return subprocess.CompletedProcess(args=["cmd"], returncode=returncode, stdout=json.dumps(payload) + "\n", stderr="")
 
 
+def assert_ready_guidance(testcase: unittest.TestCase, report: dict, output_dir: Path) -> None:
+    testcase.assertEqual(report["user_status"]["state"], "ready")
+    testcase.assertEqual(report["user_status"]["next_step"], "review_artifacts")
+    testcase.assertEqual(report["review_summary"]["schema"], "cpu_inference_beta_rc_review_summary_v1")
+    testcase.assertEqual(report["review_summary"]["state"], "ready")
+    testcase.assertEqual(report["recommended_next_command"]["label"], "inspect CPU Inference Beta RC evidence")
+    testcase.assertIn("cpu_inference_beta_rc.md", report["recommended_next_command"]["command_line"])
+    testcase.assertEqual(report["not_completed"], [])
+    testcase.assertGreaterEqual(len(report["next_commands"]), 3)
+    testcase.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+    testcase.assertEqual(
+        report["artifact_summary"]["present_artifact_count"],
+        report["artifact_summary"]["artifact_count"],
+    )
+    testcase.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+    support_path = output_dir / "support_bundle.json"
+    testcase.assertTrue(support_path.is_file())
+    support = json.loads(support_path.read_text(encoding="utf-8"))
+    testcase.assertEqual(support["schema"], "cpu_inference_beta_rc_support_bundle_v1")
+    testcase.assertEqual(support["review_summary"]["state"], "ready")
+    testcase.assertEqual(support["recommended_next_command"]["label"], "inspect CPU Inference Beta RC evidence")
+    testcase.assertTrue(support["public_artifact_safe"])
+
+
 class CpuInferenceBetaRCPackTests(unittest.TestCase):
     def _tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="crowdtensor_cpu_infer_beta_rc_test_"))
@@ -120,6 +144,14 @@ class CpuInferenceBetaRCPackTests(unittest.TestCase):
         self.assertTrue(report["artifacts"]["kaggle_remote_miner_script"]["present"])
         self.assertTrue(report["artifacts"]["miner_join_script"]["present"])
         self.assertTrue(report["artifacts"]["miner_join_runbook"]["present"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        assert_ready_guidance(self, report, output_dir)
+        markdown = (output_dir / "cpu_inference_beta_rc.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("## Not Completed", markdown)
         self.assertTrue(any("remote_two_machine_beta_check.py" in " ".join(command) for command in calls))
         self.assertTrue(any("kaggle_remote_miner_beta_check.py" in " ".join(command) for command in calls))
 
@@ -188,6 +220,7 @@ class CpuInferenceBetaRCPackTests(unittest.TestCase):
         self.assertTrue(report["real_runtime_evidence"]["token_rotation_required"])
         self.assertIn("real_runtime_evidence_ready", report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["kaggle_real_runtime_report"]["present"])
+        assert_ready_guidance(self, report, output_dir)
 
     def test_build_report_imports_real_llm_live_rc_evidence(self) -> None:
         output_dir = self._tmp_dir()
@@ -269,6 +302,7 @@ class CpuInferenceBetaRCPackTests(unittest.TestCase):
         self.assertTrue(report["real_runtime_evidence"]["operator_env_excluded_from_kaggle"])
         self.assertIn("real_runtime_evidence_ready", report["diagnosis_codes"])
         self.assertIn("kaggle_real_llm_sharded_ready", report["diagnosis_codes"])
+        assert_ready_guidance(self, report, output_dir)
 
     def test_failed_child_marks_beta_rc_blocked(self) -> None:
         output_dir = self._tmp_dir()
@@ -284,6 +318,13 @@ class CpuInferenceBetaRCPackTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("beta_rc_blocked", report["diagnosis_codes"])
         self.assertNotIn("cpu_inference_beta_rc_ready", report["diagnosis_codes"])
+        self.assertEqual(report["user_status"]["state"], "blocked")
+        self.assertEqual(report["user_status"]["next_step"], "fix_beta_rc_blockers")
+        self.assertEqual(report["review_summary"]["state"], "blocked")
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun CPU Inference Beta RC")
+        self.assertIn("CPU Inference Beta RC ready", report["not_completed"])
+        self.assertIn("step local_cpu_inference passed", report["not_completed"])
+        self.assertTrue((output_dir / "support_bundle.json").is_file())
 
 
 if __name__ == "__main__":

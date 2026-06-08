@@ -13190,7 +13190,8 @@ def print_cpu_inference_beta(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary_value = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
-    print("CrowdTensor CPU inference Beta")
+    title = "CrowdTensor CPU inference Beta RC" if report.get("schema") == "cpu_inference_beta_rc_v1" else "CrowdTensor CPU inference Beta"
+    print(title)
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
     print(f"  mode: {report.get('mode')}")
