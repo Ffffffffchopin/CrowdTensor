@@ -7848,6 +7848,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "note": "only a local or CI GPU smoke path is represented",
                     "public_artifact_safe": True,
                 },
+                "checked_gpu_summary": {
+                    "schema": "public_real_llm_swarm_beta_check_gpu_summary_v1",
+                    "state": "local-gpu-smoke-only",
+                    "fresh_kaggle_gpu_verified": False,
+                    "recommended_label": "run fresh Kaggle GPU proof",
+                    "recommended_reason": "verify_fresh_kaggle_gpu",
+                    "requires_kaggle": True,
+                    "side_effectful": True,
+                    "cleanup_required": True,
+                    "token_rotation_required": True,
+                    "public_artifact_safe": True,
+                },
                 "artifact_summary": {
                     "inspect_first": str(output_dir / "public_real_llm_swarm_beta.md"),
                     "machine_readable": str(output_dir / "public_real_llm_swarm_beta.json"),
@@ -7960,6 +7972,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  check_source: unknown", rendered)
         self.assertIn("  status: ready", rendered)
         self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
+        self.assertIn("  checked_gpu_summary: state=local-gpu-smoke-only", rendered)
+        self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
+        self.assertIn("recommended=run fresh Kaggle GPU proof", rendered)
+        self.assertIn("reason=verify_fresh_kaggle_gpu", rendered)
         self.assertIn("  artifacts: inspect=", rendered)
         self.assertIn("  checked_runtime_provenance: proof=release-local-cpu-with-retained-external-and-local-gpu-smoke", rendered)
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)

@@ -15306,6 +15306,18 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def public_real_llm_beta_checked_gpu_summary_text(summary: dict[str, Any]) -> str:
+    return (
+        f"state={summary.get('state') or 'unknown'} "
+        f"fresh_kaggle_gpu_verified={bool(summary.get('fresh_kaggle_gpu_verified'))} "
+        f"recommended={summary.get('recommended_label') or 'none'} "
+        f"reason={summary.get('recommended_reason') or 'none'} "
+        f"requires_kaggle={bool(summary.get('requires_kaggle'))} "
+        f"cleanup_required={bool(summary.get('cleanup_required'))} "
+        f"token_rotation_required={bool(summary.get('token_rotation_required'))}"
+    )
+
+
 def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
@@ -15326,6 +15338,15 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     checked_runtime_provenance = report.get("checked_runtime_provenance") if isinstance(report.get("checked_runtime_provenance"), dict) else {}
     checked_evidence_scope = report.get("checked_evidence_scope") if isinstance(report.get("checked_evidence_scope"), dict) else {}
+    checked_gpu_summary = (
+        report.get("checked_gpu_summary")
+        if isinstance(report.get("checked_gpu_summary"), dict)
+        else review.get("checked_gpu_summary")
+        if isinstance(review.get("checked_gpu_summary"), dict)
+        else user_status.get("checked_gpu_summary")
+        if isinstance(user_status.get("checked_gpu_summary"), dict)
+        else {}
+    )
     raw_operator_action = report.get("operator_action")
     operator_actions = [str(item) for item in raw_operator_action] if isinstance(raw_operator_action, list) else []
     if raw_operator_action and not operator_actions:
@@ -15353,6 +15374,8 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
             f"errors={_safe_int(review.get('error_count'))} "
             f"public_artifact_safe={bool(review.get('public_artifact_safe'))}"
         )
+    if checked_gpu_summary:
+        print(f"  checked_gpu_summary: {public_real_llm_beta_checked_gpu_summary_text(checked_gpu_summary)}")
     if artifact_summary:
         print(
             "  artifacts: "

@@ -1444,10 +1444,44 @@ def next_commands(result: dict[str, Any]) -> list[dict[str, Any]]:
     return commands
 
 
+def checked_gpu_summary(result: dict[str, Any]) -> dict[str, Any]:
+    status = result.get("checked_gpu_status") if isinstance(result.get("checked_gpu_status"), dict) else {}
+    proof_next = (
+        result.get("checked_gpu_proof_next_step")
+        if isinstance(result.get("checked_gpu_proof_next_step"), dict)
+        else {}
+    )
+    return {
+        "schema": "public_real_llm_swarm_beta_check_gpu_summary_v1",
+        "state": str(status.get("state") or "unknown"),
+        "fresh_kaggle_gpu_verified": bool(status.get("fresh_kaggle_gpu_verified")),
+        "recommended_label": proof_next.get("recommended_label") or "none",
+        "recommended_reason": proof_next.get("recommended_reason") or "none",
+        "requires_kaggle": bool(proof_next.get("requires_kaggle")),
+        "side_effectful": bool(proof_next.get("side_effectful")),
+        "cleanup_required": bool(proof_next.get("cleanup_required")),
+        "token_rotation_required": bool(proof_next.get("token_rotation_required")),
+        "public_artifact_safe": True,
+    }
+
+
+def checked_gpu_summary_text(summary: dict[str, Any]) -> str:
+    return (
+        f"state={summary.get('state') or 'unknown'} "
+        f"fresh_kaggle_gpu_verified={bool(summary.get('fresh_kaggle_gpu_verified'))} "
+        f"recommended={summary.get('recommended_label') or 'none'} "
+        f"reason={summary.get('recommended_reason') or 'none'} "
+        f"requires_kaggle={bool(summary.get('requires_kaggle'))} "
+        f"cleanup_required={bool(summary.get('cleanup_required'))} "
+        f"token_rotation_required={bool(summary.get('token_rotation_required'))}"
+    )
+
+
 def user_status(result: dict[str, Any]) -> dict[str, Any]:
     errors = result.get("errors") if isinstance(result.get("errors"), list) else []
     ready = bool(result.get("ok") is True and not errors)
     recommended = result.get("recommended_next_command") if isinstance(result.get("recommended_next_command"), dict) else {}
+    gpu = checked_gpu_summary(result)
     return {
         "state": "ready" if ready else "blocked",
         "headline": (
@@ -1459,6 +1493,11 @@ def user_status(result: dict[str, Any]) -> dict[str, Any]:
         "recommended_label": recommended.get("label") or "none",
         "recommended_reason": recommended.get("reason") or "none",
         "error_count": len(errors),
+        "checked_gpu_summary": gpu,
+        "gpu_status_state": gpu["state"],
+        "fresh_kaggle_gpu_verified": gpu["fresh_kaggle_gpu_verified"],
+        "gpu_recommended_label": gpu["recommended_label"],
+        "gpu_recommended_reason": gpu["recommended_reason"],
         "public_artifact_safe": True,
     }
 
@@ -1481,6 +1520,7 @@ def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
         else recommended_next_command(result)
     )
     ready = bool(result.get("ok") is True and not errors)
+    gpu = checked_gpu_summary(result)
     return {
         "schema": REVIEW_SUMMARY_SCHEMA,
         "state": "ready" if ready else "blocked",
@@ -1495,6 +1535,11 @@ def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
         "recommended_label": recommended_next.get("label") or recommended.get("label") or "none",
         "recommended_reason": recommended_next.get("reason") or recommended.get("reason") or "none",
         "next_command": recommended_next.get("command_line") or recommended.get("command_line") or "",
+        "checked_gpu_summary": gpu,
+        "gpu_status_state": gpu["state"],
+        "fresh_kaggle_gpu_verified": gpu["fresh_kaggle_gpu_verified"],
+        "gpu_recommended_label": gpu["recommended_label"],
+        "gpu_recommended_reason": gpu["recommended_reason"],
         "error_count": len(errors),
         "error_preview": errors[:8],
         "operator_action": (
@@ -1620,6 +1665,7 @@ def check_result_from_payload(
             "runbook": artifact_path(payload, "runbook", "PUBLIC_REAL_LLM_SWARM_BETA.md") if payload else "",
         },
     }
+    result["checked_gpu_summary"] = checked_gpu_summary(result)
     result["artifact_summary"] = check_artifact_summary(result)
     result["recommended_check_command"] = recommended_check_command(result)
     result["recommended_next_command"] = recommended_next_command(result)
@@ -1672,6 +1718,7 @@ def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
             "checked_evidence_scope",
             "checked_gpu_status",
             "checked_gpu_proof_next_step",
+            "checked_gpu_summary",
             "check_source",
             "checked_beta_report",
             "beta_output_dir",
@@ -1740,6 +1787,11 @@ def print_human_summary(result: dict[str, Any]) -> None:
     checked_evidence_scope = result.get("checked_evidence_scope") if isinstance(result.get("checked_evidence_scope"), dict) else {}
     checked_gpu_status = result.get("checked_gpu_status") if isinstance(result.get("checked_gpu_status"), dict) else {}
     checked_gpu_proof_next_step = result.get("checked_gpu_proof_next_step") if isinstance(result.get("checked_gpu_proof_next_step"), dict) else {}
+    checked_gpu_summary_value = (
+        review.get("checked_gpu_summary")
+        if isinstance(review.get("checked_gpu_summary"), dict)
+        else user.get("checked_gpu_summary") if isinstance(user.get("checked_gpu_summary"), dict) else checked_gpu_summary(result)
+    )
     print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
     print(f"  mode: {result.get('mode')}")
     print(f"  max_new_tokens: {result.get('max_new_tokens')}")
@@ -1753,6 +1805,7 @@ def print_human_summary(result: dict[str, Any]) -> None:
             f"next={user.get('next_step')} "
             f"recommended={user.get('recommended_label')} "
             f"errors={user.get('error_count')} "
+            f"gpu={checked_gpu_summary_text(checked_gpu_summary_value)} "
             f"public_artifact_safe={user.get('public_artifact_safe')}"
         )
     if review:
@@ -1762,6 +1815,7 @@ def print_human_summary(result: dict[str, Any]) -> None:
             f"next={review.get('next_step')} "
             f"inspect={review.get('inspect_first')} "
             f"errors={review.get('error_count')} "
+            f"gpu={checked_gpu_summary_text(checked_gpu_summary_value)} "
             f"public_artifact_safe={review.get('public_artifact_safe')}"
         )
     if artifact_summary:

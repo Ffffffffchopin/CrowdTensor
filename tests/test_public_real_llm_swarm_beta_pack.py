@@ -597,6 +597,18 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
                 for item in result["checked_gpu_proof_next_step"]["commands"]
             )
         )
+        self.assertEqual(result["checked_gpu_summary"]["schema"], "public_real_llm_swarm_beta_check_gpu_summary_v1")
+        self.assertEqual(result["checked_gpu_summary"]["state"], "local-gpu-smoke-only")
+        self.assertFalse(result["checked_gpu_summary"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(result["checked_gpu_summary"]["recommended_reason"], "verify_fresh_kaggle_gpu")
+        self.assertTrue(result["checked_gpu_summary"]["requires_kaggle"])
+        self.assertTrue(result["checked_gpu_summary"]["cleanup_required"])
+        self.assertEqual(result["review_summary"]["checked_gpu_summary"], result["checked_gpu_summary"])
+        self.assertEqual(result["review_summary"]["gpu_status_state"], "local-gpu-smoke-only")
+        self.assertEqual(result["review_summary"]["gpu_recommended_reason"], "verify_fresh_kaggle_gpu")
+        self.assertEqual(result["user_status"]["checked_gpu_summary"], result["checked_gpu_summary"])
+        self.assertEqual(result["user_status"]["gpu_status_state"], "local-gpu-smoke-only")
+        self.assertEqual(result["user_status"]["gpu_recommended_reason"], "verify_fresh_kaggle_gpu")
 
     def test_release_prefers_fresh_usable_report_written_by_public_swarm_v2(self) -> None:
         output_dir = self._tmp_dir()
