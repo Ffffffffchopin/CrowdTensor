@@ -419,6 +419,16 @@ def human_next_command_line(item: dict[str, Any], command_line_text: str) -> str
     return f"{' '.join(prefixes)} {command_line_text}" if prefixes else command_line_text
 
 
+def terminal_prompt_scope_text(report: dict[str, Any]) -> str:
+    if not (report.get("local_prompt_text") or report.get("local_prompt_texts")):
+        return ""
+    return (
+        "terminal_next_commands=local-private inline_prompt_text=True "
+        "saved_artifacts=prompt-placeholders "
+        "prefer_prompt_file_or_stdin_for_shareable_logs=True"
+    )
+
+
 def p2p_discovery_daemon_command(
     *,
     backend: str = "lite",
@@ -730,6 +740,11 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
         prompt_hint = markdown_prompt_input_hint(command)
         if prompt_hint:
             lines.append(prompt_hint)
+            lines.append(
+                "- Terminal prompt scope: human terminal `review_next`, `recommended_next`, and `next[...]` "
+                "may render inline local prompts for copy/paste. Treat terminal logs as local-private; "
+                "saved JSON/Markdown keep placeholders."
+            )
     if requires_env:
         lines.append(f"- Requires env: `{', '.join(str(name) for name in requires_env)}`")
     if operator_action:
@@ -10915,6 +10930,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     review_summary = display_review_summary(report, local_generate_command_line)
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
+        prompt_scope = terminal_prompt_scope_text(report)
+        if prompt_scope:
+            print(f"  prompt_scope: {prompt_scope}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
         if review_summary.get("inspect_first"):
             print(f"  inspect_first: {review_summary.get('inspect_first')}")
@@ -11208,6 +11226,9 @@ def print_infer(report: dict[str, Any]) -> None:
     review_summary = display_review_summary(report, local_infer_command_line)
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
+        prompt_scope = terminal_prompt_scope_text(report)
+        if prompt_scope:
+            print(f"  prompt_scope: {prompt_scope}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
         if review_summary.get("inspect_first"):
             print(f"  inspect_first: {review_summary.get('inspect_first')}")
@@ -13288,6 +13309,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The inspect_first line points directly to the Markdown summary to open first.\n"
             "The review_next line keeps the safe recommended command next to that first-screen summary;\n"
             "human terminal output renders local prompt sources for copying, using a pipe placeholder for --prompt-stdin;\n"
+            "inline prompt terminal next commands are local-private, so treat terminal logs as private and prefer prompt files or stdin for shareable logs;\n"
             "saved artifacts keep prompt placeholders. The status/user_status line then\n"
             "spells out completed, preflight-ready, preflight-partial, or blocked state.\n"
             "Reports include action, recommended_next, and next[...] lines with copyable\n"
@@ -13505,6 +13527,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The inspect_first line points directly to the Markdown summary to open first.\n"
             "The review_next line keeps the safe recommended command next to that first-screen summary;\n"
             "human terminal output renders local prompt sources for copying, using a pipe placeholder for --prompt-stdin;\n"
+            "inline prompt terminal next commands are local-private, so treat terminal logs as private and prefer prompt files or stdin for shareable logs;\n"
             "saved artifacts keep prompt placeholders. The status/user_status line then\n"
             "spells out completed, preflight-ready, preflight-partial, or blocked state.\n"
             "ready_to_submit labels mean: verified is ready after route,\n"

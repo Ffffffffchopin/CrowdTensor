@@ -322,6 +322,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("safe recommended command", rendered)
         self.assertIn("terminal output renders local prompt sources for copying", rendered)
         self.assertIn("using a pipe placeholder for --prompt-stdin", rendered)
+        self.assertIn("inline prompt terminal next commands are local-private", rendered)
+        self.assertIn("treat terminal logs as private", rendered)
+        self.assertIn("prefer prompt files or stdin for shareable logs", rendered)
         self.assertIn("saved artifacts", rendered)
         self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("existing mode only: check route/session readiness", rendered)
@@ -426,6 +429,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("safe recommended command", rendered)
         self.assertIn("terminal output renders local prompt sources for copying", rendered)
         self.assertIn("using a pipe placeholder for --prompt-stdin", rendered)
+        self.assertIn("inline prompt terminal next commands are local-private", rendered)
+        self.assertIn("treat terminal logs as private", rendered)
+        self.assertIn("prefer prompt files or stdin for shareable logs", rendered)
         self.assertIn("saved artifacts", rendered)
         self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("redacted detail is available", rendered)
@@ -1282,6 +1288,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render safe local prompt sources for copy/paste when available, and saved commands should prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file`.",
             markdown,
         )
+        self.assertIn(
+            "- Terminal prompt scope: human terminal `review_next`, `recommended_next`, and `next[...]` may render inline local prompts for copy/paste. Treat terminal logs as local-private; saved JSON/Markdown keep placeholders.",
+            markdown,
+        )
         self.assertIn("- Requires env: `CROWDTENSOR_OBSERVER_TOKEN`", markdown)
         self.assertIn("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.", markdown)
         self.assertIn(f"- Safety: saved Markdown keeps prompt placeholders and redacted generated output. {cli.SAVED_NO_ANSWER_SCOPE_TEXT}", markdown)
@@ -1490,6 +1500,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("redacted JSON/Markdown artifacts", progress)
         self.assertNotIn(prompt, progress)
         self.assertIn(
+            "prompt_scope: terminal_next_commands=local-private inline_prompt_text=True saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True",
+            rendered,
+        )
+        self.assertLess(rendered.index("  prompt_scope: "), rendered.index("  review_next: "))
+        self.assertIn(
             f"review_next: label=check generation route reason=verify_stage_miners command=crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run",
             rendered,
         )
@@ -1576,6 +1591,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn("prompt_scope: terminal_next_commands=local-private inline_prompt_text=True", rendered)
         self.assertIn(
             f"review_next: label=check generation route reason=verify_stage_miners command=crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-texts '{prompts}' --dry-run",
             rendered,
@@ -1664,6 +1680,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
         self.assertIn(f"--prompt-texts-file {prompt_file}", rendered)
+        self.assertNotIn("prompt_scope:", rendered)
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn("--prompt-texts '<prompt-1>,<prompt-2>'", rendered)
         for prompt in prompts:
@@ -9273,6 +9290,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Prompt input: saved Markdown keeps `<prompt>` placeholders; terminal `review_next` / `recommended_next` render safe local prompt sources for copy/paste when available, and saved commands should prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file`.",
             markdown,
         )
+        self.assertIn(
+            "- Terminal prompt scope: human terminal `review_next`, `recommended_next`, and `next[...]` may render inline local prompts for copy/paste. Treat terminal logs as local-private; saved JSON/Markdown keep placeholders.",
+            markdown,
+        )
         self.assertIn("- Requires env: `CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.", markdown)
         self.assertIn(f"- Safety: saved Markdown keeps prompt placeholders and redacted generated output. {cli.SAVED_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
@@ -9429,6 +9450,11 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn(
+            "prompt_scope: terminal_next_commands=local-private inline_prompt_text=True saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True",
+            rendered,
+        )
+        self.assertLess(rendered.index("  prompt_scope: "), rendered.index("  review_next: "))
         self.assertIn(f"review_next: label=check existing swarm reason=verify_stage_miners command=crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertIn(f"recommended_next: check existing swarm reason=verify_stage_miners crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertIn(f"next[1] check existing swarm: crowdtensor infer '{prompt}' --mode existing", rendered)
@@ -9518,6 +9544,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
         self.assertIn(f"--prompt-file {prompt_file}", rendered)
+        self.assertNotIn("prompt_scope:", rendered)
         self.assertNotIn("infer '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
@@ -9842,6 +9869,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         rendered = stdout.getvalue()
+        self.assertIn("prompt_scope: terminal_next_commands=local-private inline_prompt_text=True", rendered)
         self.assertIn(
             f"review_next: label=check existing swarm reason=verify_stage_miners command=crowdtensor infer --mode existing --output-dir {output_dir} --prompt-texts '{prompt_texts}' --dry-run",
             rendered,

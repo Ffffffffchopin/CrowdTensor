@@ -140,6 +140,12 @@ The `trace` line in human output and the `trace` object in JSON/Markdown give a
 safe troubleshooting summary: session id, request count, accepted ledger rows,
 stream event count, and per-request ids or prompt hashes. It never includes raw
 prompt text, generated text, generated token ids, credentials, or activations.
+When you pass an inline positional prompt, `--prompt-text`, or `--prompt-texts`,
+human terminal `review_next`, `recommended_next`, and `next[...]` commands may
+render those prompt values so the command is directly copyable. Treat terminal
+logs from those runs as local-private. Saved JSON/Markdown keep prompt
+placeholders; use `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file`
+when you need shareable terminal logs.
 The `result` line and JSON/Markdown `result` object summarize completion state,
 token count, output count, generated-text hash, and display safety:
 `local-private` for terminal-only generated text, `hash-only` for redacted
@@ -163,7 +169,7 @@ those warnings in `What To Do Next`. The adjacent `inspect_first` line points to
 the Markdown summary to open first. The adjacent `review_next` line repeats the
 safe recommended command near that summary; human terminal output renders it
 with local prompt sources for copying, using a `printf` pipe placeholder for
-`--prompt-stdin`, while JSON/Markdown artifacts keep prompt placeholders and
+`--prompt-stdin`; inline prompt terminal next commands are local-private, while JSON/Markdown artifacts keep prompt placeholders and
 prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when rerunning
 saved commands. Then use the `status` line or
 `user_status` for detail: `completed` means the request finished,
