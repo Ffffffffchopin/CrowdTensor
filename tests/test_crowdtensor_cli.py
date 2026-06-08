@@ -1229,6 +1229,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Generate Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Dry run: `True`", markdown)
+        self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
+        self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
         self.assertIn("## What To Do Next", markdown)
         self.assertIn("- State: `preflight-partial`", markdown)
         self.assertIn("- Next step: `run_live_preflight`", markdown)
@@ -9090,6 +9092,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Infer Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Mode: `existing`", markdown)
+        self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
+        self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
         self.assertIn("## What To Do Next", markdown)
         self.assertIn("- State: `completed`", markdown)
         self.assertIn("- Next step: `rerun_or_review_artifacts`", markdown)
@@ -11293,6 +11297,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["user_status"]["next_step"], "submit")
         self.assertNotIn("observer-secret", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
+        self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
         self.assertIn(
             "- Status: `preflight-ready: Preflight passed; submit inference next. next=submit recommendation=submit inference public_artifact_safe=True`",
             markdown,
