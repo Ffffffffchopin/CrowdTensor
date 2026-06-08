@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import io
 import json
 import sys
@@ -299,6 +300,11 @@ def _render_terminal_output(report: dict[str, Any], *, kind: str) -> str:
     return stream.getvalue()
 
 
+def _render_shareable_terminal_output(report: dict[str, Any], *, kind: str) -> str:
+    redacted = cli._strip_shareable_terminal_private_text(copy.deepcopy(report))
+    return _render_terminal_output(redacted, kind=kind)
+
+
 def _required_terminal_fragments(kind: str, raw_answer: str) -> list[str]:
     label = "infer" if kind == "Inference" else "generate"
     return [
@@ -373,6 +379,82 @@ def _validate_terminal_output(
         "prompt_public": PROMPT_TEXT in rendered,
         "admin_token_public": ADMIN_TOKEN in rendered,
         "public_artifact_safe": not any(fragment in rendered for fragment in [PROMPT_TEXT, ADMIN_TOKEN, '"generated_token_ids": [']),
+    }
+
+
+def _required_shareable_terminal_fragments(kind: str) -> list[str]:
+    label = "infer" if kind == "Inference" else "generate"
+    return [
+        f"CrowdTensor {label}",
+        "  review: state=completed",
+        "  inspect_first: ",
+        "  verdict: state=completed completed=True preflight_only=False answer=shareable-terminal-redacted answer_visible=False",
+        "artifacts_public=True",
+        "gpu=local-cpu-only",
+        "fresh_kaggle_gpu=False",
+        "public_artifact_safe=True",
+        "  verdict_note: ",
+        "shareable terminal output and saved artifacts are redacted",
+        "  status: completed:",
+        "  runtime_provenance: ",
+        "fresh_kaggle_gpu_verified=False",
+        "  evidence_scope: ",
+        "  gpu_status: state=local-cpu-only",
+        "  output_display: terminal=shareable-terminal-redacted terminal_text=False saved=hash-only",
+        "  output_display_note: Shareable terminal output hides generated text;",
+        "  local_output: available=False display_only=False public_artifact_safe=True saved_redacted=True count=1",
+        "  answer_scope: state=shareable-terminal-redacted terminal_only=False visible_in_terminal=False",
+        "saved_json=hash-only saved_markdown=hash-only",
+        "  answer_scope_note: shareable terminal output hides generated text; saved JSON/Markdown contain no generated text.",
+        "  shareable_terminal: enabled=True prompt_sources_redacted=True answer_text_redacted=True public_artifact_safe=True",
+        "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False",
+        "generated_token_ids_public=False",
+        "answer_scope_state=shareable-terminal-redacted local_answer_terminal_only=False",
+        "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True raw_prompt_public=False",
+    ]
+
+
+def _validate_shareable_terminal_output(
+    *,
+    kind: str,
+    report: dict[str, Any],
+    raw_answer: str,
+    errors: list[str],
+) -> dict[str, Any]:
+    rendered = _render_shareable_terminal_output(report, kind=kind)
+    verdict_line = next((line for line in rendered.splitlines() if line.startswith("  verdict: ")), "")
+    answer_scope_line = next((line for line in rendered.splitlines() if line.startswith("  answer_scope: ")), "")
+    gpu_line = next((line for line in rendered.splitlines() if line.startswith("  gpu_status: ")), "")
+    output_display_line = next((line for line in rendered.splitlines() if line.startswith("  output_display: ")), "")
+    shareable_terminal_line = next((line for line in rendered.splitlines() if line.startswith("  shareable_terminal: ")), "")
+    answer_line = next((line for line in rendered.splitlines() if line.startswith("  answer: ")), "")
+    for fragment in _required_shareable_terminal_fragments(kind):
+        if fragment not in rendered:
+            errors.append(f"{kind}_shareable_terminal_missing_{fragment[:32].strip().replace(' ', '_').replace('`', '')}")
+    for fragment in SECRET_FRAGMENTS:
+        if fragment and fragment in rendered:
+            errors.append(f"{kind}_shareable_terminal_leaked_{fragment[:32]}")
+    if answer_line:
+        errors.append(f"{kind}_shareable_terminal_answer_line_present")
+    if raw_answer in rendered:
+        errors.append(f"{kind}_shareable_terminal_answer_leaked")
+    if "answer=terminal-visible" in verdict_line or "answer_visible=True" in verdict_line:
+        errors.append(f"{kind}_shareable_terminal_verdict_not_redacted")
+    if "answer=shareable-terminal-redacted" not in verdict_line or "answer_visible=False" not in verdict_line:
+        errors.append(f"{kind}_shareable_terminal_verdict_scope_mismatch")
+    return {
+        "line_count": len(rendered.splitlines()),
+        "verdict_line": verdict_line,
+        "answer_scope_line": answer_scope_line,
+        "gpu_status_line": gpu_line,
+        "output_display_line": output_display_line,
+        "shareable_terminal_line": shareable_terminal_line,
+        "answer_line": answer_line,
+        "answer_hidden": raw_answer not in rendered and not answer_line,
+        "answer_visible": raw_answer in rendered,
+        "prompt_public": PROMPT_TEXT in rendered,
+        "admin_token_public": ADMIN_TOKEN in rendered,
+        "public_artifact_safe": not any(fragment in rendered for fragment in SECRET_FRAGMENTS),
     }
 
 
@@ -506,6 +588,18 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
             raw_answer=GENERATE_TEXT,
             errors=errors,
         )
+        infer_shareable_terminal = _validate_shareable_terminal_output(
+            kind="Inference",
+            report=infer_report,
+            raw_answer=INFER_TEXT,
+            errors=errors,
+        )
+        generate_shareable_terminal = _validate_shareable_terminal_output(
+            kind="Generation",
+            report=generate_report,
+            raw_answer=GENERATE_TEXT,
+            errors=errors,
+        )
         infer_check = _validate_frontdoor_artifact(
             kind="Inference",
             report=infer_report,
@@ -535,6 +629,17 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
                 "generate": generate_terminal,
                 "contract": {
                     "answer_visible_in_human_terminal": True,
+                    "saved_artifacts_redacted": True,
+                    "raw_prompt_public": False,
+                    "generated_token_ids_public": False,
+                    "fresh_kaggle_gpu_verified": False,
+                },
+            },
+            "shareable_terminal_output": {
+                "infer": infer_shareable_terminal,
+                "generate": generate_shareable_terminal,
+                "contract": {
+                    "answer_hidden_in_shareable_terminal": True,
                     "saved_artifacts_redacted": True,
                     "raw_prompt_public": False,
                     "generated_token_ids_public": False,

@@ -2102,7 +2102,9 @@ def inference_verdict_summary(report: dict[str, Any], *, kind: str) -> dict[str,
         shareable.get("saved_artifacts_public_safe", True)
         and artifact_summary.get("public_artifact_safe", True)
     )
-    if completed and answer_visible:
+    if completed and answer_state == "shareable-terminal-redacted":
+        message = f"{kind} completed; shareable terminal output and saved artifacts are redacted."
+    elif completed and answer_visible:
         message = f"{kind} completed; the answer is visible only in this terminal and saved artifacts are redacted."
     elif completed:
         message = f"{kind} completed; saved artifacts are redacted and do not include raw answer text."
@@ -6987,6 +6989,16 @@ def _strip_shareable_terminal_private_text(report: dict[str, Any]) -> dict[str, 
         terminal_report,
         answer_text_redacted=had_terminal_text,
     )
+    inference_verdict = (
+        terminal_report.get("inference_verdict")
+        if isinstance(terminal_report.get("inference_verdict"), dict)
+        else {}
+    )
+    if inference_verdict:
+        kind = str(inference_verdict.get("kind") or "")
+        if not kind:
+            kind = "Generation" if terminal_report.get("schema") == PUBLIC_SWARM_PRODUCT_CLI_SCHEMA else "Inference"
+        terminal_report["inference_verdict"] = inference_verdict_summary(terminal_report, kind=kind)
     return terminal_report
 
 
