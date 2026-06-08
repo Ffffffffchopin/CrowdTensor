@@ -1065,10 +1065,6 @@ def _infer_recommended_next_command(
         )
         if found:
             return found
-    if "generation_timeout" in diagnosis_codes:
-        found = _pick_next_command(next_commands, equals("retry inference with longer timeout"), reason="retry_timeout")
-        if found:
-            return found
     if dry_run:
         next_step = str(ready_to_submit.get("next_step") or "")
         if next_step == "submit":
@@ -1083,6 +1079,10 @@ def _infer_recommended_next_command(
             found = _pick_next_command(next_commands, equals("check existing swarm"), reason="confirm_live_preflight")
             if found:
                 return found
+    if "generation_timeout" in diagnosis_codes:
+        found = _pick_next_command(next_commands, equals("retry inference with longer timeout"), reason="retry_timeout")
+        if found:
+            return found
     if not ok:
         if "admin_token_required" in diagnosis_codes:
             found = _pick_next_command(next_commands, starts("submit inference"), reason="set_admin_token")
@@ -1149,10 +1149,6 @@ def _generate_recommended_next_command(
         )
         if found:
             return found
-    if "generation_timeout" in diagnosis_codes:
-        found = _pick_next_command(next_commands, equals("retry generation with longer timeout"), reason="retry_timeout")
-        if found:
-            return found
     if dry_run:
         next_step = str(ready_to_submit.get("next_step") or "")
         if next_step == "submit":
@@ -1167,6 +1163,10 @@ def _generate_recommended_next_command(
             found = _pick_next_command(next_commands, equals("check generation route"), reason="confirm_live_preflight")
             if found:
                 return found
+    if "generation_timeout" in diagnosis_codes:
+        found = _pick_next_command(next_commands, equals("retry generation with longer timeout"), reason="retry_timeout")
+        if found:
+            return found
     if not ok:
         if "admin_token_required" in diagnosis_codes:
             found = _pick_next_command(next_commands, starts("submit generation"), reason="set_admin_token")

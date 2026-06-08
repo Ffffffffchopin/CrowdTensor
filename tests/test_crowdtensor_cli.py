@@ -12141,6 +12141,58 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(recommended["label"], "start Coordinator")
         self.assertEqual(recommended["reason"], "start_coordinator")
 
+    def test_infer_dry_run_recommends_preflight_before_timeout_retry(self) -> None:
+        next_commands = [
+            cli.command_entry(
+                "check existing swarm",
+                ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing", "--dry-run"],
+                requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
+            ),
+            cli.command_entry(
+                "retry inference with longer timeout",
+                ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing", "--timeout-seconds", "240"],
+                requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+            ),
+        ]
+
+        recommended = cli._infer_recommended_next_command(
+            next_commands,
+            ok=True,
+            mode="existing",
+            dry_run=True,
+            ready_to_submit={"next_step": "run_live_preflight"},
+            diagnosis_codes={"generation_timeout", "crowdtensor_infer_preflight_partial"},
+            full_evidence=False,
+        )
+
+        self.assertEqual(recommended["label"], "check existing swarm")
+        self.assertEqual(recommended["reason"], "confirm_live_preflight")
+
+    def test_generate_dry_run_recommends_preflight_before_timeout_retry(self) -> None:
+        next_commands = [
+            cli.command_entry(
+                "check generation route",
+                ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER, "--dry-run"],
+                requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
+            ),
+            cli.command_entry(
+                "retry generation with longer timeout",
+                ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER, "--timeout-seconds", "240"],
+                requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+            ),
+        ]
+
+        recommended = cli._generate_recommended_next_command(
+            next_commands,
+            ok=True,
+            dry_run=True,
+            ready_to_submit={"next_step": "run_live_preflight"},
+            diagnosis_codes={"generation_timeout", "generate_request_shape_ready"},
+        )
+
+        self.assertEqual(recommended["label"], "check generation route")
+        self.assertEqual(recommended["reason"], "confirm_live_preflight")
+
     def test_print_infer_no_local_answer_shows_answer_scope(self) -> None:
         report = {
             "ok": False,
@@ -13046,6 +13098,55 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("checking request shape only", progress)
         self.assertIn("live Coordinator and stage readiness are skipped", progress)
         self.assertNotIn("checking the existing route before submitting work", progress)
+
+    def test_infer_batch_file_dry_run_preflight_recommended_before_timeout_retry(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_file = Path(self._tmp_dir()) / "private_prompts.txt"
+        prompt_file.write_text("first private prompt\nsecond private prompt\n", encoding="utf-8")
+        args = cli.parse_args([
+            "infer",
+            "--mode",
+            "existing",
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--shareable-terminal",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("skip-live-preflight should not touch live Coordinator endpoints"),
+        ):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["dry_run"])
+        self.assertIn("generation_timeout", report["diagnosis_codes"])
+        self.assertEqual(report["ready_to_submit"]["next_step"], "run_live_preflight")
+        self.assertEqual(report["recommended_next_command"]["label"], "check existing swarm")
+        self.assertEqual(report["recommended_next_command"]["reason"], "confirm_live_preflight")
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertIn("recommended_next: check existing swarm reason=confirm_live_preflight", rendered)
+        self.assertNotIn("recommended_next: retry inference with longer timeout", rendered)
+        self.assertIn("--prompt-texts-file prompts.txt", rendered)
+        self.assertNotIn(str(prompt_file), rendered)
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["recommended_next_command"]["label"], "check existing swarm")
+        self.assertEqual(persisted["recommended_next_command"]["reason"], "confirm_live_preflight")
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- Recommended: `check existing swarm` reason=`confirm_live_preflight`", markdown)
+        self.assertIn("- Prompt input: saved Markdown keeps the `prompts.txt` placeholder", markdown)
+        self.assertNotIn(str(prompt_file), markdown)
 
     def test_infer_existing_p2p_preserves_swarm_id_in_next_commands(self) -> None:
         output_dir = Path(self._tmp_dir())
