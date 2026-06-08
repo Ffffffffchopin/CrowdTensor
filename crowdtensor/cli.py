@@ -15582,6 +15582,7 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    inference_verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
     print("CrowdTensor Usable Swarm Inference v1")
     if review:
         print(f"  review: {review_summary_text(review)}")
@@ -15607,6 +15608,9 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     print(f"  generated tokens: {p2p.get('generated_token_count')}/{p2p.get('max_new_tokens')}")
     print(f"  distinct stage miners: {p2p.get('distinct_stage_miners')}")
     print(f"  stage rescue ready: {p2p.get('stage_rescue_ready') and p2p.get('real_stage_rescue_ready')}")
+    if inference_verdict:
+        print(f"  verdict: {inference_verdict_text(inference_verdict)}")
+        print(f"  verdict_note: {inference_verdict.get('message')}")
     if runtime_provenance:
         print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
     if prompt_scope:

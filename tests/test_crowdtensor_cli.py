@@ -9078,6 +9078,26 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "retained_gpu_evidence_imported": False,
                 "public_artifact_safe": True,
             },
+            "inference_verdict": {
+                "schema": "crowdtensor_inference_verdict_v1",
+                "kind": "Usable Swarm Inference v1",
+                "state": "completed",
+                "completed": True,
+                "preflight_only": False,
+                "blocked": False,
+                "answer_scope_state": "no-local-answer",
+                "answer_visible_in_terminal": False,
+                "saved_artifacts_public_safe": True,
+                "evidence_level": "local-p2p-cpu",
+                "executed_where": "local-cpu-p2p",
+                "gpu_state": "not-run-local-cpu",
+                "fresh_kaggle_gpu_verified": False,
+                "recommended_label": "inspect shareable summary",
+                "recommended_reason": "review_artifacts",
+                "next_step": "review_artifacts",
+                "public_artifact_safe": True,
+                "message": "Usable Swarm inference completed on the local CPU/P2P product path; saved artifacts are redacted and do not include raw answer text.",
+            },
             "output_request": {
                 "include_output": False,
                 "raw_generated_text_public": False,
@@ -9177,6 +9197,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
+        self.assertIn(
+            "  verdict: state=completed completed=True preflight_only=False answer=no-local-answer",
+            rendered,
+        )
+        self.assertIn("evidence=local-p2p-cpu", rendered)
+        self.assertIn("gpu=not-run-local-cpu fresh_kaggle_gpu=False next=review_artifacts", rendered)
+        self.assertIn("  verdict_note: Usable Swarm inference completed on the local CPU/P2P product path;", rendered)
         self.assertIn(
             "  prompt_scope: source=prompt-file count=1 inline_prompt_text=False",
             rendered,

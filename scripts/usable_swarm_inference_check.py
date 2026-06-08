@@ -376,6 +376,48 @@ def validate_report(
             errors.append("runtime_provenance_package_local_p2p_ran_mismatch")
         if provenance.get("retained_p2p_evidence_imported") is not False:
             errors.append("runtime_provenance_package_retained_p2p_claim_mismatch")
+    verdict = payload.get("inference_verdict") if isinstance(payload.get("inference_verdict"), dict) else {}
+    if verdict.get("schema") != pack.INFERENCE_VERDICT_SCHEMA:
+        errors.append("inference_verdict_schema_mismatch")
+    if verdict.get("kind") != "Usable Swarm Inference v1":
+        errors.append("inference_verdict_kind_mismatch")
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    if verdict.get("state") != user_status.get("state"):
+        errors.append("inference_verdict_state_mismatch")
+    expected_completed = bool(payload.get("ok") and mode != pack.MODE_PACKAGE)
+    if verdict.get("completed") is not expected_completed:
+        errors.append("inference_verdict_completed_mismatch")
+    if verdict.get("preflight_only") is not (mode == pack.MODE_PACKAGE):
+        errors.append("inference_verdict_preflight_mismatch")
+    if verdict.get("answer_scope_state") != "no-local-answer":
+        errors.append("inference_verdict_answer_scope_mismatch")
+    if verdict.get("answer_visible_in_terminal") is not False:
+        errors.append("inference_verdict_answer_visible_mismatch")
+    if verdict.get("saved_artifacts_public_safe") is not True:
+        errors.append("inference_verdict_saved_artifacts_public_safe_mismatch")
+    if verdict.get("evidence_level") != provenance.get("proof_level"):
+        errors.append("inference_verdict_evidence_level_mismatch")
+    if mode == pack.MODE_LOCAL:
+        if verdict.get("executed_where") != "local-cpu-p2p":
+            errors.append("inference_verdict_local_executed_where_mismatch")
+        if verdict.get("gpu_state") != "not-run-local-cpu":
+            errors.append("inference_verdict_local_gpu_state_mismatch")
+    elif mode == pack.MODE_EVIDENCE_IMPORT:
+        if verdict.get("executed_where") != "retained-p2p-report":
+            errors.append("inference_verdict_import_executed_where_mismatch")
+        if verdict.get("gpu_state") != "not-run-retained-p2p":
+            errors.append("inference_verdict_import_gpu_state_mismatch")
+    elif mode == pack.MODE_PACKAGE:
+        if verdict.get("executed_where") != "not-executed-package":
+            errors.append("inference_verdict_package_executed_where_mismatch")
+        if verdict.get("gpu_state") != "not-run-package":
+            errors.append("inference_verdict_package_gpu_state_mismatch")
+    if verdict.get("fresh_kaggle_gpu_verified") is not False:
+        errors.append("inference_verdict_fresh_kaggle_gpu_claim_mismatch")
+    if verdict.get("retained_gpu_evidence_imported") is not False:
+        errors.append("inference_verdict_retained_gpu_claim_mismatch")
+    if verdict.get("public_artifact_safe") is not True:
+        errors.append("inference_verdict_public_artifact_safe_mismatch")
     encoded = json.dumps(payload, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment in encoded:
@@ -484,6 +526,7 @@ def run_check(args: argparse.Namespace, *, runner: pack.Runner = subprocess.run)
         "max_new_tokens": args.max_new_tokens,
         "output_dir": str(output_dir),
         "errors": errors,
+        "checked_inference_verdict": report.get("inference_verdict"),
         "diagnosis_codes": ["usable_swarm_inference_check_ready"] if not errors else ["usable_swarm_inference_check_failed"],
     }
     (output_dir / "usable_swarm_inference_check.json").write_text(json.dumps(check, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -526,6 +569,10 @@ def main() -> None:
         print(json.dumps(result, sort_keys=True))
     else:
         print(f"Usable Swarm Inference check ok={result.get('ok')} errors={','.join(result.get('errors') or [])}")
+        verdict = result.get("checked_inference_verdict") if isinstance(result.get("checked_inference_verdict"), dict) else {}
+        if verdict:
+            print(f"checked_verdict: {pack.inference_verdict_text(verdict)}")
+            print(f"checked_verdict_note: {verdict.get('message')}")
     raise SystemExit(0 if result.get("ok") else 1)
 
 

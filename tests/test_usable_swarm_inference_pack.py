@@ -98,6 +98,19 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         self.assertFalse(report["runtime_provenance"]["retained_gpu_evidence_imported"])
+        self.assertEqual(report["inference_verdict"]["schema"], pack.INFERENCE_VERDICT_SCHEMA)
+        self.assertEqual(report["inference_verdict"]["kind"], "Usable Swarm Inference v1")
+        self.assertEqual(report["inference_verdict"]["state"], "completed")
+        self.assertTrue(report["inference_verdict"]["completed"])
+        self.assertFalse(report["inference_verdict"]["preflight_only"])
+        self.assertEqual(report["inference_verdict"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(report["inference_verdict"]["evidence_level"], "local-p2p-cpu")
+        self.assertEqual(report["inference_verdict"]["executed_where"], "local-cpu-p2p")
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "not-run-local-cpu")
+        self.assertFalse(report["inference_verdict"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["inference_verdict"]["generated_token_count"], 8)
+        self.assertEqual(report["inference_verdict"]["output_count"], 1)
+        self.assertTrue(report["inference_verdict"]["public_artifact_safe"])
         self.assertEqual(report["artifact_summary"]["present_artifact_count"], 5)
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertTrue(any("usable_swarm_inference.md" in line for line in next_lines))
@@ -110,6 +123,11 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertTrue(calls)
         markdown = (output_dir / "usable_swarm_inference.md").read_text(encoding="utf-8")
         self.assertIn("- review: `state=completed next=review_artifacts", markdown)
+        self.assertIn(
+            "- verdict: `state=completed completed=True preflight_only=False answer=no-local-answer answer_visible=False artifacts_public=True evidence=local-p2p-cpu executed=local-cpu-p2p gpu=not-run-local-cpu fresh_kaggle_gpu=False next=review_artifacts recommended=inspect shareable summary public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn("- verdict note: Usable Swarm inference completed on the local CPU/P2P product path;", markdown)
         self.assertIn("## What To Do Next", markdown)
         self.assertIn("- Recommended: `inspect shareable summary` reason=`review_artifacts`", markdown)
         self.assertIn("## Next Commands", markdown)
@@ -137,6 +155,7 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         )
         support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
         self.assertEqual(support["runtime_provenance"], report["runtime_provenance"])
+        self.assertEqual(support["inference_verdict"], report["inference_verdict"])
         self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
@@ -516,8 +535,14 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertTrue(report["runtime_provenance"]["retained_p2p_evidence_ready"])
         self.assertFalse(report["runtime_provenance"]["fresh_external_attempted"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertEqual(report["inference_verdict"]["state"], "completed")
+        self.assertTrue(report["inference_verdict"]["completed"])
+        self.assertEqual(report["inference_verdict"]["evidence_level"], "retained-p2p-evidence-import")
+        self.assertEqual(report["inference_verdict"]["executed_where"], "retained-p2p-report")
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "not-run-retained-p2p")
         support = json.loads((output_dir / "usable" / "support_bundle.json").read_text(encoding="utf-8"))
         self.assertEqual(support["runtime_provenance"], report["runtime_provenance"])
+        self.assertEqual(support["inference_verdict"], report["inference_verdict"])
 
     def test_evidence_import_rejects_two_token_p2p_report_for_eight_token_goal(self) -> None:
         output_dir = self._tmp_dir()
@@ -669,6 +694,12 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertFalse(report["runtime_provenance"]["local_p2p_generate_ran"])
         self.assertTrue(report["runtime_provenance"]["package_only"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertEqual(report["inference_verdict"]["state"], "package-ready")
+        self.assertFalse(report["inference_verdict"]["completed"])
+        self.assertTrue(report["inference_verdict"]["preflight_only"])
+        self.assertEqual(report["inference_verdict"]["evidence_level"], "package-only")
+        self.assertEqual(report["inference_verdict"]["executed_where"], "not-executed-package")
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "not-run-package")
 
     def test_check_script_validates_local_contract(self) -> None:
         result = check.run_check(check.parse_args([
@@ -681,6 +712,11 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["schema"], check.SCHEMA)
         self.assertIn("usable_swarm_inference_check_ready", result["diagnosis_codes"])
+        self.assertEqual(result["checked_inference_verdict"]["schema"], pack.INFERENCE_VERDICT_SCHEMA)
+        self.assertEqual(result["checked_inference_verdict"]["state"], "completed")
+        self.assertTrue(result["checked_inference_verdict"]["completed"])
+        self.assertEqual(result["checked_inference_verdict"]["executed_where"], "local-cpu-p2p")
+        self.assertEqual(result["checked_inference_verdict"]["gpu_state"], "not-run-local-cpu")
 
     def test_check_script_validates_package_contract(self) -> None:
         output_dir = self._tmp_dir()
@@ -704,12 +740,18 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(report["inference_verdict"]["state"], "package-ready")
+        self.assertFalse(report["inference_verdict"]["completed"])
+        self.assertTrue(report["inference_verdict"]["preflight_only"])
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "not-run-package")
         markdown = (output_dir / "usable" / "usable_swarm_inference.md").read_text(encoding="utf-8")
         self.assertIn("- State: `package-ready`", markdown)
+        self.assertIn("- verdict: `state=package-ready completed=False preflight_only=True", markdown)
         self.assertIn("- Recommended: `run local usable swarm proof` reason=`execute_local_p2p_path`", markdown)
         support = json.loads((output_dir / "usable" / "support_bundle.json").read_text(encoding="utf-8"))
         self.assertEqual(support["review_summary"]["next_step"], "run_local_proof")
         self.assertEqual(support["recommended_next_command"]["label"], "run local usable swarm proof")
+        self.assertEqual(support["inference_verdict"], report["inference_verdict"])
 
     def test_check_script_validates_non_default_model_local_contract(self) -> None:
         output_dir = self._tmp_dir()
