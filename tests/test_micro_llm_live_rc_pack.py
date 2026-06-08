@@ -14,6 +14,26 @@ def completed(payload: dict, returncode: int = 0) -> subprocess.CompletedProcess
     return subprocess.CompletedProcess(args=["cmd"], returncode=returncode, stdout=json.dumps(payload) + "\n", stderr="")
 
 
+def assert_ready_guidance(testcase: unittest.TestCase, report: dict, output_dir: Path) -> None:
+    testcase.assertEqual(report["user_status"]["state"], "ready")
+    testcase.assertEqual(report["review_summary"]["schema"], "micro_llm_live_rc_review_summary_v1")
+    testcase.assertEqual(report["review_summary"]["state"], "ready")
+    testcase.assertEqual(report["recommended_next_command"]["label"], "inspect micro-LLM Live RC evidence")
+    testcase.assertIn("micro_llm_live_rc.md", report["recommended_next_command"]["command_line"])
+    testcase.assertEqual(report["not_completed"], [])
+    testcase.assertGreaterEqual(len(report["next_commands"]), 3)
+    testcase.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+    testcase.assertEqual(
+        report["artifact_summary"]["present_artifact_count"],
+        report["artifact_summary"]["artifact_count"],
+    )
+    testcase.assertTrue(report["artifacts"]["micro_llm_live_rc_support_bundle_json"]["present"])
+    support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+    testcase.assertEqual(support["schema"], "micro_llm_live_rc_support_bundle_v1")
+    testcase.assertEqual(support["review_summary"]["state"], "ready")
+    testcase.assertTrue(support["public_artifact_safe"])
+
+
 class FakeProcess:
     _next_pid = 1000
 
@@ -139,6 +159,13 @@ class MicroLlmLiveRcPackTests(unittest.TestCase):
         self.assertNotIn("stage1-secret", serialized)
         self.assertNotIn("observer-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
+        markdown = (output_dir / "micro_llm_live_rc.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("## Not Completed", markdown)
+        assert_ready_guidance(self, report, output_dir)
         self.assertTrue(any(command[2] == "prepare" for command in calls))
         self.assertTrue(any(command[2] == "verify" for command in calls))
 
@@ -160,6 +187,7 @@ class MicroLlmLiveRcPackTests(unittest.TestCase):
                 "ok": True,
                 "mode": "verify",
                 "diagnosis_codes": [
+                    "kaggle_artifacts_ready",
                     "kaggle_micro_llm_stage0_seen",
                     "kaggle_micro_llm_stage1_seen",
                     "kaggle_micro_llm_stage_assignment_valid",
@@ -192,6 +220,7 @@ class MicroLlmLiveRcPackTests(unittest.TestCase):
         self.assertTrue(report["runtime_classification"]["external_runtime_verified"])
         self.assertNotIn("observer-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
+        assert_ready_guidance(self, report, output_dir)
 
 
 if __name__ == "__main__":
