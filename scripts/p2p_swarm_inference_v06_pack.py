@@ -320,6 +320,61 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    prompt_text = str(getattr(args, "prompt_text", "") or "")
+    parsed_prompts = getattr(args, "prompt_texts_list", None)
+    if isinstance(parsed_prompts, list):
+        prompt_count = len(parsed_prompts)
+    elif prompt_texts_file:
+        prompt_count = 0
+    elif prompt_texts or prompt_text:
+        prompt_count = len(product_mvp.parse_prompt_texts_arg(prompt_text, prompt_texts))
+    else:
+        prompt_count = 0
+    if prompt_texts_file:
+        source = "prompt-texts-file"
+    elif prompt_texts:
+        source = "prompt-texts"
+    elif prompt_text:
+        source = "prompt-text"
+    else:
+        source = "none"
+    inline_prompt_text = source in {"prompt-text", "prompt-texts"}
+    return {
+        "source": source,
+        "prompt_count": prompt_count,
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This P2P Swarm Inference v0.6 report records prompt source/count and "
+            "placeholder safety only; raw prompt text and prompt file paths are "
+            "excluded from public JSON, Markdown, runbooks, and support bundles."
+        ),
+    }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -3345,6 +3400,7 @@ def build_common_report(
         "diagnosis_codes": sorted(codes),
         "artifacts": artifacts,
         "output_request": output_request_summary(),
+        "prompt_scope": prompt_scope_summary(args),
         "answer_scope": answer_scope_summary(),
         "shareable_summary": shareable_summary(),
         "safety": {
@@ -3479,6 +3535,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- output request: `include_output={bool((report.get('output_request') or {}).get('include_output'))} raw_prompt_public={bool((report.get('output_request') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('output_request') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('output_request') or {}).get('generated_token_ids_public'))} public_artifact_safe={bool((report.get('output_request') or {}).get('public_artifact_safe'))}`",
+        f"- prompt scope: `{prompt_scope_text((report.get('prompt_scope') or {}) if isinstance(report.get('prompt_scope'), dict) else {})}`",
         f"- answer scope: `state={(report.get('answer_scope') or {}).get('scope_state')} terminal_only={bool((report.get('answer_scope') or {}).get('terminal_only'))} visible_in_terminal={bool((report.get('answer_scope') or {}).get('visible_in_terminal'))} saved_json={(report.get('answer_scope') or {}).get('saved_json_display')} saved_markdown={(report.get('answer_scope') or {}).get('saved_markdown_display')} public_artifact_safe={bool((report.get('answer_scope') or {}).get('public_artifact_safe'))}`",
         f"- shareable: `saved_artifacts={bool((report.get('shareable_summary') or {}).get('saved_artifacts_public_safe'))} raw_prompt_public={bool((report.get('shareable_summary') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('shareable_summary') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('shareable_summary') or {}).get('generated_token_ids_public'))} answer_scope_state={(report.get('shareable_summary') or {}).get('answer_scope_state')} local_answer_terminal_only={bool((report.get('shareable_summary') or {}).get('local_answer_terminal_only'))}`",
         f"- note: {(report.get('answer_scope') or {}).get('summary')}",
@@ -3514,6 +3571,10 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault(
+        "prompt_scope",
+        prompt_scope_summary(argparse.Namespace(prompt_text="", prompt_texts="", prompt_texts_file="", prompt_texts_list=[])),
+    )
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     errors = validate_public_report(report)
@@ -3532,6 +3593,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "inference": report.get("inference"),
         "artifacts": report.get("artifacts"),
         "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),

@@ -37,6 +37,17 @@ class P2PSwarmInferenceV06PackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -51,9 +62,11 @@ class P2PSwarmInferenceV06PackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "v06" / "p2p_swarm_inference_v06.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("prompt scope: `source=prompt-text count=1", markdown)
         self.assertIn("state=no-local-answer", markdown)
         self.assertIn("raw_generated_text_public=False", markdown)
         support = json.loads((output_dir / "v06" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
@@ -575,6 +588,56 @@ class P2PSwarmInferenceV06PackTests(unittest.TestCase):
 
         self.assertEqual(args.prompt_texts_file, str(prompt_file))
         self.assertEqual(args.prompt_texts_list, prompts)
+
+    def test_prompt_texts_file_scope_excludes_path_and_raw_prompts(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt_file = output_dir / "private-prompts.txt"
+        prompt_file.write_text("first private file prompt\nsecond private file prompt\n", encoding="utf-8")
+        preview_report = output_dir / "preview.json"
+        product_report = output_dir / "product.json"
+        optional_report = output_dir / "optional.json"
+        local_report = output_dir / "local_v06.json"
+        preview_report.write_text(json.dumps(check.fake_preview_payload()), encoding="utf-8")
+        product_report.write_text(json.dumps(check.fake_product_payload()), encoding="utf-8")
+        optional_report.write_text(json.dumps(check.fake_product_payload("distilgpt2")), encoding="utf-8")
+        local_report.write_text(json.dumps(check.fake_local_p2p()), encoding="utf-8")
+
+        report = pack.build_report(pack.parse_args([
+            pack.MODE_EVIDENCE_IMPORT,
+            "--output-dir",
+            str(output_dir / "final"),
+            "--preview-v04-report",
+            str(preview_report),
+            "--product-mvp-report",
+            str(product_report),
+            "--optional-model-report",
+            str(optional_report),
+            "--p2p-discovery-report",
+            str(local_report),
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--json",
+        ]))
+        encoded = json.dumps(report, sort_keys=True)
+        markdown = (output_dir / "final" / "p2p_swarm_inference_v06.md").read_text(encoding="utf-8")
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts-file")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertFalse(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
+        self.assertIn("prompt scope: `source=prompt-texts-file count=2", markdown)
+        self.assertNotIn(str(prompt_file), encoded)
+        self.assertNotIn("first private file prompt", encoded)
+        self.assertNotIn("second private file prompt", encoded)
+        self.assertNotIn(str(prompt_file), markdown)
+        self.assertNotIn("first private file prompt", markdown)
+        self.assertNotIn("second private file prompt", markdown)
 
     def test_normalize_local_p2p_report_requires_real_stage_rescue(self) -> None:
         normalized = pack.normalize_local_p2p_report({
