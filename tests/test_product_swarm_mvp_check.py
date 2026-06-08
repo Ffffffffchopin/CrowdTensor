@@ -93,6 +93,57 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
             self.assertNotIn('"generated_token_ids":', encoded)
             self.assertNotIn('"generated_text":', encoded)
 
+    def test_attach_serve_process_omits_success_runtime_logs(self) -> None:
+        report = {
+            "schema": product_check.SCHEMA,
+            "ok": True,
+            "diagnosis_codes": ["product_swarm_mvp_ready"],
+            "safety": {
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            },
+        }
+        serve_process = {
+            "returncode": -15,
+            "stdout_tail": "INFO task=session internal runtime log",
+            "stderr_tail": "Loading weights internal runtime log",
+        }
+
+        product_check.attach_serve_process(report, serve_process)
+
+        self.assertTrue(report["ok"], report)
+        self.assertNotIn("stdout_tail", report["serve_process"])
+        self.assertNotIn("stderr_tail", report["serve_process"])
+        self.assertTrue(report["serve_process"]["stdout_tail_omitted"])
+        self.assertTrue(report["serve_process"]["stderr_tail_omitted"])
+        self.assertFalse(report["serve_process"]["runtime_log_public"])
+        self.assertTrue(report["serve_process"]["captured_output_redacted"])
+        self.assertNotIn("internal runtime log", json.dumps(report, sort_keys=True))
+
+    def test_attach_serve_process_keeps_failure_runtime_logs_for_diagnostics(self) -> None:
+        report = {
+            "schema": product_check.SCHEMA,
+            "ok": False,
+            "diagnosis_codes": ["serve_start_failed"],
+            "safety": {
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            },
+        }
+        serve_process = {
+            "returncode": 1,
+            "stdout_tail": "safe startup stdout",
+            "stderr_tail": "safe startup stderr",
+        }
+
+        product_check.attach_serve_process(report, serve_process)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["serve_process"]["stdout_tail"], "safe startup stdout")
+        self.assertEqual(report["serve_process"]["stderr_tail"], "safe startup stderr")
+
     def test_finalize_report_accepts_batched_generate_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = product_check.parse_args([

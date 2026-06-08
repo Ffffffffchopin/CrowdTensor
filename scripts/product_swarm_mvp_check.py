@@ -155,6 +155,24 @@ def stop_process(proc: subprocess.Popen[str] | None) -> dict[str, Any]:
     }
 
 
+def summarize_serve_process(serve_process: dict[str, Any], *, ok: bool) -> dict[str, Any]:
+    if not isinstance(serve_process, dict):
+        return {}
+    stdout_tail = str(serve_process.get("stdout_tail") or "")
+    stderr_tail = str(serve_process.get("stderr_tail") or "")
+    if not ok:
+        return support_bundle.sanitize(serve_process)
+    return {
+        "returncode": serve_process.get("returncode"),
+        "stdout_captured": bool(stdout_tail),
+        "stderr_captured": bool(stderr_tail),
+        "stdout_tail_omitted": bool(stdout_tail),
+        "stderr_tail_omitted": bool(stderr_tail),
+        "captured_output_redacted": True,
+        "runtime_log_public": False,
+    }
+
+
 def parse_json_payload(stdout: str) -> dict[str, Any]:
     for line in reversed([line.strip() for line in stdout.splitlines() if line.strip()]):
         try:
@@ -562,7 +580,7 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
 
 
 def attach_serve_process(report: dict[str, Any], serve_process: dict[str, Any]) -> dict[str, Any]:
-    report["serve_process"] = support_bundle.sanitize(serve_process)
+    report["serve_process"] = summarize_serve_process(serve_process, ok=bool(report.get("ok")))
     safety_errors = validate_public_report(report)
     if safety_errors:
         report["ok"] = False
