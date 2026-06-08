@@ -6103,7 +6103,11 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     if output_display:
         if had_terminal_text and output_display.get("terminal_display") == "local-private":
-            output_display["terminal_display"] = "saved-terminal-redacted"
+            output_display["terminal_display"] = (
+                "shareable-terminal-redacted"
+                if shareable_terminal.get("enabled")
+                else "saved-terminal-redacted"
+            )
         output_display["terminal_text_available"] = False
         output_display["saved_artifact_display"] = "hash-only"
         output_display["json_stdout_display"] = "hash-only-json"

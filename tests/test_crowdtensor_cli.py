@@ -10000,6 +10000,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["shareable_terminal"]["answer_text_redacted"], True)
         self.assertEqual(persisted["local_output"]["note"], cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT)
         self.assertEqual(persisted["local_output_note"], cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT)
+        self.assertEqual(persisted["output_display"]["terminal_display"], "shareable-terminal-redacted")
+        self.assertFalse(persisted["output_display"]["terminal_text_available"])
         self.assertEqual(persisted["answer_scope"]["scope_state"], "shareable-terminal-redacted")
         self.assertEqual(persisted["answer_scope"]["summary"], cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT)
         self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "shareable-terminal-redacted")
@@ -10009,6 +10011,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(f"- Local output note: {cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
         self.assertIn(f"- Answer scope note: {cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(
+            "- Output display: `terminal=shareable-terminal-redacted terminal_text=False saved=hash-only json_stdout=hash-only-json",
+            markdown,
+        )
         self.assertIn(
             "- Shareable terminal: `enabled=True prompt_sources_redacted=True answer_text_redacted=True public_artifact_safe=True`",
             markdown,
