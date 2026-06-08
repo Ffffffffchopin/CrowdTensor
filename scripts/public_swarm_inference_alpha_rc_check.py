@@ -54,7 +54,7 @@ def assert_no_sensitive_output(payload: dict[str, Any]) -> None:
             raise SystemExit(f"Public Swarm Inference Alpha RC check leaked sensitive fragment: {fragment}")
 
 
-def validate_report(payload: dict[str, Any], *, mode: str) -> None:
+def validate_report(payload: dict[str, Any], *, mode: str) -> list[str]:
     if payload.get("schema") != "public_swarm_inference_alpha_rc_v1" or payload.get("ok") is not True:
         raise SystemExit(f"unexpected Public Swarm Inference Alpha RC report: {json.dumps(payload, sort_keys=True)}")
     codes = payload.get("diagnosis_codes") or []
@@ -171,7 +171,44 @@ def validate_report(payload: dict[str, Any], *, mode: str) -> None:
         artifact = artifacts.get(name) or {}
         if artifact.get("present") is not True:
             raise SystemExit(f"missing RC artifact {name}: {artifact}")
+    guidance_errors: list[str] = []
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    recommended = payload.get("recommended_next_command") if isinstance(payload.get("recommended_next_command"), dict) else {}
+    next_commands = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    not_completed = payload.get("not_completed") if isinstance(payload.get("not_completed"), list) else []
+    support = artifacts.get("support_bundle_json") if isinstance(artifacts.get("support_bundle_json"), dict) else {}
+    if user_status.get("public_artifact_safe") is not True:
+        guidance_errors.append("user_status_public_artifact_safe_mismatch")
+    if payload.get("ok") is True and user_status.get("state") != "ready":
+        guidance_errors.append("user_status_ready_state_mismatch")
+    if review.get("schema") != "public_swarm_inference_alpha_rc_review_summary_v1":
+        guidance_errors.append("review_summary_schema_mismatch")
+    if payload.get("ok") is True and review.get("state") != "ready":
+        guidance_errors.append("review_summary_ready_state_mismatch")
+    if not isinstance(review.get("inspect_first"), str) or not review.get("inspect_first"):
+        guidance_errors.append("review_summary_inspect_first_missing")
+    if not isinstance(review.get("support_bundle"), str) or not review.get("support_bundle"):
+        guidance_errors.append("review_summary_support_bundle_missing")
+    if not isinstance(recommended.get("command_line"), str) or not recommended.get("command_line"):
+        guidance_errors.append("recommended_next_command_missing")
+    if recommended.get("public_artifact_safe") is not True:
+        guidance_errors.append("recommended_next_command_public_artifact_safe_mismatch")
+    if len(next_commands) < 2:
+        guidance_errors.append("next_commands_missing")
+    if not_completed:
+        guidance_errors.append("ready_report_not_completed")
+    if artifact_summary.get("public_artifact_safe") is not True:
+        guidance_errors.append("artifact_summary_public_artifact_safe_mismatch")
+    if artifact_summary.get("present_artifact_count") != artifact_summary.get("artifact_count"):
+        guidance_errors.append("artifact_summary_present_count_mismatch")
+    if support.get("present") is not True:
+        guidance_errors.append("support_bundle_missing")
+    if guidance_errors:
+        raise SystemExit(f"RC guidance contract failed: {guidance_errors}")
     assert_no_sensitive_output(payload)
+    return guidance_errors
 
 
 def parse_args() -> argparse.Namespace:
@@ -207,7 +244,7 @@ def main() -> None:
         if args.summary_report:
             command.extend(["--summary-report", args.summary_report])
         payload = run_json(command, timeout=args.timeout_seconds + 30.0)
-        validate_report(payload, mode=args.mode)
+        guidance_errors = validate_report(payload, mode=args.mode)
         print(json.dumps({
             "ok": True,
             "schema": SCHEMA,
@@ -215,6 +252,7 @@ def main() -> None:
             "rc_schema": payload.get("schema"),
             "diagnosis_codes": payload.get("diagnosis_codes"),
             "artifact_count": len(payload.get("artifacts") or {}),
+            "guidance_errors": guidance_errors,
         }, sort_keys=True))
 
 

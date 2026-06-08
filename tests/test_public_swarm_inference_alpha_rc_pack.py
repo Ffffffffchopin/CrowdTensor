@@ -13,6 +13,24 @@ class PublicSwarmInferenceAlphaRcPackTests(unittest.TestCase):
     def _tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="crowdtensor_public_swarm_alpha_rc_test_"))
 
+    def _assert_ready_guidance(self, report: dict, output_dir: Path) -> None:
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["next_step"], "review_artifacts")
+        self.assertEqual(report["review_summary"]["schema"], "public_swarm_inference_alpha_rc_review_summary_v1")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertEqual(report["recommended_next_command"]["label"], "inspect Public Swarm Alpha RC evidence")
+        self.assertIn("public_swarm_inference_alpha_rc.md", report["recommended_next_command"]["command_line"])
+        self.assertGreaterEqual(len(report["next_commands"]), 3)
+        self.assertFalse(report["not_completed"])
+        self.assertEqual(report["artifact_summary"]["present_artifact_count"], report["artifact_summary"]["artifact_count"])
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        self.assertTrue((output_dir / "support_bundle.json").is_file())
+        support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["schema"], "public_swarm_inference_alpha_rc_support_bundle_v1")
+        self.assertEqual(support["review_summary"]["state"], "ready")
+        self.assertTrue(support["public_artifact_safe"])
+
     def _alpha_report(self, *, stage: str) -> dict:
         failure_mode = f"kill-{stage}-after-claim"
         stage_code = f"live_{stage}_requeue_ready"
@@ -134,6 +152,7 @@ class PublicSwarmInferenceAlphaRcPackTests(unittest.TestCase):
         self.assertTrue(report["imported_reports"]["stage0"]["ready"])
         self.assertTrue(report["imported_reports"]["stage1"]["ready"])
         self.assertTrue(report["artifacts"]["public_swarm_inference_alpha_rc_json"]["present"])
+        self._assert_ready_guidance(report, output_dir)
         self.assertFalse(report["output_request"]["include_output"])
         self.assertFalse(report["output_request"]["raw_prompt_public"])
         self.assertFalse(report["output_request"]["raw_generation_public"])
@@ -165,7 +184,12 @@ class PublicSwarmInferenceAlphaRcPackTests(unittest.TestCase):
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "public_swarm_inference_alpha_rc.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("## Not Completed", markdown)
+        self.assertIn("Public Swarm Inference Alpha RC evidence is ready.", markdown)
         self.assertIn("- output request note:", markdown)
         self.assertIn("answer text", markdown)
         self.assertIn("prompt scope: `source=imported-or-built-in-validation-prompts", markdown)
@@ -200,6 +224,12 @@ class PublicSwarmInferenceAlphaRcPackTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("private_artifacts_present", report["imported_reports"]["stage0"]["failed_checks"])
         self.assertIn("public_swarm_inference_alpha_rc_blocked", report["diagnosis_codes"])
+        self.assertTrue(report["imported_reports"]["stage0"]["private_artifacts_present"])
+        self.assertEqual(report["imported_reports"]["stage0"]["private_artifact_count"], 1)
+        self.assertNotIn("miner.private.env", json.dumps(report, sort_keys=True))
+        self.assertEqual(report["user_status"]["state"], "evidence-import-blocked")
+        self.assertTrue(report["not_completed"])
+        self.assertIn("rerun Public Swarm Alpha RC evidence-import", report["recommended_next_command"]["label"])
 
     def test_local_smoke_uses_ci_safe_alpha_check(self) -> None:
         output_dir = self._tmp_dir() / "rc"
@@ -228,6 +258,7 @@ class PublicSwarmInferenceAlphaRcPackTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertIn("public_swarm_alpha_rc_local_smoke_ready", report["diagnosis_codes"])
+        self._assert_ready_guidance(report, output_dir)
         self.assertFalse(report["output_request"]["include_output"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
