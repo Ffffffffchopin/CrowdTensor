@@ -13128,10 +13128,11 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["dry_run"])
-        self.assertIn("generation_timeout", report["diagnosis_codes"])
+        self.assertNotIn("generation_timeout", report["diagnosis_codes"])
         self.assertEqual(report["ready_to_submit"]["next_step"], "run_live_preflight")
         self.assertEqual(report["recommended_next_command"]["label"], "check existing swarm")
         self.assertEqual(report["recommended_next_command"]["reason"], "confirm_live_preflight")
+        self.assertFalse(any(item["label"] == "retry inference with longer timeout" for item in report["next_commands"]))
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)

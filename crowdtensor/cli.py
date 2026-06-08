@@ -6870,7 +6870,7 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
         ])
     commands.append(check_command)
     commands.append(submit_command_entry)
-    if "generation_timeout" in codes:
+    if "generation_timeout" in codes and not bool(getattr(args, "dry_run", False)):
         wait_progress = payload.get("wait_progress") if isinstance(payload.get("wait_progress"), dict) else {}
         retry_command = _command_with_timeout(submit_command, _retry_timeout_seconds(wait_progress))
         commands.append(command_entry(
@@ -7198,7 +7198,8 @@ def _infer_summary_from_payload(
         or batch_generation_ready
         or observed_request_count_int >= expected_request_count
     )
-    batch_incomplete = bool(expected_request_count > 1 and not batch_complete)
+    dry_run = bool(payload.get("dry_run"))
+    batch_incomplete = bool(expected_request_count > 1 and not batch_complete and not dry_run)
     if batch_incomplete:
         wait_progress = {
             "session_created": wait_progress.get("session_created", True),
@@ -7214,7 +7215,6 @@ def _infer_summary_from_payload(
             "timeout_seconds": wait_progress.get("timeout_seconds"),
             "public_artifact_safe": True,
         }
-    dry_run = bool(payload.get("dry_run"))
     if dry_run:
         ok = bool(payload.get("ok") and route.get("route_ready"))
     else:
