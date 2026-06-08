@@ -14089,6 +14089,9 @@ def print_public_swarm_operator_preview(report: dict[str, Any]) -> None:
 
 def print_public_swarm_trial(report: dict[str, Any]) -> None:
     trial = report.get("trial") if isinstance(report.get("trial"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -14103,6 +14106,18 @@ def print_public_swarm_trial(report: dict[str, Any]) -> None:
     print(f"  degraded_cpu_fallback_ready: {trial.get('degraded_cpu_fallback_ready')}")
     print(f"  gpu_generation_ready: {trial.get('gpu_generation_ready')}")
     print(f"  external_runtime_verified: {trial.get('external_runtime_verified')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -14111,6 +14126,19 @@ def print_public_swarm_trial(report: dict[str, Any]) -> None:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = " side_effectful=True" if item.get("side_effectful") else ""
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary.get('present_artifact_count')}/{artifact_summary.get('artifact_count')} "
+            f"support={artifact_summary.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
+        )
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -15894,6 +15922,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     swarm_trial = subparsers.add_parser(
         "swarm-trial",
         help="Build the Public Swarm v0.2 ordinary-user usable inference trial.",
+        description=(
+            "Build the Public Swarm v0.2 Usable Inference Trial over the ordinary-user serve/join/generate path.\n\n"
+            "Modes:\n"
+            "  local-loopback   Run the local Product Beta serve/join/generate path plus Operator Preview, CPU fallback, and GPU evidence import.\n"
+            "  package          Generate SWARM_TRIAL.md and join/package artifacts without creating Kaggle resources.\n"
+            "  live-kaggle      Run the side-effectful Operator Preview live Kaggle proof and optional GPU evidence for an external trial.\n"
+            "  evidence-import  Aggregate retained Product Beta, Operator Preview, and GPU generation evidence reports.\n\n"
+            "Reports print status, review, recommended_next, next[...] commands, output scope, and artifact counts. "
+            "Share only the generated JSON, Markdown, and support bundle; keep private env files, Kaggle payloads, "
+            "runtime state, credentials, leases, activations, raw prompts, generated text, and generated token ids local. "
+            "live-kaggle is side-effectful and requires cleanup plus token rotation after collection."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crowdtensor swarm-trial local-loopback --output-dir dist/public-swarm-trial --allow-dirty-release\n"
+            "  crowdtensor swarm-trial package --public-host 24.199.118.54 --output-dir dist/swarm-trial-package\n"
+            "  crowdtensor swarm-trial evidence-import --product-beta-report dist/public-swarm-product-beta/public_swarm_product_beta.json --operator-preview-report dist/public-swarm-operator-preview/public_swarm_operator_preview.json\n"
+            "  crowdtensor swarm-trial live-kaggle --kaggle-owner KAGGLE_OWNER --public-host 24.199.118.54 --failure-mode kill-stage0-after-claim"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     swarm_trial.add_argument("swarm_trial_mode", choices=["local-loopback", "package", "live-kaggle", "evidence-import"])
     swarm_trial.add_argument("--output-dir", default="dist/public-swarm-trial")
