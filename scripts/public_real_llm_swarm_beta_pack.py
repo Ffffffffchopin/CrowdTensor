@@ -38,6 +38,7 @@ SCHEMA = "public_real_llm_swarm_beta_v1"
 SUPPORT_SCHEMA = "public_real_llm_swarm_beta_support_bundle_v1"
 ARTIFACT_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_artifact_summary_v1"
 REVIEW_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_review_summary_v1"
+RUNTIME_PROVENANCE_SCHEMA = "public_real_llm_swarm_beta_runtime_provenance_v1"
 PRODUCT_SCHEMA = "public_swarm_product_beta_v1"
 GPU_SCHEMA = "public_swarm_gpu_inference_beta_v1"
 P2P_SCHEMA = "petals_class_p2p_candidate_v1"
@@ -1232,6 +1233,7 @@ def gpu_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema": payload.get("schema"),
         "ok": payload.get("ok"),
+        "mode": payload.get("mode"),
         "ready": bool(payload.get("ok") is True and "public_swarm_gpu_beta_ready" in codes),
         "fail_closed_ready": fail_closed,
         "cuda_available": beta.get("cuda_available"),
@@ -1607,6 +1609,99 @@ def shareable_summary() -> dict[str, Any]:
         "public_artifact_safe": True,
         "summary": "Share public_real_llm_swarm_beta.json/md and support_bundle.json; they contain hashes/counts and readiness evidence, not raw prompts or answers.",
     }
+
+
+def runtime_provenance_summary(report: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    product = readiness.get("product_path") if isinstance(readiness.get("product_path"), dict) else {}
+    external = readiness.get("external_kaggle") if isinstance(readiness.get("external_kaggle"), dict) else {}
+    p2p = readiness.get("p2p_candidate") if isinstance(readiness.get("p2p_candidate"), dict) else {}
+    v2 = readiness.get("public_swarm_v2") if isinstance(readiness.get("public_swarm_v2"), dict) else {}
+    kv_cache = readiness.get("usable_p2p_kv_cache") if isinstance(readiness.get("usable_p2p_kv_cache"), dict) else {}
+    cuda = readiness.get("cuda_optional") if isinstance(readiness.get("cuda_optional"), dict) else {}
+    source_reports = report.get("source_reports") if isinstance(report.get("source_reports"), dict) else {}
+    steps = report.get("steps") if isinstance(report.get("steps"), list) else []
+    step_names = [
+        str(step.get("name"))
+        for step in steps
+        if isinstance(step, dict) and step.get("name")
+    ]
+    cuda_codes = set(str(code) for code in (cuda.get("diagnosis_codes") or []))
+    gpu_report = str(source_reports.get("gpu_report") or "")
+    gpu_mode = str(cuda.get("mode") or "")
+    if not gpu_mode:
+        artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+        gpu_artifact = artifacts.get("gpu_optional_report") if isinstance(artifacts.get("gpu_optional_report"), dict) else {}
+        artifact_path = str(gpu_artifact.get("path") or "")
+        if "kaggle_auto" in gpu_report or "kaggle-auto" in gpu_report or "kaggle_auto" in artifact_path:
+            gpu_mode = "kaggle-auto"
+        elif gpu_report:
+            gpu_mode = "evidence-import"
+        elif "public_swarm_gpu_beta_local_smoke" in step_names:
+            gpu_mode = "local-smoke"
+    fresh_kaggle_gpu_attempted = any("kaggle" in name and "gpu" in name for name in step_names)
+    fresh_kaggle_gpu_verified = bool(
+        fresh_kaggle_gpu_attempted
+        and (
+            cuda.get("ready") is True
+            or "public_swarm_gpu_beta_kaggle_auto_ready" in cuda_codes
+            or "public_swarm_gpu_beta_ready" in cuda_codes
+        )
+    )
+    retained_gpu_evidence_imported = bool(mode == MODE_EVIDENCE_IMPORT and gpu_report)
+    local_gpu_smoke_ran = "public_swarm_gpu_beta_local_smoke" in step_names
+    if mode == MODE_RELEASE:
+        proof_level = "release-local-cpu-with-retained-external-and-local-gpu-smoke"
+    elif mode == MODE_LOCAL_SMOKE:
+        proof_level = "local-cpu-product-smoke"
+    elif mode == MODE_LOCAL_MODEL_VARIANT:
+        proof_level = "local-model-variant-cpu"
+    elif mode == MODE_EVIDENCE_IMPORT:
+        proof_level = "retained-evidence-import"
+    elif mode == MODE_PACKAGE:
+        proof_level = "package-only"
+    else:
+        proof_level = mode or "unknown"
+    return {
+        "schema": RUNTIME_PROVENANCE_SCHEMA,
+        "proof_level": proof_level,
+        "mode": mode,
+        "local_cpu_product_path_ready": product.get("ready") is True or product.get("path_ready") is True,
+        "local_public_swarm_v2_ready": v2.get("ready") is True,
+        "local_kv_cache_ready": kv_cache.get("ready") is True,
+        "external_kaggle_cpu_evidence_ready": external.get("ready") is True,
+        "external_kaggle_cpu_evidence_claimed": bool(mode in {MODE_RELEASE, MODE_EVIDENCE_IMPORT} and external),
+        "p2p_candidate_evidence_ready": p2p.get("ready") is True,
+        "p2p_candidate_evidence_claimed": bool(mode in {MODE_RELEASE, MODE_EVIDENCE_IMPORT} and p2p),
+        "cuda_optional_fail_closed_ready": cuda.get("fail_closed_ready") is True,
+        "gpu_backend": cuda.get("backend") or "",
+        "gpu_report_mode": gpu_mode or "none",
+        "local_gpu_smoke_ran": local_gpu_smoke_ran,
+        "retained_gpu_evidence_imported": retained_gpu_evidence_imported,
+        "fresh_kaggle_gpu_attempted": fresh_kaggle_gpu_attempted,
+        "fresh_kaggle_gpu_verified": fresh_kaggle_gpu_verified,
+        "public_artifact_safe": True,
+        "summary": (
+            "This aggregate distinguishes local CPU proof, retained external/Kaggle CPU "
+            "evidence, optional CUDA fail-closed smoke/import, and any fresh Kaggle GPU proof. "
+            "A fresh Kaggle GPU run is only claimed when fresh_kaggle_gpu_verified is true."
+        ),
+    }
+
+
+def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    return (
+        f"proof={provenance.get('proof_level') or 'unknown'} "
+        f"local_cpu_product={bool(provenance.get('local_cpu_product_path_ready'))} "
+        f"external_kaggle_cpu={bool(provenance.get('external_kaggle_cpu_evidence_ready'))} "
+        f"p2p_candidate={bool(provenance.get('p2p_candidate_evidence_ready'))} "
+        f"gpu_mode={provenance.get('gpu_report_mode') or 'none'} "
+        f"local_gpu_smoke={bool(provenance.get('local_gpu_smoke_ran'))} "
+        f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))} "
+        f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+        f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))}"
+    )
 
 
 def artifact_path_summary(report: dict[str, Any], name: str, fallback: str) -> str:
@@ -2712,6 +2807,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     shareable_paths = artifact_overview.get("shareable_paths") if isinstance(artifact_overview.get("shareable_paths"), list) else []
     recommended = (
@@ -2766,6 +2862,19 @@ def render_markdown(report: dict[str, Any]) -> str:
     else:
         lines.append("- none")
     lines.extend([
+        "",
+        "## Runtime Provenance",
+        "",
+        f"- proof: `{provenance.get('proof_level')}`",
+        f"- local CPU product path ready: `{provenance.get('local_cpu_product_path_ready')}`",
+        f"- external Kaggle CPU evidence ready: `{provenance.get('external_kaggle_cpu_evidence_ready')}`",
+        f"- P2P candidate evidence ready: `{provenance.get('p2p_candidate_evidence_ready')}`",
+        f"- GPU report mode: `{provenance.get('gpu_report_mode')}`",
+        f"- local GPU smoke ran: `{provenance.get('local_gpu_smoke_ran')}`",
+        f"- retained GPU evidence imported: `{provenance.get('retained_gpu_evidence_imported')}`",
+        f"- fresh Kaggle GPU attempted: `{provenance.get('fresh_kaggle_gpu_attempted')}`",
+        f"- fresh Kaggle GPU verified: `{provenance.get('fresh_kaggle_gpu_verified')}`",
+        f"- note: {provenance.get('summary') or ''}",
         "",
         "## Operator Action",
         "",
@@ -2841,6 +2950,7 @@ def print_human_summary(report: dict[str, Any]) -> None:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     recommended = (
@@ -2874,6 +2984,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
     print(f"  stream ready: product={product_stream.get('stream_generation_ready')} p2p={beta.get('p2p_stream_ready')} v2={beta.get('public_swarm_v2_stream_ready')}")
     print(f"  kv_cache_ready: {beta.get('kv_cache_ready')}")
     print(f"  kv_cache hits: stage0={stage0.get('hit_count')} stage1={stage1.get('hit_count')}")
+    if provenance:
+        print(f"  runtime_provenance: {runtime_provenance_text(provenance)}")
     if user:
         print(
             "  status: "
@@ -3003,6 +3115,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     report.setdefault("prompt_scope", prompt_scope_summary(argparse.Namespace(prompt_text=DEFAULT_PROMPT, prompt_texts="", prompt_texts_file="", prompt_texts_list=[])))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
+    report["runtime_provenance"] = runtime_provenance_summary(report)
     report["recommended_check_command"] = recommended_check_command(report)
     cleanup = cleanup_release_private_artifacts(output_dir)
     report["release_private_artifact_cleanup"] = cleanup
@@ -3075,6 +3188,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
+        "runtime_provenance": report.get("runtime_provenance"),
         "safety": report.get("safety"),
         "limitations": report.get("limitations"),
     })

@@ -1413,6 +1413,20 @@ def output_request_text(output_request: dict[str, Any]) -> str:
     )
 
 
+def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    return (
+        f"proof={provenance.get('proof_level') or 'unknown'} "
+        f"local_cpu_product={bool(provenance.get('local_cpu_product_path_ready'))} "
+        f"external_kaggle_cpu={bool(provenance.get('external_kaggle_cpu_evidence_ready'))} "
+        f"p2p_candidate={bool(provenance.get('p2p_candidate_evidence_ready'))} "
+        f"gpu_mode={provenance.get('gpu_report_mode') or 'none'} "
+        f"local_gpu_smoke={bool(provenance.get('local_gpu_smoke_ran'))} "
+        f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))} "
+        f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+        f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))}"
+    )
+
+
 def runtime_options_text(options: dict[str, Any]) -> str:
     text = (
         f"timeout_seconds={options.get('timeout_seconds')} "
@@ -14465,6 +14479,7 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
@@ -14533,6 +14548,8 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     print(f"  kv_cache_ready: {beta.get('kv_cache_ready')}")
     print(f"  kv_cache hits: stage0={kv_stage0.get('hit_count')} stage1={kv_stage1.get('hit_count')}")
     print(f"  cuda_optional_fail_closed_ready: {beta.get('cuda_optional_fail_closed_ready')}")
+    if runtime_provenance:
+        print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:

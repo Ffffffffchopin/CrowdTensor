@@ -8159,6 +8159,19 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
             },
+            "runtime_provenance": {
+                "schema": "public_real_llm_swarm_beta_runtime_provenance_v1",
+                "proof_level": "release-local-cpu-with-retained-external-and-local-gpu-smoke",
+                "local_cpu_product_path_ready": True,
+                "external_kaggle_cpu_evidence_ready": True,
+                "p2p_candidate_evidence_ready": True,
+                "gpu_report_mode": "local-smoke",
+                "local_gpu_smoke_ran": True,
+                "retained_gpu_evidence_imported": False,
+                "fresh_kaggle_gpu_attempted": False,
+                "fresh_kaggle_gpu_verified": False,
+                "public_artifact_safe": True,
+            },
             "artifact_summary": {
                 "inspect_first": "public_real_llm_swarm_beta.md",
                 "machine_readable": "public_real_llm_swarm_beta.json",
@@ -8260,6 +8273,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  stream ready: product=True p2p=True v2=True", output)
         self.assertIn("  kv_cache_ready: True", output)
         self.assertIn("  kv_cache hits: stage0=15 stage1=15", output)
+        self.assertIn(
+            "  runtime_provenance: proof=release-local-cpu-with-retained-external-and-local-gpu-smoke local_cpu_product=True external_kaggle_cpu=True p2p_candidate=True gpu_mode=local-smoke local_gpu_smoke=True retained_gpu_import=False fresh_kaggle_gpu_attempted=False fresh_kaggle_gpu_verified=False",
+            output,
+        )
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
