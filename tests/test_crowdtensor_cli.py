@@ -211,14 +211,16 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertEqual(file_scope["source"], "prompt-file")
         self.assertFalse(file_scope["inline_prompt_text"])
-        self.assertFalse(file_scope["terminal_next_commands_local_private"])
-        self.assertFalse(file_scope["terminal_logs_local_private"])
+        self.assertTrue(file_scope["terminal_next_commands_local_private"])
+        self.assertTrue(file_scope["terminal_logs_local_private"])
+        self.assertTrue(file_scope["terminal_local_paths"])
         self.assertTrue(file_scope["saved_artifacts_prompt_placeholders"])
         self.assertTrue(file_scope["prefer_prompt_file_or_stdin_for_shareable_logs"])
         self.assertFalse(file_scope["prompt_file_path_public"])
         self.assertFalse(file_scope["raw_prompt_public"])
         self.assertTrue(file_scope["public_artifact_safe"])
         self.assertEqual(stdin_scope["source"], "prompt-stdin")
+        self.assertFalse(stdin_scope["terminal_local_paths"])
         self.assertTrue(stdin_scope["prefer_prompt_file_or_stdin_for_shareable_logs"])
         self.assertFalse(stdin_scope["prompt_file_path_public"])
         self.assertFalse(stdin_scope["raw_prompt_public"])
@@ -1276,6 +1278,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
         self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
         self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_local_paths"])
         self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
         self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
         self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
@@ -1345,6 +1348,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["prompt_scope"]["source"], "prompt-text")
         self.assertTrue(persisted["prompt_scope"]["inline_prompt_text"])
         self.assertTrue(persisted["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(persisted["prompt_scope"]["terminal_local_paths"])
         self.assertTrue(persisted["prompt_scope"]["saved_artifacts_prompt_placeholders"])
         self.assertFalse(persisted["prompt_scope"]["raw_prompt_public"])
         self.assertTrue(persisted["prompt_scope"]["public_artifact_safe"])
@@ -1422,7 +1426,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -4438,6 +4442,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
         self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
         self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_local_paths"])
         self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
         self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
         self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
@@ -4516,6 +4521,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["prompt_scope"]["source"], "prompt-text")
         self.assertTrue(persisted["prompt_scope"]["inline_prompt_text"])
         self.assertTrue(persisted["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(persisted["prompt_scope"]["terminal_local_paths"])
         self.assertTrue(persisted["prompt_scope"]["saved_artifacts_prompt_placeholders"])
         self.assertFalse(persisted["prompt_scope"]["raw_prompt_public"])
         self.assertTrue(persisted["prompt_scope"]["public_artifact_safe"])
@@ -4587,7 +4593,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -8948,8 +8954,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["prompt"]["prompt_count"], 1)
         self.assertEqual(report["prompt_scope"]["source"], "prompt-file")
         self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
-        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
-        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_local_paths"])
         self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
         self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
         self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
@@ -9491,8 +9498,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["prompt"]["prompt_count"], 1)
         self.assertEqual(report["prompt_scope"]["source"], "prompt-file")
         self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
-        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
-        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_local_paths"])
         self.assertNotIn(private_prompt, encoded)
         self.assertNotIn(".private", encoded)
         self.assertFalse((output_dir / ".private").exists())
@@ -11510,6 +11518,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
         self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
         self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_local_paths"])
         self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
         self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
         self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
@@ -11546,6 +11555,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["prompt_scope"]["source"], "prompt-text")
         self.assertTrue(persisted["prompt_scope"]["inline_prompt_text"])
         self.assertTrue(persisted["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(persisted["prompt_scope"]["terminal_local_paths"])
         self.assertTrue(persisted["prompt_scope"]["saved_artifacts_prompt_placeholders"])
         self.assertFalse(persisted["prompt_scope"]["raw_prompt_public"])
         self.assertTrue(persisted["prompt_scope"]["public_artifact_safe"])
@@ -11563,7 +11573,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(

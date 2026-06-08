@@ -373,6 +373,8 @@ def _prompt_scope(
     safe_source = source if source else "prompt-text"
     safe_count = prompt_count if prompt_count > 0 else 1
     inline_prompt_text = safe_source in INLINE_PROMPT_SCOPE_SOURCES
+    terminal_local_paths = safe_source in {"prompt-file", "prompt-texts-file"}
+    terminal_local_private = inline_prompt_text or terminal_local_paths
     prefer_safe_prompt_source = safe_source in {
         "prompt-text",
         "prompt-texts",
@@ -384,8 +386,9 @@ def _prompt_scope(
         "source": safe_source,
         "prompt_count": safe_count,
         "inline_prompt_text": inline_prompt_text,
-        "terminal_next_commands_local_private": inline_prompt_text,
-        "terminal_logs_local_private": inline_prompt_text,
+        "terminal_next_commands_local_private": terminal_local_private,
+        "terminal_logs_local_private": terminal_local_private,
+        "terminal_local_paths": terminal_local_paths,
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
         "prefer_prompt_file_or_stdin_for_shareable_logs": prefer_safe_prompt_source,
@@ -525,7 +528,7 @@ def terminal_prompt_scope_text(report: dict[str, Any]) -> str:
         else:
             source = "prompt-text"
     inline_prompt_text = bool(prompt_scope.get("inline_prompt_text", source in INLINE_PROMPT_SCOPE_SOURCES))
-    local_path_source = source in {"prompt-file", "prompt-texts-file"}
+    local_path_source = bool(prompt_scope.get("terminal_local_paths", source in {"prompt-file", "prompt-texts-file"}))
     terminal_scope = "local-private" if inline_prompt_text or local_path_source else "shareable"
     prefer_safe_sources = bool(prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs", True))
     return (
@@ -1447,6 +1450,7 @@ def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
         f"count={prompt_scope.get('prompt_count')} "
         f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
         f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"terminal_local_paths={bool(prompt_scope.get('terminal_local_paths'))} "
         f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
         f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
         f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
