@@ -127,6 +127,18 @@ source (`prompt-text`, `prompt-file`, `prompt-stdin`, `prompt-texts`, or
 local-private, whether terminal next commands contain local prompt file paths,
 and whether saved artifacts use placeholders. `prompt_scope` does not contain
 raw prompt text.
+Read `evidence_scope` when you need the shortest answer to what actually ran.
+For `infer`, `local-cpu-loopback` means the fast local CPU product path ran,
+`local-full-evidence` means the broader local evidence gate ran, and
+`existing-runtime-preflight` / `existing-runtime-submit` means the command
+checked or used an already running Coordinator or P2P-discovered route. For
+`generate`, `existing-runtime-preflight` is a request-shape/readiness check
+without submitting work, `existing-runtime-submit` submitted to an existing
+Coordinator, and `p2p-runtime-*` came through discovery. `retained_gpu=True`
+means imported historical GPU evidence was referenced; only
+`fresh_kaggle_gpu=True` means this run verified a fresh Kaggle GPU proof.
+The current default quick-start inference path is local CPU / local loopback,
+not a fresh Kaggle GPU run.
 
 ```bash
 crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8
