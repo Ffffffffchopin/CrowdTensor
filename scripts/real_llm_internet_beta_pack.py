@@ -102,6 +102,9 @@ SECRET_FRAGMENTS = (
     "miner_registry.json",
     "CrowdTensor routes",
     "A miner returns",
+    '"generated_text":',
+    '"generated_token_ids":',
+    '"prompt_text":',
 )
 
 
@@ -176,6 +179,44 @@ def shareable_summary() -> dict[str, Any]:
             "diagnostics, not raw prompts or answers."
         ),
     }
+
+
+def prompt_scope_summary(report: dict[str, Any] | None = None) -> dict[str, Any]:
+    workload = report.get("workload") if isinstance(report, dict) and isinstance(report.get("workload"), dict) else {}
+    try:
+        prompt_count = int(workload.get("prompt_text_count") or len(DEFAULT_PROMPTS))
+    except (TypeError, ValueError):
+        prompt_count = len(DEFAULT_PROMPTS)
+    return {
+        "source": "built-in-default-prompts",
+        "prompt_count": prompt_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Real Internet Swarm Inference Beta uses fixed built-in validation prompts; "
+            "public artifacts record prompt count/source only and exclude raw prompt text."
+        ),
+    }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -1425,6 +1466,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     workload = report.get("workload") or {}
     lifecycle = report.get("kaggle_lifecycle") or {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -1443,6 +1485,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -1482,6 +1525,7 @@ def default_requeue_summary(args: argparse.Namespace) -> dict[str, Any]:
 def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: list[str]) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(report))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report, secret_values))

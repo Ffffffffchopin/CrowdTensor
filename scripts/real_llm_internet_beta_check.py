@@ -120,6 +120,7 @@ def write_external_alpha(output_dir: Path) -> None:
 def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
     shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
     if output_request.get("include_output") is not False:
@@ -132,6 +133,28 @@ def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
         errors.append(f"{label}:output_request_generated_token_ids_public")
     if output_request.get("public_artifact_safe") is not True:
         errors.append(f"{label}:output_request_public_artifact_safe")
+    if prompt_scope.get("source") != "built-in-default-prompts":
+        errors.append(f"{label}:prompt_scope_source")
+    if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 1:
+        errors.append(f"{label}:prompt_scope_count")
+    if prompt_scope.get("inline_prompt_text") is not False:
+        errors.append(f"{label}:prompt_scope_inline_prompt_text")
+    if prompt_scope.get("terminal_next_commands_local_private") is not False:
+        errors.append(f"{label}:prompt_scope_terminal_next_commands_local_private")
+    if prompt_scope.get("terminal_logs_local_private") is not False:
+        errors.append(f"{label}:prompt_scope_terminal_logs_local_private")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        errors.append(f"{label}:prompt_scope_saved_artifacts_prompt_placeholders")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        errors.append(f"{label}:prompt_scope_saved_artifacts_public_safe")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not False:
+        errors.append(f"{label}:prompt_scope_prefer_prompt_file_or_stdin")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append(f"{label}:prompt_scope_prompt_file_path_public")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:prompt_scope_raw_prompt_public")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:prompt_scope_public_artifact_safe")
     if answer_scope.get("scope_state") != "no-local-answer":
         errors.append(f"{label}:answer_scope_state")
     if answer_scope.get("visible_in_terminal") is not False:
@@ -162,6 +185,8 @@ def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
         errors.append(f"{label}:shareable_answer_scope_state")
     if shareable.get("local_answer_terminal_only") is not False:
         errors.append(f"{label}:shareable_local_answer_terminal_only")
+    if shareable.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:shareable_public_artifact_safe")
     return errors
 
 

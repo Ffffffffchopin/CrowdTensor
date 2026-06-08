@@ -126,6 +126,14 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "built-in-default-prompts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], len(pack.DEFAULT_PROMPTS))
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -143,6 +151,7 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "import" / "real_llm_internet_beta.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("prompt scope: `source=built-in-default-prompts", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
@@ -251,6 +260,11 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertTrue(report["kaggle_lifecycle"]["kernels_deleted"])
         self.assertTrue(report["artifacts"]["external_remote_real_llm_sharded_beta_json"]["present"])
         self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["prompt_scope"]["source"], "built-in-default-prompts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], len(pack.DEFAULT_PROMPTS))
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
         self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
@@ -258,6 +272,7 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         markdown = (output_dir / "real_llm_internet_beta.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("prompt scope: `source=built-in-default-prompts", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
 
     def test_cleanup_failure_blocks_ready_claim(self) -> None:
@@ -509,6 +524,17 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertIn(
             "broken:output_request_include_output",
             beta_check.output_scope_errors("broken", {"output_request": broken}),
+        )
+        broken_prompt = pack.prompt_scope_summary()
+        broken_prompt["raw_prompt_public"] = True
+        self.assertIn(
+            "broken:prompt_scope_raw_prompt_public",
+            beta_check.output_scope_errors("broken", {
+                "output_request": pack.output_request_summary(),
+                "prompt_scope": broken_prompt,
+                "answer_scope": pack.answer_scope_summary(),
+                "shareable_summary": pack.shareable_summary(),
+            }),
         )
 
 
