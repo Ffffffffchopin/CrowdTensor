@@ -260,7 +260,9 @@ it keeps the CI-safe fixture check path.
 Read `evidence_scope` in `public_real_llm_swarm_beta.json` and
 `checked_evidence_scope` in `public_real_llm_swarm_beta_check.json` for the
 shortest answer to what was verified: local CPU, retained evidence, or fresh
-Kaggle GPU. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
+Kaggle GPU. The check terminal output also prints `checked_runtime_provenance`;
+read that line when you need the detailed source/proof summary behind the
+checked scope. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
 `fresh_kaggle_gpu_attempted=True` without that verified flag is not a completed
 GPU proof. Retained external/GPU evidence is not a new Kaggle run.
 When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`

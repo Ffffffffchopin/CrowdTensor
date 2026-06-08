@@ -1056,6 +1056,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("public_real_llm_swarm_beta.json", rendered)
         for rendered in [readme, quickstart, operations]:
             self.assertIn("checked_evidence_scope", rendered)
+            self.assertIn("checked_runtime_provenance", rendered)
             self.assertIn("fresh Kaggle GPU", rendered)
         self.assertIn("Read `evidence_scope`", operations)
         self.assertIn("`evidence_scope_note`", operations)
@@ -8271,6 +8272,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("generated token ids", rendered)
         self.assertIn("Evidence scope: generated Beta reports include evidence_scope", rendered)
         self.assertIn("checked_evidence_scope", rendered)
+        self.assertIn("prints checked_runtime_provenance", rendered)
         self.assertIn("fresh_kaggle_gpu_attempted=True only means", rendered)
         self.assertIn("fresh_kaggle_gpu=True is the only fresh Kaggle GPU claim", rendered)
         self.assertIn("If ok is false, start with the Not Completed section", rendered)
