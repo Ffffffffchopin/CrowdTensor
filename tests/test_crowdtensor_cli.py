@@ -17394,6 +17394,24 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "reason": "review_artifacts",
                 "command_line": "sed -n 1,220p dist/product-beta/public_swarm_product_beta.md",
             },
+            "runtime_provenance": {
+                "schema": "public_swarm_product_beta_runtime_provenance_v1",
+                "proof_level": "local-loopback-cpu-product-path",
+                "mode": "local-loopback",
+                "target": "local",
+                "local_loopback_product_path_ran": True,
+                "local_loopback_product_path_ready": True,
+                "local_split_validation_ran": True,
+                "local_split_validation_ready": True,
+                "package_only": False,
+                "kaggle_package_generated": False,
+                "external_existing_attempted": False,
+                "external_existing_verified": False,
+                "fresh_kaggle_gpu_attempted": False,
+                "fresh_kaggle_gpu_verified": False,
+                "retained_gpu_evidence_imported": False,
+                "public_artifact_safe": True,
+            },
             "next_commands": [
                 {
                     "label": "inspect support bundle",
@@ -17460,6 +17478,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  recommended_next: inspect Product Beta evidence reason=review_artifacts sed -n 1,220p dist/product-beta/public_swarm_product_beta.md",
             output,
         )
+        self.assertIn(
+            "  runtime_provenance: proof=local-loopback-cpu-product-path local_loopback_ran=True local_loopback_ready=True",
+            output,
+        )
+        self.assertIn("fresh_kaggle_gpu_verified=False", output)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,

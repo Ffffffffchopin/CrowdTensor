@@ -61,9 +61,21 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["next_step"], "review_artifacts")
         self.assertEqual(report["recommended_next_command"]["label"], "inspect Product Beta evidence")
         self.assertTrue(any(item["label"] == "inspect support bundle" for item in report["next_commands"]))
+        self.assertEqual(report["runtime_provenance"]["schema"], pack.RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "local-loopback-cpu-product-path")
+        self.assertTrue(report["runtime_provenance"]["local_loopback_product_path_ran"])
+        self.assertTrue(report["runtime_provenance"]["local_loopback_product_path_ready"])
+        self.assertTrue(report["runtime_provenance"]["local_split_validation_ran"])
+        self.assertTrue(report["runtime_provenance"]["local_split_validation_ready"])
+        self.assertFalse(report["runtime_provenance"]["external_existing_verified"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         self.assertEqual(report["artifact_summary"]["present_artifact_count"], report["artifact_summary"]["artifact_count"])
         markdown = (Path(result["output_dir"]) / "product-beta" / "public_swarm_product_beta.md").read_text(encoding="utf-8")
         self.assertIn("## Review", markdown)
+        self.assertIn("## Runtime Provenance", markdown)
+        self.assertIn("- proof: `local-loopback-cpu-product-path`", markdown)
+        self.assertIn("- fresh Kaggle GPU attempted: `False`", markdown)
         self.assertIn("## What To Do Next", markdown)
         self.assertIn("- recommended: `inspect Product Beta evidence` reason=`review_artifacts`", markdown)
         self.assertIn("## Artifact Summary", markdown)
@@ -94,6 +106,7 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         self.assertEqual(support["user_status"], report["user_status"])
         self.assertEqual(support["review_summary"], report["review_summary"])
         self.assertEqual(support["artifact_summary"], report["artifact_summary"])
+        self.assertEqual(support["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(support["recommended_next_command"]["label"], "inspect Product Beta evidence")
 
     def test_check_builds_ready_kaggle_package_product_beta(self) -> None:
@@ -107,6 +120,12 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         ]))
 
         self.assertTrue(result["ok"], result)
+        report = json.loads((Path(result["output_dir"]) / "product-beta" / "public_swarm_product_beta.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "package-only")
+        self.assertTrue(report["runtime_provenance"]["package_only"])
+        self.assertTrue(report["runtime_provenance"]["kaggle_package_generated"])
+        self.assertFalse(report["runtime_provenance"]["local_loopback_product_path_ran"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
 
     def test_check_builds_ready_external_existing_product_beta(self) -> None:
         result = check.run_check(check.parse_args([
@@ -117,6 +136,12 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         ]))
 
         self.assertTrue(result["ok"], result)
+        report = json.loads((Path(result["output_dir"]) / "product-beta" / "public_swarm_product_beta.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "external-existing-runtime")
+        self.assertTrue(report["runtime_provenance"]["external_existing_attempted"])
+        self.assertTrue(report["runtime_provenance"]["external_existing_verified"])
+        self.assertFalse(report["runtime_provenance"]["local_loopback_product_path_ran"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
 
     def test_external_existing_requires_auth(self) -> None:
         with self.assertRaises(SystemExit):
@@ -665,6 +690,8 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertEqual(report["recommended_next_command"]["label"], "inspect Product Beta evidence")
+        self.assertEqual(report["runtime_provenance"]["schema"], pack.RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "package-only")
         self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
 
 

@@ -1414,6 +1414,19 @@ def output_request_text(output_request: dict[str, Any]) -> str:
 
 
 def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    if provenance.get("schema") == "public_swarm_product_beta_runtime_provenance_v1":
+        return (
+            f"proof={provenance.get('proof_level') or 'unknown'} "
+            f"local_loopback_ran={bool(provenance.get('local_loopback_product_path_ran'))} "
+            f"local_loopback_ready={bool(provenance.get('local_loopback_product_path_ready'))} "
+            f"package_only={bool(provenance.get('package_only'))} "
+            f"kaggle_package={bool(provenance.get('kaggle_package_generated'))} "
+            f"external_existing_attempted={bool(provenance.get('external_existing_attempted'))} "
+            f"external_existing_verified={bool(provenance.get('external_existing_verified'))} "
+            f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+            f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))} "
+            f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))}"
+        )
     if (
         provenance.get("schema") == "usable_swarm_inference_runtime_provenance_v1"
         or "retained_p2p_evidence_imported" in provenance
@@ -14215,6 +14228,7 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     print("CrowdTensor Public Swarm Product Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -14233,6 +14247,8 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
             "  recommended_next: "
             f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
         )
+    if runtime_provenance:
+        print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:

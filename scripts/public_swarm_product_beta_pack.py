@@ -31,6 +31,7 @@ from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_fi
 
 
 SCHEMA = "public_swarm_product_beta_v1"
+RUNTIME_PROVENANCE_SCHEMA = "public_swarm_product_beta_runtime_provenance_v1"
 RC_SCHEMA = "public_swarm_inference_beta_rc_v1"
 REMOTE_REAL_SCHEMA = "remote_real_llm_sharded_beta_v1"
 DEFAULT_OUTPUT_DIR = "dist/public-swarm-product-beta"
@@ -922,6 +923,90 @@ def shareable_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def runtime_provenance_summary(report: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    target = str(report.get("target") or "")
+    beta = report.get("product_beta") if isinstance(report.get("product_beta"), dict) else {}
+    payloads = report.get("payload_summaries") if isinstance(report.get("payload_summaries"), dict) else {}
+    rc = payloads.get("public_swarm_beta_rc") if isinstance(payloads.get("public_swarm_beta_rc"), dict) else {}
+    split = payloads.get("real_llm_split_validation") if isinstance(payloads.get("real_llm_split_validation"), dict) else {}
+    steps = report.get("steps") if isinstance(report.get("steps"), list) else []
+    step_names = [
+        str(step.get("name"))
+        for step in steps
+        if isinstance(step, dict) and step.get("name")
+    ]
+    codes = set(report.get("diagnosis_codes") or [])
+    rc_codes = set(rc.get("diagnosis_codes") or [])
+    split_codes = set(split.get("diagnosis_codes") or [])
+    local_loopback_ran = mode == "local-loopback" and "public_swarm_beta_rc_core" in step_names
+    split_validation_ran = mode == "local-loopback" and (
+        "real_llm_split_validation" in step_names
+        or "remote_real_llm_sharded_loopback" in step_names
+    )
+    external_existing = mode == "external-existing"
+    package_only = mode == "package"
+    kaggle_package = package_only and target == "kaggle"
+    if mode == "local-loopback":
+        proof_level = "local-loopback-cpu-product-path"
+    elif mode == "external-existing":
+        proof_level = "external-existing-runtime"
+    elif mode == "package":
+        proof_level = "package-only"
+    else:
+        proof_level = mode or "unknown"
+    return {
+        "schema": RUNTIME_PROVENANCE_SCHEMA,
+        "proof_level": proof_level,
+        "mode": mode,
+        "target": target,
+        "local_loopback_product_path_ran": local_loopback_ran,
+        "local_loopback_product_path_ready": bool(local_loopback_ran and beta.get("mode_ready") is True),
+        "local_split_validation_ran": split_validation_ran,
+        "local_split_validation_ready": bool(split_validation_ran and split.get("ok") is True),
+        "package_only": package_only,
+        "kaggle_package_generated": kaggle_package,
+        "external_existing_attempted": external_existing,
+        "external_existing_verified": bool(
+            external_existing
+            and (
+                "external_runtime_verified" in codes
+                or "external_runtime_verified" in rc_codes
+                or "remote_real_llm_sharded_existing_ready" in codes
+            )
+        ),
+        "rc_product_beta_ready": rc.get("product_beta_ready") is True,
+        "cpu_fallback_ready": rc.get("cpu_fallback_ready") is True or "cpu_fallback_ready" in codes,
+        "serve_join_generate_ready": "serve_join_generate_loop_ready" in codes or "serve_join_generate_loop_ready" in rc_codes,
+        "real_llm_split_ready": split.get("ok") is True or "remote_real_llm_sharded_ready" in split_codes,
+        "fresh_kaggle_gpu_attempted": False,
+        "fresh_kaggle_gpu_verified": False,
+        "retained_gpu_evidence_imported": "gpu_generation_evidence_import_ready" in codes or "gpu_generation_evidence_import_ready" in rc_codes,
+        "public_artifact_safe": True,
+        "summary": (
+            "Public Swarm Product Beta distinguishes local loopback CPU product-path "
+            "execution, package generation, and external-existing runtime verification. "
+            "This pack does not launch fresh Kaggle GPU proof; fresh Kaggle GPU fields "
+            "remain false unless a dedicated GPU proof path supplies evidence."
+        ),
+    }
+
+
+def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    return (
+        f"proof={provenance.get('proof_level') or 'unknown'} "
+        f"local_loopback_ran={bool(provenance.get('local_loopback_product_path_ran'))} "
+        f"local_loopback_ready={bool(provenance.get('local_loopback_product_path_ready'))} "
+        f"package_only={bool(provenance.get('package_only'))} "
+        f"kaggle_package={bool(provenance.get('kaggle_package_generated'))} "
+        f"external_existing_attempted={bool(provenance.get('external_existing_attempted'))} "
+        f"external_existing_verified={bool(provenance.get('external_existing_verified'))} "
+        f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+        f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))} "
+        f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))}"
+    )
+
+
 def write_support_bundle(output_dir: Path, report: dict[str, Any], *, secret_values: list[str] | None = None) -> dict[str, Any]:
     bundle = support_bundle.sanitize(redact_values({
         "schema": "public_swarm_product_beta_support_bundle_v1",
@@ -938,6 +1023,7 @@ def write_support_bundle(output_dir: Path, report: dict[str, Any], *, secret_val
         "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
+        "runtime_provenance": report.get("runtime_provenance"),
         "user_status": report.get("user_status"),
         "review_summary": report.get("review_summary"),
         "recommended_next_command": report.get("recommended_next_command"),
@@ -1168,6 +1254,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
     report["answer_scope"] = answer_scope_summary()
     report["shareable_summary"] = shareable_summary()
     report = attach_user_guidance(report, args, output_dir=output_dir)
+    report["runtime_provenance"] = runtime_provenance_summary(report)
     report["artifacts"]["support_bundle_json"] = write_support_bundle(output_dir, report, secret_values=secret_values)
     return persist_report(report, output_dir=output_dir, secret_values=secret_values)
 
@@ -1183,6 +1270,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     lines = [
         "# CrowdTensor Public Swarm Product Beta",
         "",
@@ -1202,6 +1290,20 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
         f"- recommended command: `{recommended.get('command_line')}`",
         f"- not completed count: `{review.get('not_completed_count')}`",
+        "",
+        "## Runtime Provenance",
+        "",
+        f"- proof: `{provenance.get('proof_level') or 'unknown'}`",
+        f"- summary: {provenance.get('summary') or ''}",
+        f"- local loopback ran: `{provenance.get('local_loopback_product_path_ran')}`",
+        f"- local loopback ready: `{provenance.get('local_loopback_product_path_ready')}`",
+        f"- package only: `{provenance.get('package_only')}`",
+        f"- Kaggle package generated: `{provenance.get('kaggle_package_generated')}`",
+        f"- external existing attempted: `{provenance.get('external_existing_attempted')}`",
+        f"- external existing verified: `{provenance.get('external_existing_verified')}`",
+        f"- fresh Kaggle GPU attempted: `{provenance.get('fresh_kaggle_gpu_attempted')}`",
+        f"- fresh Kaggle GPU verified: `{provenance.get('fresh_kaggle_gpu_verified')}`",
+        f"- retained GPU evidence imported: `{provenance.get('retained_gpu_evidence_imported')}`",
         "",
         "## What To Do Next",
         "",
@@ -1271,6 +1373,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
     report.setdefault("shareable_summary", shareable_summary())
     report.setdefault("artifact_summary", artifact_summary(output_dir))
     report = ensure_user_guidance(report, output_dir=output_dir)
+    report.setdefault("runtime_provenance", runtime_provenance_summary(report))
     report = support_bundle.sanitize(redact_values(report, secret_values))
     encoded = json.dumps(report, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in encoded]
@@ -1316,6 +1419,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
         support_payload["recommended_next_command"] = report.get("recommended_next_command")
         support_payload["next_commands"] = report.get("next_commands")
         support_payload["not_completed"] = report.get("not_completed")
+        support_payload["runtime_provenance"] = report.get("runtime_provenance")
         write_json(support_path, support_bundle.sanitize(redact_values(support_payload, secret_values)))
     return report
 
@@ -1405,7 +1509,10 @@ def main() -> None:
         prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
         answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
         shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+        provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
         print(f"Public Swarm Product Beta ready: {report.get('ok')}")
+        if provenance:
+            print(f"  runtime_provenance: {runtime_provenance_text(provenance)}")
         if output_request:
             print(f"  output_request: {output_request_text(output_request)}")
             print(f"  output_request_note: {output_request_note(output_request)}")

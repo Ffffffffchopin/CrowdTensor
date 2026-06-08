@@ -167,6 +167,42 @@ def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[
         errors.append("shareable_local_answer_terminal_only_mismatch")
     if shareable.get("public_artifact_safe") is not True:
         errors.append("shareable_public_artifact_safe_mismatch")
+    provenance = payload.get("runtime_provenance") if isinstance(payload.get("runtime_provenance"), dict) else {}
+    if provenance.get("schema") != pack.RUNTIME_PROVENANCE_SCHEMA:
+        errors.append("runtime_provenance_schema_mismatch")
+    if provenance.get("mode") != mode:
+        errors.append("runtime_provenance_mode_mismatch")
+    if not provenance.get("proof_level"):
+        errors.append("runtime_provenance_proof_level_missing")
+    if provenance.get("public_artifact_safe") is not True:
+        errors.append("runtime_provenance_public_artifact_safe_mismatch")
+    if provenance.get("fresh_kaggle_gpu_attempted") is not False or provenance.get("fresh_kaggle_gpu_verified") is not False:
+        errors.append("runtime_provenance_fresh_kaggle_gpu_claim_mismatch")
+    if mode == "local-loopback":
+        if provenance.get("proof_level") != "local-loopback-cpu-product-path":
+            errors.append("runtime_provenance_local_proof_level_mismatch")
+        if provenance.get("local_loopback_product_path_ran") is not True:
+            errors.append("runtime_provenance_local_loopback_ran_missing")
+        if provenance.get("local_loopback_product_path_ready") is not True:
+            errors.append("runtime_provenance_local_loopback_ready_missing")
+        if provenance.get("external_existing_verified") is not False:
+            errors.append("runtime_provenance_local_external_claim_mismatch")
+    elif mode == "package":
+        if provenance.get("proof_level") != "package-only":
+            errors.append("runtime_provenance_package_proof_level_mismatch")
+        if provenance.get("package_only") is not True:
+            errors.append("runtime_provenance_package_only_missing")
+        if provenance.get("kaggle_package_generated") is not (payload.get("target") == "kaggle"):
+            errors.append("runtime_provenance_kaggle_package_mismatch")
+        if provenance.get("local_loopback_product_path_ran") is not False:
+            errors.append("runtime_provenance_package_local_loopback_claim_mismatch")
+    elif mode == "external-existing":
+        if provenance.get("proof_level") != "external-existing-runtime":
+            errors.append("runtime_provenance_external_proof_level_mismatch")
+        if provenance.get("external_existing_attempted") is not True:
+            errors.append("runtime_provenance_external_attempt_missing")
+        if provenance.get("external_existing_verified") is not True:
+            errors.append("runtime_provenance_external_verified_missing")
     user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
     if user_status.get("state") not in {"ready", "blocked", "package-blocked"}:
         errors.append("user_status_state_mismatch")
