@@ -34,6 +34,7 @@ from crowdtensor.session_protocol import public_leak_paths, safe_generation_summ
 
 SCHEMA = "public_swarm_inference_v2"
 SUPPORT_SCHEMA = "public_swarm_inference_v2_support_bundle_v1"
+RUNTIME_PROVENANCE_SCHEMA = "public_swarm_inference_v2_runtime_provenance_v1"
 USABLE_SCHEMA = "usable_swarm_inference_v1"
 PREVIEW_V04_SCHEMA = "public_swarm_preview_v04_v1"
 REAL_P2P_SCHEMA = "real_p2p_swarm_inference_core_rc_v1"
@@ -904,6 +905,85 @@ def shareable_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def runtime_provenance_summary(report: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    local = readiness.get("local_p2p_generate") if isinstance(readiness.get("local_p2p_generate"), dict) else {}
+    external = readiness.get("external_validation") if isinstance(readiness.get("external_validation"), dict) else {}
+    fresh_attempt = readiness.get("fresh_external_attempt") if isinstance(readiness.get("fresh_external_attempt"), dict) else {}
+    p2p = readiness.get("p2p_route_hardening") if isinstance(readiness.get("p2p_route_hardening"), dict) else {}
+    real_p2p_local = readiness.get("real_p2p_local_route_hardening") if isinstance(readiness.get("real_p2p_local_route_hardening"), dict) else {}
+    cuda = readiness.get("cuda_optional") if isinstance(readiness.get("cuda_optional"), dict) else {}
+    performance = readiness.get("performance") if isinstance(readiness.get("performance"), dict) else {}
+    steps = report.get("steps") if isinstance(report.get("steps"), list) else []
+    step_names = [
+        str(step.get("name"))
+        for step in steps
+        if isinstance(step, dict) and step.get("name")
+    ]
+    local_v2_ran = "usable_swarm_v1_local_16_token" in step_names
+    real_p2p_local_ran = "real_p2p_core_local_route_hardening" in step_names
+    retained_external_imported = bool(external and mode in {MODE_LOCAL, MODE_LOCAL_MODEL_VARIANT, MODE_PACKAGE, MODE_EVIDENCE_IMPORT})
+    retained_gpu_imported = bool(cuda and mode in {MODE_LOCAL, MODE_LOCAL_MODEL_VARIANT, MODE_PACKAGE, MODE_EVIDENCE_IMPORT})
+    fresh_external_attempted = bool(external.get("fresh_external_runtime_verified") or fresh_attempt.get("attempted"))
+    fresh_external_verified = bool(external.get("fresh_external_runtime_verified") or fresh_attempt.get("ready"))
+    if mode == MODE_LOCAL:
+        proof_level = "local-p2p-cpu-with-retained-external-and-gpu-evidence"
+    elif mode == MODE_LOCAL_MODEL_VARIANT:
+        proof_level = "local-model-variant-p2p-cpu"
+    elif mode == MODE_EVIDENCE_IMPORT:
+        proof_level = "retained-evidence-import"
+    elif mode == MODE_PACKAGE:
+        proof_level = "package-only"
+    else:
+        proof_level = mode or "unknown"
+    return {
+        "schema": RUNTIME_PROVENANCE_SCHEMA,
+        "proof_level": proof_level,
+        "mode": mode,
+        "local_p2p_generate_ran": local_v2_ran,
+        "local_p2p_generate_ready": local.get("ready") is True,
+        "local_real_p2p_hardening_ran": real_p2p_local_ran,
+        "local_real_p2p_hardening_ready": real_p2p_local.get("ready") is True or p2p.get("local_route_hardening_ready") is True,
+        "local_real_p2p_stage_requeue_ready": real_p2p_local.get("stage_requeue_ready") is True or p2p.get("local_stage_requeue_ready") is True,
+        "retained_external_evidence_imported": retained_external_imported,
+        "retained_external_evidence_ready": external.get("retained_external_evidence_ready") is True or external.get("ready") is True,
+        "fresh_external_attempted": fresh_external_attempted,
+        "fresh_external_verified": fresh_external_verified,
+        "fresh_external_attempt_blocked": fresh_attempt.get("blocked") is True,
+        "retained_gpu_evidence_imported": retained_gpu_imported,
+        "cuda_optional_fail_closed_ready": cuda.get("fail_closed_ready") is True,
+        "gpu_runtime_ready": cuda.get("ready") is True,
+        "performance_evidence_ready": bool(
+            performance.get("stage_latency_ready")
+            and performance.get("throughput_summary_ready")
+            and performance.get("memory_or_vram_summary_ready")
+        ),
+        "public_artifact_safe": True,
+        "summary": (
+            "Public Swarm v2 distinguishes locally executed P2P CPU proof, retained "
+            "external/Kaggle evidence, optional GPU/CUDA evidence import, and fresh "
+            "external runtime verification. Fresh external proof is only claimed when "
+            "fresh_external_verified is true."
+        ),
+    }
+
+
+def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    return (
+        f"proof={provenance.get('proof_level') or 'unknown'} "
+        f"local_p2p_ran={bool(provenance.get('local_p2p_generate_ran'))} "
+        f"local_p2p_ready={bool(provenance.get('local_p2p_generate_ready'))} "
+        f"local_real_p2p_ran={bool(provenance.get('local_real_p2p_hardening_ran'))} "
+        f"local_real_p2p_ready={bool(provenance.get('local_real_p2p_hardening_ready'))} "
+        f"retained_external={bool(provenance.get('retained_external_evidence_imported'))} "
+        f"fresh_external_attempted={bool(provenance.get('fresh_external_attempted'))} "
+        f"fresh_external_verified={bool(provenance.get('fresh_external_verified'))} "
+        f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))} "
+        f"cuda_fail_closed={bool(provenance.get('cuda_optional_fail_closed_ready'))}"
+    )
+
+
 def _shell_join(parts: list[str]) -> str:
     return " ".join(shlex.quote(str(part)) for part in parts if str(part))
 
@@ -1603,6 +1683,7 @@ def build_common_report(
         "not_completed": not_completed,
         "limitations": limitations(),
     }
+    report["runtime_provenance"] = runtime_provenance_summary(report)
     report["review_summary"] = public_swarm_v2_review_summary(
         report=report,
         recommended=recommended,
@@ -1801,6 +1882,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     lines = [
@@ -1839,6 +1921,19 @@ def render_markdown(report: dict[str, Any]) -> str:
     else:
         lines.append("- none")
     lines.extend([
+        "",
+        "## Runtime Provenance",
+        "",
+        f"- proof: `{provenance.get('proof_level')}`",
+        f"- local P2P generate ran: `{provenance.get('local_p2p_generate_ran')}`",
+        f"- local P2P generate ready: `{provenance.get('local_p2p_generate_ready')}`",
+        f"- local real-P2P hardening ran: `{provenance.get('local_real_p2p_hardening_ran')}`",
+        f"- retained external evidence imported: `{provenance.get('retained_external_evidence_imported')}`",
+        f"- fresh external attempted: `{provenance.get('fresh_external_attempted')}`",
+        f"- fresh external verified: `{provenance.get('fresh_external_verified')}`",
+        f"- retained GPU evidence imported: `{provenance.get('retained_gpu_evidence_imported')}`",
+        f"- CUDA fail-closed ready: `{provenance.get('cuda_optional_fail_closed_ready')}`",
+        f"- note: {provenance.get('summary') or ''}",
         "",
         "## Readiness",
         "",
@@ -1918,6 +2013,7 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
     user_status_report = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     if not review.get("state") or not review.get("next_step") or not review.get("inspect_first"):
         errors.append("review_summary_incomplete")
@@ -1947,6 +2043,12 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("artifact_summary_incomplete")
     if artifact_report.get("public_artifact_safe") is not True:
         errors.append("artifact_summary_public_artifact_safe_mismatch")
+    if provenance.get("schema") != RUNTIME_PROVENANCE_SCHEMA:
+        errors.append("runtime_provenance_schema_mismatch")
+    if not provenance.get("proof_level"):
+        errors.append("runtime_provenance_proof_level_missing")
+    if provenance.get("public_artifact_safe") is not True:
+        errors.append("runtime_provenance_public_artifact_safe_mismatch")
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -1997,6 +2099,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
+        "runtime_provenance": report.get("runtime_provenance"),
         "review_summary": report.get("review_summary"),
         "user_status": report.get("user_status"),
         "recommended_next_command": report.get("recommended_next_command"),
@@ -2112,6 +2215,7 @@ def main() -> None:
         prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
         answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
         shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+        provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
         not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
         print("CrowdTensor Public Swarm Inference v2")
         print(f"  ok: {report.get('ok')}")
@@ -2125,6 +2229,8 @@ def main() -> None:
             print(f"  recommended_next: {recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}")
             if recommended.get("requires_env"):
                 print(f"  recommended_requires: {', '.join(str(name) for name in recommended.get('requires_env') or [])}")
+        if provenance:
+            print(f"  runtime_provenance: {runtime_provenance_text(provenance)}")
         for index, item in enumerate(not_completed[:5], start=1):
             print(f"  not_completed[{index}]: {item}")
         if output_request:

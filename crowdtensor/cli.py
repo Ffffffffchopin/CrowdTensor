@@ -1414,6 +1414,19 @@ def output_request_text(output_request: dict[str, Any]) -> str:
 
 
 def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    if "local_p2p_generate_ran" in provenance or "fresh_external_verified" in provenance:
+        return (
+            f"proof={provenance.get('proof_level') or 'unknown'} "
+            f"local_p2p_ran={bool(provenance.get('local_p2p_generate_ran'))} "
+            f"local_p2p_ready={bool(provenance.get('local_p2p_generate_ready'))} "
+            f"local_real_p2p_ran={bool(provenance.get('local_real_p2p_hardening_ran'))} "
+            f"local_real_p2p_ready={bool(provenance.get('local_real_p2p_hardening_ready'))} "
+            f"retained_external={bool(provenance.get('retained_external_evidence_imported'))} "
+            f"fresh_external_attempted={bool(provenance.get('fresh_external_attempted'))} "
+            f"fresh_external_verified={bool(provenance.get('fresh_external_verified'))} "
+            f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))} "
+            f"cuda_fail_closed={bool(provenance.get('cuda_optional_fail_closed_ready'))}"
+        )
     return (
         f"proof={provenance.get('proof_level') or 'unknown'} "
         f"local_cpu_product={bool(provenance.get('local_cpu_product_path_ready'))} "
@@ -14749,6 +14762,7 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     print("CrowdTensor Public Swarm Inference v2")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -14781,6 +14795,8 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     print(f"  model match: local={((local.get('model') or {}).get('compatible') if isinstance(local.get('model'), dict) else None)} external={((external.get('model') or {}).get('compatible') if isinstance(external.get('model'), dict) else None)} p2p={((p2p.get('model') or {}).get('compatible') if isinstance(p2p.get('model'), dict) else None)}")
     print(f"  cuda fail-closed: {cuda.get('fail_closed_ready')}")
     print(f"  performance: latency={perf.get('stage_latency_ready')} throughput={perf.get('throughput_summary_ready')} memory={perf.get('memory_or_vram_summary_ready')}")
+    if runtime_provenance:
+        print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:

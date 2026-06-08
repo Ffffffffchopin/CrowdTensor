@@ -14426,6 +14426,20 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
             },
+            "runtime_provenance": {
+                "schema": "public_swarm_inference_v2_runtime_provenance_v1",
+                "proof_level": "retained-evidence-import",
+                "local_p2p_generate_ran": False,
+                "local_p2p_generate_ready": True,
+                "local_real_p2p_hardening_ran": False,
+                "local_real_p2p_hardening_ready": True,
+                "retained_external_evidence_imported": True,
+                "fresh_external_attempted": False,
+                "fresh_external_verified": False,
+                "retained_gpu_evidence_imported": True,
+                "cuda_optional_fail_closed_ready": True,
+                "public_artifact_safe": True,
+            },
             "next_commands": [
                 {
                     "label": "inspect shareable summary",
@@ -14470,6 +14484,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stream ready: True", output)
         self.assertIn("external ready: True tokens=16/16 accepted_rows=32 rows_ready=True", output)
         self.assertIn("model match: local=True external=True p2p=True", output)
+        self.assertIn(
+            "  runtime_provenance: proof=retained-evidence-import local_p2p_ran=False local_p2p_ready=True local_real_p2p_ran=False local_real_p2p_ready=True retained_external=True fresh_external_attempted=False fresh_external_verified=False retained_gpu_import=True cuda_fail_closed=True",
+            output,
+        )
         self.assertIn(
             "  prompt_scope: source=prompt-file count=1 inline_prompt_text=False",
             output,
