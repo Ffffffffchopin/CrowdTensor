@@ -10010,6 +10010,20 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
     return commands
 
 
+def _product_generate_safety_summary(report: dict[str, Any]) -> dict[str, Any]:
+    existing = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    safety = dict(existing)
+    safety.setdefault("raw_prompt_public", False)
+    safety.setdefault("raw_generated_text_public", False)
+    safety.setdefault("generated_token_ids_public", False)
+    safety.setdefault("read_only_workload", True)
+    safety.setdefault("coordinator_backed", True)
+    safety.setdefault("not_production", True)
+    safety.setdefault("not_large_model_serving", True)
+    safety.setdefault("not_arbitrary_public_prompt_serving", True)
+    return safety
+
+
 def _finalize_product_generate_report(
     report: dict[str, Any],
     *,
@@ -10037,6 +10051,7 @@ def _finalize_product_generate_report(
     report.setdefault("answer_scope", _answer_scope_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
+    report["safety"] = _product_generate_safety_summary(report)
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
         report.setdefault("saved_summary", {
