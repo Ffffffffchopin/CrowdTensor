@@ -93,6 +93,13 @@ and whether saved JSON/Markdown stay hash-only. When generated text is
 available, the terminal prints it as `answer:` or `answer[n]:` before
 `answer_scope` and `local_output` safety metadata; when no local answer text is
 available, the terminal still prints `answer_scope=no-local-answer`.
+Start with the `verdict` line when you only need the user-facing conclusion:
+completed/preflight/blocked state, answer scope, terminal answer visibility,
+shareable artifact safety, evidence level, GPU state, `fresh_kaggle_gpu`, and
+next step. Saved JSON/Markdown recompute `inference_verdict` after local answer
+redaction, so a shareable artifact says `answer_visible=False` and
+`answer=saved-terminal-redacted` when terminal text was shown locally but
+removed from the saved report.
 `answer_scope.scope_state` uses stable values such as `terminal-visible`,
 `saved-terminal-redacted`, `shareable-terminal-redacted`, `json-suppressed`,
 and `no-local-answer`; the

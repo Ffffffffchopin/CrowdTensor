@@ -85,6 +85,13 @@ need a fixed reproducible local port.
 In human mode, `infer` and `generate` print a short safe stderr start hint before
 long-running checks so the terminal does not look idle; `--json` keeps stdout
 machine-readable.
+Start with the `verdict` line when you only need the user-facing conclusion.
+It condenses completion state, answer scope, terminal answer visibility,
+shareable artifact safety, evidence level, GPU state, `fresh_kaggle_gpu`, and
+next step into one stable line. Saved JSON/Markdown recompute
+`inference_verdict` after local answer redaction, so a shareable artifact says
+`answer_visible=False` and `answer=saved-terminal-redacted` when terminal text
+was shown locally but removed from the saved report.
 In human mode, the terminal prints `answer_scope` so the answer display state is
 explicit: whether any answer text is visible in the terminal and whether saved
 JSON/Markdown stay hash-only. When generated text is available, the terminal
