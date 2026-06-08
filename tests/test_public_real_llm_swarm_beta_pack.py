@@ -408,6 +408,8 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(support["gpu_status"], report["gpu_status"])
+        self.assertEqual(support["gpu_proof_next_step"], report["gpu_proof_next_step"])
         self.assertEqual(support["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(support["evidence_scope"], report["evidence_scope"])
         self.assertNotIn('"generated_text":', encoded)
@@ -2343,6 +2345,38 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
 
         self.assertIn("machine_readable_operator_action_mismatch", errors)
         self.assertIn("machine_readable_not_completed_mismatch", errors)
+
+    def test_check_validation_requires_gpu_proof_next_step_consistency(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+        payload["gpu_proof_next_step"]["current_gpu_status_state"] = "stale-status"
+        payload["gpu_proof_next_step"]["commands"] = []
+        report_path = output_dir / "beta" / "public_real_llm_swarm_beta.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["gpu_status"]["state"] = "stale-machine-status"
+        report["gpu_proof_next_step"]["state"] = "stale-machine-proof"
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        markdown_path = output_dir / "beta" / "public_real_llm_swarm_beta.md"
+        markdown = markdown_path.read_text(encoding="utf-8")
+        markdown = markdown.replace("## GPU Proof Next", "## GPU Next")
+        markdown = markdown.replace("public-swarm-gpu-beta kaggle-auto", "missing-gpu-command")
+        markdown_path.write_text(markdown, encoding="utf-8")
+        support_path = output_dir / "beta" / "support_bundle.json"
+        support = json.loads(support_path.read_text(encoding="utf-8"))
+        support["gpu_status"]["state"] = "stale-support-status"
+        support["gpu_proof_next_step"]["state"] = "stale-support-proof"
+        support_path.write_text(json.dumps(support, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+
+        self.assertIn("gpu_proof_next_step_status_state_mismatch", errors)
+        self.assertIn("gpu_proof_next_step_fresh_kaggle_command_missing", errors)
+        self.assertIn("machine_readable_gpu_status_mismatch", errors)
+        self.assertIn("machine_readable_gpu_proof_next_step_mismatch", errors)
+        self.assertIn("markdown_section_missing:gpu_proof_next", errors)
+        self.assertIn("markdown_gpu_proof_next_command_missing", errors)
+        self.assertIn("support_bundle_gpu_status_mismatch", errors)
+        self.assertIn("support_bundle_gpu_proof_next_step_mismatch", errors)
 
     def test_check_validation_rejects_sensitive_machine_readable_artifact(self) -> None:
         output_dir = self._tmp_dir()

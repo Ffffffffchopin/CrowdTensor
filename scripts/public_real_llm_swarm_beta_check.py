@@ -885,6 +885,34 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         if error not in errors:
             errors.append(error)
     artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    gpu_status = payload.get("gpu_status") if isinstance(payload.get("gpu_status"), dict) else {}
+    gpu_proof_next_step = payload.get("gpu_proof_next_step") if isinstance(payload.get("gpu_proof_next_step"), dict) else {}
+    if gpu_status.get("schema") != "crowdtensor_gpu_status_v1":
+        errors.append("gpu_status_schema_mismatch")
+    if gpu_status.get("public_artifact_safe") is not True:
+        errors.append("gpu_status_public_artifact_safe_mismatch")
+    if gpu_proof_next_step.get("schema") != "crowdtensor_gpu_proof_next_step_v1":
+        errors.append("gpu_proof_next_step_schema_mismatch")
+    if gpu_proof_next_step.get("current_gpu_status_state") != gpu_status.get("state"):
+        errors.append("gpu_proof_next_step_status_state_mismatch")
+    if gpu_proof_next_step.get("fresh_kaggle_gpu_verified") != gpu_status.get("fresh_kaggle_gpu_verified"):
+        errors.append("gpu_proof_next_step_verified_mismatch")
+    if gpu_proof_next_step.get("public_artifact_safe") is not True:
+        errors.append("gpu_proof_next_step_public_artifact_safe_mismatch")
+    if gpu_status.get("fresh_kaggle_gpu_verified") is True:
+        if gpu_proof_next_step.get("commands") not in ([], None):
+            errors.append("gpu_proof_next_step_verified_commands_mismatch")
+    else:
+        commands = gpu_proof_next_step.get("commands") if isinstance(gpu_proof_next_step.get("commands"), list) else []
+        if not any(
+            isinstance(item, dict)
+            and item.get("reason") == "verify_fresh_kaggle_gpu"
+            and item.get("requires_kaggle") is True
+            and item.get("cleanup_required") is True
+            and item.get("token_rotation_required") is True
+            for item in commands
+        ):
+            errors.append("gpu_proof_next_step_fresh_kaggle_command_missing")
     if artifact_summary.get("schema") != pack.ARTIFACT_SUMMARY_SCHEMA:
         errors.append("artifact_summary_schema_mismatch")
     if artifact_summary.get("inspect_first") != "public_real_llm_swarm_beta.md":
@@ -1033,6 +1061,10 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("machine_readable_runtime_provenance_mismatch")
         if machine.get("evidence_scope") != payload.get("evidence_scope"):
             errors.append("machine_readable_evidence_scope_mismatch")
+        if machine.get("gpu_status") != payload.get("gpu_status"):
+            errors.append("machine_readable_gpu_status_mismatch")
+        if machine.get("gpu_proof_next_step") != payload.get("gpu_proof_next_step"):
+            errors.append("machine_readable_gpu_proof_next_step_mismatch")
         machine_review = machine.get("review_summary") if isinstance(machine.get("review_summary"), dict) else {}
         if machine_review.get("next_step") != review_summary.get("next_step"):
             errors.append("machine_readable_review_next_step_mismatch")
@@ -1053,6 +1085,7 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             "## Evidence Scope": "evidence_scope",
             "## Operator Action": "operator_action",
             "## Output Scope": "output_scope",
+            "## GPU Proof Next": "gpu_proof_next",
             "## Artifacts": "artifacts",
             "## Diagnosis": "diagnosis",
             "## Not Completed": "not_completed",
@@ -1088,6 +1121,12 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("markdown_evidence_scope_level_missing")
         if f"- fresh Kaggle GPU verified: `{evidence_scope.get('fresh_kaggle_gpu_verified')}`" not in markdown:
             errors.append("markdown_evidence_scope_fresh_gpu_missing")
+        if "- GPU status: `" not in markdown:
+            errors.append("markdown_gpu_status_missing")
+        if f"- state: `{gpu_proof_next_step.get('state')}`" not in markdown:
+            errors.append("markdown_gpu_proof_next_state_missing")
+        if gpu_status.get("fresh_kaggle_gpu_verified") is not True and "public-swarm-gpu-beta kaggle-auto" not in markdown:
+            errors.append("markdown_gpu_proof_next_command_missing")
         for item in operator_actions[:3]:
             if item not in markdown:
                 errors.append("markdown_operator_action_missing")
@@ -1139,6 +1178,10 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("support_bundle_runtime_provenance_mismatch")
         if support.get("evidence_scope") != payload.get("evidence_scope"):
             errors.append("support_bundle_evidence_scope_mismatch")
+        if support.get("gpu_status") != payload.get("gpu_status"):
+            errors.append("support_bundle_gpu_status_mismatch")
+        if support.get("gpu_proof_next_step") != payload.get("gpu_proof_next_step"):
+            errors.append("support_bundle_gpu_proof_next_step_mismatch")
         support_artifacts = support.get("artifact_summary") if isinstance(support.get("artifact_summary"), dict) else {}
         if support_artifacts.get("inspect_first") != "public_real_llm_swarm_beta.md":
             errors.append("support_bundle_inspect_first_mismatch")

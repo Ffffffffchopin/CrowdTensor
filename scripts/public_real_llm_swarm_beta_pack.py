@@ -3573,6 +3573,8 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "shareable_summary": report.get("shareable_summary"),
         "runtime_provenance": report.get("runtime_provenance"),
         "evidence_scope": report.get("evidence_scope"),
+        "gpu_status": report.get("gpu_status"),
+        "gpu_proof_next_step": report.get("gpu_proof_next_step"),
         "safety": report.get("safety"),
         "limitations": report.get("limitations"),
     })
