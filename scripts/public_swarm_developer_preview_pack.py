@@ -348,6 +348,32 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "source": "prompt-text",
+        "prompt_count": 1,
+        "inline_prompt_text": True,
+        "terminal_next_commands_local_private": True,
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Developer Preview artifact records prompt source/count and placeholder safety only; "
+            "raw prompt text is excluded from public JSON, Markdown, and support bundles."
+        ),
+    }
+
+
+def inherited_prompt_scope(args: argparse.Namespace, product_payload: dict[str, Any]) -> dict[str, Any]:
+    prompt_scope = product_payload.get("prompt_scope") if isinstance(product_payload.get("prompt_scope"), dict) else {}
+    if prompt_scope:
+        return dict(prompt_scope)
+    return prompt_scope_summary(args)
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -389,6 +415,18 @@ def output_request_text(summary: dict[str, Any]) -> str:
     )
 
 
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def answer_scope_text(answer_scope: dict[str, Any]) -> str:
     return (
         f"state={answer_scope.get('scope_state') or 'unknown'} "
@@ -425,6 +463,7 @@ def support_bundle_artifact(output_dir: Path, report: dict[str, Any], *, secret_
         },
         "artifacts": report.get("artifacts") or {},
         "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety") or {},
@@ -558,6 +597,7 @@ def build_runtime_report(args: argparse.Namespace, *, runner: Runner = subproces
         "limitations": limitations(),
     }
     report["output_request"] = output_request_summary()
+    report["prompt_scope"] = inherited_prompt_scope(args, product_payload)
     report["answer_scope"] = answer_scope_summary()
     report["shareable_summary"] = shareable_summary()
     report["artifacts"]["support_bundle_json"] = support_bundle_artifact(output_dir, report, secret_values=secret_values)
@@ -638,6 +678,7 @@ def build_evidence_import(args: argparse.Namespace) -> dict[str, Any]:
         "limitations": limitations(),
     }
     report["output_request"] = output_request_summary()
+    report["prompt_scope"] = inherited_prompt_scope(args, product_payload)
     report["answer_scope"] = answer_scope_summary()
     report["shareable_summary"] = shareable_summary()
     report["artifacts"]["support_bundle_json"] = support_bundle_artifact(output_dir, report)
@@ -680,6 +721,7 @@ def limitations() -> list[str]:
 def render_markdown(report: dict[str, Any]) -> str:
     preview = report.get("developer_preview") if isinstance(report.get("developer_preview"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -695,6 +737,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -721,6 +764,7 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: list[str] | None = None) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(argparse.Namespace(prompt_text="CrowdTensor developer preview")))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report, secret_values))
@@ -830,11 +874,14 @@ def main() -> None:
         print(json.dumps(report, sort_keys=True))
     else:
         output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+        prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
         answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
         shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
         print(f"Public Swarm Developer Preview ready: {report.get('ok')}")
         if output_request:
             print(f"  output_request: {output_request_text(output_request)}")
+        if prompt_scope:
+            print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
         if answer_scope:
             print(f"  answer_scope: {answer_scope_text(answer_scope)}")
         if shareable:
