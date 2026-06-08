@@ -150,6 +150,29 @@ def validate_report(report: dict[str, Any], *, max_new_tokens: int) -> list[str]
         errors.append("output_request_generated_token_ids_public_mismatch")
     if output_request.get("public_artifact_safe") is not True:
         errors.append("output_request_public_artifact_safe_mismatch")
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    if prompt_scope.get("source") != "imported-or-built-in-validation-prompts":
+        errors.append("prompt_scope_source_mismatch")
+    if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 0:
+        errors.append("prompt_scope_count_mismatch")
+    if prompt_scope.get("inline_prompt_text") is not False:
+        errors.append("prompt_scope_inline_prompt_text_mismatch")
+    if prompt_scope.get("terminal_next_commands_local_private") is not False:
+        errors.append("prompt_scope_terminal_next_commands_local_private_mismatch")
+    if prompt_scope.get("terminal_logs_local_private") is not False:
+        errors.append("prompt_scope_terminal_logs_local_private_mismatch")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        errors.append("prompt_scope_saved_artifacts_prompt_placeholders_mismatch")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not False:
+        errors.append("prompt_scope_prefer_prompt_file_or_stdin_mismatch")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append("prompt_scope_prompt_file_path_public_mismatch")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append("prompt_scope_raw_prompt_public_mismatch")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        errors.append("prompt_scope_public_artifact_safe_mismatch")
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     if answer_scope.get("scope_state") != "no-local-answer":
         errors.append("answer_scope_state_mismatch")

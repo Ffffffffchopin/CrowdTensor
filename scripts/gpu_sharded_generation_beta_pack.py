@@ -33,7 +33,7 @@ SECRET_FRAGMENTS = tuple(
     fragment
     for fragment in gpu_pack.SECRET_FRAGMENTS
     if fragment not in {"generated_text", "generated_token_ids", "next_token_text", "next_token_id"}
-)
+) + ('"generated_text":', '"generated_token_ids":', '"prompt_text":')
 RAW_GENERATION_KEYS = {
     "generated_text",
     "generated_token_ids",
@@ -171,6 +171,44 @@ def shareable_summary() -> dict[str, Any]:
             "hashes/counts and readiness evidence, not raw prompts or answers."
         ),
     }
+
+
+def prompt_scope_summary(report: dict[str, Any] | None = None) -> dict[str, Any]:
+    generation = report.get("generation") if isinstance(report, dict) and isinstance(report.get("generation"), dict) else {}
+    try:
+        prompt_count = int(generation.get("request_count") or 0)
+    except (TypeError, ValueError):
+        prompt_count = 0
+    return {
+        "source": "imported-or-built-in-validation-prompts",
+        "prompt_count": prompt_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "GPU Sharded Generation Beta records prompt source/count only from imported "
+            "or built-in validation evidence; raw prompt text is excluded from public JSON and Markdown."
+        ),
+    }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
 
 
 def run_json_step(name: str, command: list[str], *, runner: Runner, timeout_seconds: float) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -464,6 +502,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
 def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(report))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     encoded = json.dumps(report, sort_keys=True)
@@ -499,6 +538,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     gpu = report.get("gpu") if isinstance(report.get("gpu"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -515,6 +555,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
