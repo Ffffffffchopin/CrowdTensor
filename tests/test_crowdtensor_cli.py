@@ -2411,6 +2411,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("2. `submit generation after live preflight`: `printf %s '<prompt>' | CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate", markdown)
         self.assertIn("printf %s '<prompt>' | crowdtensor generate", markdown)
         self.assertIn("Commands with `--prompt-stdin` read the prompt from stdin", markdown)
+        self.assertIn(
+            "- Terminal prompt scope: this stdin command is safe to copy from saved Markdown after replacing `<prompt>` locally; saved JSON/Markdown do not include raw prompt text.",
+            markdown,
+        )
+        self.assertNotIn("may render inline local prompts for copy/paste", markdown)
         self.assertNotIn("printf %s '<prompt>' | printf %s '<prompt>'", markdown)
         self.assertNotIn(prompt, markdown)
 
@@ -2637,6 +2642,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("2. `submit inference after live preflight`: `printf %s '<prompt>' | CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer", markdown)
         self.assertIn("printf %s '<prompt>' | crowdtensor infer", markdown)
         self.assertIn("Commands with `--prompt-stdin` read the prompt from stdin", markdown)
+        self.assertIn(
+            "- Terminal prompt scope: this stdin command is safe to copy from saved Markdown after replacing `<prompt>` locally; saved JSON/Markdown do not include raw prompt text.",
+            markdown,
+        )
+        self.assertNotIn("may render inline local prompts for copy/paste", markdown)
         self.assertNotIn("printf %s '<prompt>' | printf %s '<prompt>'", markdown)
         self.assertNotIn(prompt, markdown)
 

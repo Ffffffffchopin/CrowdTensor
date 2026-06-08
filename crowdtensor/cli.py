@@ -855,11 +855,17 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
         prompt_hint = markdown_prompt_input_hint(command)
         if prompt_hint:
             lines.append(prompt_hint)
-            lines.append(
-                "- Terminal prompt scope: human terminal `review_next`, `recommended_next`, and `next[...]` "
-                "may render inline local prompts for copy/paste. Treat terminal logs as local-private; "
-                "saved JSON/Markdown keep placeholders."
-            )
+            if "--prompt-stdin" in command:
+                lines.append(
+                    "- Terminal prompt scope: this stdin command is safe to copy from saved Markdown after replacing "
+                    "`<prompt>` locally; saved JSON/Markdown do not include raw prompt text."
+                )
+            else:
+                lines.append(
+                    "- Terminal prompt scope: human terminal `review_next`, `recommended_next`, and `next[...]` "
+                    "may render inline local prompts for copy/paste. Treat terminal logs as local-private; "
+                    "saved JSON/Markdown keep placeholders."
+                )
     if requires_env:
         lines.append(f"- Requires env: `{', '.join(str(name) for name in requires_env)}`")
     if operator_action:
