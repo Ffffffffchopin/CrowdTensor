@@ -39,6 +39,7 @@ SUPPORT_SCHEMA = "public_real_llm_swarm_beta_support_bundle_v1"
 ARTIFACT_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_artifact_summary_v1"
 REVIEW_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_review_summary_v1"
 RUNTIME_PROVENANCE_SCHEMA = "public_real_llm_swarm_beta_runtime_provenance_v1"
+EVIDENCE_SCOPE_SCHEMA = "public_real_llm_swarm_beta_evidence_scope_v1"
 PRODUCT_SCHEMA = "public_swarm_product_beta_v1"
 GPU_SCHEMA = "public_swarm_gpu_inference_beta_v1"
 P2P_SCHEMA = "petals_class_p2p_candidate_v1"
@@ -1704,6 +1705,92 @@ def runtime_provenance_text(provenance: dict[str, Any]) -> str:
     )
 
 
+def evidence_scope_summary(report: dict[str, Any]) -> dict[str, Any]:
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else runtime_provenance_summary(report)
+    mode = str(report.get("mode") or provenance.get("mode") or "")
+    local_cpu = bool(
+        provenance.get("local_cpu_product_path_ready")
+        or provenance.get("local_public_swarm_v2_ready")
+        or provenance.get("local_kv_cache_ready")
+    )
+    retained_external = bool(
+        provenance.get("external_kaggle_cpu_evidence_claimed")
+        or provenance.get("p2p_candidate_evidence_claimed")
+    )
+    retained_external_ready = bool(
+        provenance.get("external_kaggle_cpu_evidence_ready")
+        or provenance.get("p2p_candidate_evidence_ready")
+    )
+    retained_gpu = bool(provenance.get("retained_gpu_evidence_imported"))
+    fresh_kaggle_gpu_attempted = bool(provenance.get("fresh_kaggle_gpu_attempted"))
+    fresh_kaggle_gpu_verified = bool(provenance.get("fresh_kaggle_gpu_verified"))
+    local_gpu_smoke = bool(provenance.get("local_gpu_smoke_ran"))
+    if fresh_kaggle_gpu_verified:
+        level = "fresh-kaggle-gpu"
+        executed_where = "fresh-kaggle-gpu-plus-aggregate"
+        expectation = "This aggregate verified a fresh Kaggle GPU proof in the source report."
+    elif mode == MODE_PACKAGE:
+        level = "package-only"
+        executed_where = "not-run"
+        expectation = "Package mode writes runbooks and artifacts only; no inference proof ran."
+    elif mode == MODE_EVIDENCE_IMPORT:
+        level = "retained-evidence-import"
+        executed_where = "retained-evidence"
+        expectation = "This report imports retained evidence; retained GPU or external evidence is not a fresh run."
+    elif mode == MODE_LOCAL_MODEL_VARIANT:
+        level = "local-model-variant"
+        executed_where = "local-cpu"
+        expectation = "This report proves a local CPU model variant and does not claim external or Kaggle validation."
+    elif local_cpu and retained_external:
+        level = "release-local-cpu-with-retained-external"
+        executed_where = "local-cpu-plus-retained-evidence"
+        expectation = "This release mixes fresh local CPU checks with retained external/P2P evidence; fresh Kaggle GPU is false unless explicitly verified."
+    elif local_cpu:
+        level = "local-cpu"
+        executed_where = "local-cpu"
+        expectation = "This report ran local CPU product or smoke evidence."
+    else:
+        level = "blocked-or-mixed"
+        executed_where = "mixed-or-not-proven"
+        expectation = "Inspect not_completed and runtime_provenance for missing evidence."
+    return {
+        "schema": EVIDENCE_SCOPE_SCHEMA,
+        "level": level,
+        "executed_where": executed_where,
+        "source": SCHEMA,
+        "mode": mode,
+        "proof_level": provenance.get("proof_level") or "",
+        "local_cpu": local_cpu,
+        "local_cpu_product_path_ready": bool(provenance.get("local_cpu_product_path_ready")),
+        "local_public_swarm_v2_ready": bool(provenance.get("local_public_swarm_v2_ready")),
+        "local_kv_cache_ready": bool(provenance.get("local_kv_cache_ready")),
+        "retained_external_evidence_imported": retained_external,
+        "retained_external_evidence_ready": retained_external_ready,
+        "external_kaggle_cpu_evidence_ready": bool(provenance.get("external_kaggle_cpu_evidence_ready")),
+        "p2p_candidate_evidence_ready": bool(provenance.get("p2p_candidate_evidence_ready")),
+        "local_gpu_smoke_ran": local_gpu_smoke,
+        "retained_gpu_evidence_imported": retained_gpu,
+        "fresh_kaggle_gpu_attempted": fresh_kaggle_gpu_attempted,
+        "fresh_kaggle_gpu_verified": fresh_kaggle_gpu_verified,
+        "public_artifact_safe": True,
+        "user_expectation": expectation,
+    }
+
+
+def evidence_scope_text(scope: dict[str, Any]) -> str:
+    return (
+        f"level={scope.get('level') or 'unknown'} "
+        f"executed={scope.get('executed_where') or 'unknown'} "
+        f"source={scope.get('source') or 'unknown'} "
+        f"local_cpu={bool(scope.get('local_cpu'))} "
+        f"retained_external={bool(scope.get('retained_external_evidence_imported'))} "
+        f"local_gpu_smoke={bool(scope.get('local_gpu_smoke_ran'))} "
+        f"retained_gpu={bool(scope.get('retained_gpu_evidence_imported'))} "
+        f"fresh_kaggle_gpu={bool(scope.get('fresh_kaggle_gpu_verified'))} "
+        f"user_expectation={scope.get('user_expectation') or 'unknown'}"
+    )
+
+
 def artifact_path_summary(report: dict[str, Any], name: str, fallback: str) -> str:
     artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
     artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
@@ -2808,6 +2895,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
     user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     shareable_paths = artifact_overview.get("shareable_paths") if isinstance(artifact_overview.get("shareable_paths"), list) else []
     recommended = (
@@ -2875,6 +2963,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- fresh Kaggle GPU attempted: `{provenance.get('fresh_kaggle_gpu_attempted')}`",
         f"- fresh Kaggle GPU verified: `{provenance.get('fresh_kaggle_gpu_verified')}`",
         f"- note: {provenance.get('summary') or ''}",
+        "",
+        "## Evidence Scope",
+        "",
+        f"- level: `{evidence_scope.get('level')}`",
+        f"- executed: `{evidence_scope.get('executed_where')}`",
+        f"- local CPU: `{evidence_scope.get('local_cpu')}`",
+        f"- retained external evidence: `{evidence_scope.get('retained_external_evidence_imported')}`",
+        f"- local GPU smoke ran: `{evidence_scope.get('local_gpu_smoke_ran')}`",
+        f"- retained GPU evidence imported: `{evidence_scope.get('retained_gpu_evidence_imported')}`",
+        f"- fresh Kaggle GPU verified: `{evidence_scope.get('fresh_kaggle_gpu_verified')}`",
+        f"- note: {evidence_scope.get('user_expectation') or ''}",
         "",
         "## Operator Action",
         "",
@@ -2951,6 +3050,7 @@ def print_human_summary(report: dict[str, Any]) -> None:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
     user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     recommended = (
@@ -2986,6 +3086,9 @@ def print_human_summary(report: dict[str, Any]) -> None:
     print(f"  kv_cache hits: stage0={stage0.get('hit_count')} stage1={stage1.get('hit_count')}")
     if provenance:
         print(f"  runtime_provenance: {runtime_provenance_text(provenance)}")
+    if evidence_scope:
+        print(f"  evidence_scope: {evidence_scope_text(evidence_scope)}")
+        print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
     if user:
         print(
             "  status: "
@@ -3034,6 +3137,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
 def validate_public_report(report: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
     if prompt_scope.get("source") not in {"prompt-text", "prompt-texts", "prompt-texts-file"}:
         errors.append("prompt_scope_source_mismatch")
     if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 1:
@@ -3057,6 +3162,42 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("prompt_scope_raw_prompt_public_mismatch")
     if prompt_scope.get("public_artifact_safe") is not True:
         errors.append("prompt_scope_public_artifact_safe_mismatch")
+    if evidence_scope.get("schema") != EVIDENCE_SCOPE_SCHEMA:
+        errors.append("evidence_scope_schema_mismatch")
+    if evidence_scope.get("public_artifact_safe") is not True:
+        errors.append("evidence_scope_public_artifact_safe_mismatch")
+    allowed_levels = {
+        "fresh-kaggle-gpu",
+        "package-only",
+        "retained-evidence-import",
+        "local-model-variant",
+        "release-local-cpu-with-retained-external",
+        "local-cpu",
+        "blocked-or-mixed",
+    }
+    if evidence_scope.get("level") not in allowed_levels:
+        errors.append("evidence_scope_level_mismatch")
+    expected_local_cpu = bool(
+        provenance.get("local_cpu_product_path_ready")
+        or provenance.get("local_public_swarm_v2_ready")
+        or provenance.get("local_kv_cache_ready")
+    )
+    expected_retained_external = bool(
+        provenance.get("external_kaggle_cpu_evidence_claimed")
+        or provenance.get("p2p_candidate_evidence_claimed")
+    )
+    if bool(evidence_scope.get("local_cpu")) != expected_local_cpu:
+        errors.append("evidence_scope_local_cpu_mismatch")
+    if bool(evidence_scope.get("retained_external_evidence_imported")) != expected_retained_external:
+        errors.append("evidence_scope_retained_external_mismatch")
+    for key in [
+        "local_gpu_smoke_ran",
+        "retained_gpu_evidence_imported",
+        "fresh_kaggle_gpu_attempted",
+        "fresh_kaggle_gpu_verified",
+    ]:
+        if bool(evidence_scope.get(key)) != bool(provenance.get(key)):
+            errors.append(f"evidence_scope_{key}_mismatch")
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -3116,6 +3257,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report["runtime_provenance"] = runtime_provenance_summary(report)
+    report["evidence_scope"] = evidence_scope_summary(report)
     report["recommended_check_command"] = recommended_check_command(report)
     cleanup = cleanup_release_private_artifacts(output_dir)
     report["release_private_artifact_cleanup"] = cleanup
@@ -3189,6 +3331,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
         "runtime_provenance": report.get("runtime_provenance"),
+        "evidence_scope": report.get("evidence_scope"),
         "safety": report.get("safety"),
         "limitations": report.get("limitations"),
     })

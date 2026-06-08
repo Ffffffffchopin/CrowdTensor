@@ -303,6 +303,15 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(report["runtime_provenance"]["retained_gpu_evidence_imported"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["evidence_scope"]["schema"], pack.EVIDENCE_SCOPE_SCHEMA)
+        self.assertEqual(report["evidence_scope"]["level"], "release-local-cpu-with-retained-external")
+        self.assertEqual(report["evidence_scope"]["executed_where"], "local-cpu-plus-retained-evidence")
+        self.assertTrue(report["evidence_scope"]["local_cpu"])
+        self.assertTrue(report["evidence_scope"]["retained_external_evidence_imported"])
+        self.assertTrue(report["evidence_scope"]["local_gpu_smoke_ran"])
+        self.assertFalse(report["evidence_scope"]["retained_gpu_evidence_imported"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
         self.assertEqual(report["artifact_summary"]["schema"], pack.ARTIFACT_SUMMARY_SCHEMA)
         self.assertEqual(report["artifact_summary"]["inspect_first"], "public_real_llm_swarm_beta.md")
         self.assertEqual(report["artifact_summary"]["machine_readable"], "public_real_llm_swarm_beta.json")
@@ -360,6 +369,11 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("- proof: `release-local-cpu-with-retained-external-and-local-gpu-smoke`", markdown)
         self.assertIn("- fresh Kaggle GPU attempted: `False`", markdown)
         self.assertIn("- fresh Kaggle GPU verified: `False`", markdown)
+        self.assertIn("## Evidence Scope", markdown)
+        self.assertIn("- level: `release-local-cpu-with-retained-external`", markdown)
+        self.assertIn("- executed: `local-cpu-plus-retained-evidence`", markdown)
+        self.assertIn("- retained external evidence: `True`", markdown)
+        self.assertIn("- fresh Kaggle GPU verified: `False`", markdown)
         self.assertIn("## Operator Action", markdown)
         self.assertIn(report["operator_action"][0], markdown)
         self.assertIn("## Artifacts", markdown)
@@ -395,6 +409,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertEqual(support["runtime_provenance"], report["runtime_provenance"])
+        self.assertEqual(support["evidence_scope"], report["evidence_scope"])
         self.assertNotIn('"generated_text":', encoded)
         self.assertNotIn('"generated_token_ids":', encoded)
         self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN=", encoded)
@@ -641,6 +656,13 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(report["runtime_provenance"]["local_gpu_smoke_ran"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["evidence_scope"]["level"], "retained-evidence-import")
+        self.assertEqual(report["evidence_scope"]["executed_where"], "retained-evidence")
+        self.assertTrue(report["evidence_scope"]["retained_external_evidence_imported"])
+        self.assertTrue(report["evidence_scope"]["retained_gpu_evidence_imported"])
+        self.assertFalse(report["evidence_scope"]["local_gpu_smoke_ran"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
         markdown = (output_dir / "beta" / "public_real_llm_swarm_beta.md").read_text(encoding="utf-8")
         self.assertIn("## Review", markdown)
         self.assertIn("- status: `blocked` Public Real-LLM Swarm Beta evidence needs attention.", markdown)
@@ -648,6 +670,10 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("- next step: `review_not_completed`", markdown)
         self.assertIn("## What To Do Next", markdown)
         self.assertIn("## Operator Action", markdown)
+        self.assertIn("## Evidence Scope", markdown)
+        self.assertIn("- level: `retained-evidence-import`", markdown)
+        self.assertIn("- retained GPU evidence imported: `True`", markdown)
+        self.assertIn("- fresh Kaggle GPU verified: `False`", markdown)
         self.assertIn(report["operator_action"][0], markdown)
         self.assertIn("## Not Completed", markdown)
         self.assertIn("- persistent dual-stage KV-cache reuse", markdown)
@@ -659,6 +685,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(support["not_completed"], report["not_completed"])
         self.assertIn("persistent dual-stage KV-cache reuse", support["not_completed"])
         self.assertEqual(support["operator_action"], report["operator_action"])
+        self.assertEqual(support["evidence_scope"], report["evidence_scope"])
 
     def test_evidence_import_blocks_when_public_swarm_v2_report_missing(self) -> None:
         output_dir = self._tmp_dir()
@@ -2260,6 +2287,15 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
 
         self.assertIn('sensitive_artifact:support_bundle_json:"prompt_text":', errors)
 
+    def test_pack_validation_rejects_evidence_scope_provenance_mismatch(self) -> None:
+        output_dir = self._tmp_dir()
+        report = check.build_fake_release(output_dir, tokens=16)
+        report["evidence_scope"]["fresh_kaggle_gpu_verified"] = True
+
+        errors = pack.validate_public_report(report)
+
+        self.assertIn("evidence_scope_fresh_kaggle_gpu_verified_mismatch", errors)
+
     def test_pack_human_summary_shows_final_status_and_artifacts(self) -> None:
         output_dir = self._tmp_dir()
 
@@ -2278,6 +2314,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("  stream ready: product=False p2p=True v2=True", output)
         self.assertIn("  kv_cache_ready: True", output)
         self.assertIn("  kv_cache hits: stage0=15 stage1=15", output)
+        self.assertIn("  evidence_scope: level=release-local-cpu-with-retained-external", output)
+        self.assertIn("fresh_kaggle_gpu=False", output)
+        self.assertIn("  evidence_scope_note:", output)
         self.assertIn("  review: state=ready next_step=run_beta_report_check", output)
         self.assertIn("  recommended_check: crowdtensor public-real-llm-swarm-beta check", output)
         self.assertIn("--beta-report", output)
