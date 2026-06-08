@@ -14693,6 +14693,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     public_swarm_beta_rc.add_argument("--prompt-text", default="CrowdTensor public beta RC")
     public_swarm_beta_rc.add_argument("--prompt-texts", default="")
+    public_swarm_beta_rc.add_argument("--prompt-texts-file", default="")
     public_swarm_beta_rc.add_argument("--stream-generation", action="store_true")
     public_swarm_beta_rc.add_argument("--scenario-id", default="route-baseline")
     public_swarm_beta_rc.add_argument("--request-count", type=int, default=1)
@@ -14734,6 +14735,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     public_swarm_product_beta.add_argument("--prompt-text", default="CrowdTensor product beta")
     public_swarm_product_beta.add_argument("--prompt-texts", default="")
+    public_swarm_product_beta.add_argument("--prompt-texts-file", default="")
     public_swarm_product_beta.add_argument("--stream-generation", action="store_true")
     public_swarm_product_beta.add_argument("--scenario-id", default="route-baseline")
     public_swarm_product_beta.add_argument("--request-count", type=int, default=1)
@@ -14860,6 +14862,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     public_real_llm_swarm_beta.add_argument("--hf-cache-dir", default="")
     public_real_llm_swarm_beta.add_argument("--prompt-text", default="CrowdTensor public real LLM swarm beta")
     public_real_llm_swarm_beta.add_argument("--prompt-texts", default="")
+    public_real_llm_swarm_beta.add_argument("--prompt-texts-file", default="")
     public_real_llm_swarm_beta.add_argument("--stream-generation", action="store_true")
     public_real_llm_swarm_beta.add_argument("--request-count", type=int, default=1)
     public_real_llm_swarm_beta.add_argument("--max-new-tokens", type=int, default=16)
@@ -16083,8 +16086,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if hasattr(args, "cpu_timeout_seconds") and args.cpu_timeout_seconds <= 0:
             raise SystemExit("--cpu-timeout-seconds must be positive")
     if args.command == "public-swarm-beta-rc":
+        if args.prompt_texts and args.prompt_texts_file:
+            raise SystemExit("public-swarm-beta-rc accepts either --prompt-texts or --prompt-texts-file, not both")
         try:
-            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+            if args.prompt_texts_file:
+                args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+            else:
+                args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         if args.request_count < 1 or args.request_count > 4:
@@ -16116,8 +16124,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             if missing:
                 raise SystemExit(f"external-existing requires: {', '.join('--' + item.replace('_', '-') for item in missing)}")
     if args.command == "public-swarm-product-beta":
+        if args.prompt_texts and args.prompt_texts_file:
+            raise SystemExit("public-swarm-product-beta accepts either --prompt-texts or --prompt-texts-file, not both")
         try:
-            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+            if args.prompt_texts_file:
+                args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+            else:
+                args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         if args.request_count < 1 or args.request_count > 4:
@@ -16150,8 +16163,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 raise SystemExit(f"external-existing requires: {', '.join('--' + item.replace('_', '-') for item in missing)}")
     if args.command == "public-real-llm-swarm-beta":
         if args.public_real_llm_swarm_beta_mode != "check":
+            if args.prompt_texts and args.prompt_texts_file:
+                raise SystemExit("public-real-llm-swarm-beta accepts either --prompt-texts or --prompt-texts-file, not both")
             try:
-                parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+                if args.prompt_texts_file:
+                    args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+                else:
+                    args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
             except ValueError as exc:
                 raise SystemExit(str(exc)) from exc
             if args.request_count < 1 or args.request_count > 4:
