@@ -257,6 +257,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- include output: `{output_request.get('include_output')}`",
         f"- prompt scope: `source={prompt_scope.get('source')} count={prompt_scope.get('prompt_count')} inline_prompt_text={prompt_scope.get('inline_prompt_text')} terminal_next_commands_local_private={prompt_scope.get('terminal_next_commands_local_private')} saved_artifacts_prompt_placeholders={prompt_scope.get('saved_artifacts_prompt_placeholders')} prompt_file_path_public={prompt_scope.get('prompt_file_path_public')} raw_prompt_public={prompt_scope.get('raw_prompt_public')} public_artifact_safe={prompt_scope.get('public_artifact_safe')}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no local answer transcript or raw generated text.'}",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} local_output_display_only={shareable.get('local_output_display_only')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
@@ -443,7 +444,11 @@ def main() -> None:
     if args.json:
         print(json.dumps(report, sort_keys=True))
     else:
+        answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
         print(f"Public Swarm Product RC ready: {report.get('ok')}")
+        if answer_scope:
+            print(f"  answer_scope: {answer_scope.get('scope_state')}")
+            print(f"  answer_scope_note: {answer_scope.get('summary') or 'Public artifacts contain no local answer transcript or raw generated text.'}")
     raise SystemExit(0 if report.get("ok") else 1)
 
 

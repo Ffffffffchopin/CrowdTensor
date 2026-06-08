@@ -94,6 +94,8 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
         self.assertIn("prompt scope: `source=imported-or-built-in-validation-prompts", markdown)
         self.assertIn("prompt scope note: Public Swarm Alpha aggregates fixed or imported validation prompts", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn("- answer scope note:", markdown)
+        self.assertIn("not a local answer transcript", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generation_public=False generation_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,

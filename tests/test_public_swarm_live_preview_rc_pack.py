@@ -79,6 +79,8 @@ class PublicSwarmLivePreviewRCPackTests(unittest.TestCase):
             markdown,
         )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn("- answer scope note:", markdown)
+        self.assertIn("not a local answer transcript", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,

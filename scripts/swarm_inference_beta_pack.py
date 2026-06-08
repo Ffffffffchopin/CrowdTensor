@@ -314,6 +314,13 @@ def prompt_scope_note(prompt_scope: dict[str, Any]) -> str:
     )
 
 
+def answer_scope_note(answer_scope: dict[str, Any]) -> str:
+    return str(
+        answer_scope.get("summary")
+        or "Public artifacts contain no local answer transcript or raw generated text."
+    )
+
+
 def _safe_relative_path(output_dir: Path, relative_path: str) -> Path:
     root = output_dir.resolve()
     target = (output_dir / relative_path).resolve()
@@ -1755,6 +1762,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope_note(answer_scope)}",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
@@ -1945,6 +1953,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
 
 def print_human(report: dict[str, Any]) -> None:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     print("CrowdTensor Swarm Inference Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -1956,6 +1965,9 @@ def print_human(report: dict[str, Any]) -> None:
     if prompt_scope:
         print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
         print(f"  prompt_scope_note: {prompt_scope_note(prompt_scope)}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope.get('scope_state')}")
+        print(f"  answer_scope_note: {answer_scope_note(answer_scope)}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 

@@ -878,6 +878,13 @@ def answer_scope_text(answer_scope: dict[str, Any]) -> str:
     )
 
 
+def answer_scope_note(answer_scope: dict[str, Any]) -> str:
+    return str(
+        answer_scope.get("summary")
+        or "Public artifacts contain no local answer transcript or raw generated text."
+    )
+
+
 def shareable_summary_text(summary: dict[str, Any]) -> str:
     return (
         f"saved_artifacts={bool(summary.get('saved_artifacts_public_safe'))} "
@@ -1651,6 +1658,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope_note(answer_scope)}",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
@@ -1873,6 +1881,7 @@ def main() -> None:
             print(f"  prompt_scope_note: {prompt_scope_note(prompt_scope)}")
         if answer_scope:
             print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+            print(f"  answer_scope_note: {answer_scope_note(answer_scope)}")
         if shareable:
             print(f"  shareable: {shareable_summary_text(shareable)}")
         print(f"  output: {report.get('output_dir')}")

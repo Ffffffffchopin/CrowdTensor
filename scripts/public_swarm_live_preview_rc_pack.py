@@ -478,6 +478,13 @@ def prompt_scope_note(prompt_scope: dict[str, Any]) -> str:
     return str(prompt_scope.get("summary") or "")
 
 
+def answer_scope_note(answer_scope: dict[str, Any]) -> str:
+    return str(
+        answer_scope.get("summary")
+        or "Public artifacts contain no local answer transcript or raw generated text."
+    )
+
+
 def support_bundle_artifact(output_dir: Path, report: dict[str, Any]) -> dict[str, Any]:
     bundle = support_bundle.sanitize(redact_values({
         "schema": "public_swarm_live_preview_rc_support_bundle_v1",
@@ -1161,6 +1168,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope_note(answer_scope)}",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
@@ -1307,12 +1315,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def print_human(report: dict[str, Any]) -> None:
     preview = report.get("live_preview") if isinstance(report.get("live_preview"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     print("CrowdTensor Public Swarm Live Preview RC")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {preview.get('ready')}")
     print(f"  external_runtime_verified: {preview.get('external_runtime_verified')}")
+    if answer_scope:
+        print(f"  answer_scope: {answer_scope.get('scope_state')}")
+        print(f"  answer_scope_note: {answer_scope_note(answer_scope)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
