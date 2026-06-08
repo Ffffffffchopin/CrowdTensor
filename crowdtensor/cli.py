@@ -6824,6 +6824,8 @@ def _infer_summary_from_payload(
             "read_only_workload": True,
             "not_production": True,
             "coordinator_backed": True,
+            "not_large_model_serving": True,
+            "not_arbitrary_public_prompt_serving": True,
         },
         "limitations": [
             "User-friendly inference front door for the current small-model swarm path.",
