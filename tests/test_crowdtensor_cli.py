@@ -1367,6 +1367,27 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "ok": True,
                 "mode": "generate",
                 "diagnosis_codes": ["generate_dry_run_ready"],
+                "user_status": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "headline": "Generation route is ready.",
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "no-local-answer",
+                    "terminal_only": False,
+                    "visible_in_terminal": False,
+                    "saved_json_display": "hash-only",
+                    "saved_markdown_display": "hash-only",
+                    "public_artifact_safe": True,
+                },
+                "runtime_options": {
+                    "timeout_seconds": 420.0,
+                    "poll_interval": 1.0,
+                    "http_timeout": 30.0,
+                    "admin_results_limit": 50,
+                    "public_artifact_safe": True,
+                },
                 "route": {"route_source": "coordinator-url", "coordinator_url_present": True, "missing_capabilities": []},
                 "next_commands": [
                     cli.command_entry(
@@ -1432,7 +1453,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("review, review_next", progress)
         self.assertIn("inspect_first", progress)
         self.assertIn("status/action", progress)
-        self.assertIn("answer_scope, runtime_options", progress)
+        self.assertIn("later lines include answer_scope", progress)
+        self.assertIn("runtime_options", progress)
         self.assertIn("redacted JSON/Markdown artifacts", progress)
         self.assertNotIn(prompt, progress)
         self.assertIn(
@@ -1445,6 +1467,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(f"next[1] check generation route: crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --prompt-text '{prompt}' --dry-run", rendered)
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
+        self.assertLess(rendered.index("  status: "), rendered.index("  answer_scope: "))
+        self.assertLess(rendered.index("  answer_scope: "), rendered.index("  runtime_options: "))
 
     def test_generate_main_prints_copyable_batch_prompt_without_single_prompt_placeholder(self) -> None:
         prompts = "first private prompt,second private prompt"
@@ -7973,6 +7997,12 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "ok": True,
                 "mode": "local",
                 "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "user_status": {
+                    "state": "completed",
+                    "next_step": "rerun_or_review_artifacts",
+                    "headline": "Inference completed.",
+                    "public_artifact_safe": True,
+                },
                 "generation": {"generated_token_count": 2, "max_new_tokens": 2, "generated_text_hash": "sha256:generated"},
                 "result": {
                     "status": "complete",
@@ -7981,6 +8011,21 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "output_count": 1,
                     "display": "hash-only",
                     "generated_text_hash": "sha256:generated",
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "no-local-answer",
+                    "terminal_only": False,
+                    "visible_in_terminal": False,
+                    "saved_json_display": "hash-only",
+                    "saved_markdown_display": "hash-only",
+                    "public_artifact_safe": True,
+                },
+                "runtime_options": {
+                    "timeout_seconds": 420.0,
+                    "poll_interval": 1.0,
+                    "http_timeout": 30.0,
+                    "admin_results_limit": 50,
                     "public_artifact_safe": True,
                 },
                 "route": {"route_source": "local-product-loopback", "route_ready": True},
@@ -8010,9 +8055,72 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("review, review_next", progress)
         self.assertIn("inspect_first", progress)
         self.assertIn("status/action", progress)
-        self.assertIn("answer_scope, runtime_options", progress)
+        self.assertIn("later lines include answer_scope", progress)
+        self.assertIn("runtime_options", progress)
         self.assertIn("redacted JSON/Markdown artifacts", progress)
         self.assertNotIn(prompt, progress)
+        self.assertLess(rendered.index("  status: "), rendered.index("  answer_scope: "))
+        self.assertLess(rendered.index("  answer_scope: "), rendered.index("  runtime_options: "))
+
+    def test_infer_existing_dry_run_start_hint_prefers_route_check_over_credentials(self) -> None:
+        output_dir = Path(self._tmp_dir())
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            self.assertEqual(getattr(args, "infer_mode"), "existing")
+            self.assertTrue(getattr(args, "dry_run"))
+            self.assertEqual(getattr(args, "admin_token"), "")
+            return {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": False,
+                "mode": "existing",
+                "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "user_status": {
+                    "state": "blocked",
+                    "next_step": "fix_blockers",
+                    "headline": "Route is not ready.",
+                    "public_artifact_safe": True,
+                },
+                "generation": {"generated_token_count": 0, "max_new_tokens": 2},
+                "answer_scope": {
+                    "scope_state": "no-local-answer",
+                    "terminal_only": False,
+                    "visible_in_terminal": False,
+                    "saved_json_display": "hash-only",
+                    "saved_markdown_display": "hash-only",
+                    "public_artifact_safe": True,
+                },
+                "runtime_options": {
+                    "timeout_seconds": 420.0,
+                    "poll_interval": 1.0,
+                    "http_timeout": 30.0,
+                    "admin_results_limit": 50,
+                    "public_artifact_safe": True,
+                },
+                "route": {"route_source": "coordinator-url", "route_ready": False},
+                "output_dir": str(output_dir),
+                "diagnosis_codes": ["coordinator_route_missing"],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "infer",
+                    "CrowdTensor prompt",
+                    "--mode",
+                    "existing",
+                    "--dry-run",
+                    "--output-dir",
+                    str(output_dir),
+                ])
+
+        self.assertEqual(raised.exception.code, 1)
+        progress = stderr.getvalue()
+        self.assertIn("checking the existing route before submitting work", progress)
+        self.assertNotIn("checking credentials and request requirements", progress)
+        self.assertIn("later lines include answer_scope", progress)
+        self.assertIn("CrowdTensor infer", stdout.getvalue())
 
     def test_infer_json_suppresses_start_hint(self) -> None:
         output_dir = Path(self._tmp_dir())

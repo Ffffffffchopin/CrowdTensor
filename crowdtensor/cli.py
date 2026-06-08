@@ -11066,15 +11066,15 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
             file=sys.stderr,
             flush=True,
         )
-    elif not str(getattr(args, "admin_token", "") or "").strip():
-        print(
-            "CrowdTensor infer: checking credentials and request requirements before submitting work.",
-            file=sys.stderr,
-            flush=True,
-        )
     elif bool(getattr(args, "dry_run", False)):
         print(
             "CrowdTensor infer: checking the existing route before submitting work.",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif not str(getattr(args, "admin_token", "") or "").strip():
+        print(
+            "CrowdTensor infer: checking credentials and request requirements before submitting work.",
             file=sys.stderr,
             flush=True,
         )
@@ -11086,8 +11086,8 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
         )
     print(
         "CrowdTensor infer: final output will start with review, review_next, "
-        "inspect_first, status/action, answer_scope, runtime_options, and "
-        "redacted JSON/Markdown artifacts.",
+        "inspect_first, and status/action; later lines include answer_scope, "
+        "runtime_options, and redacted JSON/Markdown artifacts.",
         file=sys.stderr,
         flush=True,
     )
@@ -11114,8 +11114,8 @@ def print_generate_start_hint(args: argparse.Namespace) -> None:
         )
     print(
         "CrowdTensor generate: final output will start with review, review_next, "
-        "inspect_first, status/action, answer_scope, runtime_options, and "
-        "redacted JSON/Markdown artifacts.",
+        "inspect_first, and status/action; later lines include answer_scope, "
+        "runtime_options, and redacted JSON/Markdown artifacts.",
         file=sys.stderr,
         flush=True,
     )
