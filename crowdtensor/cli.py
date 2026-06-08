@@ -112,6 +112,7 @@ PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cl
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_generate_runtime_provenance_v1"
+INFER_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_infer_runtime_provenance_v1"
 INFER_CLI_SCHEMA = "crowdtensor_infer_cli_v1"
 P2P_LITE_CLI_SCHEMA = "p2p_lite_cli_v1"
 P2PD_CLI_SCHEMA = "p2pd_cli_v1"
@@ -1415,6 +1416,24 @@ def output_request_text(output_request: dict[str, Any]) -> str:
 
 
 def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    if provenance.get("schema") == INFER_RUNTIME_PROVENANCE_SCHEMA:
+        return (
+            f"proof={provenance.get('proof_level') or 'unknown'} "
+            f"mode={provenance.get('mode') or 'unknown'} "
+            f"dry_run={bool(provenance.get('dry_run'))} "
+            f"source={provenance.get('source_schema') or 'unknown'} "
+            f"source_proof={provenance.get('source_proof_level') or 'unknown'} "
+            f"local_loopback={bool(provenance.get('local_loopback_ran'))} "
+            f"full_evidence={bool(provenance.get('full_evidence_ran'))} "
+            f"existing_generate={bool(provenance.get('existing_generate_ran'))} "
+            f"backend={provenance.get('backend') or 'unknown'} "
+            f"p2p={bool(provenance.get('p2p_enabled'))} "
+            f"kaggle_runtime_attempted={bool(provenance.get('kaggle_runtime_attempted'))} "
+            f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+            f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))} "
+            f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))} "
+            f"gpu_runtime_ready={bool(provenance.get('gpu_runtime_ready'))}"
+        )
     if provenance.get("schema") == PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA:
         return (
             f"proof={provenance.get('proof_level') or 'unknown'} "
@@ -7163,6 +7182,88 @@ def _infer_ready_to_submit(
     )
 
 
+def _infer_runtime_provenance(
+    summary: dict[str, Any],
+    *,
+    args: argparse.Namespace,
+    payload: dict[str, Any],
+    mode: str,
+    step: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    source_schema = str(payload.get("schema") or "")
+    source_mode = str(payload.get("mode") or "")
+    source_provenance = payload.get("runtime_provenance") if isinstance(payload.get("runtime_provenance"), dict) else {}
+    route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
+    p2p = summary.get("p2p") if isinstance(summary.get("p2p"), dict) else {}
+    model = summary.get("model") if isinstance(summary.get("model"), dict) else {}
+    dry_run = bool(summary.get("dry_run"))
+    full_evidence = bool(getattr(args, "full_evidence", False))
+    existing_generate = mode == "existing"
+    local_loopback = bool(mode == "local" and source_schema == "product_swarm_mvp_check_v1")
+    local_full_evidence = bool(mode == "local" and full_evidence)
+    source_submitted = bool(
+        source_provenance.get("submitted_to_coordinator")
+        if source_provenance
+        else (existing_generate and not dry_run and summary.get("ok"))
+    )
+    retained_gpu_evidence_imported = bool(source_provenance.get("retained_gpu_evidence_imported"))
+    gpu_runtime_ready = bool(source_provenance.get("gpu_runtime_ready"))
+    kaggle_runtime_attempted = bool(
+        source_provenance.get("kaggle_runtime_attempted")
+        or source_provenance.get("fresh_kaggle_gpu_attempted")
+    )
+    fresh_kaggle_gpu_attempted = bool(source_provenance.get("fresh_kaggle_gpu_attempted"))
+    fresh_kaggle_gpu_verified = bool(source_provenance.get("fresh_kaggle_gpu_verified"))
+    if existing_generate:
+        if dry_run:
+            proof_level = "existing-generate-dry-run"
+        elif source_submitted:
+            proof_level = "existing-generate-submit"
+        else:
+            proof_level = "existing-generate-blocked"
+    elif local_full_evidence:
+        proof_level = "local-full-evidence"
+    else:
+        proof_level = "local-product-loopback"
+    return {
+        "schema": INFER_RUNTIME_PROVENANCE_SCHEMA,
+        "proof_level": proof_level,
+        "mode": mode,
+        "dry_run": dry_run,
+        "source_schema": source_schema,
+        "source_mode": source_mode,
+        "source_ok": payload.get("ok"),
+        "source_proof_level": source_provenance.get("proof_level") or "",
+        "source_runtime_provenance": source_provenance,
+        "local_loopback_ran": local_loopback,
+        "local_loopback_ready": bool(local_loopback and summary.get("ok")),
+        "full_evidence_ran": local_full_evidence,
+        "full_evidence_ready": bool(local_full_evidence and summary.get("ok")),
+        "existing_generate_ran": existing_generate,
+        "existing_generate_ready": bool(existing_generate and summary.get("ok")),
+        "submitted_to_coordinator": source_submitted,
+        "route_source": route.get("route_source") or source_provenance.get("route_source") or "",
+        "route_ready": bool(route.get("route_ready") or source_provenance.get("route_ready")),
+        "p2p_enabled": bool(p2p.get("enabled") or source_provenance.get("p2p_enabled")),
+        "p2p_backend": p2p.get("backend") or source_provenance.get("p2p_backend") or "",
+        "backend": str(getattr(args, "backend", "") or model.get("backend") or ""),
+        "hf_model_id": str(getattr(args, "hf_model_id", "") or model.get("hf_model_id") or ""),
+        "step_name": step.get("name") if isinstance(step, dict) else "",
+        "step_ok": step.get("ok") if isinstance(step, dict) else None,
+        "kaggle_runtime_attempted": kaggle_runtime_attempted,
+        "fresh_kaggle_gpu_attempted": fresh_kaggle_gpu_attempted,
+        "fresh_kaggle_gpu_verified": fresh_kaggle_gpu_verified,
+        "retained_gpu_evidence_imported": retained_gpu_evidence_imported,
+        "gpu_runtime_ready": gpu_runtime_ready,
+        "public_artifact_safe": True,
+        "summary": (
+            "crowdtensor infer is the short user-facing wrapper over local product loopback, "
+            "local full evidence, or an existing generate route. This wrapper records the "
+            "source report and does not itself launch a fresh Kaggle GPU proof."
+        ),
+    }
+
+
 def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     generation = summary.get("generation") if isinstance(summary.get("generation"), dict) else {}
     prompt = summary.get("prompt") if isinstance(summary.get("prompt"), dict) else {}
@@ -7191,6 +7292,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
     wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
     step = summary.get("step") if isinstance(summary.get("step"), dict) else {}
+    runtime_provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
     recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
@@ -7213,6 +7315,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Result: `{infer_result_text(result)}`",
         f"- Output display: `{output_display_text(output_display)}`",
     ])
+    if runtime_provenance:
+        lines.append(f"- Runtime provenance: `{runtime_provenance_text(runtime_provenance)}`")
     if output_display.get("summary"):
         lines.append(f"- Output display note: {output_display.get('summary')}")
     lines.extend([
@@ -7236,6 +7340,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             f"fully_verified=`{bool(ready_to_submit.get('fully_verified'))}` "
             f"status=`{ready_to_submit_status_text(ready_to_submit)}`"
         )
+    if runtime_provenance:
+        lines.append(f"- Runtime provenance summary: {runtime_provenance.get('summary') or ''}")
     if coordinator_ready:
         lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
     if stage_preflight:
@@ -7725,6 +7831,13 @@ def _infer_summary_from_payload(
     if bool(getattr(args, "shareable_terminal", False)):
         summary["shareable_terminal"] = _shareable_terminal_summary_from_report(summary)
     summary["issue_summary"] = _issue_summary_from_report(summary, kind="infer")
+    summary["runtime_provenance"] = _infer_runtime_provenance(
+        summary,
+        args=args,
+        payload=payload,
+        mode=mode,
+        step=step,
+    )
     artifacts = {
         "infer_summary": {
             "kind": "crowdtensor_infer_summary",
@@ -12278,6 +12391,9 @@ def print_infer(report: dict[str, Any]) -> None:
         print(f"  action: {report.get('operator_action')}")
     print(f"  ok: {report.get('ok')}")
     print(f"  mode: {report.get('mode')}")
+    runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    if runtime_provenance:
+        print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}

@@ -9007,6 +9007,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["runtime_options"]["coordinator_port_auto"])
         self.assertFalse(report["runtime_options"]["coordinator_port_explicit"])
         self.assertEqual(report["route"]["route_source"], "local-product-loopback")
+        self.assertEqual(report["runtime_provenance"]["schema"], cli.INFER_RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "local-product-loopback")
+        self.assertEqual(report["runtime_provenance"]["source_schema"], "product_swarm_mvp_check_v1")
+        self.assertTrue(report["runtime_provenance"]["local_loopback_ran"])
+        self.assertTrue(report["runtime_provenance"]["local_loopback_ready"])
+        self.assertFalse(report["runtime_provenance"]["existing_generate_ran"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         self.assertFalse((output_dir / ".private").exists())
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -9051,6 +9059,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["runtime_options"]["coordinator_port"], int(calls[0][calls[0].index("--port") + 1]))
         self.assertTrue(persisted["runtime_options"]["coordinator_port_auto"])
         self.assertFalse(persisted["runtime_options"]["coordinator_port_explicit"])
+        self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
         self.assertNotIn(".private", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
@@ -9067,6 +9076,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Action: Inference completed; optionally rerun with --full-evidence for the broader Public Swarm v2 proof.",
             markdown,
         )
+        self.assertIn("- Runtime provenance: `proof=local-product-loopback mode=local dry_run=False source=product_swarm_mvp_check_v1", markdown)
+        self.assertIn("fresh_kaggle_gpu_verified=False retained_gpu_import=False gpu_runtime_ready=False`", markdown)
         self.assertIn("- Answer scope: `state=json-suppressed ", markdown)
         self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
         stdout = io.StringIO()
@@ -9078,6 +9089,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("coordinator_port_auto=True", rendered)
+        self.assertIn(
+            "  runtime_provenance: proof=local-product-loopback mode=local dry_run=False source=product_swarm_mvp_check_v1",
+            rendered,
+        )
+        self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertIn("recommended_next: optional broader local evidence reason=collect_broader_evidence", rendered)
         self.assertIn("next[1] rerun local inference", rendered)
         self.assertIn("next[2] optional broader local evidence", rendered)
@@ -9779,12 +9795,37 @@ class CrowdTensorCliTests(unittest.TestCase):
                         },
                     }
                 },
+                "runtime_provenance": {
+                    "schema": "public_swarm_inference_v2_runtime_provenance_v1",
+                    "proof_level": "local-p2p-cpu-with-retained-external-and-gpu-evidence",
+                    "mode": "local",
+                    "local_p2p_generate_ran": True,
+                    "local_p2p_generate_ready": True,
+                    "retained_gpu_evidence_imported": True,
+                    "gpu_runtime_ready": True,
+                    "fresh_kaggle_gpu_attempted": False,
+                    "fresh_kaggle_gpu_verified": False,
+                    "public_artifact_safe": True,
+                },
                 "diagnosis_codes": ["public_swarm_inference_v2_ready"],
             })
 
         report = cli.build_infer(args, runner=fake_runner)
 
         self.assertTrue(report["ok"], report)
+        self.assertEqual(report["runtime_provenance"]["schema"], cli.INFER_RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "local-full-evidence")
+        self.assertEqual(report["runtime_provenance"]["source_schema"], "public_swarm_inference_v2")
+        self.assertEqual(
+            report["runtime_provenance"]["source_proof_level"],
+            "local-p2p-cpu-with-retained-external-and-gpu-evidence",
+        )
+        self.assertTrue(report["runtime_provenance"]["full_evidence_ran"])
+        self.assertTrue(report["runtime_provenance"]["full_evidence_ready"])
+        self.assertTrue(report["runtime_provenance"]["retained_gpu_evidence_imported"])
+        self.assertTrue(report["runtime_provenance"]["gpu_runtime_ready"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         child_markdown = str(output_dir / "public-swarm-v2" / "public_swarm_inference_v2.md")
         self.assertEqual(report["source_report"]["summary_markdown_path"], child_markdown)
         self.assertEqual(report["source_report"]["summary_markdown_relative_path"], "public-swarm-v2/public_swarm_inference_v2.md")
@@ -9798,9 +9839,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["recommended_next_command"]["reason"], "v2_ready")
         self.assertEqual(report["recommended_next_command"]["command_line"], f"less {child_markdown}")
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["review_summary"]["inspect_first"], child_markdown)
         self.assertEqual(persisted["artifact_summary"]["inspect_first"], child_markdown)
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Runtime provenance: `proof=local-full-evidence mode=local dry_run=False source=public_swarm_inference_v2",
+            markdown,
+        )
+        self.assertIn("fresh_kaggle_gpu_verified=False retained_gpu_import=True gpu_runtime_ready=True`", markdown)
         self.assertIn(f"- Inspect first: `{child_markdown}`", markdown)
         self.assertIn(f"- Source evidence summary: json=`{output_dir / 'public-swarm-v2' / 'public_swarm_inference_v2.json'}` markdown=`{child_markdown}`", markdown)
         stdout = io.StringIO()
@@ -10604,6 +10651,25 @@ class CrowdTensorCliTests(unittest.TestCase):
             },
             "route": {"route_source": "coordinator-url", "coordinator_url_present": True},
             "local_output": {"generated_text": "local text only"},
+            "runtime_provenance": {
+                "schema": cli.PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA,
+                "proof_level": "coordinator-submit",
+                "mode": "generate",
+                "dry_run": False,
+                "submitted_to_coordinator": True,
+                "completed_generation": True,
+                "coordinator_scope": "local-loopback",
+                "route_source": "coordinator-url",
+                "route_ready": True,
+                "backend": "cpu",
+                "p2p_enabled": False,
+                "kaggle_runtime_attempted": False,
+                "fresh_kaggle_gpu_attempted": False,
+                "fresh_kaggle_gpu_verified": False,
+                "retained_gpu_evidence_imported": False,
+                "gpu_runtime_ready": False,
+                "public_artifact_safe": True,
+            },
             "saved_summary": {
                 "path": str(output_dir / "generate" / "generate_summary.json"),
                 "markdown_path": str(output_dir / "generate" / "generate_summary.md"),
@@ -10619,9 +10685,30 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["mode"], "existing")
         self.assertEqual(report["wait_progress"]["poll_count"], 2)
+        self.assertEqual(report["runtime_provenance"]["schema"], cli.INFER_RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "existing-generate-submit")
+        self.assertEqual(report["runtime_provenance"]["source_schema"], "public_swarm_product_cli_v1")
+        self.assertEqual(report["runtime_provenance"]["source_proof_level"], "coordinator-submit")
+        self.assertEqual(
+            report["runtime_provenance"]["source_runtime_provenance"]["schema"],
+            cli.PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA,
+        )
+        self.assertTrue(report["runtime_provenance"]["existing_generate_ran"])
+        self.assertTrue(report["runtime_provenance"]["existing_generate_ready"])
+        self.assertTrue(report["runtime_provenance"]["submitted_to_coordinator"])
+        self.assertFalse(report["runtime_provenance"]["kaggle_runtime_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self.assertFalse(report["runtime_provenance"]["retained_gpu_evidence_imported"])
+        self.assertFalse(report["runtime_provenance"]["gpu_runtime_ready"])
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
+        self.assertIn(
+            "  runtime_provenance: proof=existing-generate-submit mode=existing dry_run=False source=public_swarm_product_cli_v1 source_proof=coordinator-submit",
+            stdout.getvalue(),
+        )
+        self.assertIn("fresh_kaggle_gpu_verified=False retained_gpu_import=False gpu_runtime_ready=False", stdout.getvalue())
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False", stdout.getvalue())
         self.assertIn("  prompt: count=1 hash=", stdout.getvalue())
         self.assertIn("raw_public=False", stdout.getvalue())
@@ -10760,6 +10847,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "Raw generated text is shown only in local human output; JSON and saved artifacts expose hashes only.",
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["wait_progress"]["max_observed_token_count"], 16)
         self.assertEqual(persisted["saved_summary"]["path"], str(output_dir / "infer_summary.json"))
         self.assertEqual(persisted["saved_summary"]["markdown_path"], str(output_dir / "infer_summary.md"))
@@ -10837,6 +10925,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Infer Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Mode: `existing`", markdown)
+        self.assertIn(
+            "- Runtime provenance: `proof=existing-generate-submit mode=existing dry_run=False source=public_swarm_product_cli_v1 source_proof=coordinator-submit",
+            markdown,
+        )
+        self.assertIn("fresh_kaggle_gpu_verified=False retained_gpu_import=False gpu_runtime_ready=False`", markdown)
         self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
         self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
         self.assertIn(f"- Inspect first: `{output_dir / 'infer_summary.md'}`", markdown)
@@ -13132,6 +13225,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("coordinator_route_missing", report["diagnosis_codes"])
         self.assertIn("crowdtensor_infer_blocked", report["diagnosis_codes"])
         self.assertEqual(report["p2p"]["discovery"]["error"], "OSError")
+        self.assertEqual(report["runtime_provenance"]["schema"], cli.INFER_RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "existing-generate-blocked")
+        self.assertEqual(report["runtime_provenance"]["source_schema"], "public_swarm_product_cli_v1")
+        self.assertEqual(report["runtime_provenance"]["source_proof_level"], "p2p-route-submit")
+        self.assertTrue(report["runtime_provenance"]["existing_generate_ran"])
+        self.assertFalse(report["runtime_provenance"]["existing_generate_ready"])
+        self.assertFalse(report["runtime_provenance"]["submitted_to_coordinator"])
+        self.assertTrue(report["runtime_provenance"]["p2p_enabled"])
+        self.assertEqual(report["runtime_provenance"]["p2p_backend"], "lite")
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         self.assertIn("P2P discovery daemon", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor p2pd --port 8799 --run", next_lines)
@@ -13144,6 +13248,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertIn("p2p_discovery_unreachable", persisted["diagnosis_codes"])
         self.assertEqual(persisted["p2p"]["discovery"]["error"], "OSError")
+        self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
         self.assertNotIn("admin-secret", json.dumps(persisted, sort_keys=True))
 
@@ -13474,6 +13579,15 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["dry_run"])
+        self.assertEqual(report["runtime_provenance"]["schema"], cli.INFER_RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "existing-generate-dry-run")
+        self.assertEqual(report["runtime_provenance"]["source_schema"], "public_swarm_product_cli_v1")
+        self.assertEqual(report["runtime_provenance"]["source_proof_level"], "coordinator-dry-run")
+        self.assertTrue(report["runtime_provenance"]["existing_generate_ran"])
+        self.assertTrue(report["runtime_provenance"]["existing_generate_ready"])
+        self.assertFalse(report["runtime_provenance"]["submitted_to_coordinator"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         self.assertIsNone(report["ready_to_submit"]["ok"])
         self.assertFalse(report["ready_to_submit"]["fully_verified"])
         self.assertEqual(report["ready_to_submit"]["readiness_label"], "skipped")
@@ -13502,6 +13616,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             next_lines,
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["ready_to_submit"]["readiness_label"], "skipped")
         self.assertEqual(persisted["ready_to_submit"]["next_step"], "run_live_preflight")
         self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
