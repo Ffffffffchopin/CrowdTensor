@@ -1545,6 +1545,8 @@ def check_result_from_payload(
         "beta_schema": payload.get("schema") if payload else None,
         "beta_ok": payload.get("ok") if payload else None,
         "hf_model_id": str((payload.get("beta") if isinstance(payload.get("beta"), dict) else {}).get("hf_model_id") or hf_model_id or pack.DEFAULT_HF_MODEL_ID),
+        "checked_runtime_provenance": payload.get("runtime_provenance") if isinstance(payload.get("runtime_provenance") if payload else None, dict) else {},
+        "checked_evidence_scope": payload.get("evidence_scope") if isinstance(payload.get("evidence_scope") if payload else None, dict) else {},
         "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"] if not errors else ["public_real_llm_swarm_beta_check_blocked"],
         "artifacts": {
             "public_real_llm_swarm_beta_json": artifact_path(
@@ -1609,6 +1611,8 @@ def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
             "prompt_scope",
             "answer_scope",
             "shareable_summary",
+            "checked_runtime_provenance",
+            "checked_evidence_scope",
             "check_source",
             "checked_beta_report",
             "beta_output_dir",
@@ -1673,6 +1677,7 @@ def print_human_summary(result: dict[str, Any]) -> None:
     prompt_scope = result.get("prompt_scope") if isinstance(result.get("prompt_scope"), dict) else {}
     answer_scope = result.get("answer_scope") if isinstance(result.get("answer_scope"), dict) else {}
     shareable = result.get("shareable_summary") if isinstance(result.get("shareable_summary"), dict) else {}
+    checked_evidence_scope = result.get("checked_evidence_scope") if isinstance(result.get("checked_evidence_scope"), dict) else {}
     print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
     print(f"  mode: {result.get('mode')}")
     print(f"  max_new_tokens: {result.get('max_new_tokens')}")
@@ -1705,6 +1710,9 @@ def print_human_summary(result: dict[str, Any]) -> None:
             f"support={artifact_summary.get('support_bundle')} "
             f"check={artifact_summary.get('check_json')}"
         )
+    if checked_evidence_scope:
+        print(f"  checked_evidence_scope: {pack.evidence_scope_text(checked_evidence_scope)}")
+        print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")
     if recommended:
         print(f"  recommended_check: {recommended.get('command_line')}")
     if recommended_next:
