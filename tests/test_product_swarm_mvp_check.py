@@ -29,6 +29,20 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
             self.assertIn("hf_dependencies_missing", report["diagnosis_codes"])
             self.assertIn("private_runtime_state_cleaned", report["diagnosis_codes"])
             self.assertTrue(report["safety"]["raw_runtime_state_removed"])
+            self.assertFalse(report["output_request"]["include_output"])
+            self.assertFalse(report["output_request"]["raw_prompt_public"])
+            self.assertFalse(report["output_request"]["raw_generated_text_public"])
+            self.assertFalse(report["output_request"]["generated_token_ids_public"])
+            self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+            self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+            self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+            self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+            self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+            self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+            self.assertEqual(report["answer_scope"]["saved_markdown_display"], "none")
+            self.assertFalse(report["answer_scope"]["raw_generated_text_public"])
+            self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+            self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
             self.assertTrue((Path(tmp) / "product_swarm_mvp_check.json").is_file())
 
     def test_cleanup_private_runtime_state_removes_local_state_by_default(self) -> None:
@@ -122,6 +136,13 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
             self.assertTrue(report["performance"]["stage_latency_ready"])
             self.assertTrue(report["performance"]["throughput_summary_ready"])
             self.assertTrue(report["runtime_resources"]["memory_or_vram_summary_ready"])
+            self.assertFalse(report["output_request"]["include_output"])
+            self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+            self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+            self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+            self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+            self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
+            self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
             self.assertNotIn('"generated_token_ids":', encoded)
             self.assertNotIn('"generated_text":', encoded)
 
@@ -152,6 +173,8 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
         self.assertFalse(report["serve_process"]["runtime_log_public"])
         self.assertTrue(report["serve_process"]["captured_output_redacted"])
         self.assertNotIn("internal runtime log", json.dumps(report, sort_keys=True))
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertTrue(report["shareable_summary"]["public_artifact_safe"])
 
     def test_attach_serve_process_keeps_failure_runtime_logs_for_diagnostics(self) -> None:
         report = {
@@ -580,8 +603,16 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
                 str(prompt_file),
             ])
 
-        self.assertEqual(args.prompt_texts_file, str(prompt_file))
-        self.assertEqual(args.prompt_texts_list, prompts)
+            self.assertEqual(args.prompt_texts_file, str(prompt_file))
+            self.assertEqual(args.prompt_texts_list, prompts)
+            prompt_scope = product_check.prompt_scope_summary(args)
+            self.assertEqual(prompt_scope["source"], "prompt-texts-file")
+            self.assertEqual(prompt_scope["prompt_count"], 2)
+            self.assertFalse(prompt_scope["inline_prompt_text"])
+            self.assertFalse(prompt_scope["terminal_next_commands_local_private"])
+            self.assertFalse(prompt_scope["terminal_logs_local_private"])
+            self.assertFalse(prompt_scope["prompt_file_path_public"])
+            self.assertFalse(prompt_scope["raw_prompt_public"])
 
     def test_parse_args_rejects_prompt_texts_file_over_batch_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

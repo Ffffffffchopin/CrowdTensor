@@ -81,6 +81,111 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Product Swarm MVP check artifacts summarize serve/join/generate "
+            "readiness, safe generation hashes/counts, batch and stream progress, "
+            "and runtime diagnostics only. They do not include answer text."
+        ),
+    }
+
+
+def prompt_scope_summary(args: argparse.Namespace | None = None) -> dict[str, Any]:
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    prompt_text = str(
+        getattr(args, "prompt_text", "CrowdTensor turns spare compute into open inference")
+        or "CrowdTensor turns spare compute into open inference"
+    )
+    parsed_prompts = getattr(args, "prompt_texts_list", None)
+    if isinstance(parsed_prompts, list) and parsed_prompts:
+        prompt_count = len(parsed_prompts)
+    elif prompt_texts_file:
+        prompt_count = 1
+    else:
+        try:
+            prompt_count = len(parse_prompt_texts_arg(prompt_text, prompt_texts))
+        except ValueError:
+            prompt_count = 0
+    if prompt_texts_file:
+        source = "prompt-texts-file"
+    elif prompt_texts:
+        source = "prompt-texts"
+    else:
+        source = "prompt-text"
+    inline_prompt_text = source in {"prompt-text", "prompt-texts"}
+    return {
+        "source": source,
+        "prompt_count": prompt_count,
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Product Swarm MVP report records prompt source/count and "
+            "placeholder safety only; raw prompt text and prompt file paths are "
+            "excluded from public JSON."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-only",
+        "saved_markdown_display": "none",
+        "json_stdout_display": "hash-only-json",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "The Product Swarm MVP check is shareable readiness evidence, not an "
+            "answer transcript. Raw prompts, generated text, generated token ids, "
+            "activations, credentials, and runtime state are excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share product_swarm_mvp_check.json for MVP readiness, hashes, counts, "
+            "and diagnostics only; do not treat it as local answer output."
+        ),
+    }
+
+
+def ensure_output_scope(report: dict[str, Any], args: argparse.Namespace | None = None) -> dict[str, Any]:
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(args))
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
+    return report
+
+
 def cleanup_private_runtime_state(output_dir: Path, *, keep_private_state: bool = False) -> dict[str, Any]:
     state_dir = output_dir / "state"
     summary = {
@@ -592,6 +697,80 @@ def wait_workload_queued(base_url: str, *, timeout: float) -> tuple[bool, str]:
 
 def validate_public_report(report: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    if output_request.get("include_output") is not False:
+        errors.append("output_request_include_output_mismatch")
+    if output_request.get("raw_prompt_public") is not False:
+        errors.append("output_request_raw_prompt_public_mismatch")
+    if output_request.get("raw_generated_text_public") is not False:
+        errors.append("output_request_raw_generated_text_public_mismatch")
+    if output_request.get("generated_token_ids_public") is not False:
+        errors.append("output_request_generated_token_ids_public_mismatch")
+    if output_request.get("public_artifact_safe") is not True:
+        errors.append("output_request_public_artifact_safe_mismatch")
+
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    source = prompt_scope.get("source")
+    if source not in {"prompt-text", "prompt-texts", "prompt-texts-file"}:
+        errors.append("prompt_scope_source_mismatch")
+    if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 1:
+        errors.append("prompt_scope_count_mismatch")
+    expected_inline = source in {"prompt-text", "prompt-texts"}
+    if prompt_scope.get("inline_prompt_text") is not expected_inline:
+        errors.append("prompt_scope_inline_prompt_text_mismatch")
+    if prompt_scope.get("terminal_next_commands_local_private") is not expected_inline:
+        errors.append("prompt_scope_terminal_next_commands_mismatch")
+    if prompt_scope.get("terminal_logs_local_private") is not expected_inline:
+        errors.append("prompt_scope_terminal_logs_mismatch")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        errors.append("prompt_scope_saved_placeholders_mismatch")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not expected_inline:
+        errors.append("prompt_scope_shareable_log_guidance_mismatch")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append("prompt_scope_prompt_file_path_public_mismatch")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append("prompt_scope_raw_prompt_public_mismatch")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        errors.append("prompt_scope_public_artifact_safe_mismatch")
+
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    if answer_scope.get("scope_state") != "no-local-answer":
+        errors.append("answer_scope_state_mismatch")
+    if answer_scope.get("terminal_only") is not False:
+        errors.append("answer_scope_terminal_only_mismatch")
+    if answer_scope.get("visible_in_terminal") is not False:
+        errors.append("answer_scope_visible_in_terminal_mismatch")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        errors.append("answer_scope_saved_json_display_mismatch")
+    if answer_scope.get("saved_markdown_display") != "none":
+        errors.append("answer_scope_saved_markdown_display_mismatch")
+    if answer_scope.get("raw_prompt_public") is not False:
+        errors.append("answer_scope_raw_prompt_public_mismatch")
+    if answer_scope.get("raw_generated_text_public") is not False:
+        errors.append("answer_scope_raw_generated_text_public_mismatch")
+    if answer_scope.get("generated_token_ids_public") is not False:
+        errors.append("answer_scope_generated_token_ids_public_mismatch")
+    if answer_scope.get("public_artifact_safe") is not True:
+        errors.append("answer_scope_public_artifact_safe_mismatch")
+
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    if shareable.get("saved_artifacts_public_safe") is not True:
+        errors.append("shareable_saved_artifacts_public_safe_mismatch")
+    if shareable.get("raw_prompt_public") is not False:
+        errors.append("shareable_raw_prompt_public_mismatch")
+    if shareable.get("raw_generated_text_public") is not False:
+        errors.append("shareable_raw_generated_text_public_mismatch")
+    if shareable.get("generated_token_ids_public") is not False:
+        errors.append("shareable_generated_token_ids_public_mismatch")
+    if shareable.get("answer_scope_state") != "no-local-answer":
+        errors.append("shareable_answer_scope_state_mismatch")
+    if shareable.get("local_answer_terminal_only") is not False:
+        errors.append("shareable_local_answer_terminal_only_mismatch")
+    if shareable.get("public_artifact_safe") is not True:
+        errors.append("shareable_public_artifact_safe_mismatch")
+
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -604,6 +783,7 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
 
 
 def attach_serve_process(report: dict[str, Any], serve_process: dict[str, Any]) -> dict[str, Any]:
+    ensure_output_scope(report)
     report["serve_process"] = summarize_serve_process(serve_process, ok=bool(report.get("ok")))
     safety_errors = validate_public_report(report)
     if safety_errors:
@@ -621,7 +801,7 @@ def degraded_report(args: argparse.Namespace, missing: list[str], output_dir: Pa
     ]
     if ok:
         codes.append("product_swarm_mvp_degraded_ready")
-    return {
+    return ensure_output_scope({
         "schema": SCHEMA,
         "generated_at": utc_now(),
         "ok": ok,
@@ -643,7 +823,7 @@ def degraded_report(args: argparse.Namespace, missing: list[str], output_dir: Pa
             "not_p2p": True,
             "not_large_model_serving": True,
         },
-    }
+    }, args)
 
 
 def run_local_loopback(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
@@ -702,6 +882,7 @@ def run_local_loopback(args: argparse.Namespace, output_dir: Path) -> dict[str, 
                 "steps": steps,
                 "diagnosis_codes": ["serve_start_failed"],
             }
+            ensure_output_scope(pending_report, args)
             return pending_report
 
         generate_cmd = [
@@ -908,6 +1089,7 @@ def finalize_report(
             "not_large_model_serving": True,
         },
     }
+    ensure_output_scope(report, args)
     safety_errors = validate_public_report(report)
     if safety_errors:
         report["ok"] = False
@@ -924,6 +1106,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         report = degraded_report(args, missing, output_dir)
     else:
         report = run_local_loopback(args, output_dir)
+    ensure_output_scope(report, args)
     report = support_bundle.sanitize(report)
     cleanup_summary = cleanup_private_runtime_state(
         output_dir,
@@ -1002,6 +1185,31 @@ def main() -> None:
     else:
         print(f"Product Swarm MVP check ready: {report.get('ok')}")
         print(f"Diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+        output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+        prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+        answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+        if output_request:
+            print(
+                "Output request: "
+                f"include_output={output_request.get('include_output')} "
+                f"raw_prompt_public={output_request.get('raw_prompt_public')} "
+                f"raw_generated_text_public={output_request.get('raw_generated_text_public')} "
+                f"generated_token_ids_public={output_request.get('generated_token_ids_public')}"
+            )
+        if prompt_scope:
+            print(
+                "Prompt scope: "
+                f"source={prompt_scope.get('source')} "
+                f"count={prompt_scope.get('prompt_count')} "
+                f"raw_prompt_public={prompt_scope.get('raw_prompt_public')}"
+            )
+        if answer_scope:
+            print(
+                "Answer scope: "
+                f"{answer_scope.get('scope_state')} "
+                f"saved_json={answer_scope.get('saved_json_display')} "
+                f"public_artifact_safe={answer_scope.get('public_artifact_safe')}"
+            )
     raise SystemExit(0 if report.get("ok") else 1)
 
 
