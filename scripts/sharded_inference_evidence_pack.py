@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import select
+import shlex
 import signal
 import subprocess
 import sys
@@ -26,6 +27,7 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 from create_miner_invite import create_invite  # noqa: E402
+import support_bundle  # noqa: E402
 
 
 SCHEMA = "sharded_inference_evidence_v1"
@@ -47,6 +49,164 @@ FAILURE_MODES = {
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def shell_command(parts: list[Any]) -> str:
+    return shlex.join([str(part) for part in parts])
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+        "side_effectful": bool(side_effectful),
+    }
+    if reason:
+        entry["reason"] = reason
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "", ok: bool | None = None) -> dict[str, Any]:
+    try:
+        relative = path.resolve().relative_to(output_dir.resolve()).as_posix()
+    except ValueError:
+        relative = str(path)
+    entry: dict[str, Any] = {"kind": kind, "path": relative, "present": path.is_file()}
+    if schema:
+        entry["schema"] = schema
+    if ok is not None:
+        entry["ok"] = bool(ok)
+    return entry
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "sharded_inference_evidence.md",
+        "summary_json": output_dir / "sharded_inference_evidence.json",
+        "summary_markdown": output_dir / "sharded_inference_evidence.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    return {
+        "schema": "sharded_inference_artifact_summary_v1",
+        "inspect_first": str(paths["inspect_first"]),
+        "summary_json": str(paths["summary_json"]),
+        "summary_markdown": str(paths["summary_markdown"]),
+        "support_bundle": str(paths["support_bundle"]),
+        "shareable_paths": [str(path) for path in paths.values()],
+        "artifact_count": len(paths),
+        "present_artifact_count": sum(1 for path in paths.values() if path.is_file()),
+        "raw_prompt_public": False,
+        "raw_result_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Open inspect_first first, then support_bundle for diagnostics. "
+            "Artifacts contain route/stage readiness, hashes, counts, and redaction status only."
+        ),
+    }
+
+
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_result_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Sharded inference evidence records fixed model-bundle route readiness and validation summaries only; "
+            "raw prompts, raw outputs, and intermediate tensors are excluded."
+        ),
+    }
+
+
+def prompt_scope_summary(report: dict[str, Any] | None = None) -> dict[str, Any]:
+    session = report.get("session") if isinstance(report, dict) and isinstance(report.get("session"), dict) else {}
+    try:
+        prompt_count = int(session.get("request_count") or 0)
+    except (TypeError, ValueError):
+        prompt_count = 0
+    return {
+        "source": "fixed-model-bundle-scenario",
+        "prompt_count": prompt_count,
+        "scenario_id": session.get("scenario_id"),
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This proof uses fixed model-bundle validation scenarios; public artifacts record scenario id "
+            "and request count, not raw prompt text."
+        ),
+    }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"scenario_id={prompt_scope.get('scenario_id') or 'none'} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "evidence-only",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "validation-summary-only",
+        "saved_markdown_display": "validation-summary-only",
+        "json_stdout_display": "validation-summary-only",
+        "raw_result_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "The report proves two-stage routing and baseline validation; it does not save or print raw outputs."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_result_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "evidence-only",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share sharded_inference_evidence.json/md and support_bundle.json; they contain stage readiness, "
+            "baseline match, redaction status, and diagnostics only."
+        ),
+    }
 
 
 def request_json(
@@ -437,6 +597,211 @@ def safe_state_text(state: dict[str, Any]) -> str:
     return json.dumps(state.get("tasks", []), sort_keys=True)
 
 
+def sharded_inference_command(args: argparse.Namespace, output_dir: Path) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "shard-infer",
+        "--output-dir",
+        str(output_dir),
+        "--port",
+        getattr(args, "port", 9820),
+        "--request-count",
+        getattr(args, "request_count", 4),
+        "--scenario-id",
+        getattr(args, "scenario_id", "route-baseline"),
+        "--failure-mode",
+        getattr(args, "failure_mode", FAILURE_NONE),
+        "--stage-mode",
+        getattr(args, "stage_mode", "both"),
+        "--json",
+    ]
+    if getattr(args, "require_distinct_stage_miners", False):
+        command.append("--require-distinct-stage-miners")
+    return command
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []) if code)
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    requeue = (
+        ((report.get("observability") if isinstance(report.get("observability"), dict) else {}).get("requeue_summary"))
+        if isinstance((report.get("observability") if isinstance(report.get("observability"), dict) else {}).get("requeue_summary"), dict)
+        else {}
+    )
+    items: list[tuple[str, Any]] = [
+        ("sharded inference ready", report.get("ok") is True and "sharded_inference_ready" in codes),
+        ("stage 0 accepted", "stage_0_accepted" in codes),
+        ("stage 1 accepted", "stage_1_accepted" in codes),
+        ("activation transport ready", "activation_transport_ready" in codes),
+        ("baseline match ready", "baseline_match" in codes),
+        ("read-only safety boundary present", safety.get("read_only") is True),
+        ("redaction safety present", safety.get("redaction_ok") is True),
+        ("raw activation redacted", safety.get("raw_activation_redacted") is True),
+        ("not production boundary present", safety.get("not_production") is True),
+    ]
+    if requeue.get("enabled"):
+        items.append(("stage requeue ready", "stage_requeue_ready" in codes))
+    for process in ((report.get("observability") or {}).get("processes") or []):
+        if isinstance(process, dict) and process.get("ok") is not True and process.get("expected_failure") is not True:
+            items.append((f"miner process {process.get('miner_id') or 'unknown'} passed", False))
+    missing: list[str] = []
+    for label, ready in items:
+        if ready is not True:
+            missing.append(label)
+    return missing
+
+
+def recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    missing: list[str],
+) -> dict[str, Any]:
+    if report.get("ok") is True:
+        return command_entry(
+            "inspect sharded inference evidence",
+            artifact_command(output_dir, "sharded_inference_evidence.md"),
+            reason="review_artifacts",
+        )
+    return command_entry(
+        "rerun sharded inference proof",
+        sharded_inference_command(args, output_dir),
+        reason="fix_sharded_inference_blockers" if missing else "rerun_sharded_inference",
+        side_effectful=True,
+    )
+
+
+def next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "sharded_inference_evidence.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    refresh = command_entry(
+        "refresh sharded inference proof",
+        sharded_inference_command(args, output_dir),
+        reason="refresh_sharded_inference",
+        side_effectful=True,
+    )
+    if all(item.get("command_line") != refresh.get("command_line") for item in commands):
+        commands.append(refresh)
+    return commands
+
+
+def user_status(report: dict[str, Any], *, recommended: dict[str, Any], missing: list[str]) -> dict[str, Any]:
+    if report.get("ok") is True and not missing:
+        state = "ready"
+        headline = "Pipeline-sharded model-bundle inference evidence is ready."
+        next_step = "review_artifacts"
+    else:
+        state = "blocked"
+        headline = "Pipeline-sharded model-bundle inference evidence needs attention."
+        next_step = "fix_blockers"
+    session = report.get("session") if isinstance(report.get("session"), dict) else {}
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "scenario_id": session.get("scenario_id") or "unknown",
+        "request_count": session.get("request_count"),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    artifacts = artifact_summary(output_dir)
+    ready = bool(report.get("ok") is True and not missing)
+    return {
+        "schema": "sharded_inference_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "ready": ready,
+        "next_step": "review_artifacts" if ready else "fix_sharded_inference_blockers",
+        "inspect_first": artifacts["inspect_first"],
+        "support_bundle": artifacts["support_bundle"],
+        "recommended_next_command": recommended,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": (report.get("diagnosis_codes") or ["none"])[0],
+        "not_completed_count": len(missing),
+        "not_completed": list(missing),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_result_public": False,
+    }
+
+
+def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return support_bundle.sanitize({
+        "schema": "sharded_inference_support_bundle_v1",
+        "generated_at": utc_now(),
+        "ok": report.get("ok"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "not_completed": report.get("not_completed"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
+        "session": report.get("session"),
+        "stage_summary": report.get("stage_summary"),
+        "observability": report.get("observability"),
+        "safety": report.get("safety"),
+        "limitations": report.get("limitations"),
+    })
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path | None = None) -> dict[str, Any]:
+    if output_dir is None:
+        output_dir = Path.cwd()
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(report))
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
+    missing = not_completed_items(report)
+    report["not_completed"] = missing
+    recommended = recommended_next_command(report, args, output_dir=output_dir, missing=missing)
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(report, recommended=recommended, missing=missing)
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
 def build_report(
     *,
     args: argparse.Namespace,
@@ -561,7 +926,7 @@ def build_report(
             "Not GPU/TPU pooling, P2P routing, real LLM sharding, or arbitrary prompt serving",
         ],
     }
-    return report
+    return attach_user_guidance(report, args)
 
 
 def run_evidence(args: argparse.Namespace) -> dict[str, Any]:
@@ -760,13 +1125,69 @@ def write_json(payload: dict[str, Any], path: str) -> None:
 def render_markdown(report: dict[str, Any]) -> str:
     session = report.get("session") or {}
     stage = report.get("stage_summary") or {}
-    return "\n".join([
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    lines = [
         "# CrowdTensor Sharded Inference Evidence",
         "",
         f"Schema: `{report.get('schema')}`",
         f"OK: `{report.get('ok')}`",
         f"Session: `{session.get('session_id')}`",
         f"Workload: `{report.get('workload_type')}`",
+        f"Scenario: `{session.get('scenario_id')}`",
+        "",
+        "## Review",
+        "",
+        f"- status: `{user.get('state')}` {user.get('headline') or ''}",
+        f"- state: `{review.get('state')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- support bundle: `{review.get('support_bundle')}`",
+        f"- recommended next: `{recommended.get('command_line') or 'none'}`",
+        f"- public artifact safe: `{review.get('public_artifact_safe')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    for item in report.get("next_commands") or []:
+        if isinstance(item, dict):
+            lines.append(f"- {item.get('label')}: `{item.get('command_line')}`")
+    if not report.get("next_commands"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifacts.get('inspect_first')}`",
+        f"- summary JSON: `{artifacts.get('summary_json')}`",
+        f"- support bundle: `{artifacts.get('support_bundle')}`",
+        f"- present artifacts: `{artifacts.get('present_artifact_count')}/{artifacts.get('artifact_count')}`",
+        "",
+        "## Not Completed",
+        "",
+    ])
+    for item in report.get("not_completed") or []:
+        lines.append(f"- {item}")
+    if not report.get("not_completed"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope.get('summary') or 'Public artifacts exclude raw prompt text.'}",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no raw result.'}",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_result_public={shareable.get('raw_result_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
         "## Diagnosis",
         "",
@@ -780,6 +1201,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "CPU-only fixed two-stage pipeline; not production Swarm Inference, GPU pooling, P2P routing, or real LLM sharding.",
         "",
     ])
+    return "\n".join(lines)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -822,11 +1244,42 @@ def main() -> None:
     try:
         args = parse_args()
         report = run_evidence(args)
+        output_dir = Path(args.json_out).resolve().parent if args.json_out else Path.cwd()
+        report = attach_user_guidance(report, args, output_dir=output_dir)
+        report.setdefault("artifacts", {})
+        report["artifacts"]["sharded_inference_evidence_json"] = artifact_entry(
+            Path(args.json_out) if args.json_out else output_dir / "sharded_inference_evidence.json",
+            output_dir,
+            kind="sharded_inference_evidence",
+            schema=SCHEMA,
+            ok=report.get("ok"),
+        )
+        report["artifacts"]["sharded_inference_evidence_markdown"] = artifact_entry(
+            Path(args.markdown_out) if args.markdown_out else output_dir / "sharded_inference_evidence.md",
+            output_dir,
+            kind="sharded_inference_evidence_markdown",
+        )
+        report["artifacts"]["support_bundle_json"] = artifact_entry(
+            output_dir / "support_bundle.json",
+            output_dir,
+            kind="sharded_inference_support_bundle",
+            schema="sharded_inference_support_bundle_v1",
+        )
         write_json(report, args.json_out)
         if args.markdown_out:
             output = Path(args.markdown_out)
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(render_markdown(report), encoding="utf-8")
+        support_path = output_dir / "support_bundle.json"
+        write_json(support_bundle_payload(report), str(support_path))
+        if args.json_out:
+            report["artifacts"]["sharded_inference_evidence_json"]["present"] = Path(args.json_out).is_file()
+        if args.markdown_out:
+            report["artifacts"]["sharded_inference_evidence_markdown"]["present"] = Path(args.markdown_out).is_file()
+        report["artifacts"]["support_bundle_json"]["present"] = support_path.is_file()
+        report["artifact_summary"] = artifact_summary(output_dir)
+        write_json(support_bundle_payload(report), str(support_path))
+        write_json(report, args.json_out)
         print(json.dumps(report, sort_keys=True))
         raise SystemExit(0 if report.get("ok") else 1)
     except SystemExit:

@@ -15002,6 +15002,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("sharded_inference_evidence_pack.py", command[1])
             self.assertIn("--failure-mode", command)
             self.assertIn("kill-stage-after-claim", command)
+            evidence_json = Path(command[command.index("--json-out") + 1])
+            evidence_md = Path(command[command.index("--markdown-out") + 1])
+            evidence_json.write_text("{}", encoding="utf-8")
+            evidence_md.write_text("# evidence\n", encoding="utf-8")
+            (evidence_json.parent / "support_bundle.json").write_text("{}", encoding="utf-8")
             return completed({
                 "schema": "sharded_inference_evidence_v1",
                 "ok": True,
@@ -15016,6 +15021,80 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "session": {"session_id": "shard-session-test", "stage_count": 2},
                 "stage_summary": {"stage_1": {"baseline_match": True}},
                 "safety": {"read_only": True, "redaction_ok": True},
+                "output_request": {
+                    "include_output": False,
+                    "raw_prompt_public": False,
+                    "raw_result_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "public_artifact_safe": True,
+                },
+                "prompt_scope": {
+                    "source": "fixed-model-bundle-scenario",
+                    "prompt_count": 4,
+                    "scenario_id": "route-baseline",
+                    "inline_prompt_text": False,
+                    "terminal_next_commands_local_private": False,
+                    "saved_artifacts_prompt_placeholders": True,
+                    "prompt_file_path_public": False,
+                    "raw_prompt_public": False,
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "evidence-only",
+                    "terminal_only": False,
+                    "visible_in_terminal": False,
+                    "saved_json_display": "validation-summary-only",
+                    "saved_markdown_display": "validation-summary-only",
+                    "public_artifact_safe": True,
+                },
+                "shareable_summary": {
+                    "saved_artifacts_public_safe": True,
+                    "raw_prompt_public": False,
+                    "raw_result_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "local_output_display_only": False,
+                    "answer_scope_state": "evidence-only",
+                    "local_answer_terminal_only": False,
+                },
+                "user_status": {
+                    "state": "ready",
+                    "headline": "Pipeline-sharded model-bundle inference evidence is ready.",
+                    "next_step": "review_artifacts",
+                    "recommended_label": "inspect sharded inference evidence",
+                    "public_artifact_safe": True,
+                },
+                "review_summary": {
+                    "schema": "sharded_inference_review_summary_v1",
+                    "state": "ready",
+                    "ready": True,
+                    "next_step": "review_artifacts",
+                    "inspect_first": str(evidence_md),
+                    "support_bundle": str(evidence_json.parent / "support_bundle.json"),
+                    "recommended_label": "inspect sharded inference evidence",
+                    "primary_code": "sharded_inference_ready",
+                    "public_artifact_safe": True,
+                },
+                "recommended_next_command": {
+                    "label": "inspect sharded inference evidence",
+                    "command_line": f"sed -n 1,220p {evidence_md}",
+                    "public_artifact_safe": True,
+                },
+                "next_commands": [
+                    {"label": "inspect shareable summary", "command_line": f"sed -n 1,220p {evidence_md}", "public_artifact_safe": True},
+                    {"label": "inspect support bundle", "command_line": f"sed -n 1,220p {evidence_json.parent / 'support_bundle.json'}", "public_artifact_safe": True},
+                ],
+                "not_completed": [],
+                "artifact_summary": {
+                    "inspect_first": str(evidence_md),
+                    "summary_json": str(evidence_json),
+                    "summary_markdown": str(evidence_md),
+                    "support_bundle": str(evidence_json.parent / "support_bundle.json"),
+                    "artifact_count": 4,
+                    "present_artifact_count": 4,
+                    "public_artifact_safe": True,
+                },
             })
 
         args = cli.parse_args([
@@ -15031,8 +15110,117 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(summary["ok"], summary)
         self.assertEqual(summary["schema"], "sharded_inference_cli_v1")
         self.assertIn("sharded_inference_ready", summary["diagnosis_codes"])
+        self.assertEqual(summary["user_status"]["state"], "ready")
+        self.assertEqual(summary["review_summary"]["schema"], "sharded_inference_review_summary_v1")
+        self.assertFalse(summary["output_request"]["raw_result_public"])
+        self.assertEqual(summary["answer_scope"]["scope_state"], "evidence-only")
+        self.assertTrue(summary["artifacts"]["support_bundle_json"]["present"])
         self.assertTrue(summary["artifacts"]["sharded_inference_cli_summary"]["present"])
         self.assertTrue(calls)
+
+    def test_print_shard_infer_outputs_user_guidance(self) -> None:
+        report = {
+            "schema": "sharded_inference_cli_v1",
+            "ok": True,
+            "output_dir": "dist/shard-infer",
+            "failure_mode": "none",
+            "diagnosis_codes": ["sharded_inference_ready"],
+            "session": {"session_id": "shard-session", "stage_count": 2},
+            "stage_summary": {
+                "stage_0": {"task_id": "stage0", "miner_id": "m0", "activation_count": 2},
+                "stage_1": {"task_id": "stage1", "miner_id": "m1", "baseline_match": True},
+            },
+            "user_status": {
+                "state": "ready",
+                "headline": "Pipeline-sharded model-bundle inference evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect sharded inference evidence",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "sharded_inference_review_summary_v1",
+                "state": "ready",
+                "ready": True,
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/shard-infer/sharded_inference_evidence.md",
+                "recommended_label": "inspect sharded inference evidence",
+                "primary_code": "sharded_inference_ready",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect sharded inference evidence",
+                "command_line": "sed -n 1,220p dist/shard-infer/sharded_inference_evidence.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p dist/shard-infer/sharded_inference_evidence.md",
+                    "public_artifact_safe": True,
+                }
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/shard-infer/sharded_inference_evidence.md",
+                "support_bundle": "dist/shard-infer/support_bundle.json",
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "public_artifact_safe": True,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_result_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "prompt_scope": {
+                "source": "fixed-model-bundle-scenario",
+                "prompt_count": 4,
+                "scenario_id": "route-baseline",
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "evidence-only",
+                "terminal_only": False,
+                "visible_in_terminal": False,
+                "saved_json_display": "validation-summary-only",
+                "saved_markdown_display": "validation-summary-only",
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_result_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "evidence-only",
+                "local_answer_terminal_only": False,
+            },
+            "not_completed": [],
+            "artifacts": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_sharded_inference(report)
+        output = stdout.getvalue()
+
+        self.assertIn("  status: ready", output)
+        self.assertIn("  review: state=ready next=review_artifacts", output)
+        self.assertIn("  recommended_next: sed -n 1,220p", output)
+        self.assertIn("  next[1] inspect shareable summary:", output)
+        self.assertIn("  artifacts: inspect=dist/shard-infer/sharded_inference_evidence.md present=4/4", output)
+        self.assertIn("  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
+        self.assertIn("  prompt_scope: source=fixed-model-bundle-scenario count=4", output)
+        self.assertIn("  answer_scope: state=evidence-only", output)
+        self.assertIn("  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False", output)
 
     def test_main_shard_infer_json_outputs_summary(self) -> None:
         summary = {"schema": "sharded_inference_cli_v1", "ok": True}

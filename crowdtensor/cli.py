@@ -2974,6 +2974,20 @@ def build_sharded_inference(args: argparse.Namespace, *, runner: Runner = subpro
         "session": payload.get("session") if isinstance(payload.get("session"), dict) else {},
         "stage_summary": payload.get("stage_summary") if isinstance(payload.get("stage_summary"), dict) else {},
         "safety": payload.get("safety") if isinstance(payload.get("safety"), dict) else {},
+        "output_request": payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {},
+        "prompt_scope": payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {},
+        "answer_scope": payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {},
+        "shareable_summary": payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {},
+        "user_status": payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {},
+        "review_summary": payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {},
+        "recommended_next_command": (
+            payload.get("recommended_next_command")
+            if isinstance(payload.get("recommended_next_command"), dict)
+            else {}
+        ),
+        "next_commands": payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else [],
+        "not_completed": payload.get("not_completed") if isinstance(payload.get("not_completed"), list) else [],
+        "artifact_summary": payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {},
         "artifacts": {
             "sharded_inference_evidence_json": artifact_entry(
                 evidence_json,
@@ -2994,6 +3008,12 @@ def build_sharded_inference(args: argparse.Namespace, *, runner: Runner = subpro
                 schema=SHARDED_INFERENCE_CLI_SCHEMA,
                 ok=bool(step.get("ok")),
             ),
+            "support_bundle_json": artifact_entry(
+                output_dir / "support_bundle.json",
+                output_dir,
+                kind="sharded_inference_support_bundle",
+                schema="sharded_inference_support_bundle_v1",
+            ),
         },
         "limitations": [
             "CPU-only fixed two-stage pipeline; not production Swarm Inference",
@@ -3008,7 +3028,11 @@ def build_sharded_inference(args: argparse.Namespace, *, runner: Runner = subpro
         summary.setdefault("errors", []).append("sensitive_output_detected")
         summary["safety_error"] = "sharded inference summary contained secret-like fragments"
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["sharded_inference_evidence_json"]["present"] = evidence_json.is_file()
+    summary["artifacts"]["sharded_inference_evidence_markdown"]["present"] = evidence_md.is_file()
+    summary["artifacts"]["support_bundle_json"]["present"] = (output_dir / "support_bundle.json").is_file()
     summary["artifacts"]["sharded_inference_cli_summary"]["present"] = True
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
 
 
@@ -13266,12 +13290,37 @@ def print_cpu_inference_beta(report: dict[str, Any]) -> None:
 
 
 def print_sharded_inference(summary: dict[str, Any]) -> None:
+    user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
+    review = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
+    recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
+    artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    output_request = summary.get("output_request") if isinstance(summary.get("output_request"), dict) else {}
+    prompt_scope = summary.get("prompt_scope") if isinstance(summary.get("prompt_scope"), dict) else {}
+    answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
+    shareable_summary_value = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     print("CrowdTensor sharded inference")
     print(f"  ok: {summary.get('ok')}")
     print(f"  schema: {summary.get('schema')}")
     print(f"  output: {summary.get('output_dir')}")
     print(f"  failure_mode: {summary.get('failure_mode')}")
     print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+    if recommended:
+        print(f"  recommended_next: {recommended.get('command_line')}")
+    for index, item in enumerate((summary.get("next_commands") or []), start=1):
+        if isinstance(item, dict):
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
+    if artifact_summary:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary.get('inspect_first')} "
+            f"present={artifact_summary.get('present_artifact_count')}/{artifact_summary.get('artifact_count')} "
+            f"support={artifact_summary.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
+        )
     session = summary.get("session") or {}
     print(f"  session: {session.get('session_id')} stages={session.get('stage_count')}")
     stage = summary.get("stage_summary") or {}
@@ -13279,6 +13328,16 @@ def print_sharded_inference(summary: dict[str, Any]) -> None:
     stage1 = stage.get("stage_1") or {}
     print(f"  stage0: task={stage0.get('task_id')} miner={stage0.get('miner_id')} activations={stage0.get('activation_count')}")
     print(f"  stage1: task={stage1.get('task_id')} miner={stage1.get('miner_id')} baseline_match={stage1.get('baseline_match')}")
+    if output_request:
+        print(f"  output_request: {output_request_text(output_request)}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
+    if answer_scope:
+        print_answer_scope_block(answer_scope)
+    if shareable_summary_value:
+        print(f"  shareable: {shareable_summary_text(shareable_summary_value)}")
+    for item in summary.get("not_completed") or []:
+        print(f"  not_completed: {item}")
     for name, artifact in sorted((summary.get("artifacts") or {}).items()):
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
