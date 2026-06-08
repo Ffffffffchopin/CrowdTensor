@@ -114,6 +114,11 @@ up to 4 non-empty prompt lines. The CLI rejects mixed prompt sources instead of
 guessing. Reports expose
 `output_request.include_output` while keeping
 `output_request.raw_generated_text_public` false in JSON and saved artifacts.
+Reports also include `prompt_scope`: a machine-readable summary of the prompt
+source (`prompt-text`, `prompt-file`, `prompt-stdin`, `prompt-texts`, or
+`prompt-texts-file`), prompt count, whether terminal next commands are
+local-private, and whether saved artifacts use placeholders. `prompt_scope`
+does not contain raw prompt text.
 
 ```bash
 crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8
@@ -163,9 +168,10 @@ those warnings in `What To Do Next`. The adjacent `inspect_first` line points to
 the Markdown summary to open first. The adjacent `review_next` line repeats the
 safe recommended command near that summary; human terminal output renders it
 with local prompt sources for copying, using a `printf` pipe placeholder for
-`--prompt-stdin`, while JSON/Markdown artifacts keep prompt placeholders and
-prefer `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when rerunning
-saved commands. Then use the `status` line or
+`--prompt-stdin`, while JSON/Markdown artifacts keep prompt placeholders.
+`prompt_scope` records that distinction without storing raw text; prefer
+`--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when rerunning saved
+commands. Then use the `status` line or
 `user_status` for detail: `completed` means the request finished,
 `preflight-ready` means submit next, `preflight-partial` means run the
 recommended check first, and `blocked` means follow `action` /

@@ -111,6 +111,11 @@ up to 4 non-empty prompt lines. The CLI rejects mixed prompt sources instead of
 guessing. Reports expose
 `output_request.include_output` while keeping
 `output_request.raw_generated_text_public` false in JSON and saved artifacts.
+Reports also include `prompt_scope`: a machine-readable summary of the prompt
+source (`prompt-text`, `prompt-file`, `prompt-stdin`, `prompt-texts`, or
+`prompt-texts-file`), prompt count, whether terminal next commands are
+local-private, and whether saved artifacts use placeholders. `prompt_scope`
+does not contain raw prompt text.
 
 ```bash
 crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8
@@ -144,8 +149,9 @@ When you pass an inline positional prompt, `--prompt-text`, or `--prompt-texts`,
 human terminal `review_next`, `recommended_next`, and `next[...]` commands may
 render those prompt values so the command is directly copyable. Treat terminal
 logs from those runs as local-private. Saved JSON/Markdown keep prompt
-placeholders; use `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file`
-when you need shareable terminal logs.
+placeholders; `prompt_scope` records that distinction without storing raw text.
+Use `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when you need
+shareable terminal logs.
 The `result` line and JSON/Markdown `result` object summarize completion state,
 token count, output count, generated-text hash, and display safety:
 `local-private` for terminal-only generated text, `hash-only` for redacted
