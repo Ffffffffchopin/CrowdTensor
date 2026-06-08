@@ -35,6 +35,7 @@ from crowdtensor.session_protocol import public_leak_paths, safe_generation_summ
 SCHEMA = "public_swarm_inference_v2"
 SUPPORT_SCHEMA = "public_swarm_inference_v2_support_bundle_v1"
 RUNTIME_PROVENANCE_SCHEMA = "public_swarm_inference_v2_runtime_provenance_v1"
+INFERENCE_VERDICT_SCHEMA = "crowdtensor_inference_verdict_v1"
 USABLE_SCHEMA = "usable_swarm_inference_v1"
 PREVIEW_V04_SCHEMA = "public_swarm_preview_v04_v1"
 REAL_P2P_SCHEMA = "real_p2p_swarm_inference_core_rc_v1"
@@ -905,6 +906,94 @@ def shareable_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def v2_gpu_verdict_state(cuda: dict[str, Any], provenance: dict[str, Any]) -> str:
+    if cuda.get("ready") is True and provenance.get("retained_gpu_evidence_imported") is True:
+        return "retained-gpu-evidence"
+    if cuda.get("ready") is True:
+        return "gpu-runtime-ready"
+    if cuda.get("fail_closed_ready") is True and cuda.get("cuda_unavailable") is True:
+        return "cuda-unavailable-fail-closed"
+    if cuda.get("fail_closed_ready") is True:
+        return "cuda-fail-closed"
+    return "gpu-evidence-blocked"
+
+
+def inference_verdict_summary(report: dict[str, Any]) -> dict[str, Any]:
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    local = readiness.get("local_p2p_generate") if isinstance(readiness.get("local_p2p_generate"), dict) else {}
+    cuda = readiness.get("cuda_optional") if isinstance(readiness.get("cuda_optional"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    completed = bool(report.get("ok") is True and local.get("ready") is True)
+    state = str(review.get("state") or user_status.get("state") or ("ready" if report.get("ok") else "blocked"))
+    blocked = state == "blocked" or report.get("ok") is not True
+    preflight_only = str(report.get("mode") or "") == MODE_PACKAGE
+    generated = int(local.get("generated_token_count") or 0)
+    max_new_tokens = int(local.get("max_new_tokens") or 0)
+    fresh_external_verified = provenance.get("fresh_external_verified") is True
+    retained_gpu_imported = provenance.get("retained_gpu_evidence_imported") is True
+    gpu_state = v2_gpu_verdict_state(cuda, provenance)
+    if completed:
+        message = (
+            "Public Swarm v2 inference evidence is ready. This report proves the redacted "
+            "route/evidence path; it does not save a local answer transcript."
+        )
+    elif preflight_only:
+        message = "Public Swarm v2 package artifacts are ready, but no local inference proof was run in this mode."
+    else:
+        message = "Public Swarm v2 inference evidence is blocked; follow the recommended next command."
+    return {
+        "schema": INFERENCE_VERDICT_SCHEMA,
+        "kind": "Public Swarm v2",
+        "state": state,
+        "completed": completed,
+        "preflight_only": preflight_only,
+        "blocked": blocked,
+        "result_status": "ready" if completed else ("package-only" if preflight_only else "blocked"),
+        "generated_token_count": generated,
+        "max_new_tokens": max_new_tokens,
+        "output_count": int(local.get("accepted_rows") or 0),
+        "answer_scope_state": answer_scope.get("scope_state") or shareable.get("answer_scope_state") or "unknown",
+        "answer_visible_in_terminal": bool(answer_scope.get("visible_in_terminal")),
+        "saved_artifacts_public_safe": bool(shareable.get("saved_artifacts_public_safe")),
+        "evidence_level": provenance.get("proof_level") or report.get("mode") or "unknown",
+        "executed_where": provenance.get("proof_level") or report.get("mode") or "unknown",
+        "gpu_state": gpu_state,
+        "retained_gpu_evidence_imported": retained_gpu_imported,
+        "fresh_kaggle_gpu_verified": False,
+        "fresh_external_verified": fresh_external_verified,
+        "recommended_label": recommended.get("label") or review.get("recommended_label") or "",
+        "recommended_reason": recommended.get("reason") or review.get("recommended_reason") or "",
+        "next_step": review.get("next_step") or user_status.get("next_step") or "",
+        "primary_code": review.get("primary_code") or "",
+        "inspect_first": artifact_report.get("inspect_first") or review.get("inspect_first") or "",
+        "public_artifact_safe": True,
+        "message": message,
+    }
+
+
+def inference_verdict_text(verdict: dict[str, Any]) -> str:
+    return (
+        f"state={verdict.get('state') or 'unknown'} "
+        f"completed={bool(verdict.get('completed'))} "
+        f"preflight_only={bool(verdict.get('preflight_only'))} "
+        f"answer={verdict.get('answer_scope_state') or 'unknown'} "
+        f"answer_visible={bool(verdict.get('answer_visible_in_terminal'))} "
+        f"artifacts_public={bool(verdict.get('saved_artifacts_public_safe'))} "
+        f"evidence={verdict.get('evidence_level') or 'unknown'} "
+        f"gpu={verdict.get('gpu_state') or 'unknown'} "
+        f"fresh_kaggle_gpu={bool(verdict.get('fresh_kaggle_gpu_verified'))} "
+        f"next={verdict.get('next_step') or 'none'} "
+        f"recommended={verdict.get('recommended_label') or 'none'} "
+        f"public_artifact_safe={bool(verdict.get('public_artifact_safe'))}"
+    )
+
+
 def runtime_provenance_summary(report: dict[str, Any]) -> dict[str, Any]:
     mode = str(report.get("mode") or "")
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
@@ -1689,6 +1778,7 @@ def build_common_report(
         recommended=recommended,
         not_completed=not_completed,
     )
+    report["inference_verdict"] = inference_verdict_summary(report)
     return persist_report(report, output_dir=output_dir)
 
 
@@ -1884,6 +1974,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
     next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     lines = [
         "# CrowdTensor Public Swarm Inference v2",
@@ -1905,6 +1996,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
         f"- recommended command: `{recommended.get('command_line')}`",
         f"- not completed count: `{review.get('not_completed_count')}`",
+        f"- verdict: `{inference_verdict_text(verdict)}`",
+        f"- verdict note: {verdict.get('message') or ''}",
         "",
         "## What To Do Next",
         "",
@@ -2049,6 +2142,23 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("runtime_provenance_proof_level_missing")
     if provenance.get("public_artifact_safe") is not True:
         errors.append("runtime_provenance_public_artifact_safe_mismatch")
+    verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
+    if verdict.get("schema") != INFERENCE_VERDICT_SCHEMA:
+        errors.append("inference_verdict_schema_mismatch")
+    if verdict.get("kind") != "Public Swarm v2":
+        errors.append("inference_verdict_kind_mismatch")
+    if verdict.get("state") not in {"ready", "blocked"}:
+        errors.append("inference_verdict_state_mismatch")
+    if verdict.get("completed") is not bool(report.get("ok") is True):
+        errors.append("inference_verdict_completed_mismatch")
+    if verdict.get("answer_scope_state") != "no-local-answer":
+        errors.append("inference_verdict_answer_scope_state_mismatch")
+    if verdict.get("saved_artifacts_public_safe") is not True:
+        errors.append("inference_verdict_saved_artifacts_public_safe_mismatch")
+    if verdict.get("fresh_kaggle_gpu_verified") is not False:
+        errors.append("inference_verdict_fresh_kaggle_gpu_mismatch")
+    if verdict.get("public_artifact_safe") is not True:
+        errors.append("inference_verdict_public_artifact_safe_mismatch")
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -2087,6 +2197,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
         report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
         report["review_summary"]["runbook"] = report["artifact_summary"]["runbook"]
+    report["inference_verdict"] = inference_verdict_summary(report)
     write_json(output_dir / "public_swarm_inference_v2.json", report)
     (output_dir / "public_swarm_inference_v2.md").write_text(render_markdown(report), encoding="utf-8")
     bundle = support_bundle.sanitize({
@@ -2100,6 +2211,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
         "runtime_provenance": report.get("runtime_provenance"),
+        "inference_verdict": report.get("inference_verdict"),
         "review_summary": report.get("review_summary"),
         "user_status": report.get("user_status"),
         "recommended_next_command": report.get("recommended_next_command"),
@@ -2119,6 +2231,8 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     }
     report["artifact_summary"] = artifact_summary(output_dir)
     bundle["artifact_summary"] = report.get("artifact_summary")
+    report["inference_verdict"] = inference_verdict_summary(report)
+    bundle["inference_verdict"] = report.get("inference_verdict")
     write_json(output_dir / "support_bundle.json", bundle)
     write_json(output_dir / "public_swarm_inference_v2.json", report)
     return report
@@ -2216,6 +2330,7 @@ def main() -> None:
         answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
         shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
         provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+        verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
         not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
         print("CrowdTensor Public Swarm Inference v2")
         print(f"  ok: {report.get('ok')}")
@@ -2229,6 +2344,9 @@ def main() -> None:
             print(f"  recommended_next: {recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}")
             if recommended.get("requires_env"):
                 print(f"  recommended_requires: {', '.join(str(name) for name in recommended.get('requires_env') or [])}")
+        if verdict:
+            print(f"  verdict: {inference_verdict_text(verdict)}")
+            print(f"  verdict_note: {verdict.get('message')}")
         if provenance:
             print(f"  runtime_provenance: {runtime_provenance_text(provenance)}")
         for index, item in enumerate(not_completed[:5], start=1):

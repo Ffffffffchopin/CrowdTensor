@@ -15635,6 +15635,7 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
     print("CrowdTensor Public Swarm Inference v2")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -15655,6 +15656,9 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
         )
         if recommended.get("requires_env"):
             print(f"  recommended_requires: {', '.join(str(name) for name in recommended.get('requires_env') or [])}")
+    if verdict:
+        print(f"  verdict: {inference_verdict_text(verdict)}")
+        print(f"  verdict_note: {verdict.get('message')}")
     for index, item in enumerate((report.get("not_completed") or [])[:5], start=1):
         print(f"  not_completed[{index}]: {item}")
     print(f"  local tokens: {local.get('generated_token_count')}/{local.get('max_new_tokens')}")

@@ -567,6 +567,25 @@ def validate_report(payload: dict[str, Any], *, mode: str) -> list[str]:
         errors.append("shareable_local_answer_terminal_only_mismatch")
     if shareable.get("public_artifact_safe") is not True:
         errors.append("shareable_public_artifact_safe_mismatch")
+    verdict = payload.get("inference_verdict") if isinstance(payload.get("inference_verdict"), dict) else {}
+    if verdict.get("schema") != pack.INFERENCE_VERDICT_SCHEMA:
+        errors.append("inference_verdict_schema_mismatch")
+    if verdict.get("kind") != "Public Swarm v2":
+        errors.append("inference_verdict_kind_mismatch")
+    if verdict.get("state") != "ready":
+        errors.append("inference_verdict_state_mismatch")
+    if verdict.get("completed") is not True:
+        errors.append("inference_verdict_completed_mismatch")
+    if verdict.get("answer_scope_state") != "no-local-answer":
+        errors.append("inference_verdict_answer_scope_state_mismatch")
+    if verdict.get("saved_artifacts_public_safe") is not True:
+        errors.append("inference_verdict_saved_artifacts_public_safe_mismatch")
+    if verdict.get("gpu_state") not in {"retained-gpu-evidence", "gpu-runtime-ready", "cuda-fail-closed", "cuda-unavailable-fail-closed"}:
+        errors.append("inference_verdict_gpu_state_mismatch")
+    if verdict.get("fresh_kaggle_gpu_verified") is not False:
+        errors.append("inference_verdict_fresh_kaggle_gpu_mismatch")
+    if verdict.get("public_artifact_safe") is not True:
+        errors.append("inference_verdict_public_artifact_safe_mismatch")
     encoded = json.dumps(payload, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment in encoded:

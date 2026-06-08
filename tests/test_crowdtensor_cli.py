@@ -15157,6 +15157,34 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "cuda_optional_fail_closed_ready": True,
                 "public_artifact_safe": True,
             },
+            "inference_verdict": {
+                "schema": "crowdtensor_inference_verdict_v1",
+                "kind": "Public Swarm v2",
+                "state": "ready",
+                "completed": True,
+                "preflight_only": False,
+                "blocked": False,
+                "result_status": "ready",
+                "generated_token_count": 16,
+                "max_new_tokens": 16,
+                "output_count": 32,
+                "answer_scope_state": "no-local-answer",
+                "answer_visible_in_terminal": False,
+                "saved_artifacts_public_safe": True,
+                "evidence_level": "retained-evidence-import",
+                "executed_where": "retained-evidence-import",
+                "gpu_state": "retained-gpu-evidence",
+                "retained_gpu_evidence_imported": True,
+                "fresh_kaggle_gpu_verified": False,
+                "fresh_external_verified": False,
+                "recommended_label": "review v2 evidence",
+                "recommended_reason": "v2_ready",
+                "next_step": "review_artifacts",
+                "primary_code": "public_swarm_inference_v2_ready",
+                "inspect_first": "dist/public-swarm-inference-v2/public_swarm_inference_v2.md",
+                "public_artifact_safe": True,
+                "message": "Public Swarm v2 inference evidence is ready. This report proves the redacted route/evidence path; it does not save a local answer transcript.",
+            },
             "next_commands": [
                 {
                     "label": "inspect shareable summary",
@@ -15196,6 +15224,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("  review_next: label=review v2 evidence reason=v2_ready command=less public_swarm_inference_v2.md", output)
         self.assertIn("  recommended_next: review v2 evidence reason=v2_ready less public_swarm_inference_v2.md", output)
+        self.assertIn("  verdict: state=ready completed=True preflight_only=False answer=no-local-answer answer_visible=False artifacts_public=True evidence=retained-evidence-import gpu=retained-gpu-evidence fresh_kaggle_gpu=False next=review_artifacts recommended=review v2 evidence public_artifact_safe=True", output)
+        self.assertIn("  verdict_note: Public Swarm v2 inference evidence is ready.", output)
         self.assertIn("kv cache ready: True", output)
         self.assertIn("batch ready: True", output)
         self.assertIn("stream ready: True", output)
