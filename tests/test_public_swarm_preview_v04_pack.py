@@ -34,6 +34,16 @@ class PublicSwarmPreviewV04PackTests(unittest.TestCase):
         self.assertFalse(preview["output_request"]["raw_generated_text_public"])
         self.assertFalse(preview["output_request"]["generated_token_ids_public"])
         self.assertTrue(preview["output_request"]["public_artifact_safe"])
+        self.assertEqual(preview["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(preview["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(preview["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(preview["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(preview["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(preview["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(preview["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertFalse(preview["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(preview["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(preview["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(preview["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(preview["answer_scope"]["visible_in_terminal"])
         self.assertFalse(preview["answer_scope"]["terminal_only"])
@@ -48,12 +58,14 @@ class PublicSwarmPreviewV04PackTests(unittest.TestCase):
         self.assertFalse(preview["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "preview-v04" / "public_swarm_preview_v04.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("prompt scope: `source=prompt-text count=1 inline_prompt_text=True", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
         support = json.loads((output_dir / "preview-v04" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["prompt_scope"]["source"], "prompt-text")
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
@@ -101,6 +113,53 @@ class PublicSwarmPreviewV04PackTests(unittest.TestCase):
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertNotIn("sensitive_output_detected", report["diagnosis_codes"])
+
+    def test_package_runbook_uses_prompt_placeholder(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt = "private preview prompt should not be saved"
+        args = pack.parse_args([
+            "evidence-import",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-text",
+            prompt,
+        ])
+
+        pack.build_report(args)
+
+        runbook = (output_dir / "PUBLIC_SWARM_PREVIEW_V04.md").read_text(encoding="utf-8")
+        report = json.loads((output_dir / "public_swarm_preview_v04.json").read_text(encoding="utf-8"))
+        support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        encoded = json.dumps({"report": report, "support": support, "runbook": runbook}, sort_keys=True)
+        self.assertNotIn(prompt, encoded)
+        self.assertIn("--prompt-text '<your-private-prompt>'", runbook)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+
+    def test_failed_step_redacts_prompt_text_from_tails(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt = "private failure prompt"
+        args = pack.parse_args([
+            "local-smoke",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-text",
+            prompt,
+        ])
+
+        def failing_runner(command: list[str], **_: object):
+            del command
+            return pack.subprocess.CompletedProcess(
+                args=["cmd"],
+                returncode=1,
+                stdout=f"failed for {prompt}\n",
+                stderr=f"stderr carried {prompt}\n",
+            )
+
+        report = pack.build_report(args, runner=failing_runner)
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(prompt, encoded)
+        self.assertIn("<redacted>", encoded)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
 
 
 if __name__ == "__main__":
