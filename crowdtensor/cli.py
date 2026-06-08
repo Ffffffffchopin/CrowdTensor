@@ -4210,7 +4210,9 @@ def build_public_swarm_inference_beta_rc(args: argparse.Namespace, *, runner: Ru
         str(args.http_timeout),
         "--json",
     ]
-    if getattr(args, "prompt_texts", ""):
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -4310,7 +4312,9 @@ def build_public_swarm_product_beta(args: argparse.Namespace, *, runner: Runner 
         str(args.http_timeout),
         "--json",
     ]
-    if getattr(args, "prompt_texts", ""):
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -4448,7 +4452,9 @@ def build_public_real_llm_swarm_beta(args: argparse.Namespace, *, runner: Runner
         str(args.http_timeout),
         "--json",
     ]
-    if getattr(args, "prompt_texts", ""):
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -4725,7 +4731,9 @@ def build_usable_swarm_inference(args: argparse.Namespace, *, runner: Runner = s
         args.optional_model_report,
         "--json",
     ]
-    if getattr(args, "prompt_texts", ""):
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -4807,7 +4815,9 @@ def build_public_swarm_inference_v2(args: argparse.Namespace, *, runner: Runner 
         str(args.http_timeout),
         "--json",
     ]
-    if getattr(args, "prompt_texts", ""):
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -14881,6 +14891,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     usable_swarm.add_argument("--hf-cache-dir", default="")
     usable_swarm.add_argument("--prompt-text", default="CrowdTensor usable swarm inference")
     usable_swarm.add_argument("--prompt-texts", default="")
+    usable_swarm.add_argument("--prompt-texts-file", default="")
     usable_swarm.add_argument("--stream-generation", action="store_true")
     usable_swarm.add_argument("--max-new-tokens", type=int, default=8)
     usable_swarm.add_argument("--startup-timeout", type=float, default=45.0)
@@ -14915,6 +14926,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     public_swarm_v2.add_argument("--hf-cache-dir", default="")
     public_swarm_v2.add_argument("--prompt-text", default="CrowdTensor Public Swarm Inference v2")
     public_swarm_v2.add_argument("--prompt-texts", default="")
+    public_swarm_v2.add_argument("--prompt-texts-file", default="")
     public_swarm_v2.add_argument("--stream-generation", action="store_true")
     public_swarm_v2.add_argument("--max-new-tokens", type=int, default=16)
     public_swarm_v2.add_argument("--startup-timeout", type=float, default=60.0)
@@ -16173,8 +16185,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             if getattr(args, name) <= 0:
                 raise SystemExit(f"--{name.replace('_', '-')} must be positive")
     if args.command == "usable-swarm":
+        if args.prompt_texts and args.prompt_texts_file:
+            raise SystemExit("usable-swarm accepts either --prompt-texts or --prompt-texts-file, not both")
         try:
-            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+            if args.prompt_texts_file:
+                args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+            else:
+                args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         if args.p2p_port < 1 or args.coordinator_port < 1:
@@ -16185,8 +16202,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             if getattr(args, name) <= 0:
                 raise SystemExit(f"--{name.replace('_', '-')} must be positive")
     if args.command == "public-swarm-v2":
+        if args.prompt_texts and args.prompt_texts_file:
+            raise SystemExit("public-swarm-v2 accepts either --prompt-texts or --prompt-texts-file, not both")
         try:
-            parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+            if args.prompt_texts_file:
+                args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+            else:
+                args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         if args.p2p_port < 1 or args.coordinator_port < 1:

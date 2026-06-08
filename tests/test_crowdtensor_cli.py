@@ -7897,6 +7897,56 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_schema"], "usable_swarm_inference_cli_v1")
         self.assertTrue(calls)
 
+    def test_usable_swarm_cli_forwards_prompt_texts_file(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_file = output_dir / "prompts.txt"
+        prompts = ["first prompt, with comma", "second prompt"]
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "usable-swarm",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--json",
+        ])
+        self.assertEqual(args.prompt_texts_list, prompts)
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("usable_swarm_inference_pack.py", command[1])
+            self.assertIn("--prompt-texts-file", command)
+            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            self.assertNotIn("--prompt-texts", command)
+            self.assertNotIn("--prompt-text", command)
+            command_text = " ".join(command)
+            self.assertNotIn(prompts[0], command_text)
+            self.assertNotIn(prompts[1], command_text)
+            return completed({
+                "schema": "usable_swarm_inference_v1",
+                "ok": True,
+                "mode": "local",
+                "prompt_scope": {
+                    "source": "prompt-texts-file",
+                    "prompt_count": 2,
+                    "raw_prompt_public": False,
+                },
+                "diagnosis_codes": ["usable_swarm_inference_ready", "public_swarm_generate_batch_ready"],
+            })
+
+        report = cli.build_usable_swarm_inference(args, runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "usable_swarm_inference_cli_v1")
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts-file")
+        self.assertNotIn(prompts[0], encoded)
+        self.assertNotIn(prompts[1], encoded)
+        self.assertTrue(calls)
+
     def test_usable_swarm_cli_forwards_stream_generation(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
@@ -7934,6 +7984,27 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "--prompt-texts",
                 "one,two,three,four,five",
             ])
+
+    def test_usable_swarm_cli_rejects_inline_and_file_prompt_batch(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text("first prompt\n", encoding="utf-8")
+
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args([
+                "usable-swarm",
+                "local",
+                "--prompt-texts",
+                "first prompt,second prompt",
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+
+        self.assertEqual(
+            str(raised.exception),
+            "usable-swarm accepts either --prompt-texts or --prompt-texts-file, not both",
+        )
 
     def test_public_swarm_v2_cli_wraps_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -12325,6 +12396,56 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_schema"], "public_swarm_inference_v2_cli_v1")
         self.assertTrue(calls)
 
+    def test_public_swarm_v2_cli_forwards_prompt_texts_file(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_file = output_dir / "prompts.txt"
+        prompts = ["first prompt, with comma", "second prompt"]
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "public-swarm-v2",
+            "local",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--json",
+        ])
+        self.assertEqual(args.prompt_texts_list, prompts)
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertIn("--prompt-texts-file", command)
+            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            self.assertNotIn("--prompt-texts", command)
+            self.assertNotIn("--prompt-text", command)
+            command_text = " ".join(command)
+            self.assertNotIn(prompts[0], command_text)
+            self.assertNotIn(prompts[1], command_text)
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "prompt_scope": {
+                    "source": "prompt-texts-file",
+                    "prompt_count": 2,
+                    "raw_prompt_public": False,
+                },
+                "diagnosis_codes": ["public_swarm_inference_v2_ready", "public_swarm_generate_batch_ready"],
+            })
+
+        report = cli.build_public_swarm_inference_v2(args, runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_schema"], "public_swarm_inference_v2_cli_v1")
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts-file")
+        self.assertNotIn(prompts[0], encoded)
+        self.assertNotIn(prompts[1], encoded)
+        self.assertTrue(calls)
+
     def test_public_swarm_v2_cli_forwards_stream_generation(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
@@ -12362,6 +12483,27 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "--prompt-texts",
                 "one,two,three,four,five",
             ])
+
+    def test_public_swarm_v2_cli_rejects_inline_and_file_prompt_batch(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text("first prompt\n", encoding="utf-8")
+
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args([
+                "public-swarm-v2",
+                "local",
+                "--prompt-texts",
+                "first prompt,second prompt",
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+
+        self.assertEqual(
+            str(raised.exception),
+            "public-swarm-v2 accepts either --prompt-texts or --prompt-texts-file, not both",
+        )
 
     def test_public_swarm_v2_cli_forwards_fresh_external_flag(self) -> None:
         output_dir = Path(self._tmp_dir())
