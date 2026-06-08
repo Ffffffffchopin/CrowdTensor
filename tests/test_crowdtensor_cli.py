@@ -1799,6 +1799,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("answer_scope: state=shareable-terminal-redacted", rendered)
+        self.assertIn(f"answer_scope_note: {cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT}", rendered)
         self.assertIn(f"output_display_note: {cli.SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT}", rendered)
         self.assertIn("local_output: available=False display_only=False public_artifact_safe=True", rendered)
         self.assertNotIn(prompt, stderr.getvalue())
@@ -4856,6 +4857,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(f"  answer_scope_note: {cli.LOCAL_ANSWER_SCOPE_TEXT}", rendered)
         self.assertIn("  result: status=complete tokens=2/2 outputs=1 display=local-private", rendered)
         self.assertIn(
             "  output_display: terminal=local-private terminal_text=True saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True",
@@ -7976,6 +7978,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": cli.SAVED_NO_ANSWER_SCOPE_TEXT,
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -8197,6 +8200,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": cli.SAVED_NO_ANSWER_SCOPE_TEXT,
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -10715,6 +10719,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("answer_scope: state=shareable-terminal-redacted", rendered)
+        self.assertIn(f"answer_scope_note: {cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT}", rendered)
         self.assertIn("output_display: terminal=shareable-terminal-redacted", rendered)
         self.assertIn(f"output_display_note: {cli.SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT}", rendered)
         self.assertIn("result: status=complete tokens=2/2 outputs=1 display=hash-only hash=sha256:generated public_artifact_safe=True", rendered)
@@ -11824,6 +11829,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": cli.SAVED_NO_ANSWER_SCOPE_TEXT,
             },
             "local_output": {
                 "available": False,
@@ -11844,6 +11850,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(f"  answer_scope_note: {cli.SAVED_NO_ANSWER_SCOPE_TEXT}", rendered)
         self.assertNotIn("  answer: ", rendered)
         self.assertLess(rendered.index("  output_display: "), rendered.index("  answer_scope: "))
 
@@ -11924,6 +11931,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": cli.SAVED_NO_ANSWER_SCOPE_TEXT,
             },
             "local_output": {
                 "available": False,
@@ -11945,6 +11953,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(f"  answer_scope_note: {cli.SAVED_NO_ANSWER_SCOPE_TEXT}", rendered)
         self.assertNotIn("  answer: ", rendered)
         self.assertLess(rendered.index("  output_display: "), rendered.index("  answer_scope: "))
 

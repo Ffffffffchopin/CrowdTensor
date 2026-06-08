@@ -1404,6 +1404,11 @@ SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT = (
 LOCAL_OUTPUT_DISPLAY_MAX_CHARS = 4096
 
 
+def print_answer_scope_note(answer_scope: dict[str, Any]) -> None:
+    if answer_scope.get("summary"):
+        print(f"  answer_scope_note: {answer_scope.get('summary')}")
+
+
 def print_local_output_block(report: dict[str, Any]) -> bool:
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
@@ -1429,6 +1434,7 @@ def print_local_output_block(report: dict[str, Any]) -> bool:
                 "public_artifact_safe": True,
             }
         print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_note(answer_scope)
     if has_output:
         print(f"  local_output: {local_output_terminal_text(local_output)}")
     elif _safe_int(local_output.get("output_count")) > 0:
@@ -1442,6 +1448,7 @@ def print_answer_scope_line(report: dict[str, Any], *, already_printed: bool = F
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     if answer_scope:
         print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_note(answer_scope)
 
 
 def prompt_summary_text(prompt: dict[str, Any]) -> str:
