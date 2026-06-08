@@ -7557,9 +7557,38 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "next_step": "review_checked_artifacts",
                     "inspect_first": str(output_dir / "public_real_llm_swarm_beta.md"),
                     "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
+                    "recommended_next_command": {
+                        "label": "inspect checked Beta summary",
+                        "command_line": f"sed -n 1,220p {output_dir / 'public_real_llm_swarm_beta.md'}",
+                        "reason": "review_checked_artifacts",
+                        "public_artifact_safe": True,
+                    },
                     "error_count": 0,
                     "public_artifact_safe": True,
                 },
+                "user_status": {
+                    "state": "ready",
+                    "headline": "Public Real-LLM Swarm Beta check passed.",
+                    "next_step": "review_checked_artifacts",
+                    "recommended_label": "inspect checked Beta summary",
+                    "recommended_reason": "review_checked_artifacts",
+                    "error_count": 0,
+                    "public_artifact_safe": True,
+                },
+                "recommended_next_command": {
+                    "label": "inspect checked Beta summary",
+                    "command_line": f"sed -n 1,220p {output_dir / 'public_real_llm_swarm_beta.md'}",
+                    "reason": "review_checked_artifacts",
+                    "public_artifact_safe": True,
+                },
+                "next_commands": [
+                    {
+                        "label": "inspect checked Beta summary",
+                        "command_line": f"sed -n 1,220p {output_dir / 'public_real_llm_swarm_beta.md'}",
+                        "reason": "review_checked_artifacts",
+                        "public_artifact_safe": True,
+                    }
+                ],
                 "operator_action": "Open inspect_first for the checked Markdown, support_bundle for diagnostics, and check_json for the validation record.",
                 "output_request": {
                     "include_output": False,
@@ -7608,6 +7637,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_mode"], "check")
         self.assertEqual(report["mode"], "release")
         self.assertEqual(report["review_summary"]["next_step"], "review_checked_artifacts")
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["recommended_next_command"]["label"], "inspect checked Beta summary")
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_public_real_llm_swarm_beta_check(report)
@@ -7615,8 +7646,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("CrowdTensor Public Real-LLM Swarm Beta Check", rendered)
         self.assertIn("  cli_mode: check", rendered)
         self.assertIn("  check_source: unknown", rendered)
+        self.assertIn("  status: ready", rendered)
         self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
         self.assertIn("  artifacts: inspect=", rendered)
+        self.assertIn("  recommended_next: sed -n 1,220p", rendered)
+        self.assertIn("  next[1] inspect checked Beta summary:", rendered)
         self.assertIn("  prompt_scope: source=prompt-text count=1 inline_prompt_text=True", rendered)
         self.assertIn("  prompt_scope_note: Validation check keeps prompt text out of public artifacts.", rendered)
         self.assertIn("  output_request: include_output=False", rendered)
@@ -7723,6 +7757,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["next_step"], "review_diagnostics")
         self.assertEqual(report["review_summary"]["error_count"], 1)
         self.assertEqual(report["review_summary"]["recommended_check_command"], report["recommended_check_command"])
+        self.assertEqual(report["review_summary"]["recommended_next_command"], report["recommended_next_command"])
+        self.assertEqual(report["review_summary"]["next_command"], report["recommended_next_command"]["command_line"])
+        self.assertEqual(report["user_status"]["state"], "blocked")
+        self.assertEqual(report["user_status"]["recommended_label"], "inspect check errors")
+        self.assertEqual(report["recommended_next_command"]["label"], "inspect check errors")
+        self.assertTrue(any(item["label"] == "inspect support bundle" for item in report["next_commands"]))
         self.assertIn("public real LLM swarm beta check command returned no JSON report", report["errors"])
         self.assertIn("public-real-llm-swarm-beta check", report["operator_action"])
         self.assertIn(report["recommended_check_command"]["command_line"], report["operator_action"])
@@ -7751,8 +7791,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_real_llm_swarm_beta_check(report)
         rendered = stdout.getvalue()
         self.assertIn("CrowdTensor Public Real-LLM Swarm Beta Check", rendered)
+        self.assertIn("  status: blocked", rendered)
         self.assertIn("  review: state=blocked next=review_diagnostics", rendered)
         self.assertIn("  recommended_check: crowdtensor public-real-llm-swarm-beta check", rendered)
+        self.assertIn("  recommended_next: sed -n 1,220p", rendered)
+        self.assertIn("  next[1] inspect check errors:", rendered)
         self.assertIn("  errors:", rendered)
         self.assertIn("    - public real LLM swarm beta check command returned no JSON report", rendered)
         self.assertNotIn("  model: None", rendered)

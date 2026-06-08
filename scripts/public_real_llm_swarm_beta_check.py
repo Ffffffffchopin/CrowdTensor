@@ -1310,6 +1310,98 @@ def recommended_check_command(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def command_entry(label: str, command: list[str], *, reason: str = "") -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": pack.shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    return entry
+
+
+def inspect_command(path: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(path)]
+
+
+def recommended_next_command(result: dict[str, Any]) -> dict[str, Any]:
+    artifact_summary = (
+        result.get("artifact_summary")
+        if isinstance(result.get("artifact_summary"), dict)
+        else check_artifact_summary(result)
+    )
+    ready = bool(result.get("ok") is True and not result.get("errors"))
+    if ready and artifact_summary.get("inspect_first"):
+        return command_entry(
+            "inspect checked Beta summary",
+            inspect_command(str(artifact_summary.get("inspect_first"))),
+            reason="review_checked_artifacts",
+        )
+    if artifact_summary.get("check_json"):
+        return command_entry(
+            "inspect check errors",
+            inspect_command(str(artifact_summary.get("check_json"))),
+            reason="fix_validation_errors",
+        )
+    recommended_check = result.get("recommended_check_command") if isinstance(result.get("recommended_check_command"), dict) else {}
+    return dict(recommended_check)
+
+
+def next_commands(result: dict[str, Any]) -> list[dict[str, Any]]:
+    artifact_summary = (
+        result.get("artifact_summary")
+        if isinstance(result.get("artifact_summary"), dict)
+        else check_artifact_summary(result)
+    )
+    commands: list[dict[str, Any]] = []
+    if artifact_summary.get("inspect_first"):
+        commands.append(command_entry(
+            "inspect checked Beta summary",
+            inspect_command(str(artifact_summary.get("inspect_first"))),
+            reason="review_checked_artifacts",
+        ))
+    if artifact_summary.get("support_bundle"):
+        commands.append(command_entry(
+            "inspect support bundle",
+            inspect_command(str(artifact_summary.get("support_bundle"))),
+            reason="inspect_diagnostics",
+        ))
+    if artifact_summary.get("check_json"):
+        commands.append(command_entry(
+            "inspect check JSON",
+            inspect_command(str(artifact_summary.get("check_json"))),
+            reason="inspect_validation_record",
+        ))
+    recommended_next = result.get("recommended_next_command") if isinstance(result.get("recommended_next_command"), dict) else {}
+    if recommended_next and all(item.get("command_line") != recommended_next.get("command_line") for item in commands):
+        commands.append(dict(recommended_next))
+    recommended_check = result.get("recommended_check_command") if isinstance(result.get("recommended_check_command"), dict) else {}
+    if recommended_check and all(item.get("command_line") != recommended_check.get("command_line") for item in commands):
+        commands.append(dict(recommended_check))
+    return commands
+
+
+def user_status(result: dict[str, Any]) -> dict[str, Any]:
+    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+    ready = bool(result.get("ok") is True and not errors)
+    recommended = result.get("recommended_next_command") if isinstance(result.get("recommended_next_command"), dict) else {}
+    return {
+        "state": "ready" if ready else "blocked",
+        "headline": (
+            "Public Real-LLM Swarm Beta check passed."
+            if ready
+            else "Public Real-LLM Swarm Beta check needs attention."
+        ),
+        "next_step": "review_checked_artifacts" if ready else "fix_validation_errors",
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "error_count": len(errors),
+        "public_artifact_safe": True,
+    }
+
+
 def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
     errors = [str(error) for error in (result.get("errors") if isinstance(result.get("errors"), list) else [])]
     artifact_summary = (
@@ -1322,6 +1414,11 @@ def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
         if isinstance(result.get("recommended_check_command"), dict)
         else recommended_check_command(result)
     )
+    recommended_next = (
+        result.get("recommended_next_command")
+        if isinstance(result.get("recommended_next_command"), dict)
+        else recommended_next_command(result)
+    )
     ready = bool(result.get("ok") is True and not errors)
     return {
         "schema": REVIEW_SUMMARY_SCHEMA,
@@ -1333,6 +1430,10 @@ def check_review_summary(result: dict[str, Any]) -> dict[str, Any]:
         "support_bundle": artifact_summary.get("support_bundle"),
         "check_json": artifact_summary.get("check_json"),
         "recommended_check_command": recommended,
+        "recommended_next_command": recommended_next,
+        "recommended_label": recommended_next.get("label") or recommended.get("label") or "none",
+        "recommended_reason": recommended_next.get("reason") or recommended.get("reason") or "none",
+        "next_command": recommended_next.get("command_line") or recommended.get("command_line") or "",
         "error_count": len(errors),
         "error_preview": errors[:8],
         "operator_action": (
@@ -1444,6 +1545,9 @@ def check_result_from_payload(
     }
     result["artifact_summary"] = check_artifact_summary(result)
     result["recommended_check_command"] = recommended_check_command(result)
+    result["recommended_next_command"] = recommended_next_command(result)
+    result["next_commands"] = next_commands(result)
+    result["user_status"] = user_status(result)
     result["review_summary"] = check_review_summary(result)
     result["operator_action"] = result["review_summary"]["operator_action"]
     result["output_request"] = check_output_request_summary()
@@ -1455,6 +1559,9 @@ def check_result_from_payload(
         result["ok"] = False
         result["errors"] = list(result.get("errors") or []) + check_json_errors
         result["diagnosis_codes"] = ["public_real_llm_swarm_beta_check_blocked"]
+        result["recommended_next_command"] = recommended_next_command(result)
+        result["next_commands"] = next_commands(result)
+        result["user_status"] = user_status(result)
         result["review_summary"] = check_review_summary(result)
         result["operator_action"] = result["review_summary"]["operator_action"]
     return result
@@ -1477,6 +1584,9 @@ def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
             "review_summary",
             "operator_action",
             "recommended_check_command",
+            "recommended_next_command",
+            "next_commands",
+            "user_status",
             "output_request",
             "prompt_scope",
             "answer_scope",
@@ -1530,10 +1640,16 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
 def print_human_summary(result: dict[str, Any]) -> None:
     review = result.get("review_summary") if isinstance(result.get("review_summary"), dict) else {}
     artifact_summary = result.get("artifact_summary") if isinstance(result.get("artifact_summary"), dict) else {}
+    user = result.get("user_status") if isinstance(result.get("user_status"), dict) else {}
     recommended = (
         result.get("recommended_check_command")
         if isinstance(result.get("recommended_check_command"), dict)
         else review.get("recommended_check_command") if isinstance(review.get("recommended_check_command"), dict) else {}
+    )
+    recommended_next = (
+        result.get("recommended_next_command")
+        if isinstance(result.get("recommended_next_command"), dict)
+        else review.get("recommended_next_command") if isinstance(review.get("recommended_next_command"), dict) else {}
     )
     output_request = result.get("output_request") if isinstance(result.get("output_request"), dict) else {}
     prompt_scope = result.get("prompt_scope") if isinstance(result.get("prompt_scope"), dict) else {}
@@ -1545,6 +1661,15 @@ def print_human_summary(result: dict[str, Any]) -> None:
     print(f"  check_source: {result.get('check_source')}")
     if result.get("checked_beta_report"):
         print(f"  checked_beta_report: {result.get('checked_beta_report')}")
+    if user:
+        print(
+            "  status: "
+            f"state={user.get('state')} "
+            f"next={user.get('next_step')} "
+            f"recommended={user.get('recommended_label')} "
+            f"errors={user.get('error_count')} "
+            f"public_artifact_safe={user.get('public_artifact_safe')}"
+        )
     if review:
         print(
             "  review: "
@@ -1564,6 +1689,11 @@ def print_human_summary(result: dict[str, Any]) -> None:
         )
     if recommended:
         print(f"  recommended_check: {recommended.get('command_line')}")
+    if recommended_next:
+        print(f"  recommended_next: {recommended_next.get('command_line')}")
+    for index, item in enumerate((result.get("next_commands") or []), start=1):
+        if isinstance(item, dict):
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
     if output_request:
         print(
             "  output_request: "

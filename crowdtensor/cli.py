@@ -4854,6 +4854,38 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
         "check_source": "beta-report" if beta_report else "ci-fixture",
         "public_artifact_safe": True,
     }
+    check_json = output_dir / "public_real_llm_swarm_beta_check.json"
+    recommended_next = {
+        "label": "inspect check errors",
+        "reason": "review_diagnostics",
+        "command": ["sed", "-n", "1,220p", str(check_json)],
+        "command_line": command_line(["sed", "-n", "1,220p", str(check_json)]),
+        "public_artifact_safe": True,
+    }
+    next_commands = [
+        {
+            "label": "inspect check errors",
+            "reason": "review_diagnostics",
+            "command": ["sed", "-n", "1,220p", str(check_json)],
+            "command_line": command_line(["sed", "-n", "1,220p", str(check_json)]),
+            "public_artifact_safe": True,
+        },
+        {
+            "label": "inspect checked Beta summary",
+            "reason": "review_checked_artifacts",
+            "command": ["sed", "-n", "1,220p", str(inspect_first)],
+            "command_line": command_line(["sed", "-n", "1,220p", str(inspect_first)]),
+            "public_artifact_safe": True,
+        },
+        {
+            "label": "inspect support bundle",
+            "reason": "inspect_diagnostics",
+            "command": ["sed", "-n", "1,220p", str(support_bundle)],
+            "command_line": command_line(["sed", "-n", "1,220p", str(support_bundle)]),
+            "public_artifact_safe": True,
+        },
+        recommended_check,
+    ]
     return sanitize({
         "schema": "public_real_llm_swarm_beta_check_v1",
         "cli_schema": PUBLIC_REAL_LLM_SWARM_BETA_CLI_SCHEMA,
@@ -4871,7 +4903,7 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
             "inspect_first": str(inspect_first),
             "machine_readable": str(beta_report_path),
             "support_bundle": str(support_bundle),
-            "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
+            "check_json": str(check_json),
             "public_artifact_safe": True,
             "raw_prompt_public": False,
             "raw_generated_text_public": False,
@@ -4883,8 +4915,12 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
             "ready": False,
             "next_step": "review_diagnostics",
             "inspect_first": str(inspect_first),
-            "check_json": str(output_dir / "public_real_llm_swarm_beta_check.json"),
+            "check_json": str(check_json),
             "recommended_check_command": recommended_check,
+            "recommended_next_command": recommended_next,
+            "recommended_label": recommended_next["label"],
+            "recommended_reason": recommended_next["reason"],
+            "next_command": recommended_next["command_line"],
             "error_count": 1,
             "error_preview": ["public real LLM swarm beta check command returned no JSON report"],
             "public_artifact_safe": True,
@@ -4893,6 +4929,17 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
             "generated_token_ids_public": False,
         },
         "recommended_check_command": recommended_check,
+        "recommended_next_command": recommended_next,
+        "next_commands": next_commands,
+        "user_status": {
+            "state": "blocked",
+            "headline": "Public Real-LLM Swarm Beta check needs attention.",
+            "next_step": "review_diagnostics",
+            "recommended_label": recommended_next["label"],
+            "recommended_reason": recommended_next["reason"],
+            "error_count": 1,
+            "public_artifact_safe": True,
+        },
         "operator_action": f"Inspect the CLI step payload, then rerun: {recommended_check['command_line']} after fixing the check failure.",
         "output_request": {
             "include_output": False,
@@ -13738,11 +13785,17 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
 
 def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     recommended_check = (
         report.get("recommended_check_command")
         if isinstance(report.get("recommended_check_command"), dict)
         else review.get("recommended_check_command") if isinstance(review.get("recommended_check_command"), dict) else {}
+    )
+    recommended_next = (
+        report.get("recommended_next_command")
+        if isinstance(report.get("recommended_next_command"), dict)
+        else review.get("recommended_next_command") if isinstance(review.get("recommended_next_command"), dict) else {}
     )
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
@@ -13763,6 +13816,8 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     print(f"  check_source: {report.get('check_source') or 'unknown'}")
     if report.get("checked_beta_report"):
         print(f"  checked_beta_report: {report.get('checked_beta_report')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
     if review:
         print(
             "  review: "
@@ -13784,6 +13839,11 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
         )
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")
+    if recommended_next:
+        print(f"  recommended_next: {recommended_next.get('command_line')}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if isinstance(item, dict):
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
