@@ -1446,7 +1446,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -4674,7 +4674,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -7481,6 +7481,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "generated_token_ids_public": False,
                     "public_artifact_safe": True,
                 },
+                "prompt_scope": {
+                    "source": "prompt-text",
+                    "prompt_count": 1,
+                    "inline_prompt_text": True,
+                    "terminal_next_commands_local_private": True,
+                    "terminal_local_paths": False,
+                    "saved_artifacts_prompt_placeholders": True,
+                    "prompt_file_path_public": False,
+                    "raw_prompt_public": False,
+                    "public_artifact_safe": True,
+                    "summary": "Validation check keeps prompt text out of public artifacts.",
+                },
                 "answer_scope": {
                     "scope_state": "no-local-answer",
                     "visible_in_terminal": False,
@@ -7518,6 +7530,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  check_source: unknown", rendered)
         self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
         self.assertIn("  artifacts: inspect=", rendered)
+        self.assertIn("  prompt_scope: source=prompt-text count=1 inline_prompt_text=True", rendered)
+        self.assertIn("  prompt_scope_note: Validation check keeps prompt text out of public artifacts.", rendered)
         self.assertIn("  output_request: include_output=False", rendered)
         self.assertIn("raw_prompt_public=False", rendered)
         self.assertIn("raw_generated_text_public=False", rendered)
@@ -7985,6 +7999,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "raw_generated_text_public": False,
                 "public_artifact_safe": True,
             },
+            "prompt_scope": {
+                "source": "prompt-file",
+                "prompt_count": 1,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "terminal_local_paths": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+                "summary": "Prompt file paths and raw prompt text are excluded from public artifacts.",
+            },
             "answer_scope": {
                 "scope_state": "no-local-answer",
                 "terminal_only": False,
@@ -8068,6 +8094,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  kv_cache hits: stage0=15 stage1=15", output)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope: source=prompt-file count=1 inline_prompt_text=False",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope_note: Prompt file paths and raw prompt text are excluded from public artifacts.",
             output,
         )
         self.assertIn(
@@ -8207,6 +8241,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "raw_generated_text_public": False,
                 "public_artifact_safe": True,
             },
+            "prompt_scope": {
+                "source": "prompt-file",
+                "prompt_count": 1,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "terminal_local_paths": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+                "summary": "Usable Swarm evidence excludes prompt file paths and raw prompt text.",
+            },
             "answer_scope": {
                 "scope_state": "no-local-answer",
                 "terminal_only": False,
@@ -8236,6 +8282,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn(
+            "  prompt_scope: source=prompt-file count=1 inline_prompt_text=False",
+            rendered,
+        )
+        self.assertIn(
+            "  prompt_scope_note: Usable Swarm evidence excludes prompt file paths and raw prompt text.",
             rendered,
         )
         self.assertIn(
@@ -11746,7 +11800,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            "- Prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True terminal_local_paths=False saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn(
@@ -13655,6 +13709,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "raw_generated_text_public": False,
                 "public_artifact_safe": True,
             },
+            "prompt_scope": {
+                "source": "prompt-file",
+                "prompt_count": 1,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "terminal_local_paths": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+                "summary": "Public Swarm v2 excludes prompt file paths and raw prompt text.",
+            },
             "answer_scope": {
                 "scope_state": "no-local-answer",
                 "terminal_only": False,
@@ -13698,6 +13764,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stream ready: True", output)
         self.assertIn("external ready: True tokens=16/16 accepted_rows=32 rows_ready=True", output)
         self.assertIn("model match: local=True external=True p2p=True", output)
+        self.assertIn(
+            "  prompt_scope: source=prompt-file count=1 inline_prompt_text=False",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope_note: Public Swarm v2 excludes prompt file paths and raw prompt text.",
+            output,
+        )
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
@@ -14489,6 +14563,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "raw_generated_text_public": False,
                 "public_artifact_safe": True,
             },
+            "prompt_scope": {
+                "source": "prompt-text",
+                "prompt_count": 1,
+                "inline_prompt_text": True,
+                "terminal_next_commands_local_private": True,
+                "terminal_local_paths": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+                "summary": "Raw prompt text is excluded from public artifacts.",
+            },
             "answer_scope": {
                 "scope_state": "no-local-answer",
                 "saved_json_display": "hash-only",
@@ -14515,6 +14601,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_swarm_inference_beta(report)
 
         rendered = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("prompt_scope: source=prompt-text count=1 inline_prompt_text=True", rendered)
+        self.assertIn("prompt_scope_note: Raw prompt text is excluded from public artifacts.", rendered)
         self.assertIn("output_request: include_output=False", rendered)
         self.assertIn("raw_generated_text_public=False", rendered)
         self.assertIn("answer_scope: state=no-local-answer", rendered)
@@ -14878,6 +14966,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "generated_token_ids_public": False,
                 "public_artifact_safe": True,
             },
+            "prompt_scope": {
+                "source": "prompt-text",
+                "prompt_count": 1,
+                "inline_prompt_text": True,
+                "terminal_next_commands_local_private": True,
+                "terminal_local_paths": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+                "summary": "Public Swarm Beta excludes raw prompt text from public artifacts.",
+            },
             "answer_scope": {
                 "scope_state": "no-local-answer",
                 "terminal_only": False,
@@ -14906,6 +15006,8 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         output = stream.getvalue()
         self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
+        self.assertIn("prompt_scope: source=prompt-text count=1 inline_prompt_text=True", output)
+        self.assertIn("prompt_scope_note: Public Swarm Beta excludes raw prompt text from public artifacts.", output)
         self.assertIn("answer_scope: state=no-local-answer", output)
         self.assertIn("answer_scope_note: This Public Swarm Inference Beta report is shareable evidence.", output)
         self.assertIn("saved_json=hash-only", output)
@@ -15304,6 +15406,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "raw_generated_text_public": False,
                 "public_artifact_safe": True,
             },
+            "prompt_scope": {
+                "source": "prompt-text",
+                "prompt_count": 1,
+                "inline_prompt_text": True,
+                "terminal_next_commands_local_private": True,
+                "terminal_local_paths": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+                "summary": "Public Swarm Product Beta excludes raw prompt text from public artifacts.",
+            },
             "answer_scope": {
                 "scope_state": "no-local-answer",
                 "terminal_only": False,
@@ -15333,6 +15447,14 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope: source=prompt-text count=1 inline_prompt_text=True",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope_note: Public Swarm Product Beta excludes raw prompt text from public artifacts.",
             output,
         )
         self.assertIn(
@@ -16017,6 +16139,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "generated_token_ids_public": False,
                 "public_artifact_safe": True,
             },
+            "prompt_scope": {
+                "source": "imported-or-built-in-validation-prompts",
+                "prompt_count": 0,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "terminal_local_paths": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+                "summary": "P2P v0.6 validation evidence excludes raw prompt text.",
+            },
             "answer_scope": {
                 "scope_state": "no-local-answer",
                 "terminal_only": False,
@@ -16046,6 +16180,14 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope: source=imported-or-built-in-validation-prompts count=0 inline_prompt_text=False",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope_note: P2P v0.6 validation evidence excludes raw prompt text.",
             output,
         )
         self.assertIn(
@@ -16807,6 +16949,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "raw_generated_text_public": False,
                 "public_artifact_safe": True,
             },
+            "prompt_scope": {
+                "source": "imported-or-built-in-validation-prompts",
+                "prompt_count": 1,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "terminal_local_paths": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+                "summary": "GPU generation evidence excludes raw prompt text.",
+            },
             "answer_scope": {
                 "scope_state": "no-local-answer",
                 "terminal_only": False,
@@ -16835,6 +16989,14 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope: source=imported-or-built-in-validation-prompts count=1 inline_prompt_text=False",
+            output,
+        )
+        self.assertIn(
+            "  prompt_scope_note: GPU generation evidence excludes raw prompt text.",
             output,
         )
         self.assertIn(

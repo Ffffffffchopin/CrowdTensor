@@ -1470,9 +1470,16 @@ def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
         f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
         f"terminal_local_paths={bool(prompt_scope.get('terminal_local_paths'))} "
         f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
         f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
         f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
     )
+
+
+def print_prompt_scope_block(prompt_scope: dict[str, Any]) -> None:
+    print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
+    if prompt_scope.get("summary"):
+        print(f"  prompt_scope_note: {prompt_scope.get('summary')}")
 
 
 def count_pair_text(observed: Any, expected: Any, *, empty: str = "not-run") -> str:
@@ -13162,6 +13169,7 @@ def print_real_llm_internet_alpha(report: dict[str, Any]) -> None:
 
 
 def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13172,6 +13180,8 @@ def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  coordinator: {report.get('coordinator_url')}")
     print(f"  output: {report.get('output_dir')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13189,6 +13199,7 @@ def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
 
 
 def print_swarm_inference_beta(report: dict[str, Any]) -> None:
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13198,6 +13209,8 @@ def print_swarm_inference_beta(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  output: {report.get('output_dir')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13213,6 +13226,7 @@ def print_swarm_inference_beta(report: dict[str, Any]) -> None:
 
 def print_public_swarm_inference_alpha(report: dict[str, Any]) -> None:
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13225,6 +13239,8 @@ def print_public_swarm_inference_alpha(report: dict[str, Any]) -> None:
     print(f"  model: {session.get('model_id')}")
     print(f"  external runtime: {session.get('live_external_runtime_verified')}")
     print(f"  local requeue: {session.get('local_stage_requeue_verified')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13238,6 +13254,7 @@ def print_public_swarm_inference_alpha(report: dict[str, Any]) -> None:
 
 def print_public_swarm_inference_alpha_rc(report: dict[str, Any]) -> None:
     rc = report.get("release_candidate") if isinstance(report.get("release_candidate"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13247,6 +13264,8 @@ def print_public_swarm_inference_alpha_rc(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {rc.get('ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13261,6 +13280,7 @@ def print_public_swarm_inference_alpha_rc(report: dict[str, Any]) -> None:
 
 def print_public_swarm_inference_beta(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13270,6 +13290,8 @@ def print_public_swarm_inference_beta(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {beta.get('ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13284,6 +13306,7 @@ def print_public_swarm_inference_beta(report: dict[str, Any]) -> None:
 
 def print_public_swarm_inference_beta_rc(report: dict[str, Any]) -> None:
     rc = report.get("rc") if isinstance(report.get("rc"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13293,6 +13316,8 @@ def print_public_swarm_inference_beta_rc(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {rc.get('ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13307,6 +13332,7 @@ def print_public_swarm_inference_beta_rc(report: dict[str, Any]) -> None:
 
 def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
     beta = report.get("product_beta") if isinstance(report.get("product_beta"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13316,6 +13342,8 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {beta.get('ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13331,6 +13359,7 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
 def print_p2p_swarm_inference_v06(report: dict[str, Any]) -> None:
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     inference = report.get("inference") if isinstance(report.get("inference"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13345,6 +13374,8 @@ def print_p2p_swarm_inference_v06(report: dict[str, Any]) -> None:
     print(f"  stage rescue ready: {p2p.get('stage_rescue_ready')} real_stage_rescue_ready={p2p.get('real_stage_rescue_ready')}")
     print(f"  model: requested={p2p.get('hf_model_id')} observed={p2p.get('observed_hf_model_id')} match={p2p.get('model_id_match')}")
     print(f"  tokens: {inference.get('max_new_tokens')} workload={inference.get('workload_type')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13361,6 +13392,7 @@ def print_public_p2p_swarm_inference_v1_rc(report: dict[str, Any]) -> None:
     rc = report.get("rc") if isinstance(report.get("rc"), dict) else {}
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     inference = report.get("inference") if isinstance(report.get("inference"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13374,6 +13406,8 @@ def print_public_p2p_swarm_inference_v1_rc(report: dict[str, Any]) -> None:
     print(f"  signed peers: required={p2p.get('signed_announcement_required')} signed={p2p.get('signed_peer_count')} healthy={p2p.get('healthy_peer_count')}")
     print(f"  rescue ready: {rc.get('stage_rescue_ready')}")
     print(f"  tokens: {inference.get('max_new_tokens')} workload={inference.get('workload_type')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13392,6 +13426,7 @@ def print_real_p2p_swarm_inference_core_rc(report: dict[str, Any]) -> None:
     stage_assignment = report.get("stage_assignment") if isinstance(report.get("stage_assignment"), dict) else {}
     external = report.get("external") if isinstance(report.get("external"), dict) else {}
     requeue = report.get("live_requeue_summary") if isinstance(report.get("live_requeue_summary"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13408,6 +13443,8 @@ def print_real_p2p_swarm_inference_core_rc(report: dict[str, Any]) -> None:
     print(f"  external verified: runtime={external.get('external_runtime_verified')} generate={external.get('external_generate_verified')}")
     if requeue:
         print(f"  requeue: enabled={requeue.get('enabled')} stage={requeue.get('target_stage')} rescue_used={requeue.get('rescue_miner_used')} accepted={requeue.get('accepted_result_after_requeue')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13425,6 +13462,7 @@ def print_petals_class_p2p_candidate(report: dict[str, Any]) -> None:
     batch = candidate.get("batch") if isinstance(candidate.get("batch"), dict) else {}
     stream = candidate.get("stream") if isinstance(candidate.get("stream"), dict) else {}
     requeue = candidate.get("live_requeue_summary") if isinstance(candidate.get("live_requeue_summary"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13438,6 +13476,8 @@ def print_petals_class_p2p_candidate(report: dict[str, Any]) -> None:
     print(f"  requeue: ready={candidate.get('p2p_live_requeue_ready')} rescue_used={requeue.get('rescue_miner_used')} victim_rejected={candidate.get('victim_result_not_accepted')}")
     print(f"  batch: ready={candidate.get('batch_ready')} requests={batch.get('expected_request_count')}")
     print(f"  stream: ready={candidate.get('stream_ready')} events={stream.get('event_count')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13458,6 +13498,7 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     p2p_candidate = readiness.get("p2p_candidate") if isinstance(readiness.get("p2p_candidate"), dict) else {}
     public_swarm_v2 = readiness.get("public_swarm_v2") if isinstance(readiness.get("public_swarm_v2"), dict) else {}
     usable_kv_cache = readiness.get("usable_p2p_kv_cache") if isinstance(readiness.get("usable_p2p_kv_cache"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13521,6 +13562,8 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     print(f"  kv_cache_ready: {beta.get('kv_cache_ready')}")
     print(f"  kv_cache hits: stage0={kv_stage0.get('hit_count')} stage1={kv_stage1.get('hit_count')}")
     print(f"  cuda_optional_fail_closed_ready: {beta.get('cuda_optional_fail_closed_ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13554,6 +13597,7 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
         else review.get("recommended_check_command") if isinstance(review.get("recommended_check_command"), dict) else {}
     )
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     raw_operator_action = report.get("operator_action")
@@ -13592,6 +13636,8 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
         )
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(
             "  output_request: "
@@ -13637,6 +13683,7 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     usable = report.get("usable_swarm") if isinstance(report.get("usable_swarm"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
     p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13651,6 +13698,8 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     print(f"  generated tokens: {p2p.get('generated_token_count')}/{p2p.get('max_new_tokens')}")
     print(f"  distinct stage miners: {p2p.get('distinct_stage_miners')}")
     print(f"  stage rescue ready: {p2p.get('stage_rescue_ready') and p2p.get('real_stage_rescue_ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13674,6 +13723,7 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     p2p = readiness.get("p2p_route_hardening") if isinstance(readiness.get("p2p_route_hardening"), dict) else {}
     cuda = readiness.get("cuda_optional") if isinstance(readiness.get("cuda_optional"), dict) else {}
     perf = readiness.get("performance") if isinstance(readiness.get("performance"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13709,6 +13759,8 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     print(f"  model match: local={((local.get('model') or {}).get('compatible') if isinstance(local.get('model'), dict) else None)} external={((external.get('model') or {}).get('compatible') if isinstance(external.get('model'), dict) else None)} p2p={((p2p.get('model') or {}).get('compatible') if isinstance(p2p.get('model'), dict) else None)}")
     print(f"  cuda fail-closed: {cuda.get('fail_closed_ready')}")
     print(f"  performance: latency={perf.get('stage_latency_ready')} throughput={perf.get('throughput_summary_ready')} memory={perf.get('memory_or_vram_summary_ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13723,6 +13775,7 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
 
 def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
     preview = report.get("developer_preview") if isinstance(report.get("developer_preview"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13732,6 +13785,8 @@ def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {preview.get('ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13746,6 +13801,7 @@ def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
 
 def print_public_swarm_live_preview_rc(report: dict[str, Any]) -> None:
     preview = report.get("live_preview") if isinstance(report.get("live_preview"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13757,6 +13813,8 @@ def print_public_swarm_live_preview_rc(report: dict[str, Any]) -> None:
     print(f"  ready: {preview.get('ready')}")
     print(f"  external_runtime_verified: {preview.get('external_runtime_verified')}")
     print(f"  fresh_live_kaggle_run: {preview.get('fresh_live_kaggle_run')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13771,6 +13829,7 @@ def print_public_swarm_live_preview_rc(report: dict[str, Any]) -> None:
 
 def print_public_swarm_operator_preview(report: dict[str, Any]) -> None:
     preview = report.get("operator_preview") if isinstance(report.get("operator_preview"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13785,6 +13844,8 @@ def print_public_swarm_operator_preview(report: dict[str, Any]) -> None:
     print(f"  live_preview_ready: {preview.get('live_preview_ready')}")
     print(f"  external_runtime_verified: {preview.get('external_runtime_verified')}")
     print(f"  external_runtime_blocked: {preview.get('external_runtime_blocked')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13799,6 +13860,7 @@ def print_public_swarm_operator_preview(report: dict[str, Any]) -> None:
 
 def print_public_swarm_trial(report: dict[str, Any]) -> None:
     trial = report.get("trial") if isinstance(report.get("trial"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13812,6 +13874,8 @@ def print_public_swarm_trial(report: dict[str, Any]) -> None:
     print(f"  degraded_cpu_fallback_ready: {trial.get('degraded_cpu_fallback_ready')}")
     print(f"  gpu_generation_ready: {trial.get('gpu_generation_ready')}")
     print(f"  external_runtime_verified: {trial.get('external_runtime_verified')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13826,6 +13890,7 @@ def print_public_swarm_trial(report: dict[str, Any]) -> None:
 
 def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
     preview = report.get("preview") if isinstance(report.get("preview"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13841,6 +13906,8 @@ def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
     print(f"  throughput_summary_ready: {preview.get('throughput_summary_ready')}")
     print(f"  memory_or_vram_summary_ready: {preview.get('memory_or_vram_summary_ready')}")
     print(f"  optional_model_ready: {preview.get('optional_model_ready')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13855,6 +13922,7 @@ def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
 
 def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13865,6 +13933,8 @@ def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {beta.get('ready')}")
     print(f"  backend: {beta.get('backend')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
@@ -13880,6 +13950,7 @@ def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
 def print_gpu_sharded_generation_beta(report: dict[str, Any]) -> None:
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     gpu = report.get("gpu") if isinstance(report.get("gpu"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -13891,6 +13962,8 @@ def print_gpu_sharded_generation_beta(report: dict[str, Any]) -> None:
     print(f"  backend: {gpu.get('backend')}")
     print(f"  model: {gpu.get('model_id')}")
     print(f"  generated_tokens: {generation.get('generated_token_count')}/{generation.get('max_new_tokens')}")
+    if prompt_scope:
+        print_prompt_scope_block(prompt_scope)
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
