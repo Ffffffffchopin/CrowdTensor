@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import platform
+import shutil
 try:
     import resource
 except ImportError:  # pragma: no cover - Windows fallback for local developers.
@@ -78,6 +79,29 @@ def utc_now() -> str:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def cleanup_private_runtime_state(output_dir: Path, *, keep_private_state: bool = False) -> dict[str, Any]:
+    state_dir = output_dir / "state"
+    summary = {
+        "state_dir": "state",
+        "kept": bool(keep_private_state),
+        "removed": False,
+        "present_after_cleanup": state_dir.exists(),
+        "raw_runtime_state_public": False,
+    }
+    if keep_private_state:
+        return summary
+    if not state_dir.exists():
+        summary["present_after_cleanup"] = False
+        return summary
+    try:
+        shutil.rmtree(state_dir)
+    except OSError as exc:
+        summary["error"] = f"{type(exc).__name__}: {exc}"
+    summary["removed"] = not state_dir.exists()
+    summary["present_after_cleanup"] = state_dir.exists()
+    return summary
 
 
 def request_json(
@@ -613,6 +637,8 @@ def degraded_report(args: argparse.Namespace, missing: list[str], output_dir: Pa
             "raw_prompt_public": False,
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
+            "raw_runtime_state_public": False,
+            "raw_runtime_state_removed": True,
             "not_production": True,
             "not_p2p": True,
             "not_large_model_serving": True,
@@ -876,6 +902,7 @@ def finalize_report(
             "raw_prompt_public": False,
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
+            "raw_runtime_state_public": False,
             "not_production": True,
             "not_p2p": True,
             "not_large_model_serving": True,
@@ -898,6 +925,23 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     else:
         report = run_local_loopback(args, output_dir)
     report = support_bundle.sanitize(report)
+    cleanup_summary = cleanup_private_runtime_state(
+        output_dir,
+        keep_private_state=bool(getattr(args, "keep_private_state", False)),
+    )
+    report["private_runtime_state"] = cleanup_summary
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    safety["raw_runtime_state_public"] = False
+    safety["raw_runtime_state_removed"] = bool(cleanup_summary.get("removed") or not cleanup_summary.get("present_after_cleanup"))
+    safety["private_runtime_state_kept"] = bool(cleanup_summary.get("kept"))
+    report["safety"] = safety
+    if cleanup_summary.get("error"):
+        report["ok"] = False
+        report["diagnosis_codes"] = sorted(set(report.get("diagnosis_codes") or []) | {"private_runtime_state_cleanup_failed"})
+    elif cleanup_summary.get("kept"):
+        report["diagnosis_codes"] = sorted(set(report.get("diagnosis_codes") or []) | {"private_runtime_state_retained"})
+    else:
+        report["diagnosis_codes"] = sorted(set(report.get("diagnosis_codes") or []) | {"private_runtime_state_cleaned"})
     report["artifacts"] = {
         "product_swarm_mvp_check_json": {
             "kind": "product_swarm_mvp_check",
@@ -928,6 +972,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--generate-timeout", type=float, default=180.0)
     parser.add_argument("--stream-generation", action="store_true", help="require safe generate --stream progress evidence")
     parser.add_argument("--require-hf-runtime", action="store_true")
+    parser.add_argument("--keep-private-state", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     if args.port < 1:

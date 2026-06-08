@@ -4851,25 +4851,36 @@ def _infer_request_trace_from_payload(
         if request_id is None and prompt_hash is None:
             return
         key = (str(request_id or ""), str(prompt_hash or ""))
+        next_token_value = item.get("generated_token_count")
+        if next_token_value is None:
+            next_token_value = item.get("max_observed_token_count")
+        next_max_tokens = item.get("max_new_tokens")
+        if next_max_tokens is None:
+            next_max_tokens = item.get("target_token_count")
+        next_hash = item.get("generated_text_hash")
         current = trace_by_key.get(key)
         if current is not None:
+            if next_token_value is None and next_max_tokens is None and not next_hash:
+                return
             current_tokens = _safe_int(current.get("generated_token_count"))
-            next_tokens = _safe_int(item.get("generated_token_count"))
+            next_tokens = _safe_int(next_token_value)
             if next_tokens >= current_tokens:
                 current["source"] = source
-                current["generated_token_count"] = item.get("generated_token_count")
-                if item.get("max_new_tokens") is not None:
-                    current["max_new_tokens"] = item.get("max_new_tokens")
-                if item.get("generated_text_hash"):
-                    current["generated_text_hash"] = item.get("generated_text_hash")
+                current["generated_token_count"] = next_token_value
+                if next_max_tokens is not None:
+                    current["max_new_tokens"] = next_max_tokens
+                if next_hash:
+                    current["generated_text_hash"] = next_hash
+                elif next_tokens > current_tokens:
+                    current["generated_text_hash"] = None
             return
         row = {
             "source": source,
             "request_id": request_id,
             "prompt_hash": prompt_hash,
-            "generated_token_count": item.get("generated_token_count"),
-            "max_new_tokens": item.get("max_new_tokens"),
-            "generated_text_hash": item.get("generated_text_hash"),
+            "generated_token_count": next_token_value,
+            "max_new_tokens": next_max_tokens,
+            "generated_text_hash": next_hash,
             "raw_prompt_public": False,
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
@@ -5522,6 +5533,70 @@ def _infer_local_output_from_private_state(
         "omitted_char_count": omitted_char_count,
         "note": note,
     }
+
+
+def _cleanup_infer_private_runtime_state(output_dir: Path) -> dict[str, Any]:
+    state_dir = output_dir / "product-swarm-mvp" / "state"
+    summary = {
+        "state_dir": "product-swarm-mvp/state",
+        "removed": False,
+        "present_after_cleanup": state_dir.exists(),
+        "raw_runtime_state_public": False,
+    }
+    if not state_dir.exists():
+        summary["present_after_cleanup"] = False
+        return summary
+    try:
+        shutil.rmtree(state_dir)
+    except OSError as exc:
+        summary["error"] = f"{type(exc).__name__}: {exc}"
+    summary["removed"] = not state_dir.exists()
+    summary["present_after_cleanup"] = state_dir.exists()
+    return summary
+
+
+def _sync_infer_child_private_runtime_state(output_dir: Path, cleanup_summary: dict[str, Any]) -> None:
+    report_path = output_dir / "product-swarm-mvp" / "product_swarm_mvp_check.json"
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    payload["private_runtime_state"] = cleanup_summary
+    safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
+    safety["raw_runtime_state_public"] = False
+    safety["raw_runtime_state_removed"] = bool(
+        cleanup_summary.get("removed") or not cleanup_summary.get("present_after_cleanup")
+    )
+    safety["private_runtime_state_kept"] = False
+    payload["safety"] = safety
+    codes = set(payload.get("diagnosis_codes") or [])
+    codes.discard("private_runtime_state_retained")
+    if cleanup_summary.get("error"):
+        codes.add("private_runtime_state_cleanup_failed")
+        payload["ok"] = False
+    else:
+        codes.add("private_runtime_state_cleaned")
+    payload["diagnosis_codes"] = sorted(codes)
+    report_path.write_text(
+        json.dumps(sanitize(redact_values(payload)), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _infer_private_runtime_state_from_payload(payload: dict[str, Any], *, mode: str) -> dict[str, Any]:
+    summary = (
+        payload.get("private_runtime_state")
+        if isinstance(payload.get("private_runtime_state"), dict)
+        else {}
+    )
+    if not summary:
+        return {}
+    normalized = dict(summary)
+    if mode == "local" and normalized.get("state_dir") == "state":
+        normalized["state_dir"] = "product-swarm-mvp/state"
+    return normalized
 
 
 def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
@@ -6564,6 +6639,8 @@ def _infer_summary_from_payload(
         recommended_next_command=recommended_next_command,
     )
     source_saved_summary = payload.get("saved_summary") if isinstance(payload.get("saved_summary"), dict) else {}
+    private_runtime_state = _infer_private_runtime_state_from_payload(payload, mode=mode)
+    payload_safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
     summary = {
         "schema": INFER_CLI_SCHEMA,
         "generated_at": utc_now(),
@@ -6620,6 +6697,7 @@ def _infer_summary_from_payload(
             "raw_generated_text_public": False,
             "public_artifact_safe": True,
         },
+        "private_runtime_state": private_runtime_state,
         "runtime_options": {
             "timeout_seconds": float(getattr(args, "timeout_seconds", 420.0) or 420.0),
             "poll_interval": float(getattr(args, "poll_interval", 1.0) or 1.0),
@@ -6667,6 +6745,9 @@ def _infer_summary_from_payload(
             "raw_prompt_public": False,
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
+            "raw_runtime_state_public": False,
+            "raw_runtime_state_removed": bool(payload_safety.get("raw_runtime_state_removed", True)),
+            "private_runtime_state_kept": bool(payload_safety.get("private_runtime_state_kept", False)),
             "read_only_workload": True,
             "not_production": True,
             "coordinator_backed": True,
@@ -6832,6 +6913,8 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             command.append("--stream-generation")
         if args.hf_cache_dir:
             command.extend(["--hf-cache-dir", args.hf_cache_dir])
+        if not args.json:
+            command.append("--keep-private-state")
         step, payload = run_json_step(
             "crowdtensor_infer_local_product_loopback",
             command,
@@ -6859,6 +6942,40 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             )
             if local_output:
                 payload = {**payload, "local_output": local_output}
+            cleanup_summary = _cleanup_infer_private_runtime_state(output_dir)
+            _sync_infer_child_private_runtime_state(output_dir, cleanup_summary)
+            if cleanup_summary.get("error"):
+                payload = {
+                    **payload,
+                    "ok": False,
+                    "diagnosis_codes": sorted(set(payload.get("diagnosis_codes") or []) | {"private_runtime_state_cleanup_failed"}),
+                    "private_runtime_state": cleanup_summary,
+                    "safety": {
+                        **(payload.get("safety") if isinstance(payload.get("safety"), dict) else {}),
+                        "raw_runtime_state_public": False,
+                        "raw_runtime_state_removed": False,
+                    },
+                }
+            else:
+                payload = {
+                    **payload,
+                    "diagnosis_codes": sorted(
+                        (
+                            set(payload.get("diagnosis_codes") or [])
+                            - {"private_runtime_state_retained"}
+                        )
+                        | {"private_runtime_state_cleaned"}
+                    ),
+                    "private_runtime_state": cleanup_summary,
+                    "safety": {
+                        **(payload.get("safety") if isinstance(payload.get("safety"), dict) else {}),
+                        "raw_runtime_state_public": False,
+                        "raw_runtime_state_removed": bool(
+                            cleanup_summary.get("removed") or not cleanup_summary.get("present_after_cleanup")
+                        ),
+                        "private_runtime_state_kept": False,
+                    },
+                }
         return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir, step=step)
     command = [
         sys.executable,

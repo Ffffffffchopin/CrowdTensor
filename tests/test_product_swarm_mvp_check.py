@@ -27,7 +27,39 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
             self.assertTrue(report["degraded"])
             self.assertIn("product_swarm_mvp_degraded_ready", report["diagnosis_codes"])
             self.assertIn("hf_dependencies_missing", report["diagnosis_codes"])
+            self.assertIn("private_runtime_state_cleaned", report["diagnosis_codes"])
+            self.assertTrue(report["safety"]["raw_runtime_state_removed"])
             self.assertTrue((Path(tmp) / "product_swarm_mvp_check.json").is_file())
+
+    def test_cleanup_private_runtime_state_removes_local_state_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            state_dir = output_dir / "state"
+            state_dir.mkdir()
+            (state_dir / "tasks.jsonl").write_text(
+                '{"prompt":"private prompt","generated_text":"private output","lease_token":"secret"}\n',
+                encoding="utf-8",
+            )
+
+            cleanup = product_check.cleanup_private_runtime_state(output_dir)
+
+            self.assertTrue(cleanup["removed"], cleanup)
+            self.assertFalse(cleanup["present_after_cleanup"], cleanup)
+            self.assertFalse(state_dir.exists())
+
+    def test_cleanup_private_runtime_state_can_keep_local_state_for_parent_display(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            state_dir = output_dir / "state"
+            state_dir.mkdir()
+            (state_dir / "tasks.jsonl").write_text('{"generated_text":"private output"}\n', encoding="utf-8")
+
+            cleanup = product_check.cleanup_private_runtime_state(output_dir, keep_private_state=True)
+
+            self.assertTrue(cleanup["kept"], cleanup)
+            self.assertFalse(cleanup["removed"], cleanup)
+            self.assertTrue(cleanup["present_after_cleanup"], cleanup)
+            self.assertTrue(state_dir.exists())
 
     def test_missing_hf_dependency_blocks_when_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

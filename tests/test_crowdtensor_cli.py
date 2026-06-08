@@ -8529,6 +8529,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         ])
 
         def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("--keep-private-state", command)
             state_dir = output_dir / "product-swarm-mvp" / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
             row = {
@@ -8590,6 +8591,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["local_output"]["generated_text"], "")
+        self.assertFalse((output_dir / "product-swarm-mvp" / "state").exists())
+        self.assertEqual(persisted["private_runtime_state"]["state_dir"], "product-swarm-mvp/state")
+        self.assertTrue(persisted["private_runtime_state"]["removed"])
+        self.assertFalse(persisted["private_runtime_state"]["present_after_cleanup"])
+        self.assertFalse(persisted["safety"]["private_runtime_state_kept"])
+        self.assertTrue(persisted["safety"]["raw_runtime_state_removed"])
+        self.assertIn("private_runtime_state_cleaned", persisted["diagnosis_codes"])
         self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["available"])
         self.assertFalse(persisted["local_output"]["display_only"])
@@ -8659,6 +8667,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         ])
 
         def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("--keep-private-state", command)
             state_dir = output_dir / "product-swarm-mvp" / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
             row = {
@@ -8700,6 +8709,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(tail, json.dumps(report, sort_keys=True))
         self.assertIn("Terminal answer text is truncated", report["local_output_note"])
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertFalse((output_dir / "product-swarm-mvp" / "state").exists())
+        self.assertEqual(persisted["private_runtime_state"]["state_dir"], "product-swarm-mvp/state")
+        self.assertTrue(persisted["private_runtime_state"]["removed"])
+        self.assertFalse(persisted["private_runtime_state"]["present_after_cleanup"])
+        self.assertTrue(persisted["safety"]["raw_runtime_state_removed"])
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertEqual(persisted["local_output"]["outputs"][0]["generated_text"], "")
         self.assertTrue(persisted["local_output"]["truncated"])
@@ -9907,6 +9921,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(
             [(row["request_id"], row["prompt_hash"]) for row in persisted["trace"]["request_trace"]],
             [("req-1", "sha256:p1"), ("req-2", "sha256:p2")],
+        )
+        self.assertEqual(
+            [
+                (row["generated_token_count"], row["max_new_tokens"], row.get("generated_text_hash"))
+                for row in persisted["trace"]["request_trace"]
+            ],
+            [(2, 2, None), (1, 2, None)],
         )
         self.assertEqual(
             persisted["operator_action"],
