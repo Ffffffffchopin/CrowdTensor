@@ -7920,6 +7920,25 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "token_rotation_required": True,
                     "public_artifact_safe": True,
                 },
+                "checked_inference_verdict": {
+                    "schema": "crowdtensor_inference_verdict_v1",
+                    "kind": "Public Real-LLM Swarm Beta",
+                    "state": "ready",
+                    "completed": True,
+                    "preflight_only": False,
+                    "answer_scope_state": "no-local-answer",
+                    "answer_visible_in_terminal": False,
+                    "saved_artifacts_public_safe": True,
+                    "evidence_level": "release-local-cpu-with-retained-external",
+                    "executed_where": "local-cpu-plus-retained-evidence",
+                    "gpu_state": "local-gpu-smoke-only",
+                    "fresh_kaggle_gpu_verified": False,
+                    "source_inference_verdict_state": "ready",
+                    "recommended_label": "inspect checked Beta summary",
+                    "next_step": "review_checked_artifacts",
+                    "public_artifact_safe": True,
+                    "message": "Public Real-LLM Swarm Beta evidence is ready.",
+                },
                 "artifact_summary": {
                     "inspect_first": str(output_dir / "public_real_llm_swarm_beta.md"),
                     "machine_readable": str(output_dir / "public_real_llm_swarm_beta.json"),
@@ -8020,6 +8039,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["checked_gpu_status"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["checked_gpu_status"]["fresh_kaggle_gpu_verified"])
         self.assertTrue(report["checked_gpu_status"]["public_artifact_safe"])
+        self.assertEqual(report["checked_inference_verdict"]["state"], "ready")
+        self.assertEqual(report["checked_inference_verdict"]["gpu_state"], "local-gpu-smoke-only")
+        self.assertFalse(report["checked_inference_verdict"]["fresh_kaggle_gpu_verified"])
         self.assertEqual(report["review_summary"]["next_step"], "review_checked_artifacts")
         self.assertEqual(report["user_status"]["state"], "ready")
         self.assertEqual(report["recommended_next_command"]["label"], "inspect checked Beta summary")
@@ -8052,6 +8074,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("cleanup_required=True", rendered)
         self.assertIn("token_rotation_required=True", rendered)
         self.assertIn("public-swarm-gpu-beta kaggle-auto", rendered)
+        self.assertIn("  checked_verdict: state=ready completed=True preflight_only=False answer=no-local-answer", rendered)
+        self.assertIn("gpu=local-gpu-smoke-only fresh_kaggle_gpu=False next=review_checked_artifacts", rendered)
+        self.assertIn("  checked_verdict_note: Public Real-LLM Swarm Beta evidence is ready.", rendered)
         self.assertIn("  recommended_next: sed -n 1,220p", rendered)
         self.assertIn("  next[1] inspect checked Beta summary:", rendered)
         self.assertIn("  prompt_scope: source=prompt-text count=1 inline_prompt_text=True", rendered)
@@ -8591,6 +8616,49 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "fresh_kaggle_gpu_verified": False,
                 "user_expectation": "This release mixes fresh local CPU checks with retained external/P2P evidence.",
             },
+            "inference_verdict": {
+                "schema": "crowdtensor_inference_verdict_v1",
+                "kind": "Public Real-LLM Swarm Beta",
+                "state": "ready",
+                "completed": True,
+                "preflight_only": False,
+                "blocked": False,
+                "result_status": "ready",
+                "generated_token_count": 16,
+                "max_new_tokens": 16,
+                "output_count": 32,
+                "answer_scope_state": "no-local-answer",
+                "answer_visible_in_terminal": False,
+                "saved_artifacts_public_safe": True,
+                "evidence_level": "release-local-cpu-with-retained-external",
+                "executed_where": "local-cpu-plus-retained-evidence",
+                "gpu_state": "local-gpu-smoke-only",
+                "retained_gpu_evidence_imported": False,
+                "fresh_kaggle_gpu_verified": False,
+                "source_inference_verdict": {
+                    "schema": "crowdtensor_inference_verdict_v1",
+                    "kind": "Public Swarm v2",
+                    "state": "ready",
+                    "completed": True,
+                    "preflight_only": False,
+                    "blocked": False,
+                    "evidence_level": "local-p2p-cpu-with-retained-external-and-gpu-evidence",
+                    "gpu_state": "cuda-fail-closed",
+                    "fresh_kaggle_gpu_verified": False,
+                    "next_step": "review_artifacts",
+                    "recommended_label": "review v2 evidence",
+                    "public_artifact_safe": True,
+                },
+                "source_inference_verdict_state": "ready",
+                "source_inference_verdict_completed": True,
+                "recommended_label": "validate beta report",
+                "recommended_reason": "check_current_beta_report",
+                "next_step": "run_beta_report_check",
+                "primary_code": "public_real_llm_swarm_beta_ready",
+                "inspect_first": "public_real_llm_swarm_beta.md",
+                "public_artifact_safe": True,
+                "message": "Public Real-LLM Swarm Beta evidence is ready. This top-level report proves the shareable inference evidence path; raw answers are not saved.",
+            },
             "artifact_summary": {
                 "inspect_first": "public_real_llm_swarm_beta.md",
                 "machine_readable": "public_real_llm_swarm_beta.json",
@@ -8705,6 +8773,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  gpu_proof_next: state=fresh-kaggle-gpu-not-verified", output)
         self.assertIn("reason=verify_fresh_kaggle_gpu", output)
         self.assertIn("public-swarm-gpu-beta kaggle-auto", output)
+        self.assertIn("  verdict: state=ready completed=True preflight_only=False answer=no-local-answer", output)
+        self.assertIn("gpu=local-gpu-smoke-only fresh_kaggle_gpu=False next=run_beta_report_check", output)
+        self.assertIn("  verdict_note: Public Real-LLM Swarm Beta evidence is ready.", output)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,

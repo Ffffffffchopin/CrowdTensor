@@ -1006,6 +1006,29 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         errors.append("review_summary_next_command_mismatch")
     if user_status.get("recommended_label") != recommended_next.get("label"):
         errors.append("user_status_recommended_label_mismatch")
+    verdict = payload.get("inference_verdict") if isinstance(payload.get("inference_verdict"), dict) else {}
+    if verdict.get("schema") != pack.INFERENCE_VERDICT_SCHEMA:
+        errors.append("inference_verdict_schema_mismatch")
+    if verdict.get("kind") != "Public Real-LLM Swarm Beta":
+        errors.append("inference_verdict_kind_mismatch")
+    if verdict.get("state") not in {"ready", "blocked", "package-ready", "local-model-ready"}:
+        errors.append("inference_verdict_state_mismatch")
+    expected_completed = bool(payload.get("ok") is True and beta.get("ready") is True and not not_completed)
+    if verdict.get("completed") is not expected_completed:
+        errors.append("inference_verdict_completed_mismatch")
+    if verdict.get("answer_scope_state") != "no-local-answer":
+        errors.append("inference_verdict_answer_scope_state_mismatch")
+    if verdict.get("saved_artifacts_public_safe") is not True:
+        errors.append("inference_verdict_saved_artifacts_public_safe_mismatch")
+    if verdict.get("gpu_state") != gpu_status.get("state"):
+        errors.append("inference_verdict_gpu_state_mismatch")
+    if verdict.get("fresh_kaggle_gpu_verified") is not gpu_status.get("fresh_kaggle_gpu_verified"):
+        errors.append("inference_verdict_fresh_kaggle_gpu_mismatch")
+    source_verdict = verdict.get("source_inference_verdict") if isinstance(verdict.get("source_inference_verdict"), dict) else {}
+    if source_verdict.get("kind") != "Public Swarm v2":
+        errors.append("inference_verdict_source_kind_mismatch")
+    if verdict.get("public_artifact_safe") is not True:
+        errors.append("inference_verdict_public_artifact_safe_mismatch")
     next_commands = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
     if not next_commands:
         errors.append("next_commands_missing")
@@ -1065,6 +1088,8 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("machine_readable_gpu_status_mismatch")
         if machine.get("gpu_proof_next_step") != payload.get("gpu_proof_next_step"):
             errors.append("machine_readable_gpu_proof_next_step_mismatch")
+        if machine.get("inference_verdict") != payload.get("inference_verdict"):
+            errors.append("machine_readable_inference_verdict_mismatch")
         machine_review = machine.get("review_summary") if isinstance(machine.get("review_summary"), dict) else {}
         if machine_review.get("next_step") != review_summary.get("next_step"):
             errors.append("machine_readable_review_next_step_mismatch")
@@ -1106,6 +1131,10 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("markdown_next_support_bundle_missing")
         if "- status: `" not in markdown:
             errors.append("markdown_status_missing")
+        if "- verdict: `" not in markdown:
+            errors.append("markdown_inference_verdict_missing")
+        if "- verdict note:" not in markdown:
+            errors.append("markdown_inference_verdict_note_missing")
         recommended_line = str((payload.get("recommended_check_command") if isinstance(payload.get("recommended_check_command"), dict) else {}).get("command_line") or "")
         if recommended_line and recommended_line not in markdown:
             errors.append("markdown_recommended_check_missing")
@@ -1182,6 +1211,8 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("support_bundle_gpu_status_mismatch")
         if support.get("gpu_proof_next_step") != payload.get("gpu_proof_next_step"):
             errors.append("support_bundle_gpu_proof_next_step_mismatch")
+        if support.get("inference_verdict") != payload.get("inference_verdict"):
+            errors.append("support_bundle_inference_verdict_mismatch")
         support_artifacts = support.get("artifact_summary") if isinstance(support.get("artifact_summary"), dict) else {}
         if support_artifacts.get("inspect_first") != "public_real_llm_swarm_beta.md":
             errors.append("support_bundle_inspect_first_mismatch")
@@ -1632,6 +1663,11 @@ def check_result_from_payload(
         if isinstance(payload.get("gpu_proof_next_step") if payload else None, dict)
         else pack.gpu_proof_next_step_summary(checked_gpu_status)
     )
+    checked_inference_verdict = (
+        payload.get("inference_verdict")
+        if isinstance(payload.get("inference_verdict") if payload else None, dict)
+        else {}
+    )
     result = {
         "schema": SCHEMA,
         "ok": not errors,
@@ -1649,6 +1685,7 @@ def check_result_from_payload(
         "checked_evidence_scope": checked_evidence_scope,
         "checked_gpu_status": checked_gpu_status,
         "checked_gpu_proof_next_step": checked_gpu_proof_next_step,
+        "checked_inference_verdict": checked_inference_verdict,
         "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"] if not errors else ["public_real_llm_swarm_beta_check_blocked"],
         "artifacts": {
             "public_real_llm_swarm_beta_json": artifact_path(
@@ -1719,6 +1756,7 @@ def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
             "checked_gpu_status",
             "checked_gpu_proof_next_step",
             "checked_gpu_summary",
+            "checked_inference_verdict",
             "check_source",
             "checked_beta_report",
             "beta_output_dir",
@@ -1787,6 +1825,7 @@ def print_human_summary(result: dict[str, Any]) -> None:
     checked_evidence_scope = result.get("checked_evidence_scope") if isinstance(result.get("checked_evidence_scope"), dict) else {}
     checked_gpu_status = result.get("checked_gpu_status") if isinstance(result.get("checked_gpu_status"), dict) else {}
     checked_gpu_proof_next_step = result.get("checked_gpu_proof_next_step") if isinstance(result.get("checked_gpu_proof_next_step"), dict) else {}
+    checked_inference_verdict = result.get("checked_inference_verdict") if isinstance(result.get("checked_inference_verdict"), dict) else {}
     checked_gpu_summary_value = (
         review.get("checked_gpu_summary")
         if isinstance(review.get("checked_gpu_summary"), dict)
@@ -1839,6 +1878,9 @@ def print_human_summary(result: dict[str, Any]) -> None:
             f"{pack.gpu_status_text(effective_gpu_status)}"
         )
         print(f"  checked_gpu_proof_next: {pack.gpu_proof_next_step_text(effective_gpu_proof_next_step)}")
+    if checked_inference_verdict:
+        print(f"  checked_verdict: {pack.inference_verdict_text(checked_inference_verdict)}")
+        print(f"  checked_verdict_note: {checked_inference_verdict.get('message')}")
     if recommended:
         print(f"  recommended_check: {recommended.get('command_line')}")
     if recommended_next:

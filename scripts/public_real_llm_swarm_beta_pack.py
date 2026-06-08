@@ -40,6 +40,7 @@ ARTIFACT_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_artifact_summary_v1"
 REVIEW_SUMMARY_SCHEMA = "public_real_llm_swarm_beta_review_summary_v1"
 RUNTIME_PROVENANCE_SCHEMA = "public_real_llm_swarm_beta_runtime_provenance_v1"
 EVIDENCE_SCOPE_SCHEMA = "public_real_llm_swarm_beta_evidence_scope_v1"
+INFERENCE_VERDICT_SCHEMA = "crowdtensor_inference_verdict_v1"
 PRODUCT_SCHEMA = "public_swarm_product_beta_v1"
 GPU_SCHEMA = "public_swarm_gpu_inference_beta_v1"
 P2P_SCHEMA = "petals_class_p2p_candidate_v1"
@@ -1260,6 +1261,7 @@ def public_swarm_v2_summary(
     route = readiness.get("p2p_route_hardening") if isinstance(readiness.get("p2p_route_hardening"), dict) else {}
     real_p2p_local = readiness.get("real_p2p_local_route_hardening") if isinstance(readiness.get("real_p2p_local_route_hardening"), dict) else {}
     performance = readiness.get("performance") if isinstance(readiness.get("performance"), dict) else {}
+    source_verdict = payload.get("inference_verdict") if isinstance(payload.get("inference_verdict"), dict) else {}
     local_model = local.get("model") if isinstance(local.get("model"), dict) else model_compatibility(local, expected_model_id)
     external_model = external.get("model") if isinstance(external.get("model"), dict) else model_compatibility(external, expected_model_id)
     route_model = route.get("model") if isinstance(route.get("model"), dict) else model_compatibility(route, expected_model_id)
@@ -1365,6 +1367,20 @@ def public_swarm_v2_summary(
         "performance_ready": performance_ready,
         "fresh_external_runtime_verified": external.get("fresh_external_runtime_verified") is True or "public_swarm_v2_fresh_external_runtime_verified" in codes,
         "retained_external_evidence_ready": (not local_model_variant) and (external.get("retained_external_evidence_ready") is True or "public_swarm_v2_retained_external_evidence_ready" in codes),
+        "source_inference_verdict": {
+            "schema": source_verdict.get("schema") or INFERENCE_VERDICT_SCHEMA,
+            "kind": source_verdict.get("kind") or "Public Swarm v2",
+            "state": source_verdict.get("state") or ("ready" if payload.get("ok") is True else "missing"),
+            "completed": bool(source_verdict.get("completed", payload.get("ok") is True)),
+            "preflight_only": bool(source_verdict.get("preflight_only")),
+            "blocked": bool(source_verdict.get("blocked", payload.get("ok") is not True)),
+            "evidence_level": source_verdict.get("evidence_level") or "",
+            "gpu_state": source_verdict.get("gpu_state") or "unknown",
+            "fresh_kaggle_gpu_verified": bool(source_verdict.get("fresh_kaggle_gpu_verified")),
+            "next_step": source_verdict.get("next_step") or "",
+            "recommended_label": source_verdict.get("recommended_label") or "",
+            "public_artifact_safe": bool(source_verdict.get("public_artifact_safe", True)),
+        },
         "local_model_variant_only": local_model_variant or v2.get("local_model_variant_only") is True or payload.get("mode") == MODE_LOCAL_MODEL_VARIANT,
         "external_validation_claimed": not local_model_variant,
         "raw_prompts_public": False,
@@ -1991,6 +2007,124 @@ def gpu_proof_next_step_text(summary: dict[str, Any]) -> str:
     )
 
 
+def source_inference_verdict_summary(report: dict[str, Any]) -> dict[str, Any]:
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    public_swarm_v2 = readiness.get("public_swarm_v2") if isinstance(readiness.get("public_swarm_v2"), dict) else {}
+    verdict = public_swarm_v2.get("source_inference_verdict")
+    if isinstance(verdict, dict):
+        return {
+            "schema": verdict.get("schema") or INFERENCE_VERDICT_SCHEMA,
+            "kind": verdict.get("kind") or "Public Swarm v2",
+            "state": verdict.get("state") or "unknown",
+            "completed": bool(verdict.get("completed")),
+            "preflight_only": bool(verdict.get("preflight_only")),
+            "blocked": bool(verdict.get("blocked")),
+            "evidence_level": verdict.get("evidence_level") or "",
+            "gpu_state": verdict.get("gpu_state") or "unknown",
+            "fresh_kaggle_gpu_verified": bool(verdict.get("fresh_kaggle_gpu_verified")),
+            "next_step": verdict.get("next_step") or "",
+            "recommended_label": verdict.get("recommended_label") or "",
+            "public_artifact_safe": bool(verdict.get("public_artifact_safe", True)),
+        }
+    return {
+        "schema": INFERENCE_VERDICT_SCHEMA,
+        "kind": "Public Swarm v2",
+        "state": "ready" if public_swarm_v2.get("ready") is True else "missing",
+        "completed": bool(public_swarm_v2.get("ready") is True),
+        "preflight_only": False,
+        "blocked": public_swarm_v2.get("ready") is not True,
+        "evidence_level": "",
+        "gpu_state": "unknown",
+        "fresh_kaggle_gpu_verified": False,
+        "next_step": "",
+        "recommended_label": "",
+        "public_artifact_safe": True,
+    }
+
+
+def inference_verdict_summary(report: dict[str, Any]) -> dict[str, Any]:
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    public_swarm_v2 = readiness.get("public_swarm_v2") if isinstance(readiness.get("public_swarm_v2"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
+    gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    source_verdict = source_inference_verdict_summary(report)
+    ready = report_ready(report)
+    mode = str(report.get("mode") or "")
+    state = str(review.get("state") or user.get("state") or ("ready" if ready else "blocked"))
+    preflight_only = mode == MODE_PACKAGE
+    if preflight_only and ready:
+        result_status = "package-only"
+    elif ready:
+        result_status = "ready"
+    else:
+        result_status = "blocked"
+    if ready:
+        message = (
+            "Public Real-LLM Swarm Beta evidence is ready. This top-level report proves "
+            "the shareable inference evidence path; raw answers are not saved."
+        )
+    elif preflight_only:
+        message = "Public Real-LLM Swarm Beta package artifacts are ready, but no inference proof ran in package mode."
+    else:
+        message = "Public Real-LLM Swarm Beta evidence is blocked; review Not Completed and the recommended command."
+    return {
+        "schema": INFERENCE_VERDICT_SCHEMA,
+        "kind": "Public Real-LLM Swarm Beta",
+        "state": state,
+        "completed": ready,
+        "preflight_only": preflight_only,
+        "blocked": not ready,
+        "result_status": result_status,
+        "generated_token_count": int(public_swarm_v2.get("generated_token_count") or 0),
+        "max_new_tokens": int(beta.get("max_new_tokens") or public_swarm_v2.get("required_generated_token_count") or 0),
+        "output_count": int(public_swarm_v2.get("accepted_rows") or 0),
+        "answer_scope_state": answer_scope.get("scope_state") or shareable.get("answer_scope_state") or "unknown",
+        "answer_visible_in_terminal": bool(answer_scope.get("visible_in_terminal")),
+        "saved_artifacts_public_safe": bool(shareable.get("saved_artifacts_public_safe")),
+        "evidence_level": evidence_scope.get("level") or "",
+        "executed_where": evidence_scope.get("executed_where") or "",
+        "gpu_state": gpu_status.get("state") or "unknown",
+        "retained_gpu_evidence_imported": bool(gpu_status.get("retained_gpu")),
+        "fresh_kaggle_gpu_verified": bool(gpu_status.get("fresh_kaggle_gpu_verified")),
+        "source_inference_verdict": source_verdict,
+        "source_inference_verdict_state": source_verdict.get("state") or "unknown",
+        "source_inference_verdict_completed": bool(source_verdict.get("completed")),
+        "recommended_label": recommended.get("label") or review.get("recommended_label") or "",
+        "recommended_reason": recommended.get("reason") or review.get("recommended_reason") or "",
+        "next_step": review.get("next_step") or user.get("next_step") or "",
+        "primary_code": "public_real_llm_swarm_beta_ready" if ready else "public_real_llm_swarm_beta_blocked",
+        "inspect_first": artifacts.get("inspect_first") or review.get("inspect_first") or "",
+        "public_artifact_safe": True,
+        "message": message,
+    }
+
+
+def inference_verdict_text(verdict: dict[str, Any]) -> str:
+    return (
+        f"state={verdict.get('state') or 'unknown'} "
+        f"completed={bool(verdict.get('completed'))} "
+        f"preflight_only={bool(verdict.get('preflight_only'))} "
+        f"answer={verdict.get('answer_scope_state') or 'unknown'} "
+        f"answer_visible={bool(verdict.get('answer_visible_in_terminal'))} "
+        f"artifacts_public={bool(verdict.get('saved_artifacts_public_safe'))} "
+        f"evidence={verdict.get('evidence_level') or 'unknown'} "
+        f"executed={verdict.get('executed_where') or 'unknown'} "
+        f"gpu={verdict.get('gpu_state') or 'unknown'} "
+        f"fresh_kaggle_gpu={bool(verdict.get('fresh_kaggle_gpu_verified'))} "
+        f"source={verdict.get('source_inference_verdict_state') or 'unknown'} "
+        f"next={verdict.get('next_step') or 'none'} "
+        f"recommended={verdict.get('recommended_label') or 'none'} "
+        f"public_artifact_safe={bool(verdict.get('public_artifact_safe'))}"
+    )
+
+
 def artifact_path_summary(report: dict[str, Any], name: str, fallback: str) -> str:
     artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
     artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
@@ -2254,6 +2388,7 @@ def attach_user_guidance(report: dict[str, Any]) -> dict[str, Any]:
     report["next_commands"] = next_commands(report)
     report["user_status"] = user_status(report)
     report["review_summary"] = review_summary(report)
+    report["inference_verdict"] = inference_verdict_summary(report)
     return report
 
 
@@ -3096,6 +3231,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
+    verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
     user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     shareable_paths = artifact_overview.get("shareable_paths") if isinstance(artifact_overview.get("shareable_paths"), list) else []
     recommended = (
@@ -3136,6 +3272,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- not completed count: `{review.get('not_completed_count')}`",
         f"- recommended next: `{recommended.get('command_line') or 'none'}`",
         f"- recommended check: `{recommended_check.get('command_line') or 'none'}`",
+        f"- verdict: `{inference_verdict_text(verdict)}`",
+        f"- verdict note: {verdict.get('message') or ''}",
         "",
         "## What To Do Next",
         "",
@@ -3280,6 +3418,7 @@ def print_human_summary(report: dict[str, Any]) -> None:
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
+    verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
     user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     recommended = (
@@ -3328,6 +3467,9 @@ def print_human_summary(report: dict[str, Any]) -> None:
         )
         print(f"  gpu_status: {gpu_status_text(effective_gpu_status)}")
         print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step)}")
+    if verdict:
+        print(f"  verdict: {inference_verdict_text(verdict)}")
+        print(f"  verdict_note: {verdict.get('message')}")
     if user:
         print(
             "  status: "
@@ -3378,6 +3520,7 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
+    verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
     if prompt_scope.get("source") not in {"prompt-text", "prompt-texts", "prompt-texts-file"}:
         errors.append("prompt_scope_source_mismatch")
     if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 1:
@@ -3437,6 +3580,28 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
     ]:
         if bool(evidence_scope.get(key)) != bool(provenance.get(key)):
             errors.append(f"evidence_scope_{key}_mismatch")
+    if verdict.get("schema") != INFERENCE_VERDICT_SCHEMA:
+        errors.append("inference_verdict_schema_mismatch")
+    if verdict.get("kind") != "Public Real-LLM Swarm Beta":
+        errors.append("inference_verdict_kind_mismatch")
+    if verdict.get("state") not in {"ready", "blocked", "package-ready", "local-model-ready"}:
+        errors.append("inference_verdict_state_mismatch")
+    if verdict.get("completed") is not report_ready(report):
+        errors.append("inference_verdict_completed_mismatch")
+    if verdict.get("answer_scope_state") != "no-local-answer":
+        errors.append("inference_verdict_answer_scope_state_mismatch")
+    if verdict.get("saved_artifacts_public_safe") is not True:
+        errors.append("inference_verdict_saved_artifacts_public_safe_mismatch")
+    gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
+    if verdict.get("gpu_state") != gpu_status.get("state"):
+        errors.append("inference_verdict_gpu_state_mismatch")
+    if bool(verdict.get("fresh_kaggle_gpu_verified")) != bool(gpu_status.get("fresh_kaggle_gpu_verified")):
+        errors.append("inference_verdict_fresh_kaggle_gpu_mismatch")
+    source_verdict = verdict.get("source_inference_verdict") if isinstance(verdict.get("source_inference_verdict"), dict) else {}
+    if source_verdict.get("kind") != "Public Swarm v2":
+        errors.append("inference_verdict_source_kind_mismatch")
+    if verdict.get("public_artifact_safe") is not True:
+        errors.append("inference_verdict_public_artifact_safe_mismatch")
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -3500,6 +3665,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     report["gpu_status"] = gpu_status_summary(report["runtime_provenance"], report["evidence_scope"])
     report["gpu_proof_next_step"] = gpu_proof_next_step_summary(report["gpu_status"])
     report["recommended_check_command"] = recommended_check_command(report)
+    report["inference_verdict"] = inference_verdict_summary(report)
     cleanup = cleanup_release_private_artifacts(output_dir)
     report["release_private_artifact_cleanup"] = cleanup
     if cleanup["private_artifacts_cleaned"]:
@@ -3575,6 +3741,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "evidence_scope": report.get("evidence_scope"),
         "gpu_status": report.get("gpu_status"),
         "gpu_proof_next_step": report.get("gpu_proof_next_step"),
+        "inference_verdict": report.get("inference_verdict"),
         "safety": report.get("safety"),
         "limitations": report.get("limitations"),
     })

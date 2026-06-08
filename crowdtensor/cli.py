@@ -15307,6 +15307,7 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
+    inference_verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
     review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
@@ -15386,6 +15387,9 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
         gpu_proof_next_step = report.get("gpu_proof_next_step") if isinstance(report.get("gpu_proof_next_step"), dict) else {}
         print(f"  gpu_status: {gpu_status_text(effective_gpu_status)}")
         print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step or gpu_proof_next_step_summary(effective_gpu_status))}")
+    if inference_verdict:
+        print(f"  verdict: {inference_verdict_text(inference_verdict)}")
+        print(f"  verdict_note: {inference_verdict.get('message')}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -15444,6 +15448,7 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     checked_runtime_provenance = report.get("checked_runtime_provenance") if isinstance(report.get("checked_runtime_provenance"), dict) else {}
     checked_evidence_scope = report.get("checked_evidence_scope") if isinstance(report.get("checked_evidence_scope"), dict) else {}
+    checked_inference_verdict = report.get("checked_inference_verdict") if isinstance(report.get("checked_inference_verdict"), dict) else {}
     checked_gpu_summary = (
         report.get("checked_gpu_summary")
         if isinstance(report.get("checked_gpu_summary"), dict)
@@ -15512,6 +15517,9 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
             "  checked_gpu_proof_next: "
             f"{gpu_proof_next_step_text(checked_gpu_proof_next_step or gpu_proof_next_step_summary(effective_checked_gpu_status))}"
         )
+    if checked_inference_verdict:
+        print(f"  checked_verdict: {inference_verdict_text(checked_inference_verdict)}")
+        print(f"  checked_verdict_note: {checked_inference_verdict.get('message')}")
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")
     if recommended_next:
