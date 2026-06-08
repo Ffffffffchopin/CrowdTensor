@@ -358,6 +358,7 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
         "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
         "summary": (
@@ -368,10 +369,15 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def inherited_prompt_scope(args: argparse.Namespace, product_payload: dict[str, Any]) -> dict[str, Any]:
+    fallback = prompt_scope_summary(args)
     prompt_scope = product_payload.get("prompt_scope") if isinstance(product_payload.get("prompt_scope"), dict) else {}
     if prompt_scope:
-        return dict(prompt_scope)
-    return prompt_scope_summary(args)
+        inherited = dict(fallback)
+        inherited.update(prompt_scope)
+        if not inherited.get("summary"):
+            inherited["summary"] = fallback["summary"]
+        return inherited
+    return fallback
 
 
 def answer_scope_summary() -> dict[str, Any]:
@@ -422,9 +428,14 @@ def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
         f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
         f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
         f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
         f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
         f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
     )
+
+
+def prompt_scope_note(prompt_scope: dict[str, Any]) -> str:
+    return str(prompt_scope.get("summary") or "")
 
 
 def answer_scope_text(answer_scope: dict[str, Any]) -> str:
@@ -738,6 +749,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         f"- include output: `{output_request.get('include_output')}`",
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -882,6 +894,8 @@ def main() -> None:
             print(f"  output_request: {output_request_text(output_request)}")
         if prompt_scope:
             print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
+            if prompt_scope_note(prompt_scope):
+                print(f"  prompt_scope_note: {prompt_scope_note(prompt_scope)}")
         if answer_scope:
             print(f"  answer_scope: {answer_scope_text(answer_scope)}")
         if shareable:

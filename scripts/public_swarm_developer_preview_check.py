@@ -137,6 +137,8 @@ def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[
         errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
     if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not True:
         errors.append("prompt_scope_shareable_log_guidance_mismatch")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append("prompt_scope_file_path_public_mismatch")
     if prompt_scope.get("raw_prompt_public") is not False:
         errors.append("prompt_scope_raw_prompt_public_mismatch")
     if prompt_scope.get("public_artifact_safe") is not True:
@@ -246,6 +248,7 @@ def fake_product_payload(mode: str, output_dir: Path) -> dict[str, Any]:
             "saved_artifacts_prompt_placeholders": True,
             "saved_artifacts_public_safe": True,
             "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+            "prompt_file_path_public": False,
             "raw_prompt_public": False,
             "public_artifact_safe": True,
         },

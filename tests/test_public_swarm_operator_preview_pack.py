@@ -38,6 +38,7 @@ class PublicSwarmOperatorPreviewPackTests(unittest.TestCase):
         self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
         self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
         self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
         self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
@@ -55,7 +56,11 @@ class PublicSwarmOperatorPreviewPackTests(unittest.TestCase):
         markdown = (Path(result["output_dir"]) / "operator-preview" / "public_swarm_operator_preview.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
         self.assertIn(
-            "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn(
+            "- prompt scope note: This Operator Preview artifact records inherited prompt source/count and placeholder safety only; raw prompt text is excluded from public JSON, Markdown, and support bundles.",
             markdown,
         )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
