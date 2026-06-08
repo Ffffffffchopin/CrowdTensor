@@ -57,6 +57,8 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (Path(result["output_dir"]) / "product-beta" / "public_swarm_product_beta.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("local answer", markdown)
         self.assertIn(
             "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,

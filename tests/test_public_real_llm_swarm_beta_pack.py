@@ -334,6 +334,8 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("- machine readable: `public_real_llm_swarm_beta.json`", markdown)
         self.assertIn("- support bundle: `support_bundle.json`", markdown)
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("local answer", markdown)
         self.assertIn(
             "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,

@@ -291,6 +291,8 @@ class SwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "swarm_inference_beta_live.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("answer text", markdown)
         self.assertIn("prompt scope: `source=none count=0 inline_prompt_text=False", markdown)
         self.assertIn("prompt scope note:", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)

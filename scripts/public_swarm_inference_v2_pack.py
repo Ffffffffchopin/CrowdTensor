@@ -847,6 +847,13 @@ def output_request_text(summary: dict[str, Any]) -> str:
     )
 
 
+def output_request_note(output_request: dict[str, Any]) -> str:
+    return str(
+        output_request.get("summary")
+        or "Public artifacts summarize inference evidence only and do not include answer text."
+    )
+
+
 def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
     return (
         f"source={prompt_scope.get('source') or 'unknown'} "
@@ -1655,6 +1662,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- output request note: {output_request_note(output_request)}",
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
@@ -1876,6 +1884,7 @@ def main() -> None:
             print(f"  not_completed[{index}]: {item}")
         if output_request:
             print(f"  output_request: {output_request_text(output_request)}")
+            print(f"  output_request_note: {output_request_note(output_request)}")
         if prompt_scope:
             print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
             print(f"  prompt_scope_note: {prompt_scope_note(prompt_scope)}")

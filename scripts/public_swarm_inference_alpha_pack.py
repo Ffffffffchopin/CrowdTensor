@@ -765,6 +765,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- output request note: {output_request.get('summary') or 'Public artifacts summarize inference evidence only and do not include answer text.'}",
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
@@ -889,6 +890,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def print_human(report: dict[str, Any]) -> None:
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     print("CrowdTensor Public Swarm Inference Alpha")
@@ -899,6 +901,9 @@ def print_human(report: dict[str, Any]) -> None:
     print(f"  model: {session.get('model_id')}")
     print(f"  external runtime: {session.get('live_external_runtime_verified')}")
     print(f"  local requeue: {session.get('local_stage_requeue_verified')}")
+    if output_request:
+        print(f"  output_request: include_output={bool(output_request.get('include_output'))} raw_generation_public={bool(output_request.get('raw_generation_public'))} public_artifact_safe={bool(output_request.get('public_artifact_safe'))}")
+        print(f"  output_request_note: {output_request.get('summary') or 'Public artifacts summarize inference evidence only and do not include answer text.'}")
     if prompt_scope:
         print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
         print(f"  prompt_scope_note: {prompt_scope_note(prompt_scope)}")

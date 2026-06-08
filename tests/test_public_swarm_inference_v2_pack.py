@@ -255,6 +255,8 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "v2" / "public_swarm_inference_v2.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("local answer", markdown)
         self.assertIn("## Review", markdown)
         self.assertIn("- state: `ready`", markdown)
         self.assertIn("- recommended: `review v2 evidence` reason=`v2_ready`", markdown)

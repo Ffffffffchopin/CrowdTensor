@@ -91,6 +91,8 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "public_swarm_inference_alpha.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("answer text", markdown)
         self.assertIn("prompt scope: `source=imported-or-built-in-validation-prompts", markdown)
         self.assertIn("prompt scope note: Public Swarm Alpha aggregates fixed or imported validation prompts", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)

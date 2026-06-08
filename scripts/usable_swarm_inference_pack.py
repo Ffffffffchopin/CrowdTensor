@@ -741,6 +741,13 @@ def prompt_scope_note(prompt_scope: dict[str, Any]) -> str:
     )
 
 
+def output_request_note(output_request: dict[str, Any]) -> str:
+    return str(
+        output_request.get("summary")
+        or "Public artifacts summarize inference evidence only and do not include answer text."
+    )
+
+
 def answer_scope_note(answer_scope: dict[str, Any]) -> str:
     return str(
         answer_scope.get("summary")
@@ -1075,6 +1082,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- output request note: {output_request_note(output_request)}",
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
@@ -1242,11 +1250,15 @@ def main() -> None:
         print(json.dumps(report, sort_keys=True))
     else:
         usable = report.get("usable_swarm") if isinstance(report.get("usable_swarm"), dict) else {}
+        output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
         answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
         print("CrowdTensor Usable Swarm Inference v1")
         print(f"  ok: {report.get('ok')}")
         print(f"  mode: {report.get('mode')}")
         print(f"  ready: {usable.get('ready')}")
+        if output_request:
+            print(f"  output_request: include_output={bool(output_request.get('include_output'))} raw_generated_text_public={bool(output_request.get('raw_generated_text_public'))} public_artifact_safe={bool(output_request.get('public_artifact_safe'))}")
+            print(f"  output_request_note: {output_request_note(output_request)}")
         if answer_scope:
             print(f"  answer_scope: {answer_scope.get('scope_state')}")
             print(f"  answer_scope_note: {answer_scope_note(answer_scope)}")
