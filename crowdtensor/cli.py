@@ -3775,6 +3775,10 @@ def build_real_llm_internet_beta(args: argparse.Namespace, *, runner: Runner = s
         args.mode,
         "--output-dir",
         str(output_dir),
+        "--generation-report",
+        args.generation_report,
+        "--requeue-report",
+        args.requeue_report,
         "--public-host",
         args.public_host,
         "--bind-host",
@@ -3791,6 +3795,12 @@ def build_real_llm_internet_beta(args: argparse.Namespace, *, runner: Runner = s
         str(getattr(args, "max_new_tokens", 1)),
         "--hf-model-id",
         args.hf_model_id,
+        "--real-llm-backend",
+        args.real_llm_backend,
+        "--real-llm-partition-mode",
+        args.real_llm_partition_mode,
+        "--transformers-spec",
+        args.transformers_spec,
         "--dataset-title",
         args.dataset_title,
         "--kernel-title-prefix",
@@ -3819,12 +3829,20 @@ def build_real_llm_internet_beta(args: argparse.Namespace, *, runner: Runner = s
         str(args.lease_seconds),
         "--compute-seconds",
         str(args.compute_seconds),
+        "--victim-compute-seconds",
+        str(args.victim_compute_seconds),
         "--heartbeat-interval",
         str(args.heartbeat_interval),
         "--idle-sleep",
         str(args.idle_sleep),
+        "--claim-observe-timeout",
+        str(args.claim_observe_timeout),
+        "--requeue-timeout",
+        str(args.requeue_timeout),
         "--max-request-attempts",
         str(args.max_request_attempts),
+        "--failure-mode",
+        args.failure_mode,
         "--json",
     ]
     if args.ready_url:
@@ -3833,6 +3851,10 @@ def build_real_llm_internet_beta(args: argparse.Namespace, *, runner: Runner = s
         command.extend(["--coordinator-url", args.coordinator_url])
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if args.torch_spec:
+        command.extend(["--torch-spec", args.torch_spec])
+    if args.torch_index_url:
+        command.extend(["--torch-index-url", args.torch_index_url])
     if args.kaggle_owner:
         command.extend(["--kaggle-owner", args.kaggle_owner])
     if args.dataset_slug:
@@ -13342,6 +13364,9 @@ def print_real_llm_internet_alpha(report: dict[str, Any]) -> None:
 
 
 def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -13353,6 +13378,18 @@ def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  coordinator: {report.get('coordinator_url')}")
     print(f"  output: {report.get('output_dir')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -13367,6 +13404,23 @@ def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
     print(f"  kaggle auto: {runtime.get('kaggle_auto')}")
     print(f"  external runtime: {runtime.get('external_runtime_verified')}")
     print(f"  kernels deleted: {lifecycle.get('kernels_deleted')}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = ""
+        if item.get("requires_private_credentials"):
+            suffix += " (requires private credentials)"
+        if item.get("side_effectful"):
+            suffix += " side_effectful=True"
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    artifact_summary_value = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
@@ -15362,8 +15416,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "real-llm-internet-beta",
         help="Run the real Internet Swarm Inference Beta Kaggle automation with cleanup-backed evidence.",
     )
-    real_internet_beta.add_argument("--mode", choices=["kaggle-auto"], default="kaggle-auto")
+    real_internet_beta.add_argument("--mode", choices=["kaggle-auto", "evidence-import"], default="kaggle-auto")
     real_internet_beta.add_argument("--output-dir", default="dist/real-llm-internet-beta-kaggle-auto")
+    real_internet_beta.add_argument("--generation-report", default="")
+    real_internet_beta.add_argument("--requeue-report", default="")
     real_internet_beta.add_argument("--public-host", default="24.199.118.54")
     real_internet_beta.add_argument("--bind-host", default="0.0.0.0")
     real_internet_beta.add_argument("--port", type=int, default=9190)
@@ -15375,6 +15431,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     real_internet_beta.add_argument("--max-new-tokens", type=int, default=1)
     real_internet_beta.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
     real_internet_beta.add_argument("--hf-cache-dir", default="")
+    real_internet_beta.add_argument("--real-llm-backend", choices=["hf_transformers_cpu", "hf_transformers_cuda", "cpu", "cuda", "auto"], default="hf_transformers_cpu")
+    real_internet_beta.add_argument("--real-llm-partition-mode", choices=["full", "stage-local", "stage_local"], default="full")
+    real_internet_beta.add_argument("--torch-spec", default="")
+    real_internet_beta.add_argument("--torch-index-url", default="")
+    real_internet_beta.add_argument("--transformers-spec", default="transformers==4.40.2")
     real_internet_beta.add_argument("--kaggle-owner", default="")
     real_internet_beta.add_argument("--dataset-slug", default="")
     real_internet_beta.add_argument("--dataset-title", default="CrowdTensor Real LLM Internet Beta Package")
@@ -17170,6 +17231,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--max-new-tokens must be between 1 and 32")
         if args.failure_mode != "none" and args.max_new_tokens != 1:
             raise SystemExit("--max-new-tokens greater than 1 is only supported with --failure-mode none")
+        if args.mode == "evidence-import":
+            if not args.generation_report:
+                raise SystemExit("--generation-report is required in evidence-import mode")
+            if not args.requeue_report:
+                raise SystemExit("--requeue-report is required in evidence-import mode")
         if args.port < 1 or args.base_port < 1:
             raise SystemExit("--port and --base-port must be positive")
         if args.max_request_attempts < 1:

@@ -18863,6 +18863,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("--kaggle-owner", command)
             self.assertIn("--kaggle-push-timeout-seconds", command)
             self.assertIn("--kaggle-status-timeout-seconds", command)
+            self.assertIn("--real-llm-backend", command)
+            self.assertIn("--failure-mode", command)
             return completed({
                 "schema": "real_llm_internet_beta_v1",
                 "ok": True,
@@ -18897,6 +18899,49 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("real_llm_internet_beta_ready", summary["diagnosis_codes"])
         self.assertTrue(calls)
 
+    def test_real_llm_internet_beta_evidence_import_forwards_reports(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("real_llm_internet_beta_pack.py", command[1])
+            self.assertEqual(command[command.index("--mode") + 1], "evidence-import")
+            self.assertIn("--generation-report", command)
+            self.assertIn("--requeue-report", command)
+            self.assertIn("--real-llm-backend", command)
+            return completed({
+                "schema": "real_llm_internet_beta_v1",
+                "ok": True,
+                "mode": "evidence-import",
+                "diagnosis_codes": [
+                    "real_llm_internet_beta_ready",
+                    "real_llm_internet_beta_evidence_import_ready",
+                ],
+                "artifacts": {},
+            })
+
+        args = cli.parse_args([
+            "real-llm-internet-beta",
+            "--mode",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir),
+            "--generation-report",
+            "/tmp/generation.json",
+            "--requeue-report",
+            "/tmp/requeue.json",
+            "--max-new-tokens",
+            "16",
+        ])
+        summary = cli.build_real_llm_internet_beta(args, runner=fake_runner)
+
+        self.assertTrue(summary["ok"], summary)
+        self.assertEqual(summary["mode"], "evidence-import")
+        self.assertEqual(summary["cli_schema"], "real_llm_internet_beta_cli_v1")
+        self.assertIn("real_llm_internet_beta_evidence_import_ready", summary["diagnosis_codes"])
+        self.assertTrue(calls)
+
     def test_main_real_llm_internet_beta_json_outputs_summary(self) -> None:
         summary = {"schema": "real_llm_internet_beta_v1", "ok": True}
         with patch.object(cli, "build_real_llm_internet_beta", return_value=summary), patch("builtins.print") as mocked_print:
@@ -18907,6 +18952,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "real_llm_internet_beta_v1")
 
+    def test_real_llm_internet_beta_evidence_import_requires_reports(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            cli.parse_args(["real-llm-internet-beta", "--mode", "evidence-import"])
+        self.assertEqual(str(raised.exception), "--generation-report is required in evidence-import mode")
+
     def test_print_real_llm_internet_beta_outputs_scope_summary(self) -> None:
         report = {
             "schema": "real_llm_internet_beta_v1",
@@ -18915,6 +18965,50 @@ class CrowdTensorCliTests(unittest.TestCase):
             "mode": "kaggle-auto",
             "coordinator_url": "http://127.0.0.1:9190",
             "output_dir": "/tmp/real-llm-internet-beta",
+            "user_status": {
+                "state": "ready",
+                "headline": "Real Internet Swarm Inference Beta evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Real Internet Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "real_llm_internet_beta_review_summary_v1",
+                "state": "ready",
+                "headline": "Real Internet Swarm Inference Beta evidence is ready.",
+                "next_step": "review_artifacts",
+                "inspect_first": "/tmp/real-llm-internet-beta/real_llm_internet_beta.md",
+                "support_bundle": "/tmp/real-llm-internet-beta/support_bundle.json",
+                "recommended_label": "inspect Real Internet Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p /tmp/real-llm-internet-beta/real_llm_internet_beta.md",
+                "attention": "none",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Real Internet Beta evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p /tmp/real-llm-internet-beta/real_llm_internet_beta.md",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p /tmp/real-llm-internet-beta/real_llm_internet_beta.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p /tmp/real-llm-internet-beta/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "present_artifact_count": 4,
+                "artifact_count": 4,
+                "support_bundle": "/tmp/real-llm-internet-beta/support_bundle.json",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_prompt_public": False,
@@ -18950,6 +19044,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_real_llm_internet_beta(report)
 
         output = stream.getvalue()
+        self.assertIn("status: ready", output)
+        self.assertIn("review: state=ready", output)
+        self.assertIn("recommended_next: inspect Real Internet Beta evidence", output)
+        self.assertIn("next[1] inspect shareable summary", output)
+        self.assertIn("artifacts: present=4/4", output)
         self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
         self.assertIn("answer_scope: state=no-local-answer", output)
         self.assertIn("saved_json=hash-only", output)

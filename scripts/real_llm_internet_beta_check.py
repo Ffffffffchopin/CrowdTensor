@@ -196,6 +196,45 @@ def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
     return errors
 
 
+def guidance_errors(label: str, payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    recommended = payload.get("recommended_next_command") if isinstance(payload.get("recommended_next_command"), dict) else {}
+    next_commands = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    not_completed = payload.get("not_completed") if isinstance(payload.get("not_completed"), list) else []
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    support = artifacts.get("support_bundle_json") if isinstance(artifacts.get("support_bundle_json"), dict) else {}
+    if user_status.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:user_status_public_artifact_safe")
+    if payload.get("ok") is True and user_status.get("state") != "ready":
+        errors.append(f"{label}:user_status_ready_state")
+    if review.get("schema") != "real_llm_internet_beta_review_summary_v1":
+        errors.append(f"{label}:review_schema")
+    if payload.get("ok") is True and review.get("state") != "ready":
+        errors.append(f"{label}:review_ready_state")
+    if not isinstance(review.get("inspect_first"), str) or not review.get("inspect_first"):
+        errors.append(f"{label}:review_inspect_first")
+    if not isinstance(review.get("support_bundle"), str) or not review.get("support_bundle"):
+        errors.append(f"{label}:review_support_bundle")
+    if not isinstance(recommended.get("command_line"), str) or not recommended.get("command_line"):
+        errors.append(f"{label}:recommended_command")
+    if recommended.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:recommended_public_artifact_safe")
+    if len(next_commands) < 2:
+        errors.append(f"{label}:next_commands")
+    if not_completed:
+        errors.append(f"{label}:ready_report_not_completed")
+    if artifact_summary.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:artifact_summary_public_artifact_safe")
+    if artifact_summary.get("present_artifact_count") != artifact_summary.get("artifact_count"):
+        errors.append(f"{label}:artifact_summary_present_count")
+    if support.get("present") is not True:
+        errors.append(f"{label}:support_bundle_present")
+    return errors
+
+
 def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
     joined = " ".join(command)
     if "real_llm_internet_alpha_pack.py" in joined and option_value(command, "--mode") == "package":
@@ -405,7 +444,8 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
     missing = sorted(required_codes - set(report.get("diagnosis_codes") or []))
     leaks = [item for item in forbidden if item in serialized]
     scope_errors = output_scope_errors("report", report)
-    ok = bool(report.get("ok") and not missing and not leaks and not scope_errors)
+    guide_errors = guidance_errors("report", report)
+    ok = bool(report.get("ok") and not missing and not leaks and not scope_errors and not guide_errors)
     return {
         "schema": SCHEMA,
         "ok": ok,
@@ -415,6 +455,7 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
         "missing_codes": missing,
         "sensitive_leaks": leaks,
         "output_scope_errors": scope_errors,
+        "guidance_errors": guide_errors,
         "diagnosis_codes": sorted(set(report.get("diagnosis_codes") or []) | (set() if ok else {"real_llm_internet_beta_check_failed"})),
         "artifacts": {
             "real_llm_internet_beta_json": pack.artifact_entry(

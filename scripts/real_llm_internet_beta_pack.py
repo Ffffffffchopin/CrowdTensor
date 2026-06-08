@@ -234,6 +234,41 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def shell_command(parts: list[Any]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in parts if str(part))
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    requires_private_credentials: bool = False,
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if requires_private_credentials:
+        entry["requires_private_credentials"] = True
+        entry["credential_note"] = (
+            "Use local private Kaggle and operator credentials when running this "
+            "command; credential values are intentionally excluded from public artifacts."
+        )
+    if side_effectful:
+        entry["side_effectful"] = True
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
 def json_from_stdout(stdout: str) -> dict[str, Any]:
     for line in reversed([line.strip() for line in stdout.splitlines() if line.strip()]):
         try:
@@ -1461,10 +1496,394 @@ def safety_summary(args: argparse.Namespace, *, cleanup_ok: bool) -> dict[str, A
     }
 
 
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "real_llm_internet_beta.md",
+        "summary_json": output_dir / "real_llm_internet_beta.json",
+        "summary_markdown": output_dir / "real_llm_internet_beta.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    present = sum(1 for path in paths.values() if path.is_file())
+    return {
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": present,
+        "shareable_paths": [
+            str(paths["summary_json"]),
+            str(paths["summary_markdown"]),
+            str(paths["support_bundle"]),
+        ],
+        "public_artifact_safe": True,
+    }
+
+
+def real_llm_internet_beta_command(args: argparse.Namespace, output_dir: Path, mode: str) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "real-llm-internet-beta",
+        "--mode",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--public-host",
+        getattr(args, "public_host", DEFAULT_PUBLIC_HOST),
+        "--bind-host",
+        getattr(args, "bind_host", "0.0.0.0"),
+        "--port",
+        str(getattr(args, "port", DEFAULT_PORT)),
+        "--base-port",
+        str(getattr(args, "base_port", DEFAULT_BASE_PORT)),
+        "--miner-id",
+        getattr(args, "miner_id", "internet-real-llm-beta"),
+        "--request-count",
+        str(getattr(args, "request_count", 2)),
+        "--max-new-tokens",
+        str(getattr(args, "max_new_tokens", 1)),
+        "--hf-model-id",
+        getattr(args, "hf_model_id", DEFAULT_MODEL_ID),
+        "--real-llm-backend",
+        getattr(args, "real_llm_backend", REAL_LLM_BACKEND_CPU),
+        "--real-llm-partition-mode",
+        getattr(args, "real_llm_partition_mode", "full"),
+        "--timeout-seconds",
+        str(getattr(args, "timeout_seconds", 900.0)),
+        "--remote-timeout-seconds",
+        str(getattr(args, "remote_timeout_seconds", 720.0)),
+        "--startup-timeout",
+        str(getattr(args, "startup_timeout", 45.0)),
+        "--process-exit-timeout",
+        str(getattr(args, "process_exit_timeout", 20.0)),
+        "--poll-interval",
+        str(getattr(args, "poll_interval", 1.0)),
+        "--http-timeout",
+        str(getattr(args, "http_timeout", 30.0)),
+        "--kaggle-owner",
+        getattr(args, "kaggle_owner", "") or "KAGGLE_USERNAME",
+    ]
+    if mode == MODE_KAGGLE_AUTO:
+        command.extend([
+            "--dataset-title",
+            getattr(args, "dataset_title", "CrowdTensor Real LLM Internet Beta Package"),
+            "--kernel-title-prefix",
+            getattr(args, "kernel_title_prefix", "CrowdTensor Real LLM Internet Beta Miner"),
+            "--kaggle-push-timeout-seconds",
+            str(getattr(args, "kaggle_push_timeout_seconds", 180.0)),
+            "--kaggle-delete-timeout-seconds",
+            str(getattr(args, "kaggle_delete_timeout_seconds", 120.0)),
+            "--kaggle-status-timeout-seconds",
+            str(getattr(args, "kaggle_status_timeout_seconds", 900.0)),
+            "--kaggle-status-poll-interval",
+            str(getattr(args, "kaggle_status_poll_interval", 15.0)),
+            "--lease-seconds",
+            str(getattr(args, "lease_seconds", 15.0)),
+            "--compute-seconds",
+            str(getattr(args, "compute_seconds", 0.2)),
+            "--victim-compute-seconds",
+            str(getattr(args, "victim_compute_seconds", 45.0)),
+            "--heartbeat-interval",
+            str(getattr(args, "heartbeat_interval", 0.1)),
+            "--idle-sleep",
+            str(getattr(args, "idle_sleep", 0.5)),
+            "--claim-observe-timeout",
+            str(getattr(args, "claim_observe_timeout", 180.0)),
+            "--requeue-timeout",
+            str(getattr(args, "requeue_timeout", 120.0)),
+            "--max-request-attempts",
+            str(getattr(args, "max_request_attempts", 240)),
+            "--failure-mode",
+            getattr(args, "failure_mode", FAILURE_NONE),
+        ])
+        if getattr(args, "ready_url", ""):
+            command.extend(["--ready-url", "READY_URL"])
+        if getattr(args, "coordinator_url", ""):
+            command.extend(["--coordinator-url", "COORDINATOR_URL"])
+        if getattr(args, "hf_cache_dir", ""):
+            command.extend(["--hf-cache-dir", "HF_CACHE_DIR"])
+        if getattr(args, "dataset_slug", ""):
+            command.extend(["--dataset-slug", getattr(args, "dataset_slug")])
+        if getattr(args, "kernel_slug_prefix", ""):
+            command.extend(["--kernel-slug-prefix", getattr(args, "kernel_slug_prefix")])
+        if not getattr(args, "inline_kernel_payload", True):
+            command.append("--no-inline-kernel-payload")
+        if getattr(args, "skip_kaggle_cleanup", False):
+            command.append("--skip-kaggle-cleanup")
+    else:
+        command.extend([
+            "--generation-report",
+            getattr(args, "generation_report", "") or "GENERATION_REPORT_JSON",
+            "--requeue-report",
+            getattr(args, "requeue_report", "") or "REQUEUE_REPORT_JSON",
+        ])
+    if getattr(args, "torch_spec", ""):
+        command.extend(["--torch-spec", getattr(args, "torch_spec")])
+    if getattr(args, "torch_index_url", ""):
+        command.extend(["--torch-index-url", getattr(args, "torch_index_url")])
+    if getattr(args, "transformers_spec", DEFAULT_TRANSFORMERS_SPEC) != DEFAULT_TRANSFORMERS_SPEC:
+        command.extend(["--transformers-spec", getattr(args, "transformers_spec")])
+    command.append("--json")
+    return command
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    runtime = report.get("runtime_classification") if isinstance(report.get("runtime_classification"), dict) else {}
+    lifecycle = report.get("kaggle_lifecycle") if isinstance(report.get("kaggle_lifecycle"), dict) else {}
+    requeue = report.get("live_requeue_summary") if isinstance(report.get("live_requeue_summary"), dict) else {}
+    codes = set(report.get("diagnosis_codes") or [])
+    existing = [str(item) for item in (report.get("not_completed") or []) if str(item)]
+    items: list[tuple[str, Any]] = [
+        ("Real Internet Beta ready", report.get("ok")),
+        ("external runtime verified", runtime.get("external_runtime_verified")),
+        ("Kaggle kernels deleted", lifecycle.get("kernels_deleted")),
+    ]
+    if str(report.get("mode") or "") == MODE_KAGGLE_AUTO:
+        items.extend([
+            ("Alpha package ready", "real_llm_internet_alpha_package_ready" in codes or "real_llm_internet_alpha_ready" in codes),
+            ("Kaggle package ready", "kaggle_real_llm_live_package_ready" in codes),
+            ("Kaggle auto ready", "kaggle_auto_ready" in codes),
+        ])
+        if requeue.get("enabled"):
+            items.append(("external stage requeue ready", "external_stage_requeue_ready" in codes))
+    else:
+        items.extend([
+            ("generation import ready", "real_llm_internet_beta_generation_import_ready" in codes),
+            ("external generated token target ready", "external_generated_token_target_ready" in codes),
+            ("external stage requeue ready", "external_stage_requeue_ready" in codes),
+            ("model metadata ready", "real_llm_internet_beta_model_metadata_ready" in codes),
+        ])
+    for step in report.get("steps") or []:
+        if isinstance(step, dict) and step.get("ok") is not True:
+            items.append((f"step {step.get('name') or 'step'} passed", False))
+    missing = list(existing)
+    seen = set(missing)
+    for label, ready in items:
+        if ready is True or label in seen:
+            continue
+        missing.append(label)
+        seen.add(label)
+    return missing
+
+
+def recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    missing: list[str],
+) -> dict[str, Any]:
+    mode = str(report.get("mode") or args.mode)
+    if report.get("ok"):
+        return command_entry(
+            "inspect Real Internet Beta evidence",
+            artifact_command(output_dir, "real_llm_internet_beta.md"),
+            reason="review_artifacts",
+        )
+    if mode == MODE_EVIDENCE_IMPORT:
+        return command_entry(
+            "rerun retained evidence import",
+            real_llm_internet_beta_command(args, output_dir, MODE_EVIDENCE_IMPORT),
+            reason="fix_imported_generation_or_requeue_evidence" if missing else "rerun_evidence_import",
+        )
+    return command_entry(
+        "rerun Kaggle auto proof",
+        real_llm_internet_beta_command(args, output_dir, MODE_KAGGLE_AUTO),
+        reason="fix_kaggle_auto_blockers" if missing else "rerun_kaggle_auto",
+        requires_private_credentials=True,
+        side_effectful=True,
+    )
+
+
+def next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    mode = str(report.get("mode") or args.mode)
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "real_llm_internet_beta.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if report.get("ok"):
+        commands.append(command_entry(
+            f"refresh {mode} proof",
+            real_llm_internet_beta_command(args, output_dir, mode),
+            reason="refresh_real_internet_beta",
+            requires_private_credentials=mode == MODE_KAGGLE_AUTO,
+            side_effectful=mode == MODE_KAGGLE_AUTO,
+        ))
+    else:
+        commands.append(dict(recommended))
+    if mode != MODE_EVIDENCE_IMPORT:
+        commands.append(command_entry(
+            "import retained generation and requeue evidence",
+            real_llm_internet_beta_command(args, output_dir, MODE_EVIDENCE_IMPORT),
+            reason="audit_retained_evidence_without_new_kaggle_run",
+        ))
+    return commands
+
+
+def user_status(*, ready: bool, mode: str, recommended: dict[str, Any], missing: list[str]) -> dict[str, Any]:
+    if ready:
+        state = "ready"
+        headline = "Real Internet Swarm Inference Beta evidence is ready."
+        next_step = "review_artifacts"
+    elif mode == MODE_EVIDENCE_IMPORT:
+        state = "evidence-import-blocked"
+        headline = "Retained Real Internet Beta evidence import needs attention."
+        next_step = "fix_imported_generation_or_requeue_evidence"
+    else:
+        state = "kaggle-auto-blocked"
+        headline = "Real Internet Beta Kaggle auto proof needs attention."
+        next_step = "fix_kaggle_auto_runtime_or_cleanup"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    ready = bool(report.get("ok"))
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    return {
+        "schema": "real_llm_internet_beta_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "headline": (
+            "Real Internet Swarm Inference Beta evidence is ready."
+            if ready
+            else "Real Internet Swarm Inference Beta evidence needs attention."
+        ),
+        "mode": report.get("mode"),
+        "next_step": "review_artifacts" if ready else "fix_blockers",
+        "inspect_first": str(output_dir / "real_llm_internet_beta.md"),
+        "support_bundle": str(output_dir / "support_bundle.json"),
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": "real_llm_internet_beta_ready" if ready else (codes[0] if codes else "real_llm_internet_beta_blocked"),
+        "attention": "none" if ready else (missing[0] if missing else "real_llm_internet_beta_blocked"),
+        "attention_detail": "; ".join(missing[:6]),
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    missing = not_completed_items(report)
+    recommended = recommended_next_command(report, args, output_dir=output_dir, missing=missing)
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or args.mode),
+        recommended=recommended,
+        missing=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def ensure_user_guidance(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    if (
+        isinstance(report.get("recommended_next_command"), dict)
+        and isinstance(report.get("next_commands"), list)
+        and isinstance(report.get("user_status"), dict)
+        and isinstance(report.get("review_summary"), dict)
+    ):
+        report.setdefault("not_completed", not_completed_items(report))
+        report.setdefault("artifact_summary", artifact_summary(output_dir))
+        return report
+    missing = not_completed_items(report)
+    recommended = command_entry(
+        "inspect Real Internet Beta evidence",
+        artifact_command(output_dir, "real_llm_internet_beta.md"),
+        reason="review_artifacts" if report.get("ok") else "review_missing_evidence",
+    )
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = [
+        command_entry("inspect shareable summary", artifact_command(output_dir, "real_llm_internet_beta.md"), reason="review_artifacts"),
+        command_entry("inspect support bundle", artifact_command(output_dir, "support_bundle.json", lines="1,220p"), reason="inspect_diagnostics"),
+    ]
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or ""),
+        recommended=recommended,
+        missing=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "real_llm_internet_beta_support_bundle_v1",
+        "ok": report.get("ok"),
+        "mode": report.get("mode"),
+        "output_dir": report.get("output_dir"),
+        "coordinator_url": report.get("coordinator_url"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "runtime_classification": report.get("runtime_classification"),
+        "kaggle_lifecycle": report.get("kaggle_lifecycle"),
+        "coordinator_lifecycle": report.get("coordinator_lifecycle"),
+        "live_requeue_summary": report.get("live_requeue_summary"),
+        "generation": report.get("generation"),
+        "model": report.get("model"),
+        "steps": report.get("steps"),
+        "payload_summaries": report.get("payload_summaries"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "not_completed": report.get("not_completed"),
+        "safety": report.get("safety"),
+        "limitations": report.get("limitations"),
+        "public_artifact_safe": True,
+    }
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     runtime = report.get("runtime_classification") or {}
     workload = report.get("workload") or {}
     lifecycle = report.get("kaggle_lifecycle") or {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -1482,6 +1901,33 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- external_runtime_verified: `{runtime.get('external_runtime_verified')}`",
         f"- kernels_deleted: `{lifecycle.get('kernels_deleted')}`",
         "",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- status: `{user.get('headline')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
+        f"- recommended command: `{recommended.get('command_line')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    if next_items:
+        lines.extend(
+            (
+                f"- {item.get('label')}: `{item.get('command_line')}`"
+                + (" (requires private credentials; see runbook)" if item.get("requires_private_credentials") else "")
+                + (" side_effectful=`True`" if item.get("side_effectful") else "")
+            )
+            for item in next_items
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend([
+        "",
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
@@ -1494,13 +1940,29 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifact_report.get('inspect_first')}`",
+        f"- summary JSON: `{artifact_report.get('summary_json')}`",
+        f"- summary Markdown: `{artifact_report.get('summary_markdown')}`",
+        f"- support bundle: `{artifact_report.get('support_bundle')}`",
+        f"- present: `{artifact_report.get('present_artifact_count')}` / `{artifact_report.get('artifact_count')}`",
+        f"- public artifact safe: `{artifact_report.get('public_artifact_safe')}`",
+        "",
         "## Diagnosis",
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
         "",
+        "## Not Completed",
+        "",
+    ])
+    not_completed = report.get("not_completed") or []
+    lines.extend(f"- {item}" for item in not_completed) if not_completed else lines.append("- none")
+    lines.extend([
+        "",
         "## Artifacts",
         "",
-    ]
+    ])
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         lines.append(f"- `{name}`: `{artifact.get('path')}` present=`{artifact.get('present')}`")
     lines.extend(["", "## Boundaries", ""])
@@ -1531,6 +1993,8 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
     report.setdefault("prompt_scope", prompt_scope_summary(report))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
+    report.setdefault("artifact_summary", artifact_summary(output_dir))
+    report = ensure_user_guidance(report, output_dir=output_dir)
     report = support_bundle.sanitize(redact_values(report, secret_values))
     encoded = json.dumps(report, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in encoded]
@@ -1541,12 +2005,33 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
         report["safety_error"] = "real LLM Internet Beta report contained secret-like fragments"
     json_path = output_dir / "real_llm_internet_beta.json"
     md_path = output_dir / "real_llm_internet_beta.md"
+    support_path = output_dir / "support_bundle.json"
+    report.setdefault("artifacts", {})
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_path,
+        output_dir,
+        kind="real_llm_internet_beta_support_bundle",
+        schema="real_llm_internet_beta_support_bundle_v1",
+        ok=report.get("ok"),
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
     write_json(json_path, report)
     md_path.write_text(render_markdown(report), encoding="utf-8")
+    write_json(support_path, support_bundle_payload(report))
     if "artifacts" in report:
         report["artifacts"]["real_llm_internet_beta_json"]["present"] = True
         report["artifacts"]["real_llm_internet_beta_markdown"]["present"] = True
+        report["artifacts"]["support_bundle_json"]["present"] = True
+        report["artifact_summary"] = artifact_summary(output_dir)
+        if isinstance(report.get("review_summary"), dict):
+            report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+            report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
         write_json(json_path, report)
+        md_path.write_text(render_markdown(report), encoding="utf-8")
+        write_json(support_path, support_bundle_payload(report))
     return report
 
 
@@ -1724,6 +2209,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
             if not ready
         ],
     }
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     return persist_report(report, output_dir=output_dir, secret_values=[])
 
 
@@ -2194,6 +2680,7 @@ def build_report(
             "No NAT traversal, GPU pooling marketplace, GGUF/llama.cpp serving, large-model serving, training, payments, or arbitrary prompt serving.",
         ],
     }
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     return persist_report(report, output_dir=output_dir, secret_values=secret_values)
 
 

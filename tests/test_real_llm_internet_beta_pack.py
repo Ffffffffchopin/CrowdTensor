@@ -34,6 +34,25 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
+    def _assert_ready_guidance(self, report: dict, output_dir: Path) -> None:
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["review_summary"]["schema"], "real_llm_internet_beta_review_summary_v1")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertEqual(report["not_completed"], [])
+        self.assertTrue(report["recommended_next_command"]["command_line"])
+        self.assertGreaterEqual(len(report["next_commands"]), 2)
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+        self.assertEqual(report["artifact_summary"]["present_artifact_count"], report["artifact_summary"]["artifact_count"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        markdown = (output_dir / "real_llm_internet_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("## Not Completed", markdown)
+        support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["schema"], "real_llm_internet_beta_support_bundle_v1")
+        self.assertTrue(support["public_artifact_safe"])
+
     def _external_generation_payload(self, *, generated_tokens: int | None = 16) -> dict:
         generation = {
             "max_new_tokens": 16,
@@ -162,6 +181,7 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
+        self._assert_ready_guidance(report, output_dir / "import")
 
     def test_evidence_import_blocks_when_generation_token_count_missing(self) -> None:
         output_dir = self._tmp_dir()
@@ -189,6 +209,9 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertFalse(report["generation"]["token_target_ready"])
         self.assertIn("external_generated_token_target_missing", report["diagnosis_codes"])
         self.assertIn("external generated token target", report["not_completed"])
+        self.assertEqual(report["user_status"]["state"], "evidence-import-blocked")
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun retained evidence import")
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
 
     def test_evidence_import_preserves_imported_cuda_generation_metadata(self) -> None:
         output_dir = self._tmp_dir()
@@ -284,6 +307,7 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn("- answer scope note:", markdown)
         self.assertIn("not a local answer transcript", markdown)
+        self._assert_ready_guidance(report, output_dir)
 
     def test_cleanup_failure_blocks_ready_claim(self) -> None:
         output_dir = self._tmp_dir()
@@ -304,6 +328,9 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertIn("kaggle_cleanup_failed", report["diagnosis_codes"])
         self.assertIn("real_llm_internet_beta_blocked", report["diagnosis_codes"])
         self.assertNotIn("real_llm_internet_beta_ready", report["diagnosis_codes"])
+        self.assertIn("Kaggle kernels deleted", report["not_completed"])
+        self.assertEqual(report["user_status"]["state"], "kaggle-auto-blocked")
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun Kaggle auto proof")
 
     def test_external_alpha_failure_blocks_ready_claim(self) -> None:
         output_dir = self._tmp_dir()
@@ -332,6 +359,7 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertIn("real_llm_internet_beta_blocked", report["diagnosis_codes"])
         self.assertNotIn("real_llm_internet_beta_ready", report["diagnosis_codes"])
         self.assertTrue(report["kaggle_lifecycle"]["kernels_deleted"])
+        self.assertIn("external runtime verified", report["not_completed"])
 
     def test_report_redacts_private_env_and_token_fragments(self) -> None:
         output_dir = self._tmp_dir()
@@ -355,6 +383,7 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertNotIn('"output_text":', serialized)
         self.assertNotIn('"generated_text":', serialized)
         self.assertNotIn('"generated_token_ids":', serialized)
+        self.assertNotIn("observer-secret", (output_dir / "support_bundle.json").read_text(encoding="utf-8"))
 
     def test_kaggle_auto_cuda_backend_uses_gpu_runtime_contract(self) -> None:
         output_dir = self._tmp_dir()
@@ -528,6 +557,7 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["output_scope_errors"], [])
+        self.assertEqual(report["guidance_errors"], [])
 
         broken = pack.output_request_summary()
         broken["include_output"] = True
@@ -546,6 +576,13 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
                 "shareable_summary": pack.shareable_summary(),
             }),
         )
+        ready_report = pack.build_report(
+            self._args(output_dir / "ready-guidance"),
+            runner=beta_check.fake_runner,
+            popen_factory=beta_check.FakePopen,  # type: ignore[arg-type]
+            ready_probe=beta_check.ready_probe,
+        )
+        self.assertEqual(beta_check.guidance_errors("ready", ready_report), [])
 
 
 if __name__ == "__main__":
