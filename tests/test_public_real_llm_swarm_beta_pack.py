@@ -32,6 +32,44 @@ def write_default_sources(output_dir: Path) -> tuple[Path, Path, Path, Path]:
     return external_path, p2p_path, usable_path, public_swarm_v2_path
 
 
+def fake_fresh_kaggle_gpu_payload() -> dict:
+    payload = check.fake_gpu_payload()
+    payload["mode"] = "kaggle-auto"
+    payload["beta"]["cuda_available"] = True
+    payload["diagnosis_codes"] = [
+        "public_swarm_gpu_beta_ready",
+        "public_swarm_gpu_beta_kaggle_auto_ready",
+        "external_gpu_runtime_verified",
+        "external_runtime_verified",
+        "cuda_runtime_available",
+        "hf_transformers_cuda_ready",
+        "gpu_runtime_ready",
+        "gpu_stage0_ready",
+        "gpu_stage1_ready",
+        "decoded_tokens_match",
+        "baseline_match",
+        "distinct_stage_miners",
+        "stage_assignment_valid",
+        "stage0_partition_loaded",
+        "stage1_partition_loaded",
+        "partition_parameter_split_valid",
+        "stage_local_partition_ready",
+        "kaggle_kernels_deleted",
+        "token_rotation_required",
+        "read_only_workload",
+        "not_production",
+        "not_p2p",
+    ]
+    payload["kaggle_lifecycle"] = {
+        "kernels_deleted": True,
+        "pushed_refs": {
+            "stage0": "xuyuhaosuyi/ctgpu-test-stage0",
+            "stage1": "xuyuhaosuyi/ctgpu-test-stage1",
+        },
+    }
+    return payload
+
+
 def mark_usable_model(payload: dict, model_id: str) -> dict:
     p2p = payload["readiness"]["p2p_product_path"]
     p2p["model"] = {
@@ -878,6 +916,58 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("persistent dual-stage KV-cache reuse", support["not_completed"])
         self.assertEqual(support["operator_action"], report["operator_action"])
         self.assertEqual(support["evidence_scope"], report["evidence_scope"])
+
+    def test_evidence_import_preserves_fresh_kaggle_gpu_source_verification(self) -> None:
+        output_dir = self._tmp_dir()
+        external_path, p2p_path, usable_path, public_swarm_v2_path = write_default_sources(output_dir)
+        product_path = output_dir / "sources" / "product.json"
+        gpu_path = output_dir / "sources" / "fresh-gpu.json"
+        product_path.write_text(json.dumps(check.fake_product_payload()) + "\n", encoding="utf-8")
+        gpu_path.write_text(json.dumps(fake_fresh_kaggle_gpu_payload()) + "\n", encoding="utf-8")
+
+        args = pack.parse_args([
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "beta"),
+            "--product-report",
+            str(product_path),
+            "--external-report",
+            str(external_path),
+            "--p2p-report",
+            str(p2p_path),
+            "--usable-report",
+            str(usable_path),
+            "--public-swarm-v2-report",
+            str(public_swarm_v2_path),
+            "--gpu-report",
+            str(gpu_path),
+            "--base-port",
+            "9442",
+            "--port",
+            "9442",
+            "--timeout-seconds",
+            "60",
+        ])
+
+        report = pack.build_report(args)
+
+        self.assertTrue(report["runtime_provenance"]["retained_gpu_evidence_imported"])
+        self.assertEqual(report["runtime_provenance"]["gpu_report_mode"], "kaggle-auto")
+        self.assertTrue(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertTrue(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["evidence_scope"]["level"], "fresh-kaggle-gpu")
+        self.assertEqual(report["evidence_scope"]["executed_where"], "fresh-kaggle-gpu-plus-aggregate")
+        self.assertTrue(report["evidence_scope"]["retained_gpu_evidence_imported"])
+        self.assertTrue(report["evidence_scope"]["fresh_kaggle_gpu_attempted"])
+        self.assertTrue(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["gpu_status"]["state"], "fresh-kaggle-gpu-verified")
+        self.assertTrue(report["gpu_status"]["retained_gpu"])
+        self.assertTrue(report["gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(report["inference_verdict"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "fresh-kaggle-gpu-verified")
+        markdown = (output_dir / "beta" / "public_real_llm_swarm_beta.md").read_text(encoding="utf-8")
+        self.assertIn("- level: `fresh-kaggle-gpu`", markdown)
+        self.assertIn("- fresh Kaggle GPU verified: `True`", markdown)
 
     def test_evidence_import_blocks_when_public_swarm_v2_report_missing(self) -> None:
         output_dir = self._tmp_dir()

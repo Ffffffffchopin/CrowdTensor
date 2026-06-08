@@ -1657,14 +1657,25 @@ def runtime_provenance_summary(report: dict[str, Any]) -> dict[str, Any]:
             gpu_mode = "evidence-import"
         elif "public_swarm_gpu_beta_local_smoke" in step_names:
             gpu_mode = "local-smoke"
-    fresh_kaggle_gpu_attempted = any("kaggle" in name and "gpu" in name for name in step_names)
+    fresh_gpu_codes_ready = bool(
+        cuda.get("ready") is True
+        or "public_swarm_gpu_beta_kaggle_auto_ready" in cuda_codes
+        or "public_swarm_gpu_beta_ready" in cuda_codes
+    )
+    fresh_gpu_source_report = bool(
+        gpu_mode == "kaggle-auto"
+        and "public_swarm_gpu_beta_kaggle_auto_ready" in cuda_codes
+        and "external_gpu_runtime_verified" in cuda_codes
+        and "kaggle_kernels_deleted" in cuda_codes
+    )
+    fresh_kaggle_gpu_attempted = bool(
+        any("kaggle" in name and "gpu" in name for name in step_names)
+        or fresh_gpu_source_report
+    )
     fresh_kaggle_gpu_verified = bool(
         fresh_kaggle_gpu_attempted
-        and (
-            cuda.get("ready") is True
-            or "public_swarm_gpu_beta_kaggle_auto_ready" in cuda_codes
-            or "public_swarm_gpu_beta_ready" in cuda_codes
-        )
+        and fresh_gpu_codes_ready
+        and (mode != MODE_EVIDENCE_IMPORT or fresh_gpu_source_report)
     )
     retained_gpu_evidence_imported = bool(mode == MODE_EVIDENCE_IMPORT and gpu_report)
     local_gpu_smoke_ran = "public_swarm_gpu_beta_local_smoke" in step_names
