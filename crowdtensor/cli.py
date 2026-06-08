@@ -1409,6 +1409,11 @@ def print_answer_scope_note(answer_scope: dict[str, Any]) -> None:
         print(f"  answer_scope_note: {answer_scope.get('summary')}")
 
 
+def print_answer_scope_block(answer_scope: dict[str, Any], *, text: str | None = None) -> None:
+    print(f"  answer_scope: {text if text is not None else answer_scope_text(answer_scope)}")
+    print_answer_scope_note(answer_scope)
+
+
 def print_local_output_block(report: dict[str, Any]) -> bool:
     local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
     outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
@@ -1433,8 +1438,7 @@ def print_local_output_block(report: dict[str, Any]) -> bool:
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
             }
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
-        print_answer_scope_note(answer_scope)
+        print_answer_scope_block(answer_scope)
     if has_output:
         print(f"  local_output: {local_output_terminal_text(local_output)}")
     elif _safe_int(local_output.get("output_count")) > 0:
@@ -1447,8 +1451,7 @@ def print_answer_scope_line(report: dict[str, Any], *, already_printed: bool = F
         return
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
-        print_answer_scope_note(answer_scope)
+        print_answer_scope_block(answer_scope)
 
 
 def prompt_summary_text(prompt: dict[str, Any]) -> str:
@@ -12336,7 +12339,7 @@ def print_public_swarm_product_rc(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
@@ -13172,7 +13175,7 @@ def print_real_llm_internet_beta(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
@@ -13198,7 +13201,7 @@ def print_swarm_inference_beta(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
@@ -13225,7 +13228,7 @@ def print_public_swarm_inference_alpha(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
@@ -13247,7 +13250,7 @@ def print_public_swarm_inference_alpha_rc(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13270,7 +13273,7 @@ def print_public_swarm_inference_beta(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13293,7 +13296,7 @@ def print_public_swarm_inference_beta_rc(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13316,7 +13319,7 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13345,7 +13348,7 @@ def print_p2p_swarm_inference_v06(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13374,7 +13377,7 @@ def print_public_p2p_swarm_inference_v1_rc(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13408,7 +13411,7 @@ def print_real_p2p_swarm_inference_core_rc(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13438,7 +13441,7 @@ def print_petals_class_p2p_candidate(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13521,7 +13524,7 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13599,11 +13602,13 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
             f"public_artifact_safe={bool(output_request.get('public_artifact_safe'))}"
         )
     if answer_scope:
-        print(
-            "  answer_scope: "
-            f"state={answer_scope.get('scope_state') or 'unknown'} "
-            f"saved_json={answer_scope.get('saved_json_display')} "
-            f"public_artifact_safe={bool(answer_scope.get('public_artifact_safe'))}"
+        print_answer_scope_block(
+            answer_scope,
+            text=(
+                f"state={answer_scope.get('scope_state') or 'unknown'} "
+                f"saved_json={answer_scope.get('saved_json_display')} "
+                f"public_artifact_safe={bool(answer_scope.get('public_artifact_safe'))}"
+            ),
         )
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
@@ -13649,7 +13654,7 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13707,7 +13712,7 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13730,7 +13735,7 @@ def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13755,7 +13760,7 @@ def print_public_swarm_live_preview_rc(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13783,7 +13788,7 @@ def print_public_swarm_operator_preview(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13810,7 +13815,7 @@ def print_public_swarm_trial(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13839,7 +13844,7 @@ def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13863,7 +13868,7 @@ def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
@@ -13889,7 +13894,7 @@ def print_gpu_sharded_generation_beta(report: dict[str, Any]) -> None:
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
-        print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")

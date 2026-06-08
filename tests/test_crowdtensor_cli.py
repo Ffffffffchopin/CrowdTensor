@@ -7486,6 +7486,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "visible_in_terminal": False,
                     "saved_json_display": "validation-only",
                     "public_artifact_safe": True,
+                    "summary": "Validation-only check output; no local answer transcript.",
                 },
                 "shareable_summary": {
                     "saved_artifacts_public_safe": True,
@@ -7523,6 +7524,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("generated_token_ids_public=False", rendered)
         self.assertIn("public_artifact_safe=True", rendered)
         self.assertIn("  answer_scope: state=no-local-answer saved_json=validation-only public_artifact_safe=True", rendered)
+        self.assertIn("  answer_scope_note: Validation-only check output; no local answer transcript.", rendered)
         self.assertIn("  operator_action:", rendered)
         self.assertIn("  artifact public_real_llm_swarm_beta_json:", rendered)
         self.assertNotIn("  model: None", rendered)
@@ -13660,6 +13662,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This Public Swarm v2 report is shareable aggregate evidence.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -13701,6 +13704,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope_note: This Public Swarm v2 report is shareable aggregate evidence.",
             output,
         )
         self.assertIn(
@@ -14489,6 +14496,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "visible_in_terminal": False,
                 "terminal_only": False,
                 "public_artifact_safe": True,
+                "summary": "This Swarm Inference Beta report is shareable operator evidence.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -14510,6 +14518,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("output_request: include_output=False", rendered)
         self.assertIn("raw_generated_text_public=False", rendered)
         self.assertIn("answer_scope: state=no-local-answer", rendered)
+        self.assertIn("answer_scope_note: This Swarm Inference Beta report is shareable operator evidence.", rendered)
         self.assertIn("generated_token_ids_public=False", rendered)
         self.assertIn("shareable: saved_artifacts=True", rendered)
 
@@ -14876,6 +14885,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This Public Swarm Inference Beta report is shareable evidence.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -14897,6 +14907,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         output = stream.getvalue()
         self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
         self.assertIn("answer_scope: state=no-local-answer", output)
+        self.assertIn("answer_scope_note: This Public Swarm Inference Beta report is shareable evidence.", output)
         self.assertIn("saved_json=hash-only", output)
         self.assertIn("shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False", output)
         self.assertIn("generated_token_ids_public=False", output)
@@ -15097,6 +15108,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This Public Swarm Inference Beta RC report is shareable evidence.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -15118,6 +15130,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         output = stream.getvalue()
         self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
         self.assertIn("answer_scope: state=no-local-answer", output)
+        self.assertIn("answer_scope_note: This Public Swarm Inference Beta RC report is shareable evidence.", output)
         self.assertIn("saved_json=hash-only", output)
         self.assertIn("shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False", output)
         self.assertIn("generated_token_ids_public=False", output)
@@ -15298,6 +15311,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This Public Swarm Product Beta report is shareable evidence.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -15326,6 +15340,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             output,
         )
         self.assertIn(
+            "  answer_scope_note: This Public Swarm Product Beta report is shareable evidence.",
+            output,
+        )
+        self.assertIn(
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             output,
         )
@@ -15349,6 +15367,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This Public Swarm Product RC report is shareable evidence.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -15374,6 +15393,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope_note: This Public Swarm Product RC report is shareable evidence.",
             output,
         )
         self.assertIn(
@@ -15467,6 +15490,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This Public Swarm Developer Preview report is shareable evidence.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -15492,6 +15516,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope_note: This Public Swarm Developer Preview report is shareable evidence.",
             output,
         )
         self.assertIn(
@@ -15670,6 +15698,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This Public Swarm Operator Preview report is shareable evidence.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -15695,6 +15724,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope_note: This Public Swarm Operator Preview report is shareable evidence.",
             output,
         )
         self.assertIn(
@@ -15991,6 +16024,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This P2P v0.6 report is shareable evidence, not a local answer transcript.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -16016,6 +16050,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope_note: This P2P v0.6 report is shareable evidence, not a local answer transcript.",
             output,
         )
         self.assertIn(
@@ -16839,6 +16877,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "saved_json_display": "hash-only",
                 "saved_markdown_display": "hash-only",
                 "public_artifact_safe": True,
+                "summary": "This GPU sharded generation report is shareable evidence, not a local answer transcript.",
             },
             "shareable_summary": {
                 "saved_artifacts_public_safe": True,
@@ -16864,6 +16903,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  answer_scope: state=no-local-answer terminal_only=False visible_in_terminal=False saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  answer_scope_note: This GPU sharded generation report is shareable evidence, not a local answer transcript.",
             output,
         )
         self.assertIn(
