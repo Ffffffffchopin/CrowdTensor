@@ -6948,6 +6948,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- OK: `{bool(summary.get('ok'))}`",
         f"- Mode: `{summary.get('mode')}`",
+        f"- Dry run: `{bool(summary.get('dry_run'))}`",
         f"- Diagnosis: `{', '.join(str(code) for code in (summary.get('diagnosis_codes') or []))}`",
         f"- Model: `{model.get('hf_model_id')}` backend=`{model.get('backend')}`",
         f"- Prompt: `{prompt_summary_text(prompt)}`",
@@ -14089,7 +14090,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Default mode starts the fast local product loopback proof, runs a tiny real GPT split\n"
             "across stage0/stage1 workers, prints local display-only output in human mode, and\n"
             "writes redacted infer_summary.json and infer_summary.md files. Use --mode existing\n"
-            "to target an already running Coordinator or P2P-discovered swarm.\n"
+            "to target an already running Coordinator or P2P-discovered swarm. Plain\n"
+            "`infer --dry-run` defaults to that existing-swarm preflight when --mode is omitted.\n"
             "Default local runs auto-select an available loopback Coordinator port; pass\n"
             "--coordinator-port only when you need a reproducible fixed local port.\n"
             "In non-JSON mode, the CLI prints a short safe stderr start hint before long-running\n"
@@ -14193,7 +14195,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--stream", action="store_true", help="request safe stream-progress evidence")
     infer.add_argument("--include-output", action="store_true", help="request local human display of generated text; JSON and saved artifacts still suppress it")
     infer.add_argument("--shareable-terminal", action="store_true", help="human output mode: hide inline prompts, local prompt file paths, and local answer text from terminal logs")
-    infer.add_argument("--dry-run", action="store_true", help="existing mode only: check route/session readiness without submitting an inference task")
+    infer.add_argument("--dry-run", action="store_true", help="check an existing route/session without submitting an inference task; defaults to --mode existing when --mode is omitted")
     infer.add_argument("--skip-live-preflight", action="store_true", help="existing dry-run only: skip Coordinator /ready and /state checks for CI-safe request-shape checks")
     infer.add_argument("--full-evidence", action="store_true", help="use the full local Public Swarm v2 gate instead of the faster product loopback path")
     infer.add_argument("--coordinator-url", default="")
@@ -16274,6 +16276,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
+        args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
     if args.command in {"local-proof", "infer", "serve", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
@@ -16336,8 +16339,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 raise SystemExit(f"--{name.replace('_', '-')} must be positive")
         if args.admin_results_limit < 1:
             raise SystemExit("--admin-results-limit must be at least 1")
+        if args.dry_run and not args.infer_mode_explicit:
+            args.infer_mode = "existing"
         if args.infer_mode != "existing" and args.dry_run:
-            raise SystemExit("infer --dry-run is supported for --mode existing route preflight only")
+            raise SystemExit("infer --dry-run checks existing route preflight; omit --mode or use --mode existing")
     if args.command == "serve":
         if args.port < 1:
             raise SystemExit("--port must be positive")

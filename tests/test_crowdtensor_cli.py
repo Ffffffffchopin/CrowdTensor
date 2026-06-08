@@ -392,7 +392,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("copyable reruns", rendered)
         self.assertIn("JSON fields and saved Markdown prompt values keep prompt placeholders", rendered)
         self.assertIn("prompt_scope records that distinction without raw text", rendered)
-        self.assertIn("existing mode only: check route/session readiness", rendered)
+        self.assertIn("Plain\n`infer --dry-run` defaults to that existing-swarm preflight", rendered)
+        self.assertIn("check an existing route/session without submitting", rendered)
+        self.assertIn("defaults to --mode existing when", rendered)
         self.assertIn("--skip-live-preflight", rendered)
         self.assertIn("existing dry-run only: skip Coordinator /ready", rendered)
         self.assertIn("optional single prompt text; mutually exclusive with", rendered)
@@ -12845,6 +12847,58 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn("CrowdTensor user prompt", markdown)
 
+    def test_infer_plain_dry_run_defaults_to_existing_preflight(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        self.assertEqual(args.infer_mode, "existing")
+        self.assertFalse(args.infer_mode_explicit)
+        with patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("plain dry-run preflight should honor --skip-live-preflight"),
+        ):
+            report = cli.build_infer(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["dry_run"])
+        self.assertEqual(report["mode"], "existing")
+        self.assertEqual(report["ready_to_submit"]["readiness_label"], "skipped")
+        self.assertEqual(report["user_status"]["state"], "preflight-partial")
+        self.assertEqual(report["recommended_next_command"]["label"], "check existing swarm")
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode existing --output-dir {output_dir} --max-new-tokens 8 --dry-run --coordinator-url http://127.0.0.1:8787 --observer-token ${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}}",
+            next_lines,
+        )
+        self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertIn("  mode: existing", rendered)
+        self.assertIn("  status: preflight-partial:", rendered)
+        self.assertIn("  review_next: label=check existing swarm", rendered)
+        self.assertNotIn("CrowdTensor user prompt", rendered)
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["mode"], "existing")
+        self.assertTrue(persisted["dry_run"])
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("- Mode: `existing`", markdown)
+        self.assertIn("- Dry run: `True`", markdown)
+        self.assertIn("- Recommended: `check existing swarm` reason=`confirm_live_preflight`", markdown)
+        self.assertNotIn("CrowdTensor user prompt", markdown)
+
     def test_infer_shareable_terminal_persists_artifact_scope_for_prompt_file(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompt_dir = Path(self._tmp_dir())
@@ -13547,8 +13601,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
 
     def test_infer_dry_run_is_existing_mode_only(self) -> None:
-        with self.assertRaises(SystemExit):
-            cli.parse_args(["infer", "prompt", "--dry-run"])
+        args = cli.parse_args(["infer", "prompt", "--dry-run"])
+        self.assertEqual(args.infer_mode, "existing")
+        self.assertFalse(args.infer_mode_explicit)
+        with self.assertRaisesRegex(SystemExit, "omit --mode or use --mode existing"):
+            cli.parse_args(["infer", "prompt", "--mode", "local", "--dry-run"])
 
     def test_infer_token_limits_match_mode(self) -> None:
         with self.assertRaises(SystemExit):
