@@ -94,7 +94,8 @@ available, the terminal prints it as `answer:` or `answer[n]:` before
 `answer_scope` and `local_output` safety metadata; when no local answer text is
 available, the terminal still prints `answer_scope=no-local-answer`.
 `answer_scope.scope_state` uses stable values such as `terminal-visible`,
-`saved-terminal-redacted`, `json-suppressed`, and `no-local-answer`; the
+`saved-terminal-redacted`, `shareable-terminal-redacted`, `json-suppressed`,
+and `no-local-answer`; the
 Markdown `What To Do Next` and `Details` sections repeat that saved JSON and
 Markdown contain no generated text. `local_output`
 adds safe output `count` and `source` fields such as
@@ -151,8 +152,11 @@ generated token ids, credentials, or activations.
 The `result` line and JSON/Markdown `result` object summarize completion state,
 token count, output count, generated-text hash, and display safety:
 `local-private` for terminal-only generated text, `hash-only` for redacted
-summaries, and `hash-only-json` for JSON stdout, without exposing generated text
-in shareable artifacts.
+summaries, `hash-only-json` for JSON stdout, `saved-terminal-redacted` when
+saved artifacts record that terminal text was removed, and
+`shareable-terminal-redacted` when `--shareable-terminal` also hid that answer
+from terminal output. These states do not expose generated text in shareable
+artifacts.
 The `issue` line and JSON/Markdown `issue_summary` object condense the current
 state, primary diagnosis code, next step, safe progress text, and whether a
 redacted detail is available, so blocked or timeout runs have one place to read
@@ -174,7 +178,9 @@ placeholder, while JSON fields and saved Markdown prompt values keep prompt
 placeholders.
 With `--shareable-terminal` and `--prompt-stdin`, terminal output keeps a
 copyable `printf` pipe placeholder without expanding the real stdin prompt; use
-it for reruns.
+it for reruns. Saved JSON/Markdown record `shareable_terminal.enabled=True`
+and, when answer text was hidden,
+`answer_scope.scope_state=shareable-terminal-redacted`.
 `prompt_scope` records that distinction without storing raw text. `--prompt-file`
 and `--prompt-texts-file` keep raw prompt text out of terminal commands, but
 ordinary terminal output still shows local file paths for copying and marks

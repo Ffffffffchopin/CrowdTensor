@@ -91,9 +91,10 @@ JSON/Markdown stay hash-only. When generated text is available, the terminal
 prints it as `answer:` or `answer[n]:` before `answer_scope` and `local_output`
 safety metadata; when no local answer text is available, the terminal still
 prints `answer_scope=no-local-answer`. `answer_scope.scope_state` uses stable values such as
-`terminal-visible`, `saved-terminal-redacted`, `json-suppressed`, and
-`no-local-answer`; the Markdown `What To Do Next` and `Details` sections repeat
-that saved JSON and Markdown contain no generated text. `local_output` includes
+`terminal-visible`, `saved-terminal-redacted`, `shareable-terminal-redacted`,
+`json-suppressed`, and `no-local-answer`; the
+Markdown `What To Do Next` and `Details` sections repeat that saved JSON and
+Markdown contain no generated text. `local_output` includes
 safe output `count` and `source` fields such as
 `local-private-task-state` or `coordinator-validation`. JSON mode can still
 report completed generation through `json-suppressed` plus redacted
@@ -158,7 +159,9 @@ for copying and marks `terminal_local_paths=True`. Use `--prompt-stdin`, or add
 If you still want human-readable terminal output while keeping terminal logs
 shareable, add `--shareable-terminal`; it keeps status, diagnostics, hashes,
 artifact paths, and safe next commands, but hides inline prompts, local prompt
-file paths, and local answer text from stdout.
+file paths, and local answer text from stdout. Saved JSON/Markdown then record
+`shareable_terminal.enabled=True` and, when answer text was hidden,
+`answer_scope.scope_state=shareable-terminal-redacted`.
 With `--prompt-stdin`, shareable terminal output keeps a copyable `printf`
 pipe placeholder for reruns without expanding the real stdin prompt.
 For local `infer` runs, child proof commands receive prompt inputs through
@@ -173,8 +176,9 @@ token count, output count, generated-text hash, and display safety:
 `local-private` for terminal-only generated text, `hash-only` for redacted
 summaries, `hash-only-json` for JSON stdout, and `saved-terminal-redacted` when
 a saved JSON/Markdown file records that local terminal text existed but has
-already been removed from the saved artifact. These states do not expose
-generated text in shareable artifacts.
+already been removed from the saved artifact. `shareable-terminal-redacted`
+means `--shareable-terminal` also hid the answer from the human terminal. These
+states do not expose generated text in shareable artifacts.
 The `issue` line and JSON/Markdown `issue_summary` object condense the current
 state, primary diagnosis code, next step, safe progress text, and whether a
 redacted detail is available, so blocked or timeout runs have one place to read
