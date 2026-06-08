@@ -120,7 +120,10 @@ def coordinator_peer(now: float) -> dict[str, Any]:
         "peer_id": "coordinator-a",
         "role": "coordinator",
         "urls": {"coordinator": "http://127.0.0.1:8787", "peer": "http://127.0.0.1:8788"},
-        "capabilities": {"runtime": "python-cli", "backend": "cpu"},
+        "capabilities": {
+            "runtime": "python-cli",
+            "supported_backends": ["cpu", "cuda"],
+        },
         "ttl_seconds": 30.0,
         "last_seen": now,
     }

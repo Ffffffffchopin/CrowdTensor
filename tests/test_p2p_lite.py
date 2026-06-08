@@ -209,6 +209,12 @@ class P2PLiteTests(unittest.TestCase):
         self.assertEqual(result["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(result["answer_scope"]["visible_in_terminal"])
         self.assertTrue(result["shareable_summary"]["public_artifact_safe"])
+        self.assertTrue(result["cpu_route"]["ok"])
+        self.assertTrue(result["cuda_route"]["ok"])
+        self.assertEqual(
+            result["cuda_route"]["route"]["coordinator_filter"]["compatible_candidate_count"],
+            1,
+        )
 
 
 if __name__ == "__main__":

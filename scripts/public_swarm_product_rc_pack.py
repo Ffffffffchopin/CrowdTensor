@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,10 @@ SAFE_PUBLIC_LEAK_PATH_PARTS = (
 )
 
 
+def shell_command(parts: list[Any]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in parts if str(part))
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -64,6 +69,242 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     if ok is not None:
         entry["ok"] = bool(ok)
     return entry
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    requires_private_credentials: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if requires_private_credentials:
+        entry["requires_private_credentials"] = True
+        entry["credential_note"] = (
+            "Use local private env/runbook values when running this command; "
+            "credential values are intentionally excluded from public artifacts."
+        )
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "public_swarm_product_rc.md",
+        "summary_json": output_dir / "public_swarm_product_rc.json",
+        "summary_markdown": output_dir / "public_swarm_product_rc.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    present = sum(1 for path in paths.values() if path.is_file())
+    return {
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": present,
+        "shareable_paths": [
+            str(paths["summary_json"]),
+            str(paths["summary_markdown"]),
+            str(paths["support_bundle"]),
+        ],
+        "public_artifact_safe": True,
+    }
+
+
+def product_rc_command(args: argparse.Namespace, output_dir: Path) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "public-swarm-product-rc",
+        "--output-dir",
+        str(output_dir),
+        "--gpu-report",
+        str(args.gpu_report),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--json",
+    ]
+    command.extend(["--prompt-text", "PROMPT_TEXT"])
+    return command
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    product_surface = report.get("product_surface") if isinstance(report.get("product_surface"), dict) else {}
+    session_protocol = report.get("session_protocol") if isinstance(report.get("session_protocol"), dict) else {}
+    p2p_lite = report.get("p2p_lite") if isinstance(report.get("p2p_lite"), dict) else {}
+    gpu_import = report.get("gpu_generation_import") if isinstance(report.get("gpu_generation_import"), dict) else {}
+    items = [
+        ("Coordinator product surface ready", report.get("product_surface_ready")),
+        ("serve command ready", (product_surface.get("serve") or {}).get("ok") if isinstance(product_surface.get("serve"), dict) else None),
+        ("stage0 join command ready", (product_surface.get("join_stage0") or {}).get("ok") if isinstance(product_surface.get("join_stage0"), dict) else None),
+        ("stage1 join command ready", (product_surface.get("join_stage1") or {}).get("ok") if isinstance(product_surface.get("join_stage1"), dict) else None),
+        ("generate command ready", (product_surface.get("generate") or {}).get("ok") if isinstance(product_surface.get("generate"), dict) else None),
+        ("session protocol ready", session_protocol.get("ok")),
+        ("P2P-lite discovery ready", p2p_lite.get("ok")),
+        ("GPU generation evidence import ready", gpu_import.get("ok")),
+    ]
+    return [label for label, ready in items if ready is not True]
+
+
+def recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    not_completed: list[str],
+) -> dict[str, Any]:
+    if report.get("ok"):
+        return command_entry(
+            "inspect Product RC evidence",
+            artifact_command(output_dir, "public_swarm_product_rc.md"),
+            reason="review_artifacts",
+        )
+    if "GPU generation evidence import ready" in not_completed:
+        return command_entry(
+            "import retained GPU generation evidence",
+            product_rc_command(args, output_dir),
+            reason="provide_gpu_generation_evidence",
+        )
+    return command_entry(
+        "rerun Product RC proof",
+        product_rc_command(args, output_dir),
+        reason="fix_product_rc_blockers" if not_completed else "rerun_product_rc",
+    )
+
+
+def next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "public_swarm_product_rc.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if report.get("ok"):
+        commands.append(command_entry(
+            "refresh Product RC proof",
+            product_rc_command(args, output_dir),
+            reason="refresh_product_rc",
+        ))
+    else:
+        commands.append(dict(recommended))
+    return commands
+
+
+def user_status(
+    *,
+    ready: bool,
+    recommended: dict[str, Any],
+    not_completed: list[str],
+) -> dict[str, Any]:
+    return {
+        "state": "ready" if ready else "blocked",
+        "headline": (
+            "Public Swarm Product RC evidence is ready."
+            if ready
+            else "Public Swarm Product RC evidence needs attention."
+        ),
+        "next_step": "review_artifacts" if ready else "fix_blockers",
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(not_completed),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    not_completed: list[str],
+) -> dict[str, Any]:
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    ready = bool(report.get("ok"))
+    return {
+        "schema": "public_swarm_product_rc_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "headline": (
+            "Public Swarm Product RC evidence is ready."
+            if ready
+            else "Public Swarm Product RC evidence needs attention."
+        ),
+        "next_step": "review_artifacts" if ready else "fix_blockers",
+        "inspect_first": str(output_dir / "public_swarm_product_rc.md"),
+        "support_bundle": str(output_dir / "support_bundle.json"),
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": "public_swarm_product_rc_ready" if ready else (codes[0] if codes else "public_swarm_product_rc_blocked"),
+        "attention": "none" if ready else (not_completed[0] if not_completed else "public_swarm_product_rc_blocked"),
+        "attention_detail": "; ".join(not_completed[:5]),
+        "not_completed_count": len(not_completed),
+        "public_artifact_safe": True,
+    }
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    missing = not_completed_items(report)
+    recommended = recommended_next_command(report, args, output_dir=output_dir, not_completed=missing)
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "public_swarm_product_rc_support_bundle_v1",
+        "ok": report.get("ok"),
+        "output_dir": report.get("output_dir"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "not_completed": report.get("not_completed"),
+        "product_surface_ready": report.get("product_surface_ready"),
+        "session_protocol": report.get("session_protocol"),
+        "p2p_lite": report.get("p2p_lite"),
+        "gpu_generation_import": report.get("gpu_generation_import"),
+        "safety": report.get("safety"),
+        "limitations": report.get("limitations"),
+        "public_artifact_safe": True,
+    }
 
 
 def output_request_summary() -> dict[str, Any]:
@@ -241,6 +482,11 @@ def validate_public_artifact(report: dict[str, Any]) -> list[str]:
 
 
 def render_markdown(report: dict[str, Any]) -> str:
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -251,6 +497,32 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- schema: `{report.get('schema')}`",
         f"- ok: `{report.get('ok')}`",
         f"- output_dir: `{report.get('output_dir')}`",
+        "",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- status: `{user.get('headline')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
+        f"- recommended command: `{recommended.get('command_line')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    if next_items:
+        lines.extend(
+            (
+                f"- {item.get('label')}: `{item.get('command_line')}`"
+                + (" (requires private credentials; see runbook)" if item.get("requires_private_credentials") else "")
+            )
+            for item in next_items
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend([
         "",
         "## Output Scope",
         "",
@@ -263,6 +535,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} local_output_display_only={shareable.get('local_output_display_only')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifact_report.get('inspect_first')}`",
+        f"- summary JSON: `{artifact_report.get('summary_json')}`",
+        f"- summary Markdown: `{artifact_report.get('summary_markdown')}`",
+        f"- support bundle: `{artifact_report.get('support_bundle')}`",
+        f"- present: `{artifact_report.get('present_artifact_count')}` / `{artifact_report.get('artifact_count')}`",
+        f"- public artifact safe: `{artifact_report.get('public_artifact_safe')}`",
+        "",
         "## Readiness",
         "",
         f"- product surface ready: `{report.get('product_surface_ready')}`",
@@ -274,7 +555,12 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
         "",
-    ]
+        "## Not Completed",
+        "",
+    ])
+    not_completed = report.get("not_completed") or []
+    lines.extend(f"- {item}" for item in not_completed) if not_completed else lines.append("- none")
+    lines.append("")
     if report.get("artifacts"):
         lines.extend(["## Artifacts", ""])
         for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -294,9 +580,12 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     report.setdefault("prompt_scope", prompt_scope_summary())
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
+    if "artifact_summary" not in report:
+        report["artifact_summary"] = artifact_summary(output_dir)
     report.setdefault("artifacts", {})
     json_path = output_dir / "public_swarm_product_rc.json"
     markdown_path = output_dir / "public_swarm_product_rc.md"
+    support_path = output_dir / "support_bundle.json"
     report["artifacts"]["public_swarm_product_rc_json"] = artifact_entry(
         json_path,
         output_dir,
@@ -316,6 +605,17 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         kind="gpu_sharded_generation_beta_evidence_import",
         schema="gpu_sharded_generation_beta_v1",
     )
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_path,
+        output_dir,
+        kind="support_bundle",
+        schema="public_swarm_product_rc_support_bundle_v1",
+        ok=report.get("ok"),
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
     safety_errors = validate_public_artifact(report)
     if safety_errors:
         report["ok"] = False
@@ -326,9 +626,17 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
                 artifact["ok"] = False
     write_json(json_path, report)
     markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    write_json(support_path, support_bundle_payload(report))
     report["artifacts"]["public_swarm_product_rc_json"]["present"] = True
     report["artifacts"]["public_swarm_product_rc_markdown"]["present"] = True
+    report["artifacts"]["support_bundle_json"]["present"] = True
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
     write_json(json_path, report)
+    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    write_json(support_path, support_bundle_payload(report))
     return report
 
 
@@ -420,6 +728,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         ],
         "artifacts": {},
     }
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     return persist_report(report, output_dir=output_dir)
 
 

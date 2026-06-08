@@ -12466,6 +12466,10 @@ def build_public_swarm_product_rc(args: argparse.Namespace, *, runner: Runner = 
 
 
 def print_public_swarm_product_rc(report: dict[str, Any]) -> None:
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
@@ -12475,12 +12479,38 @@ def print_public_swarm_product_rc(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  product_surface_ready: {report.get('product_surface_ready')}")
+    if user_status:
+        print(
+            f"  status: {user_status.get('state')}: "
+            f"{user_status.get('headline')} next={user_status.get('next_step')}"
+        )
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} "
+            f"{recommended.get('command_line')}"
+        )
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
     if answer_scope:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate(next_items[:5], start=1):
+        if isinstance(item, dict):
+            suffix = " (requires private credentials)" if item.get("requires_private_credentials") else ""
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    artifact_summary_value = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         if isinstance(artifact, dict):

@@ -16224,6 +16224,50 @@ class CrowdTensorCliTests(unittest.TestCase):
             "ok": True,
             "output_dir": "dist/product-rc",
             "product_surface_ready": True,
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Swarm Product RC evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Product RC evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/product-rc/public_swarm_product_rc.md",
+                "recommended_label": "inspect Product RC evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/product-rc/public_swarm_product_rc.md",
+                "primary_code": "public_swarm_product_rc_ready",
+                "attention": "none",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Product RC evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p dist/product-rc/public_swarm_product_rc.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "reason": "review_artifacts",
+                    "command_line": "sed -n 1,220p dist/product-rc/public_swarm_product_rc.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "reason": "inspect_diagnostics",
+                    "command_line": "sed -n 1,220p dist/product-rc/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "support_bundle": "dist/product-rc/support_bundle.json",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_generated_text_public": False,
@@ -16256,6 +16300,16 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_swarm_product_rc(report)
         output = stdout.getvalue()
 
+        self.assertIn("  status: ready: Public Swarm Product RC evidence is ready. next=review_artifacts", output)
+        self.assertIn("  review: state=ready next=review_artifacts", output)
+        self.assertIn(
+            "  review_next: label=inspect Product RC evidence reason=review_artifacts command=sed -n 1,220p dist/product-rc/public_swarm_product_rc.md",
+            output,
+        )
+        self.assertIn(
+            "  recommended_next: inspect Product RC evidence reason=review_artifacts sed -n 1,220p dist/product-rc/public_swarm_product_rc.md",
+            output,
+        )
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
@@ -16272,6 +16326,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             output,
         )
+        self.assertIn("  next[2] inspect support bundle: sed -n 1,220p dist/product-rc/support_bundle.json", output)
+        self.assertIn("  artifacts: present=4/4 support=dist/product-rc/support_bundle.json public_artifact_safe=True", output)
 
     def test_main_public_swarm_product_beta_json_outputs_summary(self) -> None:
         summary = {"schema": "public_swarm_product_beta_v1", "ok": True}
