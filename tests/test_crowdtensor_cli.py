@@ -148,6 +148,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Stream request[3]: request=missing tokens=0/2 counts=[] complete=False missing=True",
             markdown,
         )
+
         self.assertEqual(
             cli.stream_progress_issue_summary(batch),
             "missing_requests=1/3 request[2]=req-2:1/2 request[3]=missing",
@@ -185,6 +186,42 @@ class CrowdTensorCliTests(unittest.TestCase):
             "sha256:abcdef1234567890z",
         )
         self.assertEqual(cli.stream_request_label({"request_key": "<redacted>"}), "unknown")
+
+    def test_prompt_scope_marks_file_and_stdin_as_shareable_log_friendly(self) -> None:
+        file_scope = cli.prompt_scope_from_args(
+            argparse.Namespace(
+                prompt_texts_file="",
+                prompt_file="/tmp/private-prompt.txt",
+                prompt_stdin=False,
+                prompt_texts="",
+                prompt_text="",
+            ),
+            prompt_count=1,
+        )
+        stdin_scope = cli.prompt_scope_from_args(
+            argparse.Namespace(
+                prompt_texts_file="",
+                prompt_file="",
+                prompt_stdin=True,
+                prompt_texts="",
+                prompt_text="",
+            ),
+            prompt_count=1,
+        )
+
+        self.assertEqual(file_scope["source"], "prompt-file")
+        self.assertFalse(file_scope["inline_prompt_text"])
+        self.assertFalse(file_scope["terminal_next_commands_local_private"])
+        self.assertFalse(file_scope["terminal_logs_local_private"])
+        self.assertTrue(file_scope["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(file_scope["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(file_scope["prompt_file_path_public"])
+        self.assertFalse(file_scope["raw_prompt_public"])
+        self.assertTrue(file_scope["public_artifact_safe"])
+        self.assertEqual(stdin_scope["source"], "prompt-stdin")
+        self.assertTrue(stdin_scope["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(stdin_scope["prompt_file_path_public"])
+        self.assertFalse(stdin_scope["raw_prompt_public"])
 
     def test_local_proof_success_summarizes_steps_and_artifacts(self) -> None:
         calls: list[list[str]] = []
@@ -1176,6 +1213,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["session_request"]["hf_model_id"], "distilgpt2")
         self.assertTrue(report["stream"]["enabled"])
         self.assertTrue(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
         self.assertEqual(report["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
         self.assertTrue(report["artifacts"]["generate_summary"]["present"])
@@ -1272,7 +1313,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("<prompt>", persisted["review_summary"]["next_command"])
         self.assertNotIn("CrowdTensor prompt", persisted["review_summary"]["next_command"])
         self.assertTrue(persisted["review_summary"]["public_artifact_safe"])
+        self.assertFalse(persisted["output_request"]["raw_prompt_public"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
+        self.assertFalse(persisted["output_request"]["generated_token_ids_public"])
+        self.assertTrue(persisted["output_request"]["public_artifact_safe"])
         self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
         self.assertEqual(persisted["user_status"]["next_step"], "run_live_preflight")
         self.assertEqual(persisted["trace"]["request_count"], 1)
@@ -3912,6 +3956,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["stream"]["enabled"])
         self.assertTrue(report["stream"]["requested"])
         self.assertTrue(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
         self.assertIn("Start a Coordinator", report["operator_action"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
@@ -3976,6 +4024,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["stream"]["enabled"])
         self.assertTrue(report["stream"]["requested"])
         self.assertTrue(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor generate --max-new-tokens 2 --coordinator-url http://127.0.0.1:8787 --prompt-texts '<prompt-1>,<prompt-2>' --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} --stream --include-output",
@@ -4142,6 +4194,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["trace"]["accepted_rows_seen"], 1)
         self.assertEqual(report["trace"]["stream_event_count"], 0)
         self.assertEqual(report["trace"]["source"], "public_swarm_product_cli_v1")
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
         self.assertFalse(report["trace"]["raw_prompt_public"])
         self.assertFalse(report["trace"]["raw_generated_text_public"])
         self.assertFalse(report["trace"]["generated_token_ids_public"])
@@ -4220,6 +4277,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["result"]["output_count"], 1)
         self.assertEqual(persisted["result"]["display"], "hash-only-json")
         self.assertTrue(persisted["result"]["public_artifact_safe"])
+        self.assertFalse(persisted["output_request"]["include_output"])
+        self.assertFalse(persisted["output_request"]["raw_prompt_public"])
+        self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
+        self.assertFalse(persisted["output_request"]["generated_token_ids_public"])
+        self.assertTrue(persisted["output_request"]["public_artifact_safe"])
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertEqual(persisted["prompt_scope"]["source"], "prompt-text")
         self.assertTrue(persisted["prompt_scope"]["inline_prompt_text"])
@@ -7098,7 +7160,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  check_source: unknown", rendered)
         self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
         self.assertIn("  artifacts: inspect=", rendered)
-        self.assertIn("  output_request: include_output=False raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False public_artifact_safe=True", rendered)
+        self.assertIn("  output_request: include_output=False", rendered)
+        self.assertIn("raw_prompt_public=False", rendered)
+        self.assertIn("raw_generated_text_public=False", rendered)
+        self.assertIn("generated_token_ids_public=False", rendered)
+        self.assertIn("public_artifact_safe=True", rendered)
         self.assertIn("  answer_scope: state=no-local-answer saved_json=validation-only public_artifact_safe=True", rendered)
         self.assertIn("  operator_action:", rendered)
         self.assertIn("  artifact public_real_llm_swarm_beta_json:", rendered)
@@ -9206,7 +9272,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn("CrowdTensor user prompt", json.dumps(report["next_commands"], sort_keys=True))
         self.assertTrue(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
         self.assertEqual(report["output_display"]["terminal_display"], "local-private")
         self.assertTrue(report["output_display"]["terminal_text_available"])
@@ -9288,7 +9356,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "saved-terminal-redacted")
         self.assertFalse(persisted["shareable_summary"]["local_answer_terminal_only"])
         self.assertTrue(persisted["output_request"]["include_output"])
+        self.assertFalse(persisted["output_request"]["raw_prompt_public"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
+        self.assertFalse(persisted["output_request"]["generated_token_ids_public"])
+        self.assertTrue(persisted["output_request"]["public_artifact_safe"])
         self.assertEqual(persisted["local_output"]["generated_text"], "")
         self.assertFalse(persisted["local_output"]["display_only"])
         self.assertTrue(persisted["local_output"]["public_artifact_safe"])
@@ -10452,7 +10523,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertTrue(report["output_request"]["public_artifact_safe"])
         self.assertEqual(report["local_output"]["generated_text"], "")
         self.assertTrue(report["local_output"]["public_artifact_safe"])
         self.assertFalse(report["safety"]["raw_prompt_public"])
@@ -10487,7 +10561,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("  answer_scope: ", stdout.getvalue())
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["output_request"]["include_output"])
+        self.assertFalse(persisted["output_request"]["raw_prompt_public"])
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
+        self.assertFalse(persisted["output_request"]["generated_token_ids_public"])
+        self.assertTrue(persisted["output_request"]["public_artifact_safe"])
         self.assertTrue(persisted["local_output"]["public_artifact_safe"])
         self.assertEqual(persisted["local_output"]["output_count"], 1)
         self.assertFalse(persisted["safety"]["raw_prompt_public"])

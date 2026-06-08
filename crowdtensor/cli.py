@@ -371,6 +371,13 @@ def _prompt_scope(
     safe_source = source if source else "prompt-text"
     safe_count = prompt_count if prompt_count > 0 else 1
     inline_prompt_text = safe_source in INLINE_PROMPT_SCOPE_SOURCES
+    prefer_safe_prompt_source = safe_source in {
+        "prompt-text",
+        "prompt-texts",
+        "prompt-file",
+        "prompt-stdin",
+        "prompt-texts-file",
+    }
     return {
         "source": safe_source,
         "prompt_count": safe_count,
@@ -379,7 +386,8 @@ def _prompt_scope(
         "terminal_logs_local_private": inline_prompt_text,
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
-        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": prefer_safe_prompt_source,
+        "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
     }
@@ -1219,16 +1227,24 @@ def format_p2p_status(p2p: dict[str, Any]) -> str:
 
 
 def output_request_text(output_request: dict[str, Any]) -> str:
+    raw_prompt_public = output_request.get("raw_prompt_public")
+    if raw_prompt_public is None:
+        raw_prompt_public = False
     raw_generation_public = output_request.get("raw_generated_text_public")
     if raw_generation_public is None:
         raw_generation_public = output_request.get("raw_generation_public")
+    generated_token_ids_public = output_request.get("generated_token_ids_public")
+    if generated_token_ids_public is None:
+        generated_token_ids_public = False
     public_artifact_safe = output_request.get("public_artifact_safe")
     if public_artifact_safe is None:
-        public_artifact_safe = not bool(raw_generation_public)
+        public_artifact_safe = not bool(raw_prompt_public or raw_generation_public or generated_token_ids_public)
     return (
         f"include_output={bool(output_request.get('include_output'))} "
         f"raw_generated_text_public={bool(raw_generation_public)} "
-        f"public_artifact_safe={bool(public_artifact_safe)}"
+        f"public_artifact_safe={bool(public_artifact_safe)} "
+        f"raw_prompt_public={bool(raw_prompt_public)} "
+        f"generated_token_ids_public={bool(generated_token_ids_public)}"
     )
 
 
@@ -6869,7 +6885,9 @@ def _infer_summary_from_payload(
         "wait_progress": wait_progress,
         "output_request": {
             "include_output": bool(getattr(args, "include_output", False)),
+            "raw_prompt_public": False,
             "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
             "public_artifact_safe": True,
         },
         "private_runtime_state": private_runtime_state,
@@ -9662,7 +9680,9 @@ def _generate_stream_request_summary(args: argparse.Namespace) -> dict[str, Any]
 def _generate_output_request_summary(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "include_output": bool(getattr(args, "include_output", False)),
+        "raw_prompt_public": False,
         "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
         "public_artifact_safe": True,
     }
 
