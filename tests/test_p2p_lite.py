@@ -4,6 +4,7 @@ import unittest
 
 from crowdtensor.p2p_lite import PeerCatalog, peer_leak_paths, sanitize_peer, sign_peer_announcement, stable_peer_secret
 from crowdtensor.session_protocol import build_session_request
+from scripts import p2p_lite_discovery_check
 
 
 class P2PLiteTests(unittest.TestCase):
@@ -194,6 +195,20 @@ class P2PLiteTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             catalog.announce(signed, now=now)
+
+    def test_discovery_check_reports_prompt_and_answer_scope(self) -> None:
+        result = p2p_lite_discovery_check.run_check(p2p_lite_discovery_check.parse_args([]))
+
+        self.assertEqual(result["schema"], "p2p_lite_discovery_check_v1")
+        self.assertFalse(result["output_request"]["include_output"])
+        self.assertFalse(result["output_request"]["raw_prompt_public"])
+        self.assertEqual(result["prompt_scope"]["source"], "route-check-placeholder")
+        self.assertEqual(result["prompt_scope"]["prompt_count"], 1)
+        self.assertFalse(result["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(result["prompt_scope"]["raw_prompt_public"])
+        self.assertEqual(result["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(result["answer_scope"]["visible_in_terminal"])
+        self.assertTrue(result["shareable_summary"]["public_artifact_safe"])
 
 
 if __name__ == "__main__":

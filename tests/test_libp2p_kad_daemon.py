@@ -6,10 +6,13 @@ import shutil
 import signal
 import socket
 import subprocess
+import tempfile
 import time
 import unittest
 from pathlib import Path
 from urllib.request import urlopen
+
+from scripts import libp2p_discovery_alpha_check
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +25,26 @@ def free_port() -> int:
 
 
 class Libp2pKadDaemonTests(unittest.TestCase):
+    def test_discovery_alpha_write_report_adds_prompt_and_answer_scope(self) -> None:
+        output_dir = Path(tempfile.mkdtemp(prefix="crowdtensor_libp2p_scope_test_"))
+
+        report = libp2p_discovery_alpha_check.write_report(output_dir, {
+            "schema": libp2p_discovery_alpha_check.SCHEMA,
+            "ok": False,
+            "diagnosis_codes": ["node_runtime_missing", "libp2p_discovery_alpha_blocked"],
+        })
+
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertEqual(report["prompt_scope"]["source"], "route-check-placeholder")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["answer_scope"]["visible_in_terminal"])
+        self.assertTrue(report["shareable_summary"]["public_artifact_safe"])
+        self.assertTrue((output_dir / "libp2p_discovery_alpha_check.json").is_file())
+
     def test_health_and_provider_catalog_do_not_500_or_422(self) -> None:
         if shutil.which("node") is None:
             self.skipTest("node runtime is not installed")

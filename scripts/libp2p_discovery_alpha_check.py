@@ -28,6 +28,71 @@ from crowdtensor.session_protocol import build_session_request  # noqa: E402
 SCHEMA = "libp2p_discovery_alpha_check_v1"
 
 
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "libp2p discovery alpha artifacts validate provider sync and route "
+            "lookup only; they do not include answer text."
+        ),
+    }
+
+
+def prompt_scope_summary() -> dict[str, Any]:
+    return {
+        "source": "route-check-placeholder",
+        "prompt_count": 1,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This discovery-only check uses an internal placeholder session request "
+            "for route lookup; raw prompt text is not public."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "route-only",
+        "saved_markdown_display": "none",
+        "json_stdout_display": "route-only-json",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": "Discovery checks are not answer transcripts.",
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": "Share discovery readiness and route metadata only.",
+    }
+
+
 def request_json(method: str, base_url: str, path: str, payload: dict[str, Any] | None = None, *, timeout: float = 5.0) -> dict[str, Any]:
     data = None
     headers = {}
@@ -329,6 +394,10 @@ def finalize(
 
 def write_report(output_dir: Path, report: dict[str, Any]) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary())
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
     (output_dir / "libp2p_discovery_alpha_check.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
 
