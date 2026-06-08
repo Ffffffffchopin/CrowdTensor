@@ -1587,6 +1587,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
         self.assertIn("checking route and stage readiness", progress)
+        self.assertNotIn("request shape only", progress)
         self.assertIn("review, review_next", progress)
         self.assertIn("inspect_first", progress)
         self.assertIn("status/action", progress)
@@ -2854,7 +2855,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("next[2] submit generation after stage preflight:", rendered)
 
     def test_product_generate_dry_run_can_skip_live_preflight_for_ci(self) -> None:
-        args = cli.parse_args([
+        argv = [
             "generate",
             "--coordinator-url",
             "http://127.0.0.1:8787",
@@ -2863,7 +2864,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--dry-run",
             "--skip-live-preflight",
             "--json",
-        ])
+        ]
+        args = cli.parse_args(argv)
 
         with patch.object(
             cli,
@@ -2908,6 +2910,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertNotIn("ready_to_submit: None", rendered)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cli.print_generate_start_hint(cli.parse_args([item for item in argv if item != "--json"]))
+        progress = stderr.getvalue()
+        self.assertIn("checking request shape only", progress)
+        self.assertIn("live Coordinator and stage readiness are skipped", progress)
+        self.assertNotIn("checking route and stage readiness before submitting work", progress)
         self.assertIn(
             "warnings=coordinator_preflight_skipped,stage_preflight_skipped",
             rendered,
@@ -12405,7 +12414,7 @@ class CrowdTensorCliTests(unittest.TestCase):
 
     def test_infer_existing_dry_run_can_skip_live_preflight_for_ci(self) -> None:
         output_dir = Path(self._tmp_dir())
-        args = cli.parse_args([
+        argv = [
             "infer",
             "CrowdTensor user prompt",
             "--mode",
@@ -12417,7 +12426,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "--output-dir",
             str(output_dir),
             "--json",
-        ])
+        ]
+        args = cli.parse_args(argv)
 
         with patch.object(
             cli,
@@ -12476,6 +12486,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertNotIn("ready_to_submit: None", rendered)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cli.print_infer_start_hint(cli.parse_args([item for item in argv if item != "--json"]))
+        progress = stderr.getvalue()
+        self.assertIn("checking request shape only", progress)
+        self.assertIn("live Coordinator and stage readiness are skipped", progress)
+        self.assertNotIn("checking the existing route before submitting work", progress)
 
     def test_infer_existing_p2p_preserves_swarm_id_in_next_commands(self) -> None:
         output_dir = Path(self._tmp_dir())

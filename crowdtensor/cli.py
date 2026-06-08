@@ -11633,11 +11633,18 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
             flush=True,
         )
     elif bool(getattr(args, "dry_run", False)):
-        print(
-            "CrowdTensor infer: checking the existing route before submitting work.",
-            file=sys.stderr,
-            flush=True,
-        )
+        if bool(getattr(args, "skip_live_preflight", False)):
+            print(
+                "CrowdTensor infer: checking request shape only; live Coordinator and stage readiness are skipped.",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                "CrowdTensor infer: checking the existing route before submitting work.",
+                file=sys.stderr,
+                flush=True,
+            )
     elif not str(getattr(args, "admin_token", "") or "").strip():
         print(
             "CrowdTensor infer: checking credentials and request requirements before submitting work.",
@@ -11661,11 +11668,18 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
 
 def print_generate_start_hint(args: argparse.Namespace) -> None:
     if bool(getattr(args, "dry_run", False)):
-        print(
-            "CrowdTensor generate: checking route and stage readiness before submitting work.",
-            file=sys.stderr,
-            flush=True,
-        )
+        if bool(getattr(args, "skip_live_preflight", False)):
+            print(
+                "CrowdTensor generate: checking request shape only; live Coordinator and stage readiness are skipped.",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                "CrowdTensor generate: checking route and stage readiness before submitting work.",
+                file=sys.stderr,
+                flush=True,
+            )
     elif not str(getattr(args, "admin_token", "") or "").strip():
         print(
             "CrowdTensor generate: checking credentials and request requirements before submitting work.",
