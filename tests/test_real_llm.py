@@ -57,6 +57,52 @@ class RealLlmTests(unittest.TestCase):
         self.assertEqual(spec["requests"][0]["generated_token_ids"], [])
         self.assertEqual(spec["requests"][0]["generated_text"], "")
 
+    def test_gpt2_block_call_supports_new_past_key_values_signature(self) -> None:
+        class NewBlock:
+            def __init__(self) -> None:
+                self.kwargs = {}
+
+            def forward(self, hidden_states, past_key_values=None, use_cache=False):  # noqa: ANN001, ANN202
+                self.kwargs = {"past_key_values": past_key_values, "use_cache": use_cache}
+                return hidden_states, ("key", "value")
+
+            __call__ = forward
+
+        block = NewBlock()
+        output = real_llm._call_gpt2_block(  # noqa: SLF001
+            block,
+            "hidden",
+            dynamic_cache="cache",
+            layer_past="legacy",
+            use_cache=True,
+        )
+
+        self.assertEqual(output[0], "hidden")
+        self.assertEqual(block.kwargs, {"past_key_values": "cache", "use_cache": True})
+
+    def test_gpt2_block_call_supports_legacy_layer_past_signature(self) -> None:
+        class LegacyBlock:
+            def __init__(self) -> None:
+                self.kwargs = {}
+
+            def forward(self, hidden_states, layer_past=None, use_cache=False):  # noqa: ANN001, ANN202
+                self.kwargs = {"layer_past": layer_past, "use_cache": use_cache}
+                return hidden_states, ("key", "value")
+
+            __call__ = forward
+
+        block = LegacyBlock()
+        output = real_llm._call_gpt2_block(  # noqa: SLF001
+            block,
+            "hidden",
+            dynamic_cache="cache",
+            layer_past="legacy",
+            use_cache=True,
+        )
+
+        self.assertEqual(output[0], "hidden")
+        self.assertEqual(block.kwargs, {"layer_past": "legacy", "use_cache": True})
+
     def test_stage_local_runtime_preserves_batched_activation_shape(self) -> None:
         missing = real_llm.missing_hf_dependencies()
         if missing:

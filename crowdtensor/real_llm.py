@@ -8,6 +8,7 @@ CPU-first, read-only two-stage proof for a real small LLM runtime when
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import time
 from typing import Any
@@ -299,6 +300,48 @@ def _cache_layers(cache: Any, *, split: int, layer_indices: list[int] | None = N
             return []
         rows.append(tuple(value.detach().cpu() for value in values[:2]))
     return rows if len(rows) == len(indices) else []
+
+
+def _block_cache_argument(block: Any) -> str:
+    try:
+        parameters = inspect.signature(block.forward).parameters
+    except (TypeError, ValueError, AttributeError):
+        return "none"
+    if "past_key_values" in parameters:
+        return "past_key_values"
+    if "layer_past" in parameters:
+        return "layer_past"
+    return "none"
+
+
+def _move_past_layer(layer: Any, device: Any) -> Any | None:
+    values = list(layer or [])
+    if len(values) < 2 or values[0] is None or values[1] is None:
+        return None
+    return tuple(value.to(device) for value in values[:2])
+
+
+def _detach_present_layer(present: Any) -> Any | None:
+    values = list(present or [])
+    if len(values) < 2 or values[0] is None or values[1] is None:
+        return None
+    return tuple(value.detach().cpu() for value in values[:2])
+
+
+def _call_gpt2_block(
+    block: Any,
+    hidden: Any,
+    *,
+    dynamic_cache: Any | None = None,
+    layer_past: Any | None = None,
+    use_cache: bool = True,
+) -> Any:
+    cache_argument = _block_cache_argument(block)
+    if cache_argument == "past_key_values" and dynamic_cache is not None:
+        return block(hidden, past_key_values=dynamic_cache, use_cache=use_cache)
+    if cache_argument == "layer_past":
+        return block(hidden, layer_past=layer_past, use_cache=use_cache)
+    return block(hidden, use_cache=use_cache)
 
 
 def clear_real_llm_runtime_caches() -> None:
@@ -743,17 +786,29 @@ def _stage0_activation(
             previous_hidden = cached.get("hidden")
             past_key_values = list(cached.get("past_key_values") or [])
             cache = _new_dynamic_cache(model, stored_layers=past_key_values, device=device)
-            if previous_hidden is not None and cache is not None:
+            if previous_hidden is not None and (cache is not None or len(past_key_values) == split):
                 cache_hit = True
                 cache_tokens_before = int(cached.get("input_token_count") or 0)
                 next_input_ids = input_ids[:, -1:]
                 next_position_ids = position_ids[:, -1:]
                 hidden_delta = transformer.wte(next_input_ids) + transformer.wpe(next_position_ids)
+                legacy_past: list[Any] = []
                 for block, past in zip(blocks[:split], past_key_values):
-                    output = block(hidden_delta, past_key_values=cache, use_cache=True)
+                    output = _call_gpt2_block(
+                        block,
+                        hidden_delta,
+                        dynamic_cache=cache,
+                        layer_past=_move_past_layer(past, device),
+                        use_cache=True,
+                    )
                     block_hidden, _present = _block_output_hidden_and_present(output)
+                    detached_present = _detach_present_layer(_present)
+                    if detached_present is not None:
+                        legacy_past.append(detached_present)
                     hidden_delta = _ensure_batched_hidden(block_hidden)
                 next_past_key_values = _cache_layers(cache, split=split)
+                if len(next_past_key_values) != split and len(legacy_past) == split:
+                    next_past_key_values = legacy_past
                 if len(next_past_key_values) == split:
                     hidden = torch.cat([previous_hidden.to(device), hidden_delta], dim=1)
                     _STAGE0_KV_CACHE[cache_key] = {
@@ -765,14 +820,17 @@ def _stage0_activation(
         if hidden is None:
             hidden = transformer.wte(input_ids) + transformer.wpe(position_ids)
             cache = _new_dynamic_cache(model)
+            legacy_past: list[Any] = []
             for block in blocks[:split]:
-                if cache is not None:
-                    output = block(hidden, past_key_values=cache, use_cache=True)
-                else:
-                    output = block(hidden, use_cache=True)
+                output = _call_gpt2_block(block, hidden, dynamic_cache=cache, use_cache=True)
                 block_hidden, _present = _block_output_hidden_and_present(output)
+                detached_present = _detach_present_layer(_present)
+                if detached_present is not None:
+                    legacy_past.append(detached_present)
                 hidden = _ensure_batched_hidden(block_hidden)
             past_key_values = _cache_layers(cache, split=split) if cache is not None else []
+            if len(past_key_values) != split and len(legacy_past) == split:
+                past_key_values = legacy_past
             if len(past_key_values) == split:
                 _STAGE0_KV_CACHE[cache_key] = {
                     "input_token_count": int(input_ids.shape[1]),
@@ -854,14 +912,26 @@ def _stage1_result(
                 device=device,
                 layer_indices=suffix_layer_indices,
             )
-            if previous_hidden is not None and cache is not None:
+            if previous_hidden is not None and (cache is not None or len(past_key_values) == len(suffix_layer_indices)):
                 cache_tokens_before = int(cached.get("input_token_count") or 0)
                 hidden_delta = hidden[:, -1:, :]
-                for block in blocks[split:]:
-                    output = block(hidden_delta, past_key_values=cache, use_cache=True)
+                legacy_past: list[Any] = []
+                for block, past in zip(blocks[split:], past_key_values):
+                    output = _call_gpt2_block(
+                        block,
+                        hidden_delta,
+                        dynamic_cache=cache,
+                        layer_past=_move_past_layer(past, device),
+                        use_cache=True,
+                    )
                     block_hidden, _present = _block_output_hidden_and_present(output)
+                    detached_present = _detach_present_layer(_present)
+                    if detached_present is not None:
+                        legacy_past.append(detached_present)
                     hidden_delta = _ensure_batched_hidden(block_hidden)
                 next_past_key_values = _cache_layers(cache, split=len(blocks), layer_indices=suffix_layer_indices)
+                if len(next_past_key_values) != len(suffix_layer_indices) and len(legacy_past) == len(suffix_layer_indices):
+                    next_past_key_values = legacy_past
                 if len(next_past_key_values) == len(suffix_layer_indices):
                     hidden = torch.cat([previous_hidden.to(device), hidden_delta], dim=1)
                     _STAGE1_KV_CACHE[cache_key] = {
@@ -874,18 +944,21 @@ def _stage1_result(
                     cache_hit = True
         if not cache_ready:
             cache = _new_dynamic_cache(model)
+            legacy_past: list[Any] = []
             for block in blocks[split:]:
-                if cache is not None:
-                    output = block(hidden, past_key_values=cache, use_cache=True)
-                else:
-                    output = block(hidden, use_cache=True)
+                output = _call_gpt2_block(block, hidden, dynamic_cache=cache, use_cache=True)
                 block_hidden, _present = _block_output_hidden_and_present(output)
+                detached_present = _detach_present_layer(_present)
+                if detached_present is not None:
+                    legacy_past.append(detached_present)
                 hidden = _ensure_batched_hidden(block_hidden)
             past_key_values = (
                 _cache_layers(cache, split=len(blocks), layer_indices=suffix_layer_indices)
                 if cache is not None
                 else []
             )
+            if len(past_key_values) != len(suffix_layer_indices) and len(legacy_past) == len(suffix_layer_indices):
+                past_key_values = legacy_past
             if len(past_key_values) == len(suffix_layer_indices):
                 _STAGE1_KV_CACHE[cache_key] = {
                     "input_token_count": int(hidden.shape[1]),
