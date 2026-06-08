@@ -113,6 +113,7 @@ GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_generate_runtime_provenance_v1"
 INFER_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_infer_runtime_provenance_v1"
+INFER_EVIDENCE_SCOPE_SCHEMA = "crowdtensor_infer_evidence_scope_v1"
 INFER_CLI_SCHEMA = "crowdtensor_infer_cli_v1"
 P2P_LITE_CLI_SCHEMA = "p2p_lite_cli_v1"
 P2PD_CLI_SCHEMA = "p2pd_cli_v1"
@@ -1504,6 +1505,81 @@ def runtime_provenance_text(provenance: dict[str, Any]) -> str:
         f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
         f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))}"
     )
+
+
+def infer_evidence_scope_text(scope: dict[str, Any]) -> str:
+    return (
+        f"level={scope.get('level') or 'unknown'} "
+        f"executed={scope.get('executed_where') or 'unknown'} "
+        f"source={scope.get('source') or 'unknown'} "
+        f"local_cpu={bool(scope.get('local_cpu'))} "
+        f"existing_runtime={bool(scope.get('existing_runtime'))} "
+        f"retained_gpu={bool(scope.get('retained_gpu_evidence_imported'))} "
+        f"fresh_kaggle_gpu={bool(scope.get('fresh_kaggle_gpu_verified'))} "
+        f"user_expectation={scope.get('user_expectation') or 'unknown'}"
+    )
+
+
+def _infer_evidence_scope(summary: dict[str, Any]) -> dict[str, Any]:
+    provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
+    dry_run = bool(summary.get("dry_run") or provenance.get("dry_run"))
+    local_loopback = bool(provenance.get("local_loopback_ran"))
+    full_evidence = bool(provenance.get("full_evidence_ran"))
+    existing_generate = bool(provenance.get("existing_generate_ran"))
+    submitted = bool(provenance.get("submitted_to_coordinator"))
+    retained_gpu = bool(provenance.get("retained_gpu_evidence_imported"))
+    fresh_kaggle_gpu = bool(provenance.get("fresh_kaggle_gpu_verified"))
+    if fresh_kaggle_gpu:
+        level = "fresh-kaggle-gpu"
+        executed_where = "fresh-kaggle-gpu"
+        expectation = "fresh external GPU proof was verified by the source report."
+    elif retained_gpu:
+        level = "local-with-retained-gpu-evidence" if full_evidence else "retained-gpu-evidence"
+        executed_where = "local-cpu-plus-retained-gpu-evidence" if full_evidence else "retained-evidence"
+        expectation = "GPU evidence is retained/imported evidence, not a fresh GPU run from this infer command."
+    elif local_loopback:
+        level = "local-cpu-loopback"
+        executed_where = "local-cpu"
+        expectation = "This infer run executed the fast local CPU loopback proof."
+    elif full_evidence:
+        level = "local-full-evidence"
+        executed_where = "local-cpu"
+        expectation = "This infer run executed the local full evidence gate."
+    elif existing_generate and dry_run:
+        level = "existing-runtime-preflight"
+        executed_where = "request-shape-preflight"
+        expectation = "This was a preflight; no inference task was submitted."
+    elif existing_generate and submitted:
+        level = "existing-runtime-submit"
+        executed_where = "existing-coordinator"
+        expectation = "This submitted to an existing Coordinator/generate route."
+    elif existing_generate:
+        level = "existing-runtime-blocked"
+        executed_where = "not-submitted"
+        expectation = "This existing-runtime path was blocked before submission."
+    else:
+        level = "unknown"
+        executed_where = "unknown"
+        expectation = "Inspect runtime_provenance and source_report for execution details."
+    return {
+        "schema": INFER_EVIDENCE_SCOPE_SCHEMA,
+        "level": level,
+        "executed_where": executed_where,
+        "source": provenance.get("source_schema") or "",
+        "proof_level": provenance.get("proof_level") or "",
+        "local_cpu": bool(local_loopback or full_evidence),
+        "local_loopback": local_loopback,
+        "full_evidence": full_evidence,
+        "existing_runtime": existing_generate,
+        "submitted_to_coordinator": submitted,
+        "dry_run": dry_run,
+        "retained_gpu_evidence_imported": retained_gpu,
+        "gpu_runtime_ready": bool(provenance.get("gpu_runtime_ready")),
+        "fresh_kaggle_gpu_attempted": bool(provenance.get("fresh_kaggle_gpu_attempted")),
+        "fresh_kaggle_gpu_verified": fresh_kaggle_gpu,
+        "public_artifact_safe": True,
+        "user_expectation": expectation,
+    }
 
 
 def runtime_options_text(options: dict[str, Any]) -> str:
@@ -7293,6 +7369,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
     step = summary.get("step") if isinstance(summary.get("step"), dict) else {}
     runtime_provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
+    evidence_scope = summary.get("evidence_scope") if isinstance(summary.get("evidence_scope"), dict) else {}
     recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
@@ -7317,6 +7394,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     ])
     if runtime_provenance:
         lines.append(f"- Runtime provenance: `{runtime_provenance_text(runtime_provenance)}`")
+    if evidence_scope:
+        lines.append(f"- Evidence scope: `{infer_evidence_scope_text(evidence_scope)}`")
     if output_display.get("summary"):
         lines.append(f"- Output display note: {output_display.get('summary')}")
     lines.extend([
@@ -7342,6 +7421,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         )
     if runtime_provenance:
         lines.append(f"- Runtime provenance summary: {runtime_provenance.get('summary') or ''}")
+    if evidence_scope:
+        lines.append(f"- Evidence scope note: {evidence_scope.get('user_expectation') or ''}")
     if coordinator_ready:
         lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
     if stage_preflight:
@@ -7838,6 +7919,7 @@ def _infer_summary_from_payload(
         mode=mode,
         step=step,
     )
+    summary["evidence_scope"] = _infer_evidence_scope(summary)
     artifacts = {
         "infer_summary": {
             "kind": "crowdtensor_infer_summary",
@@ -12394,6 +12476,9 @@ def print_infer(report: dict[str, Any]) -> None:
     runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     if runtime_provenance:
         print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
+    evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
+    if evidence_scope:
+        print(f"  evidence_scope: {infer_evidence_scope_text(evidence_scope)}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
