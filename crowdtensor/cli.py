@@ -15026,6 +15026,7 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    checked_runtime_provenance = report.get("checked_runtime_provenance") if isinstance(report.get("checked_runtime_provenance"), dict) else {}
     checked_evidence_scope = report.get("checked_evidence_scope") if isinstance(report.get("checked_evidence_scope"), dict) else {}
     raw_operator_action = report.get("operator_action")
     operator_actions = [str(item) for item in raw_operator_action] if isinstance(raw_operator_action, list) else []
@@ -15063,6 +15064,8 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
             f"check={artifact_summary.get('check_json') or 'none'} "
             f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
         )
+    if checked_runtime_provenance:
+        print(f"  checked_runtime_provenance: {runtime_provenance_text(checked_runtime_provenance)}")
     if checked_evidence_scope:
         print(f"  checked_evidence_scope: {public_real_llm_beta_evidence_scope_text(checked_evidence_scope)}")
         print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")

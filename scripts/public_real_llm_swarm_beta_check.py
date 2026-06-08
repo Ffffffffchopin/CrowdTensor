@@ -1677,6 +1677,7 @@ def print_human_summary(result: dict[str, Any]) -> None:
     prompt_scope = result.get("prompt_scope") if isinstance(result.get("prompt_scope"), dict) else {}
     answer_scope = result.get("answer_scope") if isinstance(result.get("answer_scope"), dict) else {}
     shareable = result.get("shareable_summary") if isinstance(result.get("shareable_summary"), dict) else {}
+    checked_runtime_provenance = result.get("checked_runtime_provenance") if isinstance(result.get("checked_runtime_provenance"), dict) else {}
     checked_evidence_scope = result.get("checked_evidence_scope") if isinstance(result.get("checked_evidence_scope"), dict) else {}
     print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
     print(f"  mode: {result.get('mode')}")
@@ -1710,6 +1711,8 @@ def print_human_summary(result: dict[str, Any]) -> None:
             f"support={artifact_summary.get('support_bundle')} "
             f"check={artifact_summary.get('check_json')}"
         )
+    if checked_runtime_provenance:
+        print(f"  checked_runtime_provenance: {pack.runtime_provenance_text(checked_runtime_provenance)}")
     if checked_evidence_scope:
         print(f"  checked_evidence_scope: {pack.evidence_scope_text(checked_evidence_scope)}")
         print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")

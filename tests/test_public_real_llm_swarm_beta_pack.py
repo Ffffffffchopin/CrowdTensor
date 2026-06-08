@@ -2397,6 +2397,8 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("errors=0", output)
         self.assertIn("  artifacts: inspect=", output)
         self.assertIn("check=", output)
+        self.assertIn("  checked_runtime_provenance: proof=release-local-cpu-with-retained-external-and-local-gpu-smoke", output)
+        self.assertIn("fresh_kaggle_gpu_verified=False", output)
         self.assertIn("  checked_evidence_scope: level=release-local-cpu-with-retained-external", output)
         self.assertIn("fresh_kaggle_gpu_attempted=False", output)
         self.assertIn("fresh_kaggle_gpu=False", output)

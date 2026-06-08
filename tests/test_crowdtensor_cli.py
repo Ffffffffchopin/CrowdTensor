@@ -7715,6 +7715,18 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "output_dir": str(output_dir),
                 "errors": [],
                 "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"],
+                "checked_runtime_provenance": {
+                    "schema": "public_real_llm_swarm_beta_runtime_provenance_v1",
+                    "proof_level": "release-local-cpu-with-retained-external-and-local-gpu-smoke",
+                    "local_cpu_product_path_ready": True,
+                    "external_kaggle_cpu_evidence_ready": True,
+                    "p2p_candidate_evidence_ready": True,
+                    "gpu_report_mode": "local-smoke",
+                    "local_gpu_smoke_ran": True,
+                    "retained_gpu_evidence_imported": False,
+                    "fresh_kaggle_gpu_attempted": False,
+                    "fresh_kaggle_gpu_verified": False,
+                },
                 "checked_evidence_scope": {
                     "level": "release-local-cpu-with-retained-external",
                     "executed_where": "local-cpu-plus-retained-evidence",
@@ -7832,6 +7844,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  status: ready", rendered)
         self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
         self.assertIn("  artifacts: inspect=", rendered)
+        self.assertIn("  checked_runtime_provenance: proof=release-local-cpu-with-retained-external-and-local-gpu-smoke", rendered)
+        self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertIn("  checked_evidence_scope: level=release-local-cpu-with-retained-external", rendered)
         self.assertIn("fresh_kaggle_gpu_attempted=False", rendered)
         self.assertIn("fresh_kaggle_gpu=False", rendered)
