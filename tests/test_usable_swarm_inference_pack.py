@@ -60,6 +60,17 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -79,12 +90,17 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertTrue(calls)
         markdown = (output_dir / "usable_swarm_inference.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn(
+            "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
         support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertNotIn('"generated_text":', encoded)
@@ -178,6 +194,14 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         p2p = report["readiness"]["p2p_product_path"]
         self.assertTrue(p2p["batch_ready"])
         self.assertTrue(p2p["batch"]["batch_generation_ready"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         self.assertIn("usable_real_llm_batch_ready", report["diagnosis_codes"])
         self.assertIn("public_swarm_generate_batch_ready", report["diagnosis_codes"])
         self.assertNotIn("first prompt", encoded)
@@ -247,6 +271,14 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["readiness"]["p2p_product_path"]["batch_ready"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts-file")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
 
@@ -552,10 +584,13 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
     def test_package_mode_writes_user_runbook(self) -> None:
         output_dir = self._tmp_dir()
 
+        private_prompt = "private package prompt should not be saved"
         report = pack.build_report(pack.parse_args([
             "package",
             "--output-dir",
             str(output_dir),
+            "--prompt-text",
+            private_prompt,
             "--max-new-tokens",
             "8",
         ]))
@@ -572,7 +607,13 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertIn("Two-Machine/Public Rehearsal", text)
         self.assertIn("--i-understand-public-bind", text)
         self.assertIn("COORDINATOR_PUBLIC_HOST", text)
+        self.assertIn("CROWDTENSOR_PROMPT_TEXT", text)
+        self.assertNotIn(private_prompt, text)
         self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
@@ -602,6 +643,8 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertIn("usable_swarm_inference_check_ready", result["diagnosis_codes"])
         report = json.loads((output_dir / "usable" / "usable_swarm_inference.json").read_text(encoding="utf-8"))
         self.assertTrue(report["usable_swarm"]["package_only"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
