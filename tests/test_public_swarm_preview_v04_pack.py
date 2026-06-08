@@ -56,7 +56,19 @@ class PublicSwarmPreviewV04PackTests(unittest.TestCase):
         self.assertFalse(preview["shareable_summary"]["generated_token_ids_public"])
         self.assertEqual(preview["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertFalse(preview["shareable_summary"]["local_answer_terminal_only"])
+        self.assertEqual(preview["user_status"]["state"], "ready")
+        self.assertEqual(preview["user_status"]["recommended_label"], "inspect Preview v0.4 evidence")
+        self.assertEqual(preview["review_summary"]["schema"], "public_swarm_preview_v04_review_summary_v1")
+        self.assertEqual(preview["review_summary"]["next_step"], "review_artifacts")
+        self.assertEqual(preview["recommended_next_command"]["label"], "inspect Preview v0.4 evidence")
+        self.assertTrue(any(item["label"] == "inspect support bundle" for item in preview["next_commands"]))
+        self.assertEqual(preview["artifact_summary"]["present_artifact_count"], preview["artifact_summary"]["artifact_count"])
+        self.assertTrue(preview["artifact_summary"]["public_artifact_safe"])
+        self.assertEqual(preview["not_completed"], [])
         markdown = (output_dir / "preview-v04" / "public_swarm_preview_v04.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("- recommended: `inspect Preview v0.4 evidence` reason=`review_artifacts`", markdown)
+        self.assertIn("## What To Do Next", markdown)
         self.assertIn("## Output Scope", markdown)
         self.assertIn("- output request note:", markdown)
         self.assertIn("local answer", markdown)
@@ -69,10 +81,18 @@ class PublicSwarmPreviewV04PackTests(unittest.TestCase):
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("- present: `4` / `4`", markdown)
+        self.assertIn("## Not Completed", markdown)
+        self.assertIn("- none", markdown)
         support = json.loads((output_dir / "preview-v04" / "support_bundle.json").read_text(encoding="utf-8"))
         self.assertEqual(support["prompt_scope"]["source"], "prompt-text")
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(support["user_status"]["state"], "ready")
+        self.assertEqual(support["review_summary"]["schema"], "public_swarm_preview_v04_review_summary_v1")
+        self.assertEqual(support["recommended_next_command"]["label"], "inspect Preview v0.4 evidence")
+        self.assertEqual(support["artifact_summary"]["present_artifact_count"], support["artifact_summary"]["artifact_count"])
 
     def test_check_builds_ready_package(self) -> None:
         result = check.run_check(check.parse_args([
@@ -117,6 +137,8 @@ class PublicSwarmPreviewV04PackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["include_output"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(report["recommended_next_command"]["label"], "inspect Preview v0.4 evidence")
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
         self.assertNotIn("sensitive_output_detected", report["diagnosis_codes"])
 
     def test_package_runbook_uses_prompt_placeholder(self) -> None:

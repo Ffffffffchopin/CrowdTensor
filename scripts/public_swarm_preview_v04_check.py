@@ -384,6 +384,49 @@ def validate_payload(payload: dict[str, Any], *, mode: str, require_optional: bo
         errors.append("shareable_local_answer_terminal_only_mismatch")
     if shareable.get("public_artifact_safe") is not True:
         errors.append("shareable_public_artifact_safe_mismatch")
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    if user_status.get("state") not in {"ready", "blocked", "package-blocked"}:
+        errors.append("user_status_state_mismatch")
+    if not user_status.get("headline"):
+        errors.append("user_status_headline_missing")
+    if not user_status.get("recommended_label"):
+        errors.append("user_status_recommended_label_missing")
+    if user_status.get("public_artifact_safe") is not True:
+        errors.append("user_status_public_artifact_safe_mismatch")
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    if review.get("schema") != "public_swarm_preview_v04_review_summary_v1":
+        errors.append("review_schema_mismatch")
+    if not review.get("inspect_first"):
+        errors.append("review_inspect_first_missing")
+    if not review.get("support_bundle"):
+        errors.append("review_support_bundle_missing")
+    if not review.get("recommended_label"):
+        errors.append("review_recommended_label_missing")
+    if not review.get("next_command"):
+        errors.append("review_next_command_missing")
+    if review.get("public_artifact_safe") is not True:
+        errors.append("review_public_artifact_safe_mismatch")
+    recommended = payload.get("recommended_next_command") if isinstance(payload.get("recommended_next_command"), dict) else {}
+    if not recommended.get("label"):
+        errors.append("recommended_label_missing")
+    if not recommended.get("command_line"):
+        errors.append("recommended_command_missing")
+    if recommended.get("public_artifact_safe") is not True:
+        errors.append("recommended_public_artifact_safe_mismatch")
+    next_commands = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    if not next_commands:
+        errors.append("next_commands_missing")
+    if not any(isinstance(item, dict) and item.get("label") == "inspect support bundle" for item in next_commands):
+        errors.append("next_commands_support_bundle_missing")
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    if artifact_summary.get("public_artifact_safe") is not True:
+        errors.append("artifact_summary_public_artifact_safe_mismatch")
+    if not artifact_summary.get("support_bundle"):
+        errors.append("artifact_summary_support_bundle_missing")
+    if artifact_summary.get("present_artifact_count") != artifact_summary.get("artifact_count"):
+        errors.append("artifact_summary_present_count_mismatch")
+    if not isinstance(payload.get("not_completed"), list):
+        errors.append("not_completed_list_missing")
     artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
     for name in ["public_swarm_preview_v04_json", "public_swarm_preview_v04_markdown", "support_bundle_json"]:
         artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}

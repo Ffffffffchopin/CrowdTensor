@@ -14147,6 +14147,9 @@ def print_public_swarm_trial(report: dict[str, Any]) -> None:
 
 def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
     preview = report.get("preview") if isinstance(report.get("preview"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -14163,6 +14166,18 @@ def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
     print(f"  throughput_summary_ready: {preview.get('throughput_summary_ready')}")
     print(f"  memory_or_vram_summary_ready: {preview.get('memory_or_vram_summary_ready')}")
     print(f"  optional_model_ready: {preview.get('optional_model_ready')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -14171,6 +14186,19 @@ def print_public_swarm_preview_v04(report: dict[str, Any]) -> None:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = " side_effectful=True" if item.get("side_effectful") else ""
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    artifact_summary_value = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -16025,6 +16053,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     preview_v04 = subparsers.add_parser(
         "preview-v04",
         help="Build the Public Swarm Inference Preview v0.4 artifact.",
+        description=(
+            "Build Public Swarm Inference Preview v0.4 over the current Coordinator-backed release preview aggregate.\n\n"
+            "Modes:\n"
+            "  local-smoke      Run the local Product MVP tiny GPT path and import retained live/GPU evidence.\n"
+            "  package          Generate PUBLIC_SWARM_PREVIEW_V04.md and package artifacts.\n"
+            "  evidence-import  Aggregate retained Product MVP, live stage0/stage1, optional model, and GPU generation evidence reports.\n\n"
+            "Reports print status, review, recommended_next, next[...] commands, output scope, and artifact counts. "
+            "Share only the generated JSON, Markdown, and support bundle; keep private env files, Kaggle payloads, "
+            "runtime state, credentials, leases, activations, raw prompts, generated text, and generated token ids local. "
+            "external live evidence is side-effectful and requires cleanup plus token rotation after collection."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crowdtensor preview-v04 local-smoke --output-dir dist/public-swarm-preview-v04\n"
+            "  crowdtensor preview-v04 package --public-host 24.199.118.54 --output-dir dist/preview-v04-package\n"
+            "  crowdtensor preview-v04 evidence-import --product-mvp-report dist/product-swarm-mvp/product_swarm_mvp_check.json\n"
+            "  crowdtensor preview-v04 evidence-import --optional-model-report dist/preview-v04-distilgpt2/product-mvp/product_swarm_mvp_check.json --require-optional-model-ready"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     preview_v04.add_argument("preview_v04_mode", choices=["local-smoke", "package", "evidence-import"])
     preview_v04.add_argument("--output-dir", default="dist/public-swarm-preview-v04")
