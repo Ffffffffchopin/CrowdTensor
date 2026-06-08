@@ -40,6 +40,17 @@ class PublicP2PSwarmInferenceV1RCPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -54,9 +65,11 @@ class PublicP2PSwarmInferenceV1RCPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "rc" / "public_p2p_swarm_inference_v1_rc.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("prompt scope: `source=prompt-text count=1", markdown)
         self.assertIn("state=no-local-answer", markdown)
         self.assertIn("raw_generated_text_public=False", markdown)
         support = json.loads((output_dir / "rc" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
@@ -168,6 +181,34 @@ class PublicP2PSwarmInferenceV1RCPackTests(unittest.TestCase):
         self.assertTrue(report["artifacts"]["public_p2p_swarm_inference_v1_rc_markdown"]["present"])
         self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
         self.assertTrue(report["artifacts"]["signed_local_v06_json"]["present"])
+
+    def test_missing_v06_prompt_scope_falls_back_to_imported_validation_prompts(self) -> None:
+        output_dir = self._tmp_dir()
+        signed_local = output_dir / "signed_local.json"
+        payload = check.fake_signed_local_v06()
+        payload.pop("prompt_scope", None)
+        signed_local.write_text(json.dumps(payload), encoding="utf-8")
+
+        report = pack.build_report(pack.parse_args([
+            pack.MODE_EVIDENCE_IMPORT,
+            "--output-dir",
+            str(output_dir / "rc"),
+            "--signed-local-report",
+            str(signed_local),
+            "--json",
+        ]))
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertEqual(report["prompt_scope"]["source"], "imported-or-built-in-validation-prompts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertFalse(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
+        self.assertNotIn("CrowdTensor public P2P v1 RC", encoded)
 
     def test_evidence_import_blocks_non_default_model_without_matching_v06_reports(self) -> None:
         output_dir = self._tmp_dir()

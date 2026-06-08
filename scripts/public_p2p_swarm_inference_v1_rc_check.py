@@ -82,6 +82,19 @@ def fake_signed_local_v06() -> dict[str, Any]:
         "schema": "p2p_swarm_inference_v06_v1",
         "ok": True,
         "hf_model_id": pack.DEFAULT_HF_MODEL_ID,
+        "prompt_scope": {
+            "source": "prompt-text",
+            "prompt_count": 1,
+            "inline_prompt_text": True,
+            "terminal_next_commands_local_private": True,
+            "terminal_logs_local_private": True,
+            "saved_artifacts_prompt_placeholders": True,
+            "saved_artifacts_public_safe": True,
+            "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+            "prompt_file_path_public": False,
+            "raw_prompt_public": False,
+            "public_artifact_safe": True,
+        },
         "p2p": {
             "ready": True,
             "hf_model_id": pack.DEFAULT_HF_MODEL_ID,
@@ -120,6 +133,19 @@ def fake_external_v06() -> dict[str, Any]:
         "schema": "p2p_swarm_inference_v06_v1",
         "ok": True,
         "hf_model_id": pack.DEFAULT_HF_MODEL_ID,
+        "prompt_scope": {
+            "source": "prompt-text",
+            "prompt_count": 1,
+            "inline_prompt_text": True,
+            "terminal_next_commands_local_private": True,
+            "terminal_logs_local_private": True,
+            "saved_artifacts_prompt_placeholders": True,
+            "saved_artifacts_public_safe": True,
+            "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+            "prompt_file_path_public": False,
+            "raw_prompt_public": False,
+            "public_artifact_safe": True,
+        },
         "p2p": {
             "ready": True,
             "hf_model_id": pack.DEFAULT_HF_MODEL_ID,
@@ -148,6 +174,19 @@ def fake_kaggle_v06() -> dict[str, Any]:
         "schema": "p2p_swarm_inference_v06_kaggle_auto_v1",
         "ok": True,
         "hf_model_id": pack.DEFAULT_HF_MODEL_ID,
+        "prompt_scope": {
+            "source": "prompt-text",
+            "prompt_count": 1,
+            "inline_prompt_text": True,
+            "terminal_next_commands_local_private": True,
+            "terminal_logs_local_private": True,
+            "saved_artifacts_prompt_placeholders": True,
+            "saved_artifacts_public_safe": True,
+            "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+            "prompt_file_path_public": False,
+            "raw_prompt_public": False,
+            "public_artifact_safe": True,
+        },
         "external_runtime_verified": True,
         "external_generate_verified": True,
         "generation": {"generated_token_count": 2, "decoded_tokens_match": True},
@@ -219,6 +258,34 @@ def validate_payload(payload: dict[str, Any], *, mode: str) -> list[str]:
         errors.append("output_request_generated_token_ids_public_not_false")
     if output_request.get("public_artifact_safe") is not True:
         errors.append("output_request_public_artifact_safe_missing")
+    prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
+    if prompt_scope.get("source") not in {"prompt-text", "prompt-texts", "prompt-texts-file", "imported-or-built-in-validation-prompts", "none"}:
+        errors.append("prompt_scope_source_mismatch")
+    if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 0:
+        errors.append("prompt_scope_count_mismatch")
+    inline_prompt_text = prompt_scope.get("source") in {"prompt-text", "prompt-texts"}
+    if inline_prompt_text and prompt_scope.get("prompt_count") < 1:
+        errors.append("prompt_scope_inline_count_mismatch")
+    if prompt_scope.get("source") == "none" and prompt_scope.get("prompt_count") != 0:
+        errors.append("prompt_scope_none_count_mismatch")
+    if prompt_scope.get("inline_prompt_text") is not inline_prompt_text:
+        errors.append("prompt_scope_inline_prompt_text_mismatch")
+    if prompt_scope.get("terminal_next_commands_local_private") is not inline_prompt_text:
+        errors.append("prompt_scope_terminal_next_commands_mismatch")
+    if prompt_scope.get("terminal_logs_local_private") is not inline_prompt_text:
+        errors.append("prompt_scope_terminal_logs_mismatch")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        errors.append("prompt_scope_saved_placeholders_mismatch")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not inline_prompt_text:
+        errors.append("prompt_scope_shareable_log_guidance_mismatch")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append("prompt_scope_file_path_public_mismatch")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append("prompt_scope_raw_prompt_public_mismatch")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        errors.append("prompt_scope_public_artifact_safe_mismatch")
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
     if answer_scope.get("scope_state") != "no-local-answer":
         errors.append("answer_scope_state_mismatch")

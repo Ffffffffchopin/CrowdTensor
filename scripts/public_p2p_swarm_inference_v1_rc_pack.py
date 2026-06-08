@@ -211,6 +211,71 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def safe_prompt_count(value: Any) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, count)
+
+
+def normalize_prompt_scope(scope: dict[str, Any]) -> dict[str, Any]:
+    source = str(scope.get("source") or "imported-or-built-in-validation-prompts")
+    inline_prompt_text = bool(scope.get("inline_prompt_text"))
+    return {
+        "source": source,
+        "prompt_count": safe_prompt_count(scope.get("prompt_count")),
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": bool(scope.get("terminal_next_commands_local_private")),
+        "terminal_logs_local_private": bool(scope.get("terminal_logs_local_private")),
+        "saved_artifacts_prompt_placeholders": scope.get("saved_artifacts_prompt_placeholders") is not False,
+        "saved_artifacts_public_safe": scope.get("saved_artifacts_public_safe") is not False,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": bool(scope.get("prefer_prompt_file_or_stdin_for_shareable_logs")),
+        "prompt_file_path_public": bool(scope.get("prompt_file_path_public")),
+        "raw_prompt_public": bool(scope.get("raw_prompt_public")),
+        "public_artifact_safe": scope.get("public_artifact_safe") is not False,
+        "summary": (
+            "Public P2P v1 RC inherits prompt source/count metadata from v0.6 "
+            "evidence when present; public artifacts keep raw prompt text and "
+            "prompt file paths out of JSON, Markdown, and support bundles."
+        ),
+    }
+
+
+def inherited_prompt_scope(args: argparse.Namespace, *payloads: dict[str, Any]) -> dict[str, Any]:
+    for payload in payloads:
+        prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
+        if prompt_scope:
+            return normalize_prompt_scope(prompt_scope)
+    prompt_count = 1 if str(getattr(args, "prompt_text", "") or "").strip() else 0
+    return normalize_prompt_scope({
+        "source": "imported-or-built-in-validation-prompts",
+        "prompt_count": prompt_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+    })
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -563,6 +628,7 @@ def build_common_report(
         },
         "diagnosis_codes": sorted(codes),
         "artifacts": artifacts,
+        "prompt_scope": inherited_prompt_scope(args, signed_local, external_v06, kaggle_v06),
         "safety": {
             "signed_peer_announcement": True,
             "peer_secret_gossiped": False,
@@ -620,6 +686,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- output request: `include_output={bool((report.get('output_request') or {}).get('include_output'))} raw_prompt_public={bool((report.get('output_request') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('output_request') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('output_request') or {}).get('generated_token_ids_public'))} public_artifact_safe={bool((report.get('output_request') or {}).get('public_artifact_safe'))}`",
+        f"- prompt scope: `{prompt_scope_text((report.get('prompt_scope') or {}) if isinstance(report.get('prompt_scope'), dict) else {})}`",
         f"- answer scope: `state={(report.get('answer_scope') or {}).get('scope_state')} terminal_only={bool((report.get('answer_scope') or {}).get('terminal_only'))} visible_in_terminal={bool((report.get('answer_scope') or {}).get('visible_in_terminal'))} saved_json={(report.get('answer_scope') or {}).get('saved_json_display')} saved_markdown={(report.get('answer_scope') or {}).get('saved_markdown_display')} public_artifact_safe={bool((report.get('answer_scope') or {}).get('public_artifact_safe'))}`",
         f"- shareable: `saved_artifacts={bool((report.get('shareable_summary') or {}).get('saved_artifacts_public_safe'))} raw_prompt_public={bool((report.get('shareable_summary') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('shareable_summary') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('shareable_summary') or {}).get('generated_token_ids_public'))} answer_scope_state={(report.get('shareable_summary') or {}).get('answer_scope_state')} local_answer_terminal_only={bool((report.get('shareable_summary') or {}).get('local_answer_terminal_only'))}`",
         f"- note: {(report.get('answer_scope') or {}).get('summary')}",
@@ -653,6 +720,10 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault(
+        "prompt_scope",
+        normalize_prompt_scope({"source": "imported-or-built-in-validation-prompts", "prompt_count": 0}),
+    )
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     errors = validate_public_report(report)
@@ -684,6 +755,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "inference": report.get("inference"),
         "artifacts": report.get("artifacts"),
         "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),
