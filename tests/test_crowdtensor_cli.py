@@ -17907,6 +17907,49 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
             },
+            "user_status": {
+                "state": "ready",
+                "headline": "Petals-class P2P Candidate evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Petals candidate evidence",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/petals-candidate/petals_class_p2p_candidate.md",
+                "recommended_label": "inspect Petals candidate evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/petals-candidate/petals_class_p2p_candidate.md",
+                "primary_code": "petals_class_p2p_candidate_ready",
+                "attention": "none",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Petals candidate evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p dist/petals-candidate/petals_class_p2p_candidate.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect Petals candidate evidence",
+                    "command_line": "sed -n 1,220p dist/petals-candidate/petals_class_p2p_candidate.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/petals-candidate/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/petals-candidate/petals_class_p2p_candidate.md",
+                "summary_json": "dist/petals-candidate/petals_class_p2p_candidate.json",
+                "summary_markdown": "dist/petals-candidate/petals_class_p2p_candidate.md",
+                "support_bundle": "dist/petals-candidate/support_bundle.json",
+                "artifact_count": 3,
+                "present_artifact_count": 3,
+                "public_artifact_safe": True,
+            },
             "diagnosis_codes": ["petals_class_p2p_candidate_ready"],
             "artifacts": {},
         }
@@ -17916,6 +17959,26 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_petals_class_p2p_candidate(report)
         output = stdout.getvalue()
 
+        self.assertIn(
+            "  status: ready: Petals-class P2P Candidate evidence is ready. next=review_artifacts recommendation=inspect Petals candidate evidence public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  review: state=ready next=review_artifacts inspect=dist/petals-candidate/petals_class_p2p_candidate.md recommended=inspect Petals candidate evidence primary=petals_class_p2p_candidate_ready attention=none public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  recommended_next: inspect Petals candidate evidence reason=review_artifacts sed -n 1,220p dist/petals-candidate/petals_class_p2p_candidate.md",
+            output,
+        )
+        self.assertIn(
+            "  next[2] inspect support bundle: sed -n 1,220p dist/petals-candidate/support_bundle.json",
+            output,
+        )
+        self.assertIn(
+            "  artifacts: inspect=dist/petals-candidate/petals_class_p2p_candidate.md json=dist/petals-candidate/petals_class_p2p_candidate.json markdown=dist/petals-candidate/petals_class_p2p_candidate.md present=3/3 public_artifact_safe=True",
+            output,
+        )
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,

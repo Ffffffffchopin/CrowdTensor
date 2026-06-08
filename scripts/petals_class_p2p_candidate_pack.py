@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import signal
 import shutil
 import subprocess
@@ -103,6 +104,10 @@ def utc_now() -> str:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def shell_command(parts: list[Any]) -> str:
+    return shlex.join([str(part) for part in parts if str(part) != ""])
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
@@ -227,6 +232,216 @@ def shareable_summary() -> dict[str, Any]:
             "and `support_bundle.json`; they contain candidate readiness evidence, "
             "hashes, counts, and safe summaries, not raw prompts or answers."
         ),
+    }
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if side_effectful:
+        entry["side_effectful"] = True
+        entry["side_effect_note"] = (
+            "This command can start local child runtimes; inspect child artifacts before sharing "
+            "and keep private runtime state local."
+        )
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    inspect_first = output_dir / "petals_class_p2p_candidate.md"
+    paths = {
+        "summary_json": output_dir / "petals_class_p2p_candidate.json",
+        "summary_markdown": inspect_first,
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    return {
+        "schema": "petals_class_p2p_candidate_artifact_summary_v1",
+        "inspect_first": str(inspect_first),
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": sum(1 for path in paths.values() if path.is_file()),
+        "shareable_paths": [str(path) for path in paths.values()],
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": (
+            "Open inspect_first first, then support_bundle for diagnostics; artifacts contain "
+            "Petals-class P2P candidate readiness, hashes, and counts only."
+        ),
+    }
+
+
+def petals_candidate_command(report: dict[str, Any], output_dir: Path, mode: str) -> list[str]:
+    return [
+        "crowdtensor",
+        "petals-candidate",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--max-new-tokens",
+        str(report.get("max_new_tokens") or 8),
+        "--json",
+    ]
+
+
+def candidate_ready(report: dict[str, Any]) -> bool:
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    return bool(report.get("ok") is True and "petals_class_p2p_candidate_ready" in codes)
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    items: list[str] = []
+    for item in report.get("not_completed") or []:
+        if isinstance(item, str) and item not in items:
+            items.append(item)
+    return items
+
+
+def recommended_next_command(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    if candidate_ready(report):
+        return command_entry(
+            "inspect Petals candidate evidence",
+            artifact_command(output_dir, "petals_class_p2p_candidate.md"),
+            reason="review_artifacts",
+        )
+    if mode == MODE_PACKAGE and report.get("ok") is True:
+        return command_entry(
+            "run Petals candidate local smoke",
+            petals_candidate_command(report, output_dir, MODE_LOCAL_SMOKE),
+            reason="verify_local_candidate_path",
+            side_effectful=True,
+        )
+    if mode == MODE_LOCAL_SMOKE:
+        return command_entry(
+            "inspect local smoke diagnostics",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_local_candidate_diagnostics",
+        )
+    if mode == MODE_EVIDENCE_IMPORT:
+        return command_entry(
+            "inspect Petals candidate diagnostics",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="fix_or_refresh_imported_evidence",
+        )
+    return command_entry(
+        "inspect Petals candidate diagnostics",
+        artifact_command(output_dir, "support_bundle.json"),
+        reason="inspect_diagnostics",
+    )
+
+
+def next_commands(report: dict[str, Any], *, output_dir: Path, recommended: dict[str, Any]) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect Petals candidate evidence",
+            artifact_command(output_dir, "petals_class_p2p_candidate.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    mode = str(report.get("mode") or "")
+    if mode == MODE_PACKAGE:
+        commands.append(command_entry(
+            "run Petals candidate local smoke",
+            petals_candidate_command(report, output_dir, MODE_LOCAL_SMOKE),
+            reason="verify_local_candidate_path",
+            side_effectful=True,
+        ))
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    return commands
+
+
+def user_status(report: dict[str, Any], *, recommended: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    ready = candidate_ready(report)
+    if ready:
+        state = "ready"
+        headline = "Petals-class P2P Candidate evidence is ready."
+        next_step = "review_artifacts"
+    elif mode == MODE_PACKAGE and report.get("ok") is True:
+        state = "package-ready"
+        headline = "Petals-class P2P Candidate runbook is ready; proof execution is not complete."
+        next_step = "run_local_or_import_evidence"
+    else:
+        state = "blocked"
+        headline = "Petals-class P2P Candidate evidence needs attention."
+        next_step = "fix_petals_candidate_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(not_completed_items(report)),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(report: dict[str, Any], *, output_dir: Path, recommended: dict[str, Any]) -> dict[str, Any]:
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    ready = candidate_ready(report)
+    package_ready = str(report.get("mode") or "") == MODE_PACKAGE and report.get("ok") is True
+    missing = not_completed_items(report)
+    if ready:
+        state = "ready"
+        next_step = "review_artifacts"
+        attention = "none"
+    elif package_ready:
+        state = "package-ready"
+        next_step = "run_local_or_import_evidence"
+        attention = missing[0] if missing else "petals_candidate_proof_not_run"
+    else:
+        state = "blocked"
+        next_step = "fix_petals_candidate_blockers"
+        attention = missing[0] if missing else (codes[0] if codes else "petals_candidate_blocked")
+    artifacts = artifact_summary(output_dir)
+    return {
+        "schema": "petals_class_p2p_candidate_review_summary_v1",
+        "state": state,
+        "ready": ready,
+        "headline": (
+            "Petals-class P2P Candidate evidence is ready."
+            if ready
+            else "Petals-class P2P Candidate evidence needs follow-up before readiness is claimed."
+        ),
+        "next_step": next_step,
+        "inspect_first": artifacts["inspect_first"],
+        "support_bundle": artifacts["support_bundle"],
+        "recommended_next_command": recommended,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": "petals_class_p2p_candidate_ready" if ready else (codes[0] if codes else "petals_candidate_blocked"),
+        "attention": attention,
+        "attention_detail": "; ".join(missing[:5]),
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
     }
 
 
@@ -770,6 +985,23 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
         "ok": True,
         "mode": MODE_PACKAGE,
         "output_dir": str(output_dir),
+        "max_new_tokens": args.max_new_tokens,
+        "candidate": {
+            "runbook_ready": bool(runbook.get("present")),
+            "max_new_tokens": args.max_new_tokens,
+            "external_generated_token_count": 0,
+            "local_libp2p_ready": False,
+            "kaggle_runtime_smoke_ready": False,
+            "external_libp2p_generate_ready": False,
+            "external_stage_requeue_ready": False,
+            "p2p_live_requeue_ready": False,
+            "victim_result_not_accepted": False,
+            "batch_ready": False,
+            "batch": {"enabled": False, "expected_request_count": 0},
+            "stream_ready": False,
+            "stream": {"enabled": False, "event_count": 0},
+            "peer_scoring_ready": False,
+        },
         "diagnosis_codes": ["petals_class_p2p_candidate_runbook_ready"],
         "artifacts": {"runbook": runbook},
         "prompt_scope": normalize_prompt_scope({
@@ -1067,6 +1299,10 @@ def build_local_smoke(args: argparse.Namespace, *, output_dir: Path, runner: Run
 
 def render_markdown(report: dict[str, Any]) -> str:
     candidate = report.get("candidate") if isinstance(report.get("candidate"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     lines = [
         "# Petals-Class P2P Candidate",
         "",
@@ -1075,6 +1311,33 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- mode: `{report.get('mode')}`",
         f"- generated tokens: `{candidate.get('external_generated_token_count', 0)}`",
         f"- diagnosis: {', '.join(report.get('diagnosis_codes') or [])}",
+        "",
+        "## Review",
+        "",
+        f"- status: `{status.get('state') or review.get('state') or 'unknown'}`",
+        f"- headline: {status.get('headline') or review.get('headline') or 'No status available.'}",
+        f"- next step: `{review.get('next_step') or status.get('next_step') or 'none'}`",
+        f"- primary code: `{review.get('primary_code') or 'none'}`",
+        f"- attention: `{review.get('attention') or 'none'}`",
+        f"- inspect first: `{review.get('inspect_first') or artifacts.get('inspect_first') or 'none'}`",
+        "",
+        "## What To Do Next",
+        "",
+        f"- recommended next: `{recommended.get('command_line') or review.get('next_command') or 'none'}`",
+        f"- recommendation: `{recommended.get('label') or review.get('recommended_label') or 'none'}` reason=`{recommended.get('reason') or review.get('recommended_reason') or 'none'}`",
+        *[
+            f"- next[{index}] {item.get('label')}: `{item.get('command_line')}`"
+            for index, item in enumerate((report.get("next_commands") or []), start=1)
+            if isinstance(item, dict)
+        ],
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifacts.get('inspect_first') or 'none'}`",
+        f"- summary json: `{artifacts.get('summary_json') or 'none'}`",
+        f"- summary markdown: `{artifacts.get('summary_markdown') or 'none'}`",
+        f"- support bundle: `{artifacts.get('support_bundle') or 'none'}`",
+        f"- present: `{artifacts.get('present_artifact_count')}/{artifacts.get('artifact_count')}` public_artifact_safe=`{bool(artifacts.get('public_artifact_safe'))}`",
         "",
         "## Readiness",
         "",
@@ -1126,31 +1389,53 @@ def sanitize_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, An
     )
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
+    report["artifact_summary"] = artifact_summary(output_dir)
+    recommended = recommended_next_command(report, output_dir=output_dir)
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(report, recommended=recommended)
+    report["review_summary"] = review_summary(report, output_dir=output_dir, recommended=recommended)
     report = support_bundle.sanitize(redact_values(report))
     errors = validate_public_report(report)
     if errors:
         report["ok"] = False
         report["diagnosis_codes"] = sorted(set(report.get("diagnosis_codes") or []) | {"public_report_safety_failed"})
         report["safety_errors"] = errors
+        report["artifact_summary"] = artifact_summary(output_dir)
+        recommended = recommended_next_command(report, output_dir=output_dir)
+        report["recommended_next_command"] = recommended
+        report["next_commands"] = next_commands(report, output_dir=output_dir, recommended=recommended)
+        report["user_status"] = user_status(report, recommended=recommended)
+        report["review_summary"] = review_summary(report, output_dir=output_dir, recommended=recommended)
+        report = support_bundle.sanitize(redact_values(report))
     artifacts = report.setdefault("artifacts", {})
     artifacts.setdefault("petals_class_p2p_candidate_json", {
         "kind": "petals_class_p2p_candidate",
         "path": "petals_class_p2p_candidate.json",
-        "present": True,
+        "present": False,
         "schema": SCHEMA,
         "ok": report.get("ok"),
     })
     artifacts.setdefault("petals_class_p2p_candidate_markdown", {
         "kind": "petals_class_p2p_candidate_markdown",
         "path": "petals_class_p2p_candidate.md",
-        "present": True,
+        "present": False,
     })
-    write_json(output_dir / "petals_class_p2p_candidate.json", report)
-    (output_dir / "petals_class_p2p_candidate.md").write_text(render_markdown(report), encoding="utf-8")
+    json_path = output_dir / "petals_class_p2p_candidate.json"
+    markdown_path = output_dir / "petals_class_p2p_candidate.md"
+    support_path = output_dir / "support_bundle.json"
+    write_json(json_path, report)
+    markdown_path.write_text(render_markdown(report), encoding="utf-8")
     bundle = support_bundle.sanitize({
         "schema": SUPPORT_SCHEMA,
+        "generated_at": utc_now(),
         "ok": report.get("ok"),
         "diagnosis_codes": report.get("diagnosis_codes"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
         "candidate": report.get("candidate"),
         "summaries": report.get("summaries"),
         "output_request": report.get("output_request"),
@@ -1159,15 +1444,22 @@ def sanitize_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, An
         "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),
     })
-    write_json(output_dir / "support_bundle.json", bundle)
+    write_json(support_path, bundle)
     report["artifacts"]["support_bundle_json"] = {
         "kind": "petals_class_p2p_candidate_support_bundle",
         "path": "support_bundle.json",
-        "present": True,
+        "present": False,
         "schema": SUPPORT_SCHEMA,
         "ok": bundle.get("ok"),
     }
-    write_json(output_dir / "petals_class_p2p_candidate.json", report)
+    report["artifacts"]["petals_class_p2p_candidate_json"]["present"] = json_path.is_file()
+    report["artifacts"]["petals_class_p2p_candidate_markdown"]["present"] = markdown_path.is_file()
+    report["artifacts"]["support_bundle_json"]["present"] = support_path.is_file()
+    report["artifact_summary"] = artifact_summary(output_dir)
+    bundle["artifact_summary"] = report.get("artifact_summary")
+    write_json(support_path, bundle)
+    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    write_json(json_path, report)
     return report
 
 
