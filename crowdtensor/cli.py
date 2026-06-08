@@ -112,6 +112,7 @@ PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cl
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_generate_runtime_provenance_v1"
+PRODUCT_GENERATE_EVIDENCE_SCOPE_SCHEMA = "crowdtensor_generate_evidence_scope_v1"
 INFER_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_infer_runtime_provenance_v1"
 INFER_EVIDENCE_SCOPE_SCHEMA = "crowdtensor_infer_evidence_scope_v1"
 INFER_CLI_SCHEMA = "crowdtensor_infer_cli_v1"
@@ -1515,6 +1516,21 @@ def infer_evidence_scope_text(scope: dict[str, Any]) -> str:
         f"local_cpu={bool(scope.get('local_cpu'))} "
         f"existing_runtime={bool(scope.get('existing_runtime'))} "
         f"retained_gpu={bool(scope.get('retained_gpu_evidence_imported'))} "
+        f"fresh_kaggle_gpu={bool(scope.get('fresh_kaggle_gpu_verified'))} "
+        f"user_expectation={scope.get('user_expectation') or 'unknown'}"
+    )
+
+
+def generate_evidence_scope_text(scope: dict[str, Any]) -> str:
+    return (
+        f"level={scope.get('level') or 'unknown'} "
+        f"executed={scope.get('executed_where') or 'unknown'} "
+        f"source={scope.get('source') or 'unknown'} "
+        f"coordinator={scope.get('coordinator_scope') or 'unknown'} "
+        f"route={scope.get('route_source') or 'unknown'} "
+        f"p2p={bool(scope.get('p2p_enabled'))} "
+        f"dry_run={bool(scope.get('dry_run'))} "
+        f"submitted={bool(scope.get('submitted_to_coordinator'))} "
         f"fresh_kaggle_gpu={bool(scope.get('fresh_kaggle_gpu_verified'))} "
         f"user_expectation={scope.get('user_expectation') or 'unknown'}"
     )
@@ -10746,6 +10762,59 @@ def _generate_runtime_provenance(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _generate_evidence_scope(report: dict[str, Any]) -> dict[str, Any]:
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    route = report.get("route") if isinstance(report.get("route"), dict) else {}
+    dry_run = bool(report.get("dry_run") or provenance.get("dry_run"))
+    submitted = bool(provenance.get("submitted_to_coordinator"))
+    p2p_enabled = bool(provenance.get("p2p_enabled"))
+    route_ready = bool(provenance.get("route_ready") or route.get("usable_now") or route.get("coordinator_url_present"))
+    coordinator_scope = str(provenance.get("coordinator_scope") or "unknown")
+    fresh_kaggle_gpu = bool(provenance.get("fresh_kaggle_gpu_verified"))
+    if fresh_kaggle_gpu:
+        level = "fresh-kaggle-gpu"
+        executed_where = "fresh-kaggle-gpu"
+        expectation = "A fresh Kaggle GPU proof was verified by the source report."
+    elif dry_run and route_ready:
+        level = "p2p-runtime-preflight" if p2p_enabled else "existing-runtime-preflight"
+        executed_where = "request-shape-preflight"
+        expectation = "This was a preflight; no generation task was submitted."
+    elif submitted:
+        level = "p2p-runtime-submit" if p2p_enabled else "existing-runtime-submit"
+        executed_where = "p2p-discovered-coordinator" if p2p_enabled else "existing-coordinator"
+        expectation = "This submitted a generation request to an existing Coordinator route."
+    elif p2p_enabled:
+        level = "p2p-runtime-blocked"
+        executed_where = "not-submitted"
+        expectation = "This P2P-discovered route was blocked before submission."
+    else:
+        level = "existing-runtime-blocked"
+        executed_where = "not-submitted"
+        expectation = "This existing-runtime route was blocked before submission."
+    return {
+        "schema": PRODUCT_GENERATE_EVIDENCE_SCOPE_SCHEMA,
+        "level": level,
+        "executed_where": executed_where,
+        "source": str(report.get("schema") or PUBLIC_SWARM_PRODUCT_CLI_SCHEMA),
+        "proof_level": provenance.get("proof_level") or "",
+        "coordinator_scope": coordinator_scope,
+        "route_source": provenance.get("route_source") or "",
+        "route_ready": route_ready,
+        "local_loopback_coordinator": coordinator_scope == "local-loopback",
+        "existing_runtime": bool(coordinator_scope in {"local-loopback", "external-existing", "p2p-discovered"} or p2p_enabled),
+        "submitted_to_coordinator": submitted,
+        "dry_run": dry_run,
+        "p2p_enabled": p2p_enabled,
+        "backend": provenance.get("backend") or "",
+        "kaggle_runtime_attempted": bool(provenance.get("kaggle_runtime_attempted")),
+        "fresh_kaggle_gpu_attempted": bool(provenance.get("fresh_kaggle_gpu_attempted")),
+        "fresh_kaggle_gpu_verified": fresh_kaggle_gpu,
+        "retained_gpu_evidence_imported": False,
+        "public_artifact_safe": True,
+        "user_expectation": expectation,
+    }
+
+
 def _fill_hidden_generate_local_output(report: dict[str, Any]) -> None:
     if not bool(report.get("json_mode")):
         return
@@ -10794,6 +10863,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
     wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
     runtime_provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
+    evidence_scope = summary.get("evidence_scope") if isinstance(summary.get("evidence_scope"), dict) else {}
     recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
@@ -10815,6 +10885,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     ])
     if runtime_provenance:
         lines.append(f"- Runtime provenance: `{runtime_provenance_text(runtime_provenance)}`")
+    if evidence_scope:
+        lines.append(f"- Evidence scope: `{generate_evidence_scope_text(evidence_scope)}`")
     if output_display.get("summary"):
         lines.append(f"- Output display note: {output_display.get('summary')}")
     lines.extend([
@@ -10840,6 +10912,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         )
     if runtime_provenance:
         lines.append(f"- Runtime provenance summary: {runtime_provenance.get('summary') or ''}")
+    if evidence_scope:
+        lines.append(f"- Evidence scope note: {evidence_scope.get('user_expectation') or ''}")
     if coordinator_ready:
         lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
     if stage_preflight:
@@ -11259,6 +11333,7 @@ def _finalize_product_generate_report(
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
     report["runtime_provenance"] = _generate_runtime_provenance(report)
+    report["evidence_scope"] = _generate_evidence_scope(report)
     report["safety"] = _product_generate_safety_summary(report)
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -12155,6 +12230,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     if runtime_provenance:
         print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
+    evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
+    if evidence_scope:
+        print(f"  evidence_scope: {generate_evidence_scope_text(evidence_scope)}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
         print(
@@ -15859,6 +15937,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "with --prompt-stdin, --shareable-terminal keeps a safe printf placeholder pipe for copyable reruns;\n"
             "JSON fields and saved Markdown prompt values keep prompt placeholders, and prompt_scope records that distinction without raw text. The status/user_status line then\n"
             "spells out completed, preflight-ready, preflight-partial, or blocked state.\n"
+            "The evidence_scope line is the shortest answer to what this generate command\n"
+            "actually ran: existing-runtime-preflight means request shape/readiness was\n"
+            "checked without submitting work; existing-runtime-submit means a generation\n"
+            "request was submitted to an existing Coordinator; p2p-runtime-preflight/submit\n"
+            "means the route came through P2P discovery; retained_gpu=False means no retained\n"
+            "GPU evidence was imported by this front door; fresh_kaggle_gpu=True is the only\n"
+            "claim that a fresh Kaggle GPU proof was verified.\n"
             "ready_to_submit labels mean: verified is ready after route,\n"
             "Coordinator, and stage Miner checks; partial can submit but still needs the printed\n"
             "follow-up preflight; blocked needs the printed operator_action; skipped is request-shape only.\n"

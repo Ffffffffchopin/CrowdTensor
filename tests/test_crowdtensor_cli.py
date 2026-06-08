@@ -433,6 +433,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("status/user_status line then", rendered)
         self.assertIn("preflight-ready", rendered)
         self.assertIn("preflight-partial", rendered)
+        self.assertIn("The evidence_scope line is the shortest answer to what this generate command", rendered)
+        self.assertIn("existing-runtime-preflight means request shape/readiness", rendered)
+        self.assertIn("p2p-runtime-preflight/submit", rendered)
+        self.assertIn("fresh_kaggle_gpu=True is the only", rendered)
         self.assertIn("ready_to_submit labels mean", rendered)
         self.assertIn("ready_to_submit.next_step is the script-friendly", rendered)
         self.assertIn("stage_preflight_unknown", rendered)
@@ -1297,6 +1301,22 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["runtime_provenance"]["p2p_enabled"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["evidence_scope"]["schema"], cli.PRODUCT_GENERATE_EVIDENCE_SCOPE_SCHEMA)
+        self.assertEqual(report["evidence_scope"]["level"], "existing-runtime-preflight")
+        self.assertEqual(report["evidence_scope"]["executed_where"], "request-shape-preflight")
+        self.assertEqual(report["evidence_scope"]["source"], cli.PUBLIC_SWARM_PRODUCT_CLI_SCHEMA)
+        self.assertEqual(report["evidence_scope"]["coordinator_scope"], "local-loopback")
+        self.assertEqual(report["evidence_scope"]["route_source"], "coordinator-url")
+        self.assertTrue(report["evidence_scope"]["route_ready"])
+        self.assertTrue(report["evidence_scope"]["local_loopback_coordinator"])
+        self.assertTrue(report["evidence_scope"]["existing_runtime"])
+        self.assertTrue(report["evidence_scope"]["dry_run"])
+        self.assertFalse(report["evidence_scope"]["submitted_to_coordinator"])
+        self.assertFalse(report["evidence_scope"]["p2p_enabled"])
+        self.assertFalse(report["evidence_scope"]["retained_gpu_evidence_imported"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["evidence_scope"]["user_expectation"], "This was a preflight; no generation task was submitted.")
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
         self.assertEqual(report["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
         self.assertTrue(report["artifacts"]["generate_summary"]["present"])
@@ -1399,6 +1419,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["output_request"]["generated_token_ids_public"])
         self.assertTrue(persisted["output_request"]["public_artifact_safe"])
         self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
+        self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
         self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
         self.assertEqual(persisted["user_status"]["next_step"], "run_live_preflight")
         self.assertEqual(persisted["trace"]["request_count"], 1)
@@ -1433,6 +1454,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Dry run: `True`", markdown)
         self.assertIn("- Runtime provenance: `proof=coordinator-dry-run mode=generate dry_run=True submitted=False coordinator=local-loopback", markdown)
         self.assertIn("fresh_kaggle_gpu_verified=False`", markdown)
+        self.assertIn(
+            "- Evidence scope: `level=existing-runtime-preflight executed=request-shape-preflight source=public_swarm_product_cli_v1 coordinator=local-loopback route=coordinator-url p2p=False dry_run=True submitted=False fresh_kaggle_gpu=False",
+            markdown,
+        )
+        self.assertIn("- Evidence scope note: This was a preflight; no generation task was submitted.", markdown)
         self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
         self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
         self.assertIn(f"- Inspect first: `{output_dir / 'generate_summary.md'}`", markdown)
@@ -1540,6 +1566,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  action: Generation request shape is valid, but live readiness was skipped", rendered)
         self.assertIn(
             "  runtime_provenance: proof=coordinator-dry-run mode=generate dry_run=True submitted=False coordinator=local-loopback",
+            rendered,
+        )
+        self.assertIn(
+            "  evidence_scope: level=existing-runtime-preflight executed=request-shape-preflight source=public_swarm_product_cli_v1 coordinator=local-loopback route=coordinator-url p2p=False dry_run=True submitted=False fresh_kaggle_gpu=False",
             rendered,
         )
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
@@ -4091,6 +4121,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["runtime_provenance"]["route_source"], "real-p2p-discovery")
         self.assertFalse(report["runtime_provenance"]["submitted_to_coordinator"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertEqual(report["evidence_scope"]["schema"], cli.PRODUCT_GENERATE_EVIDENCE_SCOPE_SCHEMA)
+        self.assertEqual(report["evidence_scope"]["level"], "p2p-runtime-preflight")
+        self.assertEqual(report["evidence_scope"]["executed_where"], "request-shape-preflight")
+        self.assertEqual(report["evidence_scope"]["route_source"], "real-p2p-discovery")
+        self.assertTrue(report["evidence_scope"]["p2p_enabled"])
+        self.assertTrue(report["evidence_scope"]["dry_run"])
+        self.assertFalse(report["evidence_scope"]["submitted_to_coordinator"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
         self.assertIn("real_p2p_generate_route_ready", report["diagnosis_codes"])
 
     def test_product_generate_real_p2p_route_lookup_uses_compatible_coordinator(self) -> None:
@@ -4287,6 +4325,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["runtime_provenance"]["submitted_to_coordinator"])
         self.assertTrue(report["runtime_provenance"]["completed_generation"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["evidence_scope"]["level"], "p2p-runtime-submit")
+        self.assertEqual(report["evidence_scope"]["executed_where"], "p2p-discovered-coordinator")
+        self.assertEqual(report["evidence_scope"]["route_source"], "real-p2p-discovery")
+        self.assertTrue(report["evidence_scope"]["p2p_enabled"])
+        self.assertFalse(report["evidence_scope"]["dry_run"])
+        self.assertTrue(report["evidence_scope"]["submitted_to_coordinator"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
         self.assertEqual(report["route"]["coordinator_url"], "http://route.example:8787")
 
     def test_product_generate_p2p_non_dry_run_blocks_when_route_unusable(self) -> None:
@@ -4652,6 +4697,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["runtime_provenance"]["backend"], "cpu")
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["evidence_scope"]["schema"], cli.PRODUCT_GENERATE_EVIDENCE_SCOPE_SCHEMA)
+        self.assertEqual(report["evidence_scope"]["level"], "existing-runtime-submit")
+        self.assertEqual(report["evidence_scope"]["executed_where"], "existing-coordinator")
+        self.assertEqual(report["evidence_scope"]["source"], cli.PUBLIC_SWARM_PRODUCT_CLI_SCHEMA)
+        self.assertEqual(report["evidence_scope"]["coordinator_scope"], "local-loopback")
+        self.assertEqual(report["evidence_scope"]["route_source"], "coordinator-url")
+        self.assertTrue(report["evidence_scope"]["route_ready"])
+        self.assertTrue(report["evidence_scope"]["local_loopback_coordinator"])
+        self.assertTrue(report["evidence_scope"]["existing_runtime"])
+        self.assertFalse(report["evidence_scope"]["dry_run"])
+        self.assertTrue(report["evidence_scope"]["submitted_to_coordinator"])
+        self.assertFalse(report["evidence_scope"]["p2p_enabled"])
+        self.assertFalse(report["evidence_scope"]["retained_gpu_evidence_imported"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
         self.assertFalse(report["trace"]["raw_prompt_public"])
         self.assertFalse(report["trace"]["raw_generated_text_public"])
         self.assertFalse(report["trace"]["generated_token_ids_public"])
@@ -4737,6 +4797,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["output_request"]["generated_token_ids_public"])
         self.assertTrue(persisted["output_request"]["public_artifact_safe"])
         self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
+        self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertEqual(persisted["prompt_scope"]["source"], "prompt-text")
         self.assertTrue(persisted["prompt_scope"]["inline_prompt_text"])
@@ -4807,6 +4868,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Runtime provenance: `proof=coordinator-submit mode=generate dry_run=False submitted=True coordinator=local-loopback", markdown)
         self.assertIn("fresh_kaggle_gpu_verified=False`", markdown)
         self.assertIn(
+            "- Evidence scope: `level=existing-runtime-submit executed=existing-coordinator source=public_swarm_product_cli_v1 coordinator=local-loopback route=coordinator-url p2p=False dry_run=False submitted=True fresh_kaggle_gpu=False",
+            markdown,
+        )
+        self.assertIn("- Evidence scope note: This submitted a generation request to an existing Coordinator route.", markdown)
+        self.assertIn(
             "- Trace: `session=real-llm-session-test requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True`",
             markdown,
         )
@@ -4867,6 +4933,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn(
             "  runtime_provenance: proof=coordinator-submit mode=generate dry_run=False submitted=True coordinator=local-loopback",
+            rendered,
+        )
+        self.assertIn(
+            "  evidence_scope: level=existing-runtime-submit executed=existing-coordinator source=public_swarm_product_cli_v1 coordinator=local-loopback route=coordinator-url p2p=False dry_run=False submitted=True fresh_kaggle_gpu=False",
             rendered,
         )
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
