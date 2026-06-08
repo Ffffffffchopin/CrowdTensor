@@ -25,6 +25,7 @@ from crowdtensor.real_llm import BACKEND_CUDA as REAL_LLM_BACKEND_CUDA  # noqa: 
 from crowdtensor.real_llm import DEFAULT_MODEL_ID  # noqa: E402
 from crowdtensor.real_llm import normalize_backend as normalize_real_llm_backend  # noqa: E402
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
 
 SCHEMA = "remote_real_llm_sharded_beta_v1"
@@ -171,7 +172,9 @@ def build_local(args: argparse.Namespace, *, runner: base.Runner) -> dict[str, A
         command.append("--require-distinct-stage-miners")
     if getattr(args, "hf_cache_dir", ""):
         command.extend(["--hf-cache-dir", str(args.hf_cache_dir)])
-    if getattr(args, "prompt_texts", ""):
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
+    elif getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", str(args.prompt_texts)])
     step, payload = base.run_json_step(
         "local_real_llm_sharded_inference",
@@ -240,7 +243,9 @@ def build_remote_loopback(args: argparse.Namespace, *, runner: base.Runner) -> d
         command.append("--require-distinct-stage-miners")
     if getattr(args, "hf_cache_dir", ""):
         command.extend(["--hf-cache-dir", str(args.hf_cache_dir)])
-    if getattr(args, "prompt_texts", ""):
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
+    elif getattr(args, "prompt_texts", ""):
         command.extend(["--prompt-texts", str(args.prompt_texts)])
     step, payload = base.run_json_step(
         "remote_loopback_real_llm_sharded_inference",
@@ -291,7 +296,7 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
             "partition_mode": args.real_llm_partition_mode,
             "max_new_tokens": args.max_new_tokens,
         }
-        prompt_texts = [item for item in str(getattr(args, "prompt_texts", "") or "").split(",") if item]
+        prompt_texts = prompt_list_from_args(args)
         if prompt_texts:
             session_payload["prompt_texts"] = prompt_texts
         session = base.request_json(
@@ -416,7 +421,7 @@ def build_report(args: argparse.Namespace, *, runner: base.Runner = subprocess.r
         "real_llm_partition_mode": args.real_llm_partition_mode,
         "stage_mode": args.stage_mode,
         "require_distinct_stage_miners": bool(args.require_distinct_stage_miners),
-        "prompt_text_count": len([item for item in str(getattr(args, "prompt_texts", "") or "").split(",") if item]),
+        "prompt_text_count": len(prompt_list_from_args(args)),
         "max_new_tokens": args.max_new_tokens,
         "diagnosis_codes": sorted(codes),
         "safety": {
@@ -482,6 +487,16 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return [str(prompt) for prompt in prompt_list]
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        return read_prompt_texts_file(prompt_texts_file)
+    return parse_prompt_texts_arg("", str(getattr(args, "prompt_texts", "") or ""))
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     raw = list(sys.argv[1:] if argv is None else argv)
     hf_model_id = DEFAULT_MODEL_ID
@@ -489,6 +504,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     real_llm_backend = REAL_LLM_BACKEND_CPU
     real_llm_partition_mode = "full"
     prompt_texts = "CrowdTensor routes home CPU,A miner returns one token"
+    prompt_texts_file = ""
+    prompt_texts_file_seen = False
+    prompt_texts_seen = False
     max_new_tokens = 1
     cleaned: list[str] = []
     index = 0
@@ -527,8 +545,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             if index >= len(raw):
                 raise SystemExit("--prompt-texts requires a value")
             prompt_texts = str(raw[index])
+            prompt_texts_seen = True
         elif item.startswith("--prompt-texts="):
             prompt_texts = item.split("=", 1)[1]
+            prompt_texts_seen = True
+        elif item == "--prompt-texts-file":
+            index += 1
+            if index >= len(raw):
+                raise SystemExit("--prompt-texts-file requires a value")
+            prompt_texts_file = str(raw[index])
+            prompt_texts_file_seen = True
+        elif item.startswith("--prompt-texts-file="):
+            prompt_texts_file = item.split("=", 1)[1]
+            prompt_texts_file_seen = True
         elif item == "--max-new-tokens":
             index += 1
             if index >= len(raw):
@@ -544,7 +573,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.hf_cache_dir = hf_cache_dir
     args.real_llm_backend = normalize_real_llm_backend(real_llm_backend)
     args.real_llm_partition_mode = normalize_real_llm_partition_mode(real_llm_partition_mode)
-    args.prompt_texts = prompt_texts
+    if prompt_texts_file_seen and prompt_texts_seen:
+        raise SystemExit("remote_real_llm_sharded_beta accepts either --prompt-texts or --prompt-texts-file, not both")
+    try:
+        if prompt_texts_file_seen:
+            args.prompt_texts_file = prompt_texts_file
+            args.prompt_texts_list = read_prompt_texts_file(prompt_texts_file)
+            args.prompt_texts = ""
+        else:
+            args.prompt_texts_file = ""
+            args.prompt_texts = prompt_texts
+            args.prompt_texts_list = parse_prompt_texts_arg("", prompt_texts)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     args.max_new_tokens = max_new_tokens
     if args.request_count > 4:
         raise SystemExit("--request-count must be at most 4 for real LLM sharded inference")

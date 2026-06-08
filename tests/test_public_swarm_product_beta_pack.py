@@ -111,6 +111,44 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         self.assertEqual(rc_args.prompt_texts, "first prompt,second prompt")
         self.assertEqual(rc_args.prompt_text, pack.rc_pack.DEFAULT_PROMPT)
 
+    def test_rc_args_forward_prompt_texts_file(self) -> None:
+        prompt_file = self._tmp_dir() / "prompts.txt"
+        prompt_file.write_text("first, comma prompt\nsecond prompt\n", encoding="utf-8")
+        args = pack.parse_args([
+            "local-loopback",
+            "--prompt-texts-file",
+            str(prompt_file),
+        ])
+        rc_args = pack.rc_args(args, Path("/tmp/product-beta-rc"))
+        scope = pack.prompt_scope_summary(args)
+
+        self.assertEqual(args.prompt_texts_list, ["first, comma prompt", "second prompt"])
+        self.assertEqual(rc_args.prompt_texts_file, str(prompt_file))
+        self.assertEqual(rc_args.prompt_texts_list, ["first, comma prompt", "second prompt"])
+        self.assertEqual(rc_args.prompt_texts, "")
+        self.assertEqual(scope["source"], "prompt-texts-file")
+        self.assertEqual(scope["prompt_count"], 2)
+        self.assertFalse(scope["inline_prompt_text"])
+        self.assertFalse(scope["terminal_next_commands_local_private"])
+        self.assertTrue(scope["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(scope["prompt_file_path_public"])
+
+    def test_prompt_texts_file_rejects_inline_batch(self) -> None:
+        prompt_file = self._tmp_dir() / "prompts.txt"
+        prompt_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            pack.parse_args([
+                "local-loopback",
+                "--prompt-texts",
+                "first prompt,second prompt",
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+        self.assertEqual(
+            str(raised.exception),
+            "public_swarm_product_beta accepts either --prompt-texts or --prompt-texts-file, not both",
+        )
+
     def test_rc_args_forward_stream_generation(self) -> None:
         args = pack.parse_args([
             "local-loopback",

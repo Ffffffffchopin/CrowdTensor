@@ -32,7 +32,7 @@ if str(ROOT / "scripts") not in sys.path:
 import public_swarm_inference_beta_pack as beta_pack  # noqa: E402
 import support_bundle  # noqa: E402
 from crowdtensor.real_llm import missing_hf_dependencies  # noqa: E402
-from product_swarm_mvp_check import parse_prompt_texts_arg  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
 
 SCHEMA = "public_swarm_inference_beta_rc_v1"
@@ -159,8 +159,14 @@ def output_request_summary() -> dict[str, Any]:
 
 
 def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
-    prompts = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
-    source = "prompt-texts" if args.prompt_texts else "prompt-text"
+    prompts = prompt_list_from_args(args)
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        source = "prompt-texts-file"
+    elif args.prompt_texts:
+        source = "prompt-texts"
+    else:
+        source = "prompt-text"
     inline_prompt_text = source in {"prompt-text", "prompt-texts"}
     return {
         "source": source,
@@ -170,7 +176,7 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
         "terminal_logs_local_private": inline_prompt_text,
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
-        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": source in {"prompt-text", "prompt-texts", "prompt-texts-file"},
         "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
@@ -182,8 +188,18 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def prompt_secret_values(args: argparse.Namespace) -> list[str]:
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return [str(prompt) for prompt in prompt_list]
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        return read_prompt_texts_file(prompt_texts_file)
     return parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+
+
+def prompt_secret_values(args: argparse.Namespace) -> list[str]:
+    return prompt_list_from_args(args)
 
 
 def answer_scope_summary() -> dict[str, Any]:
@@ -402,7 +418,9 @@ def product_beta_command(args: argparse.Namespace, output_dir: Path) -> list[str
         str(args.timeout_seconds),
         "--json",
     ]
-    if args.prompt_texts:
+    if args.prompt_texts_file:
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -821,7 +839,9 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
             str(args.http_timeout),
             "--json",
         ]
-        if args.prompt_texts:
+        if args.prompt_texts_file:
+            generate_command.extend(["--prompt-texts-file", args.prompt_texts_file])
+        elif args.prompt_texts:
             generate_command.extend(["--prompt-texts", args.prompt_texts])
         else:
             generate_command.extend(["--prompt-text", args.prompt_text])
@@ -999,7 +1019,9 @@ def generate_existing_command(args: argparse.Namespace, output_dir: Path) -> lis
         str(args.http_timeout),
         "--json",
     ]
-    if args.prompt_texts:
+    if args.prompt_texts_file:
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -1510,6 +1532,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gpu-report", default=DEFAULT_GPU_REPORT)
     parser.add_argument("--prompt-text", default=DEFAULT_PROMPT)
     parser.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
+    parser.add_argument("--prompt-texts-file", default="", help="newline-delimited bounded batch of up to 4 prompts")
     parser.add_argument("--stream-generation", action="store_true")
     parser.add_argument("--scenario-id", default="route-baseline")
     parser.add_argument("--request-count", type=int, default=1)
@@ -1537,8 +1560,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--external-llm-request-count must be between 1 and 4")
     if args.max_new_tokens < 2 or args.max_new_tokens > 32:
         raise SystemExit("--max-new-tokens must be between 2 and 32")
+    if args.prompt_texts and args.prompt_texts_file:
+        raise SystemExit("public_swarm_inference_beta_rc accepts either --prompt-texts or --prompt-texts-file, not both")
     try:
-        parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        if args.prompt_texts_file:
+            args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+        else:
+            args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     for name in [

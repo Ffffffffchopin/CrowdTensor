@@ -91,7 +91,7 @@ def output_scope_errors(payload: dict[str, Any]) -> list[str]:
         errors.append("output_request_generated_token_ids_public_mismatch")
     if output_request.get("public_artifact_safe") is not True:
         errors.append("output_request_public_artifact_safe_mismatch")
-    if prompt_scope.get("source") not in {"prompt-text", "prompt-texts"}:
+    if prompt_scope.get("source") not in {"prompt-text", "prompt-texts", "prompt-texts-file"}:
         errors.append("prompt_scope_source_mismatch")
     if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 1:
         errors.append("prompt_scope_count_mismatch")
@@ -106,7 +106,7 @@ def output_scope_errors(payload: dict[str, Any]) -> list[str]:
         errors.append("prompt_scope_saved_placeholders_mismatch")
     if prompt_scope.get("saved_artifacts_public_safe") is not True:
         errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
-    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not inline_prompt_text:
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not (prompt_scope.get("source") in {"prompt-text", "prompt-texts", "prompt-texts-file"}):
         errors.append("prompt_scope_shareable_log_guidance_mismatch")
     if prompt_scope.get("prompt_file_path_public") is not False:
         errors.append("prompt_scope_file_path_public_mismatch")

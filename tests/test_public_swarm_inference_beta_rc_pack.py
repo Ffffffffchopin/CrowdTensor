@@ -289,6 +289,58 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
         self.assertTrue(pack.safe_batch_summary(payload)["batch_generation_ready"])
         self.assertTrue(calls)
 
+    def test_prompt_texts_file_scope_and_command_forwarding(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.write_text("first, comma prompt\nsecond prompt\n", encoding="utf-8")
+        args = pack.parse_args([
+            "external-existing",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "http://127.0.0.1:9999",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--prompt-texts-file",
+            str(prompt_file),
+        ])
+
+        scope = pack.prompt_scope_summary(args)
+        self.assertEqual(args.prompt_texts_list, ["first, comma prompt", "second prompt"])
+        self.assertEqual(scope["source"], "prompt-texts-file")
+        self.assertEqual(scope["prompt_count"], 2)
+        self.assertFalse(scope["inline_prompt_text"])
+        self.assertFalse(scope["terminal_next_commands_local_private"])
+        self.assertTrue(scope["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(scope["prompt_file_path_public"])
+
+        product_command = pack.product_beta_command(args, output_dir / "product-beta")
+        generate_command = pack.generate_existing_command(args, output_dir)
+        for command in (product_command, generate_command):
+            self.assertIn("--prompt-texts-file", command)
+            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            self.assertNotIn("--prompt-texts", command)
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn("first, comma prompt", command)
+
+    def test_prompt_texts_file_rejects_inline_batch(self) -> None:
+        prompt_file = self._tmp_dir() / "prompts.txt"
+        prompt_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            pack.parse_args([
+                "local-loopback",
+                "--prompt-texts",
+                "first prompt,second prompt",
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+        self.assertEqual(
+            str(raised.exception),
+            "public_swarm_inference_beta_rc accepts either --prompt-texts or --prompt-texts-file, not both",
+        )
+
     def test_generate_existing_rejects_batch_with_duplicate_request_identity(self) -> None:
         output_dir = self._tmp_dir()
         args = pack.parse_args([

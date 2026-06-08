@@ -31,7 +31,7 @@ if str(ROOT / "scripts") not in sys.path:
 
 import support_bundle  # noqa: E402
 from crowdtensor.session_protocol import public_leak_paths  # noqa: E402
-from product_swarm_mvp_check import parse_prompt_texts_arg  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
 
 SCHEMA = "public_real_llm_swarm_beta_v1"
@@ -883,7 +883,9 @@ def run_product_local(args: argparse.Namespace, *, output_dir: Path, runner: Run
         str(args.http_timeout),
         "--json",
     ]
-    if args.prompt_texts:
+    if args.prompt_texts_file:
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
         command.extend(["--prompt-text", args.prompt_text])
@@ -960,8 +962,6 @@ def run_public_swarm_v2_local(args: argparse.Namespace, *, output_dir: Path, run
         args.public_swarm_v2_backend,
         "--hf-model-id",
         args.hf_model_id,
-        "--prompt-texts",
-        args.prompt_texts or f"{args.prompt_text},CrowdTensor v2 batch proof",
         "--max-new-tokens",
         str(v2_tokens),
         "--startup-timeout",
@@ -973,6 +973,10 @@ def run_public_swarm_v2_local(args: argparse.Namespace, *, output_dir: Path, run
         "--stream-generation",
         "--json",
     ]
+    if args.prompt_texts_file:
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    else:
+        command.extend(["--prompt-texts", args.prompt_texts or f"{args.prompt_text},CrowdTensor v2 batch proof"])
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     return run_json_step(
@@ -1534,8 +1538,14 @@ def output_request_summary() -> dict[str, Any]:
 
 
 def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
-    prompt_count = len(parse_prompt_texts_arg(args.prompt_text, args.prompt_texts))
-    source = "prompt-texts" if str(getattr(args, "prompt_texts", "") or "") else "prompt-text"
+    prompt_count = len(prompt_list_from_args(args))
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        source = "prompt-texts-file"
+    elif str(getattr(args, "prompt_texts", "") or ""):
+        source = "prompt-texts"
+    else:
+        source = "prompt-text"
     inline_prompt_text = source in {"prompt-text", "prompt-texts"}
     return {
         "source": source,
@@ -1545,7 +1555,8 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
         "terminal_logs_local_private": inline_prompt_text,
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
-        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": source in {"prompt-text", "prompt-texts", "prompt-texts-file"},
+        "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
         "summary": (
@@ -1553,6 +1564,16 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
             "raw prompt text is excluded from public JSON, Markdown, and support bundles."
         ),
     }
+
+
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return [str(prompt) for prompt in prompt_list]
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        return read_prompt_texts_file(prompt_texts_file)
+    return parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
 
 
 def answer_scope_summary() -> dict[str, Any]:
@@ -1718,6 +1739,7 @@ def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
         f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
         f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
         f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
         f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
         f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
     )
@@ -1819,8 +1841,8 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
             "hf_model_id": args.hf_model_id,
             "max_new_tokens": args.max_new_tokens,
             "batch": {
-                "enabled": bool(args.prompt_texts),
-                "request_count": len(parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)),
+                "enabled": bool(args.prompt_texts or args.prompt_texts_file),
+                "request_count": len(prompt_list_from_args(args)),
                 "batch_generation_ready": False,
                 "documented_only": True,
             },
@@ -2687,15 +2709,16 @@ def print_human_summary(report: dict[str, Any]) -> None:
 def validate_public_report(report: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
-    if prompt_scope.get("source") not in {"prompt-text", "prompt-texts"}:
+    if prompt_scope.get("source") not in {"prompt-text", "prompt-texts", "prompt-texts-file"}:
         errors.append("prompt_scope_source_mismatch")
     if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 1:
         errors.append("prompt_scope_count_mismatch")
-    if prompt_scope.get("inline_prompt_text") is not True:
+    expected_inline = prompt_scope.get("source") in {"prompt-text", "prompt-texts"}
+    if prompt_scope.get("inline_prompt_text") is not expected_inline:
         errors.append("prompt_scope_inline_prompt_text_mismatch")
-    if prompt_scope.get("terminal_next_commands_local_private") is not True:
+    if prompt_scope.get("terminal_next_commands_local_private") is not expected_inline:
         errors.append("prompt_scope_terminal_next_commands_mismatch")
-    if prompt_scope.get("terminal_logs_local_private") is not True:
+    if prompt_scope.get("terminal_logs_local_private") is not expected_inline:
         errors.append("prompt_scope_terminal_logs_mismatch")
     if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
         errors.append("prompt_scope_saved_placeholders_mismatch")
@@ -2703,6 +2726,8 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
     if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not True:
         errors.append("prompt_scope_shareable_log_guidance_mismatch")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append("prompt_scope_prompt_file_path_public_mismatch")
     if prompt_scope.get("raw_prompt_public") is not False:
         errors.append("prompt_scope_raw_prompt_public_mismatch")
     if prompt_scope.get("public_artifact_safe") is not True:
@@ -2762,7 +2787,7 @@ def cleanup_release_private_artifacts(output_dir: Path) -> dict[str, Any]:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
-    report.setdefault("prompt_scope", prompt_scope_summary(argparse.Namespace(prompt_text=DEFAULT_PROMPT, prompt_texts="")))
+    report.setdefault("prompt_scope", prompt_scope_summary(argparse.Namespace(prompt_text=DEFAULT_PROMPT, prompt_texts="", prompt_texts_file="", prompt_texts_list=[])))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report["recommended_check_command"] = recommended_check_command(report)
@@ -2892,6 +2917,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--prompt-text", default=DEFAULT_PROMPT)
     parser.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
+    parser.add_argument("--prompt-texts-file", default="", help="newline-delimited bounded batch of up to 4 prompts")
     parser.add_argument("--stream-generation", action="store_true")
     parser.add_argument("--request-count", type=int, default=1)
     parser.add_argument("--max-new-tokens", type=int, default=16)
@@ -2915,8 +2941,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--external-llm-request-count must be between 1 and 4")
     if args.max_new_tokens < 2 or args.max_new_tokens > 32:
         raise SystemExit("--max-new-tokens must be between 2 and 32")
+    if args.prompt_texts and args.prompt_texts_file:
+        raise SystemExit("public_real_llm_swarm_beta accepts either --prompt-texts or --prompt-texts-file, not both")
     try:
-        parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        if args.prompt_texts_file:
+            args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+        else:
+            args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     for name in [

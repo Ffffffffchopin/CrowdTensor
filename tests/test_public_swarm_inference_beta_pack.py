@@ -557,6 +557,110 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertNotIn("private failure prompt one", encoded)
         self.assertNotIn("private failure prompt two", encoded)
 
+    def test_local_loopback_forwards_prompt_texts_file(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.write_text("first, comma prompt\nsecond prompt\n", encoding="utf-8")
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("remote_real_llm_sharded_beta_pack.py", command[1])
+            self.assertIn("--prompt-texts-file", command)
+            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            self.assertNotIn("--prompt-texts", command)
+            self.assertNotIn("first, comma prompt", command)
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=json.dumps({
+                    "schema": pack.REMOTE_REAL_SCHEMA,
+                    "ok": True,
+                    "mode": "remote-loopback",
+                    "diagnosis_codes": [
+                        "remote_real_llm_sharded_ready",
+                        "remote_real_llm_sharded_loopback_ready",
+                        "real_llm_sharded_ready",
+                        "real_llm_artifact_ready",
+                        "activation_transport_ready",
+                        "baseline_match",
+                        "decoded_tokens_match",
+                        "distinct_stage_miners",
+                        "stage_assignment_valid",
+                    ],
+                    "payload_summaries": {
+                        "remote_loopback_real_llm_sharded_inference": {
+                            "session": {"stage_count": 2, "request_count": 2, "model_id": "sshleifer/tiny-gpt2"},
+                            "stage_assignment": {
+                                "stage0_miner_id": "miner-stage0",
+                                "stage1_miner_id": "miner-stage1",
+                                "distinct_stage_miners": True,
+                                "stage_assignment_valid": True,
+                            },
+                        },
+                    },
+                    "safety": {"cpu_only_default": True, "activation_payloads_redacted": True},
+                }) + "\n",
+                stderr="",
+            )
+
+        report = pack.build_report(pack.parse_args([
+            "local-loopback",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts-file",
+            str(prompt_file),
+        ]), runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts-file")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertNotIn("first, comma prompt", encoded)
+        self.assertTrue(calls)
+
+    def test_verify_wraps_prompt_texts_file(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.write_text("first, comma prompt\nsecond prompt\n", encoding="utf-8")
+        args = pack.parse_args([
+            "verify",
+            "--output-dir",
+            str(output_dir),
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--prompt-texts-file",
+            str(prompt_file),
+        ])
+
+        command = pack.swarm_common_command(args, output_dir=output_dir)
+
+        self.assertIn("--prompt-texts-file", command)
+        self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+        self.assertNotIn("--prompt-texts", command)
+        self.assertNotIn("first, comma prompt", command)
+
+    def test_prompt_texts_file_rejects_inline_batch(self) -> None:
+        prompt_file = self._tmp_dir() / "prompts.txt"
+        prompt_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            pack.parse_args([
+                "local-loopback",
+                "--prompt-texts",
+                "first prompt,second prompt",
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+        self.assertEqual(
+            str(raised.exception),
+            "public_swarm_inference_beta accepts either --prompt-texts or --prompt-texts-file, not both",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

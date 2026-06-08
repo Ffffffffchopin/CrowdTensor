@@ -1,11 +1,41 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import scripts.real_llm_sharded_inference_evidence_pack as pack
 
 
 class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
+    def test_parse_args_reads_prompt_texts_file(self) -> None:
+        prompt_file = Path(tempfile.mkdtemp(prefix="crowdtensor_real_llm_prompts_test_")) / "prompts.txt"
+        prompt_file.write_text("first, comma prompt\nsecond prompt\n", encoding="utf-8")
+
+        args = pack.parse_args(["--prompt-texts-file", str(prompt_file)])
+
+        self.assertEqual(args.prompt_texts, "")
+        self.assertEqual(args.prompt_texts_file, str(prompt_file))
+        self.assertEqual(args.prompt_texts_list, ["first, comma prompt", "second prompt"])
+        self.assertEqual(pack.prompt_list_from_args(args), ["first, comma prompt", "second prompt"])
+
+    def test_parse_args_rejects_inline_and_file_prompt_batch(self) -> None:
+        prompt_file = Path(tempfile.mkdtemp(prefix="crowdtensor_real_llm_prompts_test_")) / "prompts.txt"
+        prompt_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
+
+        with self.assertRaises(SystemExit) as raised:
+            pack.parse_args([
+                "--prompt-texts",
+                "first prompt,second prompt",
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+
+        self.assertEqual(
+            str(raised.exception),
+            "real_llm_sharded_inference_evidence accepts either --prompt-texts or --prompt-texts-file, not both",
+        )
+
     def test_report_redacts_generated_text_and_token_payloads(self) -> None:
         args = type("Args", (), {
             "base_url": "http://127.0.0.1:9880",

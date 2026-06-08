@@ -29,6 +29,7 @@ if str(ROOT / "scripts") not in sys.path:
 import public_swarm_inference_alpha_rc_pack as alpha_rc  # noqa: E402
 import support_bundle  # noqa: E402
 from crowdtensor.real_llm import DEFAULT_MODEL_ID, DEFAULT_PROMPTS  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
 
 SCHEMA = "public_swarm_inference_beta_v1"
@@ -187,18 +188,27 @@ def output_request_summary() -> dict[str, Any]:
 
 
 def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
-    prompts = [item.strip() for item in str(getattr(args, "prompt_texts", "") or "").split(",") if item.strip()]
-    has_prompt_texts = bool(prompts)
-    source = "prompt-texts" if has_prompt_texts else "inherited-or-fixed-evidence"
+    prompts = prompt_list_from_args(args)
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    has_prompt_source = bool(prompts)
+    if prompt_texts_file:
+        source = "prompt-texts-file"
+    elif str(getattr(args, "prompt_texts", "") or ""):
+        source = "prompt-texts"
+    elif str(getattr(args, "prompt_text", "") or ""):
+        source = "prompt-text"
+    else:
+        source = "inherited-or-fixed-evidence"
+    inline_prompt_text = source in {"prompt-text", "prompt-texts"}
     return {
         "source": source,
-        "prompt_count": len(prompts) if has_prompt_texts else 0,
-        "inline_prompt_text": has_prompt_texts,
-        "terminal_next_commands_local_private": has_prompt_texts,
-        "terminal_logs_local_private": has_prompt_texts,
+        "prompt_count": len(prompts) if has_prompt_source else 0,
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
-        "prefer_prompt_file_or_stdin_for_shareable_logs": has_prompt_texts,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": source in {"prompt-text", "prompt-texts", "prompt-texts-file"},
         "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
@@ -210,8 +220,22 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return [str(prompt) for prompt in prompt_list]
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        return read_prompt_texts_file(prompt_texts_file)
+    prompt_text = str(getattr(args, "prompt_text", "") or "")
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    if not prompt_text and not prompt_texts:
+        return []
+    return parse_prompt_texts_arg(prompt_text, prompt_texts)
+
+
 def prompt_secret_values(args: argparse.Namespace) -> list[str]:
-    return [item.strip() for item in str(getattr(args, "prompt_texts", "") or "").split(",") if item.strip()]
+    return prompt_list_from_args(args)
 
 
 def answer_scope_summary() -> dict[str, Any]:
@@ -568,6 +592,7 @@ def cpu_beta_summary(payload: dict[str, Any]) -> dict[str, Any]:
 def build_product_beta(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> dict[str, Any]:
     product_dir = output_dir / "product-rc"
     cpu_dir = output_dir / "cpu-fallback"
+    prompts = prompt_list_from_args(args)
     product_command = [
         sys.executable,
         str(ROOT / "scripts" / "public_swarm_product_rc_pack.py"),
@@ -578,7 +603,7 @@ def build_product_beta(args: argparse.Namespace, *, output_dir: Path, runner: Ru
         "--max-new-tokens",
         str(args.max_new_tokens),
         "--prompt-text",
-        args.prompt_texts.split(",", 1)[0] if args.prompt_texts else "CrowdTensor public beta",
+        prompts[0] if prompts else "CrowdTensor public beta",
         "--timeout-seconds",
         str(int(args.timeout_seconds)),
         "--json",
@@ -745,7 +770,9 @@ def build_local_loopback(args: argparse.Namespace, *, output_dir: Path, runner: 
     ]
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
-    if args.prompt_texts:
+    if args.prompt_texts_file:
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
     step, payload = run_json_step(
         "remote_real_llm_sharded_loopback",
@@ -933,7 +960,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
             "summary": summary,
         },
         "diagnosis_codes": sorted(codes),
-        "prompt_scope": prompt_scope_summary(argparse.Namespace(prompt_texts="")),
+        "prompt_scope": prompt_scope_summary(argparse.Namespace(prompt_text="", prompt_texts="", prompt_texts_file="", prompt_texts_list=[])),
         "artifacts": {
             "public_swarm_inference_alpha_rc_json": artifact_entry(
                 alpha_rc_path,
@@ -1048,7 +1075,9 @@ def swarm_common_command(args: argparse.Namespace, *, output_dir: Path) -> list[
             command.extend(["--observer-token", args.observer_token])
         if args.admin_token:
             command.extend(["--admin-token", args.admin_token])
-        if args.prompt_texts:
+        if args.prompt_texts_file:
+            command.extend(["--prompt-texts-file", args.prompt_texts_file])
+        elif args.prompt_texts:
             command.extend(["--prompt-texts", args.prompt_texts])
         if args.real_internet_beta_report:
             command.extend(["--real-internet-beta-report", args.real_internet_beta_report])
@@ -1173,7 +1202,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--hf-model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--hf-cache-dir", default="")
+    parser.add_argument("--prompt-text", default="")
     parser.add_argument("--prompt-texts", default=",".join(DEFAULT_PROMPTS))
+    parser.add_argument("--prompt-texts-file", default="", help="newline-delimited bounded batch of up to 4 prompts")
     parser.add_argument("--scenario-id", default="route-baseline")
     parser.add_argument("--observer-token", default="")
     parser.add_argument("--admin-token", default="")
@@ -1219,6 +1250,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--compute-seconds must be non-negative")
     if args.max_request_attempts < 1:
         raise SystemExit("--max-request-attempts must be at least 1")
+    raw_argv = list(argv if argv is not None else sys.argv[1:])
+    prompt_texts_explicit = "--prompt-texts" in raw_argv or any(item.startswith("--prompt-texts=") for item in raw_argv)
+    if args.prompt_texts_file and prompt_texts_explicit:
+        raise SystemExit("public_swarm_inference_beta accepts either --prompt-texts or --prompt-texts-file, not both")
+    try:
+        if args.prompt_texts_file:
+            args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+            args.prompt_texts = ""
+        else:
+            args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if args.mode == "miner" and not args.stage:
         raise SystemExit("miner requires --stage stage0|stage1")
     if args.mode not in PUBLIC_ACTIONS:

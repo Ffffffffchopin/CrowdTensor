@@ -94,6 +94,62 @@ class SwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertNotIn("admin-secret", serialized)
         self.assertNotIn("hidden_state", serialized)
 
+    def test_verify_forwards_prompt_texts_file_to_remote_beta(self) -> None:
+        output_dir = self._tmp_dir()
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.write_text("first, comma prompt\nsecond prompt\n", encoding="utf-8")
+        external = output_dir / "external" / "real_llm_internet_beta.json"
+        check.write_external_beta(external)
+        calls: list[list[str]] = []
+        args = pack.parse_args([
+            "verify",
+            "--output-dir",
+            str(output_dir),
+            "--observer-token",
+            "operator-secret",
+            "--admin-token",
+            "admin-secret",
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--real-internet-beta-report",
+            str(external),
+        ])
+
+        def fake_runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("--prompt-texts-file", command)
+            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            self.assertNotIn("--prompt-texts", command)
+            self.assertNotIn("first, comma prompt", command)
+            return check.fake_runner(command, **kwargs)
+
+        report = pack.build_report(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts-file")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertTrue(calls)
+
+    def test_verify_rejects_inline_and_file_prompt_batch(self) -> None:
+        prompt_file = self._tmp_dir() / "prompts.txt"
+        prompt_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            pack.parse_args([
+                "verify",
+                "--prompt-texts",
+                "first prompt,second prompt",
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+        self.assertEqual(
+            str(raised.exception),
+            "swarm_inference_beta verify accepts either --prompt-texts or --prompt-texts-file, not both",
+        )
+
     def test_collect_and_clean_are_safe_and_dry_run_by_default(self) -> None:
         output_dir = self._tmp_dir()
         pack.build_report(pack.parse_args([

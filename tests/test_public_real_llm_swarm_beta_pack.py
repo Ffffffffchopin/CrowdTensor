@@ -335,7 +335,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("- support bundle: `support_bundle.json`", markdown)
         self.assertIn("## Output Scope", markdown)
         self.assertIn(
-            "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,
         )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
@@ -818,6 +818,93 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("public_swarm_generate_batch_ready", report["diagnosis_codes"])
         self.assertNotIn("first prompt", encoded)
         self.assertNotIn("second prompt", encoded)
+
+    def test_release_forwards_prompt_texts_file_to_child_packs(self) -> None:
+        output_dir = self._tmp_dir()
+        external_path, p2p_path, usable_path, public_swarm_v2_path = write_default_sources(output_dir)
+        prompt_file = output_dir / "prompts.txt"
+        prompt_file.write_text("first, comma prompt\nsecond prompt\n", encoding="utf-8")
+        product_payload = check.fake_product_payload()
+        product_payload["product_beta"]["batch"] = {
+            "enabled": True,
+            "request_count": 2,
+            "prompt_hashes": ["sha256:a", "sha256:b"],
+            "prompt_char_counts": [19, 13],
+            "results": [
+                {
+                    "request_id": "req-1",
+                    "prompt_hash": "sha256:a",
+                    "generated_token_count": 16,
+                    "max_new_tokens": 16,
+                    "generated_text_hash": "sha256:g1",
+                    "multi_token_generation_ready": True,
+                },
+                {
+                    "request_id": "req-2",
+                    "prompt_hash": "sha256:b",
+                    "generated_token_count": 16,
+                    "max_new_tokens": 16,
+                    "generated_text_hash": "sha256:g2",
+                    "multi_token_generation_ready": True,
+                },
+            ],
+            "batch_generation_ready": True,
+        }
+        product_payload["diagnosis_codes"].append("public_swarm_generate_batch_ready")
+        captured: list[list[str]] = []
+        args = pack.parse_args([
+            "release",
+            "--output-dir",
+            str(output_dir / "beta"),
+            "--external-report",
+            str(external_path),
+            "--p2p-report",
+            str(p2p_path),
+            "--usable-report",
+            str(usable_path),
+            "--public-swarm-v2-report",
+            str(public_swarm_v2_path),
+            "--prompt-texts-file",
+            str(prompt_file),
+            "--timeout-seconds",
+            "60",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            joined = " ".join(command)
+            p2p_completed = write_fresh_p2p_if_requested(command, output_dir, json.loads(p2p_path.read_text(encoding="utf-8")))
+            if p2p_completed is not None:
+                return p2p_completed
+            if "public_swarm_inference_v2_pack.py" in joined:
+                captured.append(command)
+                self.assertIn("--prompt-texts-file", command)
+                self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+                self.assertNotIn("--prompt-texts", command)
+                return completed(check.fake_public_swarm_v2_payload())
+            if "public_swarm_product_beta_pack.py" in joined:
+                captured.append(command)
+                self.assertIn("--prompt-texts-file", command)
+                self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+                self.assertNotIn("--prompt-texts", command)
+                self.assertNotIn("--prompt-text", command)
+                self.assertNotIn("first, comma prompt", command)
+                return completed(product_payload)
+            if "public_swarm_gpu_inference_beta_pack.py" in joined:
+                return completed(check.fake_gpu_payload())
+            raise AssertionError(command)
+
+        report = pack.build_report(args, runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts-file")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertNotIn("first, comma prompt", encoded)
+        self.assertGreaterEqual(len(captured), 2)
 
     def test_release_blocks_v2_batch_ready_code_without_batch_evidence(self) -> None:
         output_dir = self._tmp_dir()

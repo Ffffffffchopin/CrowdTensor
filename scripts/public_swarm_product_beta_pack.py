@@ -27,7 +27,7 @@ if str(ROOT / "scripts") not in sys.path:
 import public_swarm_inference_beta_rc_pack as rc_pack  # noqa: E402
 import support_bundle  # noqa: E402
 from crowdtensor.real_llm import missing_hf_dependencies  # noqa: E402
-from product_swarm_mvp_check import parse_prompt_texts_arg  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
 
 SCHEMA = "public_swarm_product_beta_v1"
@@ -288,7 +288,9 @@ def rc_args(args: argparse.Namespace, output_dir: Path) -> argparse.Namespace:
         str(args.http_timeout),
         "--json",
     ]
-    if args.prompt_texts:
+    if args.prompt_texts_file:
+        argv.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif args.prompt_texts:
         argv.extend(["--prompt-texts", args.prompt_texts])
     else:
         argv.extend(["--prompt-text", args.prompt_text])
@@ -438,8 +440,14 @@ def output_request_summary() -> dict[str, Any]:
 
 
 def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
-    prompt_count = len(parse_prompt_texts_arg(args.prompt_text, args.prompt_texts))
-    source = "prompt-texts" if str(getattr(args, "prompt_texts", "") or "") else "prompt-text"
+    prompt_count = len(prompt_list_from_args(args))
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        source = "prompt-texts-file"
+    elif str(getattr(args, "prompt_texts", "") or ""):
+        source = "prompt-texts"
+    else:
+        source = "prompt-text"
     inline_prompt_text = source in {"prompt-text", "prompt-texts"}
     return {
         "source": source,
@@ -449,7 +457,8 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
         "terminal_logs_local_private": inline_prompt_text,
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
-        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": source in {"prompt-text", "prompt-texts", "prompt-texts-file"},
+        "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
         "summary": (
@@ -457,6 +466,16 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
             "raw prompt text is excluded from public JSON, Markdown, and support bundles."
         ),
     }
+
+
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return [str(prompt) for prompt in prompt_list]
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        return read_prompt_texts_file(prompt_texts_file)
+    return parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
 
 
 def answer_scope_summary() -> dict[str, Any]:
@@ -820,7 +839,7 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: list[str] | None = None) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
-    report.setdefault("prompt_scope", prompt_scope_summary(argparse.Namespace(prompt_text=DEFAULT_PROMPT, prompt_texts="")))
+    report.setdefault("prompt_scope", prompt_scope_summary(argparse.Namespace(prompt_text=DEFAULT_PROMPT, prompt_texts="", prompt_texts_file="", prompt_texts_list=[])))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report, secret_values))
@@ -869,6 +888,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gpu-report", default=rc_pack.DEFAULT_GPU_REPORT)
     parser.add_argument("--prompt-text", default=DEFAULT_PROMPT)
     parser.add_argument("--prompt-texts", default="", help="comma-separated bounded batch of up to 4 prompts")
+    parser.add_argument("--prompt-texts-file", default="", help="newline-delimited bounded batch of up to 4 prompts")
     parser.add_argument("--stream-generation", action="store_true")
     parser.add_argument("--scenario-id", default="route-baseline")
     parser.add_argument("--request-count", type=int, default=1)
@@ -896,8 +916,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--external-llm-request-count must be between 1 and 4")
     if args.max_new_tokens < 2 or args.max_new_tokens > 32:
         raise SystemExit("--max-new-tokens must be between 2 and 32")
+    if args.prompt_texts and args.prompt_texts_file:
+        raise SystemExit("public_swarm_product_beta accepts either --prompt-texts or --prompt-texts-file, not both")
     try:
-        parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+        if args.prompt_texts_file:
+            args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+        else:
+            args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     for name in [

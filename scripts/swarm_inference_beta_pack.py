@@ -28,6 +28,7 @@ import support_bundle  # noqa: E402
 from create_miner_invite import create_invite  # noqa: E402
 from crowdtensor.auth import hash_token  # noqa: E402
 from crowdtensor.real_llm import DEFAULT_MODEL_ID, DEFAULT_PROMPTS  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
 
 SCHEMA = "swarm_inference_beta_v1"
@@ -213,20 +214,30 @@ def parse_prompt_texts(value: str) -> list[str]:
     return prompts or list(DEFAULT_PROMPTS)
 
 
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return [str(prompt) for prompt in prompt_list]
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        return read_prompt_texts_file(prompt_texts_file)
+    return parse_prompt_texts_arg("", str(getattr(args, "prompt_texts", "") or ""))
+
+
 def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
     action = getattr(args, "action", "")
-    prompts = parse_prompt_texts(getattr(args, "prompt_texts", "")) if action == "verify" else []
+    prompts = prompt_list_from_args(args) if action == "verify" else []
     inline_prompt_text = bool(prompts)
-    source = "prompt-texts" if inline_prompt_text else "none"
+    source = "prompt-texts-file" if action == "verify" and str(getattr(args, "prompt_texts_file", "") or "") else "prompt-texts" if inline_prompt_text else "none"
     return {
         "source": source,
         "prompt_count": len(prompts),
-        "inline_prompt_text": inline_prompt_text,
-        "terminal_next_commands_local_private": inline_prompt_text,
-        "terminal_logs_local_private": inline_prompt_text,
+        "inline_prompt_text": source == "prompt-texts",
+        "terminal_next_commands_local_private": source == "prompt-texts",
+        "terminal_logs_local_private": source == "prompt-texts",
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
-        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": source in {"prompt-texts", "prompt-texts-file"},
         "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
@@ -241,7 +252,7 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
 def prompt_secret_values(args: argparse.Namespace) -> list[str]:
     if getattr(args, "action", "") != "verify":
         return []
-    return parse_prompt_texts(getattr(args, "prompt_texts", ""))
+    return prompt_list_from_args(args)
 
 
 def answer_scope_summary() -> dict[str, Any]:
@@ -1104,7 +1115,9 @@ def build_verify(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
     ]
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
-    if args.prompt_texts:
+    if args.prompt_texts_file:
+        command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
     step, payload = run_json_step(
         "remote_real_llm_sharded_beta_verify",
@@ -1806,6 +1819,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     verify.add_argument("--observer-token", default="")
     verify.add_argument("--admin-token", default="")
     verify.add_argument("--prompt-texts", default=",".join(DEFAULT_PROMPTS))
+    verify.add_argument("--prompt-texts-file", default="", help="newline-delimited bounded batch of up to 4 prompts")
     verify.add_argument("--real-internet-beta-report", default="")
 
     collect = subparsers.add_parser("collect", help="Collect redacted evidence and support bundle from a running Beta.")
@@ -1882,6 +1896,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--max-request-attempts must be at least 1")
     if hasattr(args, "artifact_timeout") and args.artifact_timeout <= 0:
         raise SystemExit("--artifact-timeout must be positive")
+    if getattr(args, "action", "") == "verify":
+        raw_argv = list(argv if argv is not None else sys.argv[1:])
+        prompt_texts_explicit = "--prompt-texts" in raw_argv or any(item.startswith("--prompt-texts=") for item in raw_argv)
+        if getattr(args, "prompt_texts_file", "") and prompt_texts_explicit:
+            raise SystemExit("swarm_inference_beta verify accepts either --prompt-texts or --prompt-texts-file, not both")
+        try:
+            if getattr(args, "prompt_texts_file", ""):
+                args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+                args.prompt_texts = ""
+            else:
+                args.prompt_texts_list = parse_prompt_texts_arg("", args.prompt_texts)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     if getattr(args, "action", "") == "live" and getattr(args, "failure_mode", "none") != "none":
         if args.victim_compute_seconds <= args.lease_seconds:
             args.victim_compute_seconds = args.lease_seconds + 30.0

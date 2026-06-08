@@ -107,14 +107,15 @@ def output_scope_errors(payload: dict[str, Any]) -> list[str]:
         errors.append("output_request_generated_token_ids_public_mismatch")
     if output_request.get("public_artifact_safe") is not True:
         errors.append("output_request_public_artifact_safe_mismatch")
-    if prompt_scope.get("source") not in {"prompt-texts", "inherited-or-fixed-evidence"}:
+    if prompt_scope.get("source") not in {"prompt-text", "prompt-texts", "prompt-texts-file", "inherited-or-fixed-evidence"}:
         errors.append("prompt_scope_source_mismatch")
     if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 0:
         errors.append("prompt_scope_count_mismatch")
-    inline_prompt_text = prompt_scope.get("source") == "prompt-texts"
-    if inline_prompt_text and prompt_scope.get("prompt_count") < 1:
+    inline_prompt_text = prompt_scope.get("source") in {"prompt-text", "prompt-texts"}
+    has_prompt_source = prompt_scope.get("source") in {"prompt-text", "prompt-texts", "prompt-texts-file"}
+    if has_prompt_source and prompt_scope.get("prompt_count") < 1:
         errors.append("prompt_scope_prompt_texts_count_mismatch")
-    if not inline_prompt_text and prompt_scope.get("prompt_count") != 0:
+    if not has_prompt_source and prompt_scope.get("prompt_count") != 0:
         errors.append("prompt_scope_inherited_count_mismatch")
     if prompt_scope.get("inline_prompt_text") is not inline_prompt_text:
         errors.append("prompt_scope_inline_prompt_text_mismatch")
@@ -126,7 +127,7 @@ def output_scope_errors(payload: dict[str, Any]) -> list[str]:
         errors.append("prompt_scope_saved_placeholders_mismatch")
     if prompt_scope.get("saved_artifacts_public_safe") is not True:
         errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
-    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not inline_prompt_text:
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not has_prompt_source:
         errors.append("prompt_scope_shareable_log_guidance_mismatch")
     if prompt_scope.get("prompt_file_path_public") is not False:
         errors.append("prompt_scope_file_path_public_mismatch")

@@ -32,6 +32,41 @@ class _HttpErrorWithBody(HTTPError):
 
 
 class RemoteRealLlmShardedBetaPackTests(unittest.TestCase):
+    def test_parse_args_reads_and_forwards_prompt_texts_file(self) -> None:
+        prompt_file = Path(tempfile.mkdtemp(prefix="crowdtensor_remote_real_llm_prompts_test_")) / "prompts.txt"
+        prompt_file.write_text("first, comma prompt\nsecond prompt\n", encoding="utf-8")
+
+        args = pack.parse_args([
+            "--mode",
+            "remote-loopback",
+            "--prompt-texts-file",
+            str(prompt_file),
+        ])
+
+        self.assertEqual(args.prompt_texts, "")
+        self.assertEqual(args.prompt_texts_file, str(prompt_file))
+        self.assertEqual(args.prompt_texts_list, ["first, comma prompt", "second prompt"])
+        self.assertEqual(pack.prompt_list_from_args(args), ["first, comma prompt", "second prompt"])
+
+    def test_parse_args_rejects_inline_and_file_prompt_batch(self) -> None:
+        prompt_file = Path(tempfile.mkdtemp(prefix="crowdtensor_remote_real_llm_prompts_test_")) / "prompts.txt"
+        prompt_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
+
+        with self.assertRaises(SystemExit) as raised:
+            pack.parse_args([
+                "--mode",
+                "remote-loopback",
+                "--prompt-texts",
+                "first prompt,second prompt",
+                "--prompt-texts-file",
+                str(prompt_file),
+            ])
+
+        self.assertEqual(
+            str(raised.exception),
+            "remote_real_llm_sharded_beta accepts either --prompt-texts or --prompt-texts-file, not both",
+        )
+
     def test_payload_summary_extracts_nested_generation_hash(self) -> None:
         summary = pack.payload_summary({
             "schema": "remote_real_llm_sharded_beta_v1",

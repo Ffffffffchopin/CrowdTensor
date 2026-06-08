@@ -30,6 +30,7 @@ from crowdtensor.real_llm import BACKEND_CPU as REAL_LLM_BACKEND_CPU  # noqa: E4
 from crowdtensor.real_llm import BACKEND_CUDA as REAL_LLM_BACKEND_CUDA  # noqa: E402
 from crowdtensor.real_llm import normalize_backend as normalize_real_llm_backend  # noqa: E402
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
 
 SCHEMA = "real_llm_sharded_evidence_v1"
@@ -84,7 +85,7 @@ def create_session(args: argparse.Namespace) -> dict[str, Any]:
         "backend": "cuda" if resolved_backend == REAL_LLM_BACKEND_CUDA else "cpu",
         "partition_mode": normalize_real_llm_partition_mode(getattr(args, "real_llm_partition_mode", "full")),
     }
-    prompt_texts = [item for item in str(getattr(args, "prompt_texts", "") or "").split(",") if item]
+    prompt_texts = prompt_list_from_args(args)
     if prompt_texts:
         payload["prompt_texts"] = prompt_texts
     return base.request_json(
@@ -95,6 +96,16 @@ def create_session(args: argparse.Namespace) -> dict[str, Any]:
         admin_token=args.admin_token,
         timeout=max(30.0, float(args.startup_timeout)),
     )
+
+
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return [str(prompt) for prompt in prompt_list]
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        return read_prompt_texts_file(prompt_texts_file)
+    return parse_prompt_texts_arg("", str(getattr(args, "prompt_texts", "") or ""))
 
 
 def redacted_token_summary(token_ids: Any) -> dict[str, Any]:
@@ -509,6 +520,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--request-count", type=int, default=1)
     parser.add_argument("--max-new-tokens", type=int, default=1)
     parser.add_argument("--prompt-texts", default=",".join(DEFAULT_PROMPTS))
+    parser.add_argument("--prompt-texts-file", default="", help="newline-delimited bounded batch of up to 4 prompts")
     parser.add_argument("--hf-model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument(
         "--real-llm-backend",
@@ -542,6 +554,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--max-new-tokens must be between 1 and 32")
     if args.failure_mode != base.FAILURE_NONE and args.max_new_tokens != 1:
         raise SystemExit("--max-new-tokens greater than 1 is only supported with --failure-mode none")
+    raw_argv = list(argv if argv is not None else sys.argv[1:])
+    prompt_texts_explicit = "--prompt-texts" in raw_argv or any(item.startswith("--prompt-texts=") for item in raw_argv)
+    if args.prompt_texts_file and prompt_texts_explicit:
+        raise SystemExit("real_llm_sharded_inference_evidence accepts either --prompt-texts or --prompt-texts-file, not both")
+    try:
+        if args.prompt_texts_file:
+            args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+            args.prompt_texts = ""
+        else:
+            args.prompt_texts_list = parse_prompt_texts_arg("", args.prompt_texts)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if args.requeue_timeout <= args.lease_seconds:
         args.requeue_timeout = args.lease_seconds + 5.0
     if args.victim_compute_seconds <= args.lease_seconds:
