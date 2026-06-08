@@ -1792,7 +1792,8 @@ def evidence_scope_text(scope: dict[str, Any]) -> str:
     )
 
 
-def gpu_status_text(provenance: dict[str, Any], scope: dict[str, Any] | None = None) -> str:
+def gpu_status_summary(provenance: dict[str, Any], scope: dict[str, Any] | None = None) -> dict[str, Any]:
+    provenance = provenance if isinstance(provenance, dict) else {}
     scope = scope if isinstance(scope, dict) else {}
     fresh_verified = bool(provenance.get("fresh_kaggle_gpu_verified") or scope.get("fresh_kaggle_gpu_verified"))
     fresh_attempted = bool(provenance.get("fresh_kaggle_gpu_attempted") or scope.get("fresh_kaggle_gpu_attempted"))
@@ -1822,14 +1823,33 @@ def gpu_status_text(provenance: dict[str, Any], scope: dict[str, Any] | None = N
     else:
         state = "no-gpu-evidence"
         note = "no GPU execution evidence is claimed by this report"
+    return {
+        "schema": "crowdtensor_gpu_status_v1",
+        "state": state,
+        "local_cpu": local_cpu,
+        "local_gpu_smoke": local_gpu_smoke,
+        "retained_gpu": retained_gpu,
+        "fresh_kaggle_gpu_attempted": fresh_attempted,
+        "fresh_kaggle_gpu_verified": fresh_verified,
+        "note": note,
+        "public_artifact_safe": True,
+    }
+
+
+def gpu_status_text(provenance: dict[str, Any], scope: dict[str, Any] | None = None) -> str:
+    status = (
+        provenance
+        if scope is None and isinstance(provenance, dict) and isinstance(provenance.get("state"), str)
+        else gpu_status_summary(provenance, scope)
+    )
     return (
-        f"state={state} "
-        f"local_cpu={local_cpu} "
-        f"local_gpu_smoke={local_gpu_smoke} "
-        f"retained_gpu={retained_gpu} "
-        f"fresh_kaggle_gpu_attempted={fresh_attempted} "
-        f"fresh_kaggle_gpu_verified={fresh_verified} "
-        f"note={note}"
+        f"state={status.get('state')} "
+        f"local_cpu={bool(status.get('local_cpu'))} "
+        f"local_gpu_smoke={bool(status.get('local_gpu_smoke'))} "
+        f"retained_gpu={bool(status.get('retained_gpu'))} "
+        f"fresh_kaggle_gpu_attempted={bool(status.get('fresh_kaggle_gpu_attempted'))} "
+        f"fresh_kaggle_gpu_verified={bool(status.get('fresh_kaggle_gpu_verified'))} "
+        f"note={status.get('note') or ''}"
     )
 
 
@@ -2991,6 +3011,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
     else:
         lines.append("- none")
+    gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
     lines.extend([
         "",
         "## Runtime Provenance",
@@ -3004,7 +3025,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- retained GPU evidence imported: `{provenance.get('retained_gpu_evidence_imported')}`",
         f"- fresh Kaggle GPU attempted: `{provenance.get('fresh_kaggle_gpu_attempted')}`",
         f"- fresh Kaggle GPU verified: `{provenance.get('fresh_kaggle_gpu_verified')}`",
-        f"- GPU status: `{gpu_status_text(provenance, evidence_scope)}`",
+        f"- GPU status: `{gpu_status_text(gpu_status or gpu_status_summary(provenance, evidence_scope))}`",
         f"- note: {provenance.get('summary') or ''}",
         "",
         "## Evidence Scope",
@@ -3133,7 +3154,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
         print(f"  evidence_scope: {evidence_scope_text(evidence_scope)}")
         print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
     if provenance or evidence_scope:
-        print(f"  gpu_status: {gpu_status_text(provenance, evidence_scope)}")
+        gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
+        print(f"  gpu_status: {gpu_status_text(gpu_status or gpu_status_summary(provenance, evidence_scope))}")
     if user:
         print(
             "  status: "
@@ -3303,6 +3325,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     report.setdefault("shareable_summary", shareable_summary())
     report["runtime_provenance"] = runtime_provenance_summary(report)
     report["evidence_scope"] = evidence_scope_summary(report)
+    report["gpu_status"] = gpu_status_summary(report["runtime_provenance"], report["evidence_scope"])
     report["recommended_check_command"] = recommended_check_command(report)
     cleanup = cleanup_release_private_artifacts(output_dir)
     report["release_private_artifact_cleanup"] = cleanup

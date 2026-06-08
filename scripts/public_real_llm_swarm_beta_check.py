@@ -1532,6 +1532,8 @@ def check_result_from_payload(
         errors.extend(validate_report(payload, mode=mode, expected_tokens=expected_tokens))
     elif not errors:
         errors.append("beta_report_empty")
+    checked_runtime_provenance = payload.get("runtime_provenance") if isinstance(payload.get("runtime_provenance") if payload else None, dict) else {}
+    checked_evidence_scope = payload.get("evidence_scope") if isinstance(payload.get("evidence_scope") if payload else None, dict) else {}
     result = {
         "schema": SCHEMA,
         "ok": not errors,
@@ -1545,8 +1547,13 @@ def check_result_from_payload(
         "beta_schema": payload.get("schema") if payload else None,
         "beta_ok": payload.get("ok") if payload else None,
         "hf_model_id": str((payload.get("beta") if isinstance(payload.get("beta"), dict) else {}).get("hf_model_id") or hf_model_id or pack.DEFAULT_HF_MODEL_ID),
-        "checked_runtime_provenance": payload.get("runtime_provenance") if isinstance(payload.get("runtime_provenance") if payload else None, dict) else {},
-        "checked_evidence_scope": payload.get("evidence_scope") if isinstance(payload.get("evidence_scope") if payload else None, dict) else {},
+        "checked_runtime_provenance": checked_runtime_provenance,
+        "checked_evidence_scope": checked_evidence_scope,
+        "checked_gpu_status": (
+            payload.get("gpu_status")
+            if isinstance(payload.get("gpu_status") if payload else None, dict)
+            else pack.gpu_status_summary(checked_runtime_provenance, checked_evidence_scope)
+        ),
         "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"] if not errors else ["public_real_llm_swarm_beta_check_blocked"],
         "artifacts": {
             "public_real_llm_swarm_beta_json": artifact_path(
@@ -1613,6 +1620,7 @@ def sensitive_check_json_errors(result: dict[str, Any]) -> list[str]:
             "shareable_summary",
             "checked_runtime_provenance",
             "checked_evidence_scope",
+            "checked_gpu_status",
             "check_source",
             "checked_beta_report",
             "beta_output_dir",
@@ -1679,6 +1687,7 @@ def print_human_summary(result: dict[str, Any]) -> None:
     shareable = result.get("shareable_summary") if isinstance(result.get("shareable_summary"), dict) else {}
     checked_runtime_provenance = result.get("checked_runtime_provenance") if isinstance(result.get("checked_runtime_provenance"), dict) else {}
     checked_evidence_scope = result.get("checked_evidence_scope") if isinstance(result.get("checked_evidence_scope"), dict) else {}
+    checked_gpu_status = result.get("checked_gpu_status") if isinstance(result.get("checked_gpu_status"), dict) else {}
     print(f"Public Real-LLM Swarm Beta check ready: {result.get('ok')}")
     print(f"  mode: {result.get('mode')}")
     print(f"  max_new_tokens: {result.get('max_new_tokens')}")
@@ -1717,7 +1726,10 @@ def print_human_summary(result: dict[str, Any]) -> None:
         print(f"  checked_evidence_scope: {pack.evidence_scope_text(checked_evidence_scope)}")
         print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")
     if checked_runtime_provenance or checked_evidence_scope:
-        print(f"  checked_gpu_status: {pack.gpu_status_text(checked_runtime_provenance, checked_evidence_scope)}")
+        print(
+            "  checked_gpu_status: "
+            f"{pack.gpu_status_text(checked_gpu_status or pack.gpu_status_summary(checked_runtime_provenance, checked_evidence_scope))}"
+        )
     if recommended:
         print(f"  recommended_check: {recommended.get('command_line')}")
     if recommended_next:

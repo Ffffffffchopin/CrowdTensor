@@ -526,11 +526,41 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         persisted = pack.persist_report(report, output_dir=output_dir)
 
         self.assertTrue(persisted["ok"], persisted)
+        self.assertEqual(persisted["gpu_status"]["schema"], "crowdtensor_gpu_status_v1")
+        self.assertEqual(persisted["gpu_status"]["state"], "no-gpu-evidence")
+        self.assertFalse(persisted["gpu_status"]["local_cpu"])
+        self.assertFalse(persisted["gpu_status"]["local_gpu_smoke"])
+        self.assertFalse(persisted["gpu_status"]["retained_gpu"])
+        self.assertFalse(persisted["gpu_status"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(persisted["gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(persisted["gpu_status"]["public_artifact_safe"])
         self.assertTrue(persisted["release_private_artifact_cleanup"]["private_artifacts_cleaned"])
         self.assertEqual(persisted["release_private_artifact_cleanup"]["removed_private_artifact_count"], 4)
         self.assertFalse((output_dir / "child" / "state").exists())
         self.assertFalse((output_dir / "child" / "libp2p-bootstrap-peer-key.json").exists())
         self.assertFalse((output_dir / "child" / "miner.private.env").exists())
+
+    def test_check_result_persists_checked_gpu_status(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+
+        result = check.check_result_from_payload(
+            payload,
+            output_dir=output_dir,
+            mode=pack.MODE_RELEASE,
+            expected_tokens=16,
+            check_source="ci-fixture",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["checked_gpu_status"]["schema"], "crowdtensor_gpu_status_v1")
+        self.assertEqual(result["checked_gpu_status"]["state"], "local-gpu-smoke-only")
+        self.assertTrue(result["checked_gpu_status"]["local_cpu"])
+        self.assertTrue(result["checked_gpu_status"]["local_gpu_smoke"])
+        self.assertFalse(result["checked_gpu_status"]["retained_gpu"])
+        self.assertFalse(result["checked_gpu_status"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(result["checked_gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(result["checked_gpu_status"]["public_artifact_safe"])
 
     def test_release_prefers_fresh_usable_report_written_by_public_swarm_v2(self) -> None:
         output_dir = self._tmp_dir()

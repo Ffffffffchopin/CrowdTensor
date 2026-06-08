@@ -1365,6 +1365,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
         self.assertEqual(report["evidence_scope"]["user_expectation"], "This was a preflight; no generation task was submitted.")
+        self.assertEqual(report["gpu_status"]["schema"], "crowdtensor_gpu_status_v1")
+        self.assertEqual(report["gpu_status"]["state"], "no-gpu-evidence")
+        self.assertFalse(report["gpu_status"]["local_cpu"])
+        self.assertFalse(report["gpu_status"]["local_gpu_smoke"])
+        self.assertFalse(report["gpu_status"]["retained_gpu"])
+        self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(report["gpu_status"]["public_artifact_safe"])
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
         self.assertEqual(report["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
         self.assertTrue(report["artifacts"]["generate_summary"]["present"])
@@ -1468,6 +1476,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["output_request"]["public_artifact_safe"])
         self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
+        self.assertEqual(persisted["gpu_status"], report["gpu_status"])
         self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
         self.assertEqual(persisted["user_status"]["next_step"], "run_live_preflight")
         self.assertEqual(persisted["trace"]["request_count"], 1)
@@ -4785,6 +4794,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["evidence_scope"]["retained_gpu_evidence_imported"])
         self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["gpu_status"]["schema"], "crowdtensor_gpu_status_v1")
+        self.assertEqual(report["gpu_status"]["state"], "local-cpu-only")
+        self.assertTrue(report["gpu_status"]["local_cpu"])
+        self.assertFalse(report["gpu_status"]["local_gpu_smoke"])
+        self.assertFalse(report["gpu_status"]["retained_gpu"])
+        self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(report["gpu_status"]["public_artifact_safe"])
         self.assertFalse(report["trace"]["raw_prompt_public"])
         self.assertFalse(report["trace"]["raw_generated_text_public"])
         self.assertFalse(report["trace"]["generated_token_ids_public"])
@@ -4871,6 +4888,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["output_request"]["public_artifact_safe"])
         self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
+        self.assertEqual(persisted["gpu_status"], report["gpu_status"])
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertEqual(persisted["prompt_scope"]["source"], "prompt-text")
         self.assertTrue(persisted["prompt_scope"]["inline_prompt_text"])
@@ -7772,6 +7790,17 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "fresh_kaggle_gpu_verified": False,
                     "user_expectation": "This release mixes fresh local CPU checks with retained external/P2P evidence.",
                 },
+                "checked_gpu_status": {
+                    "schema": "crowdtensor_gpu_status_v1",
+                    "state": "local-gpu-smoke-only",
+                    "local_cpu": True,
+                    "local_gpu_smoke": True,
+                    "retained_gpu": False,
+                    "fresh_kaggle_gpu_attempted": False,
+                    "fresh_kaggle_gpu_verified": False,
+                    "note": "only a local or CI GPU smoke path is represented",
+                    "public_artifact_safe": True,
+                },
                 "artifact_summary": {
                     "inspect_first": str(output_dir / "public_real_llm_swarm_beta.md"),
                     "machine_readable": str(output_dir / "public_real_llm_swarm_beta.json"),
@@ -7864,6 +7893,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_schema"], "public_real_llm_swarm_beta_cli_v1")
         self.assertEqual(report["cli_mode"], "check")
         self.assertEqual(report["mode"], "release")
+        self.assertEqual(report["checked_gpu_status"]["schema"], "crowdtensor_gpu_status_v1")
+        self.assertEqual(report["checked_gpu_status"]["state"], "local-gpu-smoke-only")
+        self.assertTrue(report["checked_gpu_status"]["local_cpu"])
+        self.assertTrue(report["checked_gpu_status"]["local_gpu_smoke"])
+        self.assertFalse(report["checked_gpu_status"]["retained_gpu"])
+        self.assertFalse(report["checked_gpu_status"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["checked_gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(report["checked_gpu_status"]["public_artifact_safe"])
         self.assertEqual(report["review_summary"]["next_step"], "review_checked_artifacts")
         self.assertEqual(report["user_status"]["state"], "ready")
         self.assertEqual(report["recommended_next_command"]["label"], "inspect checked Beta summary")
@@ -9226,6 +9263,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["evidence_scope"]["executed_where"], "local-cpu")
         self.assertTrue(report["evidence_scope"]["local_cpu"])
         self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["gpu_status"]["schema"], "crowdtensor_gpu_status_v1")
+        self.assertEqual(report["gpu_status"]["state"], "local-cpu-only")
+        self.assertTrue(report["gpu_status"]["local_cpu"])
+        self.assertFalse(report["gpu_status"]["local_gpu_smoke"])
+        self.assertFalse(report["gpu_status"]["retained_gpu"])
+        self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(report["gpu_status"]["public_artifact_safe"])
         self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         self.assertFalse((output_dir / ".private").exists())
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -9272,6 +9317,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["runtime_options"]["coordinator_port_explicit"])
         self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
+        self.assertEqual(persisted["gpu_status"], report["gpu_status"])
         self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
         self.assertNotIn(".private", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
@@ -10099,6 +10145,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["evidence_scope"]["local_cpu"])
         self.assertTrue(report["evidence_scope"]["retained_gpu_evidence_imported"])
         self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["gpu_status"]["schema"], "crowdtensor_gpu_status_v1")
+        self.assertEqual(report["gpu_status"]["state"], "retained-gpu-evidence")
+        self.assertTrue(report["gpu_status"]["local_cpu"])
+        self.assertFalse(report["gpu_status"]["local_gpu_smoke"])
+        self.assertTrue(report["gpu_status"]["retained_gpu"])
+        self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(report["gpu_status"]["public_artifact_safe"])
         child_markdown = str(output_dir / "public-swarm-v2" / "public_swarm_inference_v2.md")
         self.assertEqual(report["source_report"]["summary_markdown_path"], child_markdown)
         self.assertEqual(report["source_report"]["summary_markdown_relative_path"], "public-swarm-v2/public_swarm_inference_v2.md")
@@ -10114,6 +10168,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
+        self.assertEqual(persisted["gpu_status"], report["gpu_status"])
         self.assertEqual(persisted["review_summary"]["inspect_first"], child_markdown)
         self.assertEqual(persisted["artifact_summary"]["inspect_first"], child_markdown)
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
