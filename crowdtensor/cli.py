@@ -1094,11 +1094,9 @@ def _infer_prompt_redaction_values(args: argparse.Namespace) -> list[str]:
     return unique_redaction_values(values)
 
 
-def _infer_private_stdin_prompt_file(args: argparse.Namespace, output_dir: Path) -> Path | None:
-    if not bool(getattr(args, "prompt_stdin", False)):
-        return None
-    prompt_text = str(getattr(args, "prompt_text", "") or "").strip()
-    if not prompt_text:
+def _write_infer_private_prompt_file(output_dir: Path, name: str, content: str) -> Path | None:
+    text = str(content or "").strip()
+    if not text:
         return None
     private_dir = output_dir / ".private"
     private_dir.mkdir(parents=True, exist_ok=True)
@@ -1106,13 +1104,28 @@ def _infer_private_stdin_prompt_file(args: argparse.Namespace, output_dir: Path)
         private_dir.chmod(0o700)
     except OSError:
         pass
-    path = private_dir / "infer-stdin-prompt.txt"
-    path.write_text(prompt_text, encoding="utf-8")
+    path = private_dir / name
+    path.write_text(text, encoding="utf-8")
     try:
         path.chmod(0o600)
     except OSError:
         pass
     return path
+
+
+def _infer_private_prompt_files(args: argparse.Namespace, output_dir: Path) -> tuple[Path | None, Path | None]:
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts or prompt_texts_file:
+        prompts = list(getattr(args, "prompt_texts_list", []) or [])
+        if not prompts:
+            prompts = [item.strip() for item in prompt_texts.split(",") if item.strip()]
+        path = _write_infer_private_prompt_file(output_dir, "infer-prompts.txt", "\n".join(str(prompt) for prompt in prompts))
+        return None, path
+    prompt_text = str(getattr(args, "prompt_text", "") or "")
+    if bool(getattr(args, "prompt_stdin", False)):
+        return _write_infer_private_prompt_file(output_dir, "infer-stdin-prompt.txt", prompt_text), None
+    return _write_infer_private_prompt_file(output_dir, "infer-prompt.txt", prompt_text), None
 
 
 def _cleanup_infer_private_prompt_file(path: Path | None) -> None:
@@ -1126,6 +1139,11 @@ def _cleanup_infer_private_prompt_file(path: Path | None) -> None:
         path.parent.rmdir()
     except OSError:
         pass
+
+
+def _cleanup_infer_private_prompt_files(*paths: Path | None) -> None:
+    for path in paths:
+        _cleanup_infer_private_prompt_file(path)
 
 
 def _artifact_entry_from_report_path(
@@ -7407,10 +7425,10 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         if args.dry_run and _infer_existing_should_attach_preflight(payload, args):
             payload = _attach_infer_existing_preflight(payload, args)
         return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir)
-    private_prompt_file = (
-        _infer_private_stdin_prompt_file(args, output_dir)
-        if mode == "local" and bool(getattr(args, "prompt_stdin", False))
-        else None
+    private_prompt_file, private_prompt_texts_file = (
+        _infer_private_prompt_files(args, output_dir)
+        if mode == "local"
+        else (None, None)
     )
     if not args.full_evidence:
         command = [
@@ -7437,10 +7455,12 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             "--require-hf-runtime",
             "--json",
         ]
-        if getattr(args, "prompt_texts_file", ""):
-            command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
+        if private_prompt_texts_file is not None:
+            command.extend(["--prompt-texts-file", str(private_prompt_texts_file)])
         elif private_prompt_file is not None:
             command.extend(["--prompt-file", str(private_prompt_file)])
+        elif getattr(args, "prompt_texts_file", ""):
+            command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
         elif getattr(args, "prompt_file", ""):
             command.extend(["--prompt-file", str(args.prompt_file)])
         elif args.prompt_texts:
@@ -7463,7 +7483,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
                 redact_secrets=prompt_redactions,
             )
         finally:
-            _cleanup_infer_private_prompt_file(private_prompt_file)
+            _cleanup_infer_private_prompt_files(private_prompt_file, private_prompt_texts_file)
         if not payload:
             payload = {
                 "schema": "product_swarm_mvp_check_v1",
@@ -7562,10 +7582,12 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         str(args.http_timeout),
         "--json",
     ]
-    if getattr(args, "prompt_texts_file", ""):
-        command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
+    if private_prompt_texts_file is not None:
+        command.extend(["--prompt-texts-file", str(private_prompt_texts_file)])
     elif private_prompt_file is not None:
         command.extend(["--prompt-file", str(private_prompt_file)])
+    elif getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
     elif getattr(args, "prompt_file", ""):
         command.extend(["--prompt-file", str(args.prompt_file)])
     elif args.prompt_texts:
@@ -7586,7 +7608,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             redact_secrets=prompt_redactions,
         )
     finally:
-        _cleanup_infer_private_prompt_file(private_prompt_file)
+        _cleanup_infer_private_prompt_files(private_prompt_file, private_prompt_texts_file)
     if not payload:
         payload = {
             "schema": "public_swarm_inference_v2",

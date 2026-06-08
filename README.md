@@ -156,6 +156,12 @@ If you still want human-readable terminal output while keeping terminal logs
 shareable, add `--shareable-terminal`; it keeps status, diagnostics, hashes,
 artifact paths, and safe next commands, but hides inline prompts, local prompt
 file paths, and local answer text from stdout.
+For local `infer` runs, child proof commands receive prompt inputs through
+temporary `.private` prompt files that are cleaned after the child command
+returns, so child process arguments do not carry raw prompt text or local prompt
+paths. If your environment treats process lists as shareable too, start the top
+level command with `--prompt-file` or `--prompt-stdin` instead of an inline
+positional prompt.
 The `result` line and JSON/Markdown `result` object summarize completion state,
 token count, output count, generated-text hash, and display safety:
 `local-private` for terminal-only generated text, `hash-only` for redacted

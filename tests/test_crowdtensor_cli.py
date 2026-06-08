@@ -8227,9 +8227,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
     def test_infer_local_defaults_to_product_loopback(self) -> None:
         output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor user prompt"
         args = cli.parse_args([
             "infer",
-            "CrowdTensor user prompt",
+            prompt,
             "--output-dir",
             str(output_dir),
             "--max-new-tokens",
@@ -8241,7 +8242,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             calls.append(command)
             self.assertIn("product_swarm_mvp_check.py", command[1])
-            self.assertEqual(command[command.index("--prompt-text") + 1], "CrowdTensor user prompt")
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn(prompt, command)
+            self.assertIn("--prompt-file", command)
+            prompt_path = Path(command[command.index("--prompt-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), prompt)
             self.assertEqual(command[command.index("--max-new-tokens") + 1], "8")
             self.assertIn("--port", command)
             selected_port = int(command[command.index("--port") + 1])
@@ -8297,6 +8303,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["runtime_options"]["coordinator_port_explicit"])
         self.assertEqual(report["route"]["route_source"], "local-product-loopback")
         self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
+        self.assertFalse((output_dir / ".private").exists())
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode local --output-dir {output_dir} --max-new-tokens 8",
@@ -8310,7 +8317,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "rerun local inference",
             "optional broader local evidence",
         ])
-        self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        self.assertNotIn(".private", json.dumps(report, sort_keys=True))
         self.assertTrue(report["artifacts"]["product_swarm_mvp_report"]["present"] is False)
         self.assertTrue((output_dir / "infer_summary.json").is_file())
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
@@ -8338,7 +8346,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["runtime_options"]["coordinator_port"], int(calls[0][calls[0].index("--port") + 1]))
         self.assertTrue(persisted["runtime_options"]["coordinator_port_auto"])
         self.assertFalse(persisted["runtime_options"]["coordinator_port_explicit"])
-        self.assertNotIn("CrowdTensor user prompt", json.dumps(persisted, sort_keys=True))
+        self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
+        self.assertNotIn(".private", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(
             "- Local output: `available=False display_only=False public_artifact_safe=True saved_redacted=True` count=`1` source=``",
@@ -8649,12 +8658,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("None/None", markdown)
         self.assertNotIn("hash=`None`", markdown)
 
-    def test_infer_local_batch_forwards_only_prompt_texts_to_product_loopback(self) -> None:
+    def test_infer_local_batch_uses_private_prompt_texts_file_for_product_loopback(self) -> None:
         output_dir = Path(self._tmp_dir())
+        private_prompts = ["first prompt", "second prompt"]
         args = cli.parse_args([
             "infer",
             "--prompt-texts",
-            "first prompt,second prompt",
+            ",".join(private_prompts),
             "--output-dir",
             str(output_dir),
             "--max-new-tokens",
@@ -8667,8 +8677,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             calls.append(command)
             self.assertIn("product_swarm_mvp_check.py", command[1])
             self.assertNotIn("--prompt-text", command)
-            self.assertIn("--prompt-texts", command)
-            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-texts", command)
+            for prompt in private_prompts:
+                self.assertNotIn(prompt, command)
+            self.assertIn("--prompt-texts-file", command)
+            prompt_path = Path(command[command.index("--prompt-texts-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8").splitlines(), private_prompts)
             return completed({
                 "schema": "product_swarm_mvp_check_v1",
                 "ok": True,
@@ -8698,6 +8713,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["batch"]["enabled"])
         self.assertEqual(report["prompt"]["prompt_count"], 2)
+        self.assertFalse((output_dir / ".private").exists())
         self.assertTrue(calls)
 
     def test_infer_local_batch_file_forwards_prompt_texts_file_to_product_loopback(self) -> None:
@@ -8724,7 +8740,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertNotIn("--prompt-text", command)
             self.assertNotIn("--prompt-texts", command)
             self.assertIn("--prompt-texts-file", command)
-            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            self.assertNotIn(str(prompt_file), command)
+            prompt_path = Path(command[command.index("--prompt-texts-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8").splitlines(), prompts)
             return completed({
                 "schema": "product_swarm_mvp_check_v1",
                 "ok": True,
@@ -8756,6 +8775,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         encoded = json.dumps(report, sort_keys=True)
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
+        self.assertNotIn(".private", encoded)
+        self.assertFalse((output_dir / ".private").exists())
         self.assertTrue(calls)
 
     def test_infer_local_prompt_file_forwards_prompt_file_to_product_loopback(self) -> None:
@@ -8782,7 +8803,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertNotIn("--prompt-text", command)
             self.assertNotIn(private_prompt, command)
             self.assertIn("--prompt-file", command)
-            self.assertEqual(command[command.index("--prompt-file") + 1], str(prompt_file))
+            self.assertNotIn(str(prompt_file), command)
+            prompt_path = Path(command[command.index("--prompt-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), private_prompt)
             return completed({
                 "schema": "product_swarm_mvp_check_v1",
                 "ok": True,
@@ -8819,6 +8843,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn(private_prompt, encoded)
+        self.assertNotIn(".private", encoded)
+        self.assertFalse((output_dir / ".private").exists())
         self.assertTrue(calls)
 
     def test_infer_local_prompt_stdin_uses_private_prompt_file_for_product_loopback(self) -> None:
@@ -8892,7 +8918,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         ])
 
         def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-            self.assertEqual(command[command.index("--prompt-text") + 1], prompt)
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn(prompt, command)
+            self.assertIn("--prompt-file", command)
+            prompt_path = Path(command[command.index("--prompt-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), prompt)
             return subprocess.CompletedProcess(
                 args=command,
                 returncode=1,
@@ -8919,6 +8950,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Step: `name=crowdtensor_infer_local_product_loopback ok=False returncode=1 error=command emitted no JSON object`", markdown)
         self.assertNotIn(prompt, markdown)
         self.assertNotIn("runtime echoed", markdown)
+        self.assertFalse((output_dir / ".private").exists())
 
     def test_infer_local_source_serve_start_failure_is_actionable(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -8934,7 +8966,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         ])
 
         def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-            self.assertEqual(command[command.index("--prompt-text") + 1], prompt)
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn(prompt, command)
+            self.assertIn("--prompt-file", command)
+            prompt_path = Path(command[command.index("--prompt-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), prompt)
             return completed({
                 "schema": "product_swarm_mvp_check_v1",
                 "ok": False,
@@ -8970,6 +9007,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("loopback Coordinator", markdown)
         self.assertIn("--coordinator-port", markdown)
         self.assertNotIn(prompt, markdown)
+        self.assertFalse((output_dir / ".private").exists())
 
     def test_infer_full_evidence_uses_public_swarm_v2_local_gate(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -9153,12 +9191,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(child_markdown, markdown)
         self.assertNotIn(prompt, markdown)
 
-    def test_infer_full_evidence_batch_forwards_only_prompt_texts(self) -> None:
+    def test_infer_full_evidence_batch_uses_private_prompt_texts_file(self) -> None:
         output_dir = Path(self._tmp_dir())
+        private_prompts = ["first prompt", "second prompt"]
         args = cli.parse_args([
             "infer",
             "--prompt-texts",
-            "first prompt,second prompt",
+            ",".join(private_prompts),
             "--full-evidence",
             "--output-dir",
             str(output_dir),
@@ -9172,8 +9211,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             calls.append(command)
             self.assertIn("public_swarm_inference_v2_pack.py", command[1])
             self.assertNotIn("--prompt-text", command)
-            self.assertIn("--prompt-texts", command)
-            self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
+            self.assertNotIn("--prompt-texts", command)
+            for prompt in private_prompts:
+                self.assertNotIn(prompt, command)
+            self.assertIn("--prompt-texts-file", command)
+            prompt_path = Path(command[command.index("--prompt-texts-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8").splitlines(), private_prompts)
             return completed({
                 "schema": "public_swarm_inference_v2",
                 "ok": True,
@@ -9205,6 +9249,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["batch"]["enabled"])
         self.assertEqual(report["prompt"]["prompt_count"], 2)
+        self.assertFalse((output_dir / ".private").exists())
         self.assertTrue(calls)
 
     def test_infer_full_evidence_batch_file_forwards_prompt_texts_file(self) -> None:
@@ -9232,7 +9277,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertNotIn("--prompt-text", command)
             self.assertNotIn("--prompt-texts", command)
             self.assertIn("--prompt-texts-file", command)
-            self.assertEqual(command[command.index("--prompt-texts-file") + 1], str(prompt_file))
+            self.assertNotIn(str(prompt_file), command)
+            prompt_path = Path(command[command.index("--prompt-texts-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8").splitlines(), prompts)
             return completed({
                 "schema": "public_swarm_inference_v2",
                 "ok": True,
@@ -9266,6 +9314,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["prompt"]["prompt_count"], 2)
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
+        self.assertNotIn(".private", encoded)
+        self.assertFalse((output_dir / ".private").exists())
         self.assertTrue(calls)
 
     def test_infer_full_evidence_prompt_file_forwards_prompt_file(self) -> None:
@@ -9293,7 +9343,10 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertNotIn("--prompt-text", command)
             self.assertNotIn(private_prompt, command)
             self.assertIn("--prompt-file", command)
-            self.assertEqual(command[command.index("--prompt-file") + 1], str(prompt_file))
+            self.assertNotIn(str(prompt_file), command)
+            prompt_path = Path(command[command.index("--prompt-file") + 1])
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), private_prompt)
             return completed({
                 "schema": "public_swarm_inference_v2",
                 "ok": True,
@@ -9329,6 +9382,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
         self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
         self.assertNotIn(private_prompt, encoded)
+        self.assertNotIn(".private", encoded)
+        self.assertFalse((output_dir / ".private").exists())
         self.assertTrue(calls)
 
     def test_infer_full_evidence_prompt_stdin_uses_private_prompt_file(self) -> None:
