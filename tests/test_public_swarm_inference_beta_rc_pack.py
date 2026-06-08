@@ -29,11 +29,23 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["schema"], "public_swarm_inference_beta_rc_check_v1")
         report = json.loads((output_dir / "rc" / "public_swarm_inference_beta_rc.json").read_text(encoding="utf-8"))
+        encoded = json.dumps(report, sort_keys=True)
         self.assertFalse(report["output_request"]["include_output"])
         self.assertFalse(report["output_request"]["raw_prompt_public"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -51,11 +63,19 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "rc" / "public_swarm_inference_beta_rc.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn(
+            "- prompt scope: `source=prompt-texts count=2 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
+        self.assertNotIn("private beta rc check one", encoded)
+        self.assertNotIn("private beta rc check two", encoded)
+        self.assertNotIn("private beta rc check one", markdown)
+        self.assertNotIn("private beta rc check two", markdown)
 
     def test_check_builds_ready_kaggle_package_rc_with_fake_runner(self) -> None:
         result = check.run_check(check.parse_args([
@@ -110,6 +130,8 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("public_swarm_inference_beta_rc_blocked", report["diagnosis_codes"])
         self.assertIn("generation_timeout", report["diagnosis_codes"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
 
     def test_common_report_rejects_batch_stream_ready_codes_without_per_request_stream_evidence(self) -> None:
         output_dir = self._tmp_dir()
@@ -196,6 +218,8 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
         self.assertFalse(report["rc"]["mode_ready"])
         self.assertTrue(report["rc"]["batch"]["batch_generation_ready"])
         self.assertFalse(report["rc"]["stream"]["stream_generation_ready"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
         self.assertIn("public_swarm_generate_batch_ready", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_generate_stream_ready", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_generate_stream_endpoint_ready", report["diagnosis_codes"])
@@ -635,6 +659,42 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
         broken = dict(report)
         broken["output_request"] = {**report["output_request"], "include_output": True}
         self.assertIn("output_request_include_output_mismatch", check.output_scope_errors(broken))
+        broken_prompt = dict(report)
+        broken_prompt["prompt_scope"] = {**report["prompt_scope"], "raw_prompt_public": True}
+        self.assertIn("prompt_scope_raw_prompt_public_mismatch", check.output_scope_errors(broken_prompt))
+
+    def test_existing_generate_redacts_prompt_texts_from_failed_output(self) -> None:
+        output_dir = self._tmp_dir()
+        args = pack.parse_args([
+            "external-existing",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "http://127.0.0.1:9999",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--prompt-texts",
+            "private rc fail one,private rc fail two",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=1,
+                stdout="stdout private rc fail one\n",
+                stderr="stderr private rc fail two\n",
+            )
+
+        step, payload = pack.run_existing_generate(args, output_dir=output_dir, runner=fake_runner)
+        encoded = json.dumps(step, sort_keys=True)
+
+        self.assertFalse(step["ok"])
+        self.assertEqual(payload, {})
+        self.assertIn("<redacted>", encoded)
+        self.assertNotIn("private rc fail one", encoded)
+        self.assertNotIn("private rc fail two", encoded)
 
 
 if __name__ == "__main__":

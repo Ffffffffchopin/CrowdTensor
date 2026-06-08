@@ -158,6 +158,34 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    prompts = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+    source = "prompt-texts" if args.prompt_texts else "prompt-text"
+    inline_prompt_text = source in {"prompt-text", "prompt-texts"}
+    return {
+        "source": source,
+        "prompt_count": len(prompts),
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Beta RC report records prompt source/count and placeholder "
+            "safety only; raw prompt text is excluded from public JSON, "
+            "Markdown, and support artifacts."
+        ),
+    }
+
+
+def prompt_secret_values(args: argparse.Namespace) -> list[str]:
+    return parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -693,6 +721,7 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
     secret_values = [
         args.admin_token or DEFAULT_ADMIN_TOKEN,
         args.observer_token or DEFAULT_OBSERVER_TOKEN,
+        *prompt_secret_values(args),
     ]
     admin_token = secret_values[0]
     observer_token = secret_values[1]
@@ -985,7 +1014,7 @@ def run_existing_generate(args: argparse.Namespace, *, output_dir: Path, runner:
         generate_existing_command(args, output_dir),
         runner=runner,
         timeout_seconds=float(args.remote_timeout_seconds) + 60.0,
-        secret_values=[args.admin_token],
+        secret_values=[args.admin_token, *prompt_secret_values(args)],
     )
 
 
@@ -1113,6 +1142,7 @@ def build_common_report(
             **(mode_payloads or {}),
         },
         "diagnosis_codes": sorted(codes),
+        "prompt_scope": prompt_scope_summary(args),
         "artifacts": {
             "public_swarm_product_beta_json": artifact_entry(
                 output_dir / "product-beta" / "public_swarm_inference_beta.json",
@@ -1154,12 +1184,17 @@ def build_common_report(
             "The default proof uses tiny GPT / CPU fallback paths and safe evidence summaries; not Hivemind-level serving or large-model public prompt serving.",
         ],
     }
-    return persist_report(report, output_dir=output_dir, secret_values=[args.admin_token, args.observer_token])
+    return persist_report(
+        report,
+        output_dir=output_dir,
+        secret_values=[args.admin_token, args.observer_token, *prompt_secret_values(args)],
+    )
 
 
 def render_markdown(report: dict[str, Any]) -> str:
     rc = report.get("rc") if isinstance(report.get("rc"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -1175,6 +1210,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `source={prompt_scope.get('source')} count={prompt_scope.get('prompt_count')} inline_prompt_text={prompt_scope.get('inline_prompt_text')} terminal_next_commands_local_private={prompt_scope.get('terminal_next_commands_local_private')} saved_artifacts_prompt_placeholders={prompt_scope.get('saved_artifacts_prompt_placeholders')} prompt_file_path_public={prompt_scope.get('prompt_file_path_public')} raw_prompt_public={prompt_scope.get('raw_prompt_public')} public_artifact_safe={prompt_scope.get('public_artifact_safe')}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -1197,6 +1233,19 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: list[str] | None = None) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", {
+        "source": "prompt-text",
+        "prompt_count": 1,
+        "inline_prompt_text": True,
+        "terminal_next_commands_local_private": True,
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+    })
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report, secret_values))
