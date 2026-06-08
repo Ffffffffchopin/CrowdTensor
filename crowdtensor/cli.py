@@ -741,6 +741,13 @@ def markdown_next_step_section(summary: dict[str, Any]) -> list[str]:
     return lines
 
 
+def markdown_top_inspect_first_line(review_summary: dict[str, Any], artifact_summary: dict[str, Any]) -> list[str]:
+    inspect_first = str(review_summary.get("inspect_first") or artifact_summary.get("inspect_first") or "")
+    if not inspect_first:
+        return []
+    return [f"- Inspect first: `{inspect_first}`"]
+
+
 def _pick_next_command(
     next_commands: list[dict[str, Any]],
     predicate: Callable[[dict[str, Any]], bool],
@@ -6325,6 +6332,9 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         "",
         f"- Review: `{review_summary_text(review_summary)}`",
         f"- Review next: `{review_next_command_text(review_summary)}`",
+    ]
+    lines.extend(markdown_top_inspect_first_line(review_summary, artifact_summary))
+    lines.extend([
         f"- Status: `{infer_user_status_text(user_status)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- OK: `{bool(summary.get('ok'))}`",
@@ -6340,7 +6350,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Route: source=`{route.get('route_source')}` ready=`{route.get('route_ready')}`",
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{count_pair_text(batch.get('observed_request_count'), batch.get('request_count'))}` ready=`{batch.get('ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
-    ]
+    ])
     lines.extend(markdown_next_step_section(summary))
     lines.extend([
         "",
@@ -9592,6 +9602,9 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         "",
         f"- Review: `{review_summary_text(review_summary)}`",
         f"- Review next: `{review_next_command_text(review_summary)}`",
+    ]
+    lines.extend(markdown_top_inspect_first_line(review_summary, artifact_summary))
+    lines.extend([
         f"- Status: `{infer_user_status_text(user_status)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- OK: `{bool(summary.get('ok'))}`",
@@ -9605,7 +9618,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Route: source=`{route.get('route_source')}` ready=`{bool(route.get('usable_now') or route.get('coordinator_url_present'))}`",
         f"- Batch: enabled=`{bool(batch.get('enabled'))}` requests=`{count_pair_text(batch.get('observed_request_count'), batch.get('request_count'))}` ready=`{batch.get('batch_generation_ready')}`",
         f"- Stream: enabled=`{bool(stream.get('enabled'))}` ready=`{bool(stream.get('stream_generation_ready'))}` events=`{stream.get('event_count')}` source=`{stream.get('source')}`",
-    ]
+    ])
     lines.extend(markdown_next_step_section(summary))
     lines.extend([
         "",
