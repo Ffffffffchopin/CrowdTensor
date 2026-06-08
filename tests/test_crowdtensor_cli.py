@@ -11940,6 +11940,72 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
 
+    def test_print_infer_prompt_scope_note_marks_inline_prompt_terminal_private(self) -> None:
+        report = {
+            "ok": True,
+            "mode": "local",
+            "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+            "review_summary": {
+                "state": "completed",
+                "next_step": "rerun_or_review_artifacts",
+                "recommended_label": "rerun local inference",
+                "recommended_reason": "rerun_inference",
+                "next_command": "crowdtensor infer '<prompt>' --mode local",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": cli.command_entry(
+                "rerun local inference",
+                ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "local"],
+            ),
+            "local_prompt_text": "private prompt",
+            "prompt_scope": cli._prompt_scope(source="prompt-text", prompt_count=1),
+            "diagnosis_codes": ["crowdtensor_infer_ready"],
+            "stream": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+
+        rendered = stdout.getvalue()
+        self.assertIn("  prompt_scope: terminal_next_commands=local-private", rendered)
+        self.assertIn(
+            "  prompt_scope_note: Treat this terminal log as local-private because rerun commands may include inline prompt text. "
+            "Saved JSON/Markdown keep prompt placeholders and omit raw prompt text.",
+            rendered,
+        )
+        self.assertIn("  review_next: label=rerun local inference", rendered)
+        self.assertLess(rendered.index("  prompt_scope_note: "), rendered.index("  review_next: "))
+
+    def test_print_infer_shareable_terminal_suppresses_prompt_scope_note(self) -> None:
+        report = {
+            "ok": True,
+            "mode": "local",
+            "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+            "review_summary": {
+                "state": "completed",
+                "next_step": "rerun_or_review_artifacts",
+                "recommended_label": "rerun local inference",
+                "recommended_reason": "rerun_inference",
+                "next_command": "crowdtensor infer '<prompt>' --mode local",
+                "public_artifact_safe": True,
+            },
+            "local_prompt_text": "private prompt",
+            "prompt_scope": cli._prompt_scope(source="prompt-text", prompt_count=1),
+            "shareable_terminal": {"enabled": True},
+            "diagnosis_codes": ["crowdtensor_infer_ready"],
+            "stream": {},
+        }
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+
+        rendered = stdout.getvalue()
+        self.assertNotIn("  prompt_scope: ", rendered)
+        self.assertNotIn("  prompt_scope_note: ", rendered)
+        self.assertIn("  shareable_terminal: enabled=True", rendered)
+
     def test_infer_trace_keeps_generation_hash_source_when_local_output_lacks_hash(self) -> None:
         trace = cli._infer_request_trace_from_payload(
             {},

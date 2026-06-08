@@ -540,6 +540,38 @@ def terminal_prompt_scope_text(report: dict[str, Any]) -> str:
     )
 
 
+def terminal_prompt_scope_note(report: dict[str, Any]) -> str:
+    scope_text = terminal_prompt_scope_text(report)
+    if not scope_text:
+        return ""
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    source = str(prompt_scope.get("source") or "")
+    if not source:
+        if report.get("local_prompt_texts_file"):
+            source = "prompt-texts-file"
+        elif report.get("local_prompt_file"):
+            source = "prompt-file"
+        elif report.get("local_prompt_stdin"):
+            source = "prompt-stdin"
+        elif report.get("local_prompt_texts"):
+            source = "prompt-texts"
+        else:
+            source = "prompt-text"
+    inline_prompt_text = bool(prompt_scope.get("inline_prompt_text", source in INLINE_PROMPT_SCOPE_SOURCES))
+    local_path_source = bool(prompt_scope.get("terminal_local_paths", source in {"prompt-file", "prompt-texts-file"}))
+    if inline_prompt_text:
+        return (
+            "Treat this terminal log as local-private because rerun commands may include inline prompt text. "
+            "Saved JSON/Markdown keep prompt placeholders and omit raw prompt text."
+        )
+    if local_path_source:
+        return (
+            "Treat this terminal log as local-private because rerun commands may include local prompt file paths. "
+            "Saved JSON/Markdown keep prompt placeholders and omit raw prompt text."
+        )
+    return "Terminal prompt source is shareable; saved JSON/Markdown keep prompt placeholders and omit raw prompt text."
+
+
 def p2p_discovery_daemon_command(
     *,
     backend: str = "lite",
@@ -11577,6 +11609,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
         prompt_scope = terminal_prompt_scope_text(report)
         if prompt_scope:
             print(f"  prompt_scope: {prompt_scope}")
+            print(f"  prompt_scope_note: {terminal_prompt_scope_note(report)}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
         if review_summary.get("inspect_first"):
             print(f"  inspect_first: {review_summary.get('inspect_first')}")
@@ -11894,6 +11927,7 @@ def print_infer(report: dict[str, Any]) -> None:
         prompt_scope = terminal_prompt_scope_text(report)
         if prompt_scope:
             print(f"  prompt_scope: {prompt_scope}")
+            print(f"  prompt_scope_note: {terminal_prompt_scope_note(report)}")
         print(f"  review_next: {review_next_command_text(review_summary)}")
         if review_summary.get("inspect_first"):
             print(f"  inspect_first: {review_summary.get('inspect_first')}")
