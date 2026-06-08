@@ -1509,6 +1509,63 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn("stream_events: None", rendered)
 
+    def test_generate_shareable_terminal_persists_artifact_scope_for_prompt_file(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_dir = Path(self._tmp_dir())
+        prompt_file = prompt_dir / "private_prompt.txt"
+        prompt_file.write_text("CrowdTensor private file prompt", encoding="utf-8")
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            cli.main([
+                "generate",
+                "--prompt-file",
+                str(prompt_file),
+                "--shareable-terminal",
+                "--coordinator-url",
+                "http://127.0.0.1:8787",
+                "--dry-run",
+                "--skip-live-preflight",
+                "--output-dir",
+                str(output_dir),
+            ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertNotIn(str(prompt_file), rendered)
+        self.assertNotIn(str(prompt_file), progress)
+        self.assertNotIn("prompt_scope:", rendered)
+        self.assertIn("--prompt-file prompt.txt", rendered)
+        self.assertIn(
+            "  shareable_terminal: enabled=True prompt_sources_redacted=True answer_text_redacted=False public_artifact_safe=True",
+            rendered,
+        )
+        persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted["shareable_terminal"],
+            {
+                "enabled": True,
+                "prompt_sources_redacted": True,
+                "answer_text_redacted": False,
+                "public_artifact_safe": True,
+            },
+        )
+        self.assertEqual(persisted["prompt_scope"]["source"], "prompt-file")
+        self.assertTrue(persisted["prompt_scope"]["terminal_local_paths"])
+        self.assertNotIn(str(prompt_file), json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Shareable terminal: `enabled=True prompt_sources_redacted=True answer_text_redacted=False public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn(
+            "- Prompt scope: `source=prompt-file count=1 inline_prompt_text=False terminal_next_commands_local_private=True terminal_local_paths=True",
+            markdown,
+        )
+        self.assertNotIn(str(prompt_file), markdown)
+
     def test_generate_main_prints_copyable_local_prompt_without_persisting_it(self) -> None:
         prompt = "CrowdTensor prompt"
 
@@ -12452,6 +12509,63 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertNotIn("CrowdTensor user prompt", markdown)
+
+    def test_infer_shareable_terminal_persists_artifact_scope_for_prompt_file(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_dir = Path(self._tmp_dir())
+        prompt_file = prompt_dir / "private_infer_prompt.txt"
+        prompt_file.write_text("CrowdTensor private infer file prompt", encoding="utf-8")
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            cli.main([
+                "infer",
+                "--mode",
+                "existing",
+                "--prompt-file",
+                str(prompt_file),
+                "--shareable-terminal",
+                "--coordinator-url",
+                "http://127.0.0.1:8787",
+                "--dry-run",
+                "--skip-live-preflight",
+                "--output-dir",
+                str(output_dir),
+            ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertNotIn(str(prompt_file), rendered)
+        self.assertNotIn(str(prompt_file), progress)
+        self.assertNotIn("prompt_scope:", rendered)
+        self.assertIn("--prompt-file prompt.txt", rendered)
+        self.assertIn(
+            "  shareable_terminal: enabled=True prompt_sources_redacted=True answer_text_redacted=False public_artifact_safe=True",
+            rendered,
+        )
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        source_persisted = json.loads((output_dir / "generate" / "generate_summary.json").read_text(encoding="utf-8"))
+        expected_shareable_terminal = {
+            "enabled": True,
+            "prompt_sources_redacted": True,
+            "answer_text_redacted": False,
+            "public_artifact_safe": True,
+        }
+        self.assertEqual(persisted["shareable_terminal"], expected_shareable_terminal)
+        self.assertEqual(source_persisted["shareable_terminal"], expected_shareable_terminal)
+        self.assertEqual(persisted["prompt_scope"]["source"], "prompt-file")
+        self.assertTrue(persisted["prompt_scope"]["terminal_local_paths"])
+        self.assertNotIn(str(prompt_file), json.dumps(persisted, sort_keys=True))
+        self.assertNotIn(str(prompt_file), json.dumps(source_persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        source_markdown = (output_dir / "generate" / "generate_summary.md").read_text(encoding="utf-8")
+        shareable_line = "- Shareable terminal: `enabled=True prompt_sources_redacted=True answer_text_redacted=False public_artifact_safe=True`"
+        self.assertIn(shareable_line, markdown)
+        self.assertIn(shareable_line, source_markdown)
+        self.assertNotIn(str(prompt_file), markdown)
+        self.assertNotIn(str(prompt_file), source_markdown)
 
     def test_infer_existing_dry_run_can_skip_live_preflight_for_ci(self) -> None:
         output_dir = Path(self._tmp_dir())

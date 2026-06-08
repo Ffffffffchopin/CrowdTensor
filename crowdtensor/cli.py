@@ -1811,6 +1811,32 @@ def shareable_terminal_text(summary: dict[str, Any]) -> str:
     )
 
 
+def _local_output_has_terminal_text(local_output: dict[str, Any]) -> bool:
+    return bool(
+        local_output.get("generated_text")
+        or any(
+            isinstance(output, dict) and output.get("generated_text")
+            for output in (local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else [])
+        )
+    )
+
+
+def _shareable_terminal_summary_from_report(
+    report: dict[str, Any],
+    *,
+    answer_text_redacted: bool | None = None,
+) -> dict[str, Any]:
+    local_output = report.get("local_output") if isinstance(report.get("local_output"), dict) else {}
+    if answer_text_redacted is None:
+        answer_text_redacted = _local_output_has_terminal_text(local_output)
+    return {
+        "enabled": True,
+        "prompt_sources_redacted": True,
+        "answer_text_redacted": bool(answer_text_redacted),
+        "public_artifact_safe": True,
+    }
+
+
 def batch_status_text(batch: dict[str, Any]) -> str:
     return (
         f"requests={batch.get('request_count') or batch.get('expected_request_count')} "
@@ -6053,13 +6079,7 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     if not local_output:
         return summary
-    had_terminal_text = bool(
-        local_output.get("generated_text")
-        or any(
-            isinstance(output, dict) and output.get("generated_text")
-            for output in (local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else [])
-        )
-    )
+    had_terminal_text = _local_output_has_terminal_text(local_output)
     local_output["available"] = False
     local_output["generated_text"] = ""
     local_output["display_only"] = False
@@ -6205,12 +6225,10 @@ def _strip_shareable_terminal_private_text(report: dict[str, Any]) -> dict[str, 
         if had_terminal_text:
             shareable_summary["answer_scope_state"] = "shareable-terminal-redacted"
         terminal_report["shareable_summary"] = shareable_summary
-    terminal_report["shareable_terminal"] = {
-        "enabled": True,
-        "prompt_sources_redacted": True,
-        "answer_text_redacted": bool(had_terminal_text),
-        "public_artifact_safe": True,
-    }
+    terminal_report["shareable_terminal"] = _shareable_terminal_summary_from_report(
+        terminal_report,
+        answer_text_redacted=had_terminal_text,
+    )
     return terminal_report
 
 
@@ -6821,6 +6839,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
+    shareable_terminal = summary.get("shareable_terminal") if isinstance(summary.get("shareable_terminal"), dict) else {}
     artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
@@ -6912,6 +6931,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             lines.append(f"- Answer scope note: {answer_scope.get('summary')}")
     if prompt_scope:
         lines.append(f"- Prompt scope: `{prompt_scope_text(prompt_scope)}`")
+    if shareable_terminal:
+        lines.append(f"- Shareable terminal: `{shareable_terminal_text(shareable_terminal)}`")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if stream.get("issue_summary"):
@@ -7355,6 +7376,8 @@ def _infer_summary_from_payload(
     summary["output_display"] = _output_display_from_report(summary)
     summary["answer_scope"] = _answer_scope_from_report(summary)
     summary["shareable_summary"] = _shareable_summary_from_report(summary, kind="infer")
+    if bool(getattr(args, "shareable_terminal", False)):
+        summary["shareable_terminal"] = _shareable_terminal_summary_from_report(summary)
     summary["issue_summary"] = _issue_summary_from_report(summary, kind="infer")
     artifacts = {
         "infer_summary": {
@@ -7467,6 +7490,7 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             include_output=args.include_output,
             stream=args.stream,
             json=args.json,
+            shareable_terminal=bool(getattr(args, "shareable_terminal", False)),
         )
         payload = build_product_generate(generate_args)
         if args.dry_run and _infer_existing_should_attach_preflight(payload, args):
@@ -10150,6 +10174,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
+    shareable_terminal = summary.get("shareable_terminal") if isinstance(summary.get("shareable_terminal"), dict) else {}
     artifact_summary = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
     route = summary.get("route") if isinstance(summary.get("route"), dict) else {}
     batch = summary.get("batch") if isinstance(summary.get("batch"), dict) else {}
@@ -10229,6 +10254,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             lines.append(f"- Answer scope note: {answer_scope.get('summary')}")
     if prompt_scope:
         lines.append(f"- Prompt scope: `{prompt_scope_text(prompt_scope)}`")
+    if shareable_terminal:
+        lines.append(f"- Shareable terminal: `{shareable_terminal_text(shareable_terminal)}`")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if recommended:
@@ -10588,6 +10615,7 @@ def _finalize_product_generate_report(
     *,
     admin_token: str = "",
     output_dir: Path | None = None,
+    shareable_terminal: bool = False,
 ) -> dict[str, Any]:
     report.setdefault("operator_action", _product_generate_operator_action(report))
     report.setdefault("next_commands", _product_generate_next_commands(report))
@@ -10610,6 +10638,8 @@ def _finalize_product_generate_report(
     report.setdefault("answer_scope", _answer_scope_from_report(report))
     report.setdefault("prompt_scope", prompt_scope_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
+    if shareable_terminal:
+        report.setdefault("shareable_terminal", _shareable_terminal_summary_from_report(report))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
     report["safety"] = _product_generate_safety_summary(report)
     if output_dir is not None:
@@ -11093,7 +11123,11 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             route=route,
             effective_coordinator_url=effective_coordinator_url,
         )
-        return _finalize_product_generate_report(report, output_dir=output_dir)
+        return _finalize_product_generate_report(
+            report,
+            output_dir=output_dir,
+            shareable_terminal=bool(getattr(args, "shareable_terminal", False)),
+        )
     if args.p2p and not route.get("usable_now"):
         return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -11126,7 +11160,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
                 if discovery_error
                 else ["generate_route_unavailable"]
             ),
-        }, output_dir=output_dir)
+        }, output_dir=output_dir, shareable_terminal=bool(getattr(args, "shareable_terminal", False)))
     if not effective_coordinator_url:
         return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -11145,7 +11179,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_request": output_request,
             "runtime_options": runtime_options,
             "diagnosis_codes": ["coordinator_route_missing"],
-        }, output_dir=output_dir)
+        }, output_dir=output_dir, shareable_terminal=bool(getattr(args, "shareable_terminal", False)))
     if not args.admin_token:
         return _finalize_product_generate_report({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
@@ -11164,7 +11198,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "output_request": output_request,
             "runtime_options": runtime_options,
             "diagnosis_codes": ["admin_token_required"],
-        }, output_dir=output_dir)
+        }, output_dir=output_dir, shareable_terminal=bool(getattr(args, "shareable_terminal", False)))
     private_payload = coordinator_payload_for_request(session_request, prompt_text=prompt_text, prompt_texts=prompt_texts)
     private_redactions = unique_redaction_values([args.admin_token, prompt_text, *prompt_texts])
     session_create_timeout = max(float(args.http_timeout), min(float(args.timeout_seconds), 30.0))
@@ -11212,7 +11246,7 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
             "diagnosis_codes": diagnosis,
             "error": type(exc).__name__,
             "detail": detail,
-        }, admin_token=args.admin_token, output_dir=output_dir)
+        }, admin_token=args.admin_token, output_dir=output_dir, shareable_terminal=bool(getattr(args, "shareable_terminal", False)))
     result_row: dict[str, Any] | None = None
     stream_events: list[dict[str, Any]] = []
     stream_seen_keys: set[tuple[str, int]] = set()
@@ -11467,7 +11501,12 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
         )
     elif args.include_output:
         report["local_output_note"] = "Raw generated text is suppressed in JSON/public output; rerun without --json for local display."
-    return _finalize_product_generate_report(report, admin_token=args.admin_token, output_dir=output_dir)
+    return _finalize_product_generate_report(
+        report,
+        admin_token=args.admin_token,
+        output_dir=output_dir,
+        shareable_terminal=bool(getattr(args, "shareable_terminal", False)),
+    )
 
 
 def print_product_generate(report: dict[str, Any]) -> None:
