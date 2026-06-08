@@ -609,6 +609,31 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.next_reason_detail("rerun_inference"),
             "Rerun the inference request.",
         )
+        self.assertEqual(
+            cli.next_reason_detail("verify_fresh_kaggle_gpu"),
+            "Run the explicit Kaggle GPU proof only when you are ready for side-effectful external execution.",
+        )
+        missing_gpu = cli.gpu_proof_next_step_summary({
+            "schema": "crowdtensor_gpu_status_v1",
+            "state": "local-cpu-only",
+            "fresh_kaggle_gpu_verified": False,
+        })
+        self.assertEqual(missing_gpu["state"], "fresh-kaggle-gpu-not-verified")
+        self.assertTrue(missing_gpu["requires_kaggle"])
+        self.assertTrue(missing_gpu["side_effectful"])
+        self.assertTrue(missing_gpu["cleanup_required"])
+        self.assertTrue(missing_gpu["token_rotation_required"])
+        self.assertTrue(any("public-swarm-gpu-beta kaggle-auto" in item["command_line"] for item in missing_gpu["commands"]))
+        self.assertIn("side_effectful=True", cli.gpu_proof_next_step_text(missing_gpu))
+        verified_gpu = cli.gpu_proof_next_step_summary({
+            "schema": "crowdtensor_gpu_status_v1",
+            "state": "fresh-kaggle-gpu-verified",
+            "fresh_kaggle_gpu_verified": True,
+        })
+        self.assertEqual(verified_gpu["state"], "fresh-kaggle-gpu-verified")
+        self.assertFalse(verified_gpu["requires_kaggle"])
+        self.assertFalse(verified_gpu["side_effectful"])
+        self.assertEqual(verified_gpu["commands"], [])
         self.assertEqual(cli.route_catalog_missing_text({"route_source": "coordinator-url"}), "not_used")
         self.assertEqual(
             cli.route_catalog_missing_text({
@@ -1063,6 +1088,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Read `evidence_scope`", operations)
         self.assertIn("`evidence_scope_note`", operations)
         self.assertIn("read `gpu_status` for the direct CPU/GPU verdict", operations)
+        self.assertIn("`gpu_proof_next_step`", operations)
         self.assertIn("plain-language explanation", operations)
         self.assertIn("checked_runtime_provenance", operations)
         self.assertIn("checked_evidence_scope", operations)
@@ -1076,6 +1102,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("fresh_kaggle_gpu_verified: true", memory)
         self.assertIn("terminal/Markdown `evidence_scope_note`", memory)
         self.assertIn("`gpu_status` as the direct verdict", memory)
+        self.assertIn("`gpu_proof_next_step`", memory)
         self.assertIn("`checked_gpu_status`", memory)
         self.assertIn("default quick-start `infer` path is local CPU / local loopback", memory)
         self.assertIn("official user-facing validation entry", readme)
@@ -1373,6 +1400,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_verified"])
         self.assertTrue(report["gpu_status"]["public_artifact_safe"])
+        self.assertEqual(report["gpu_proof_next_step"]["schema"], "crowdtensor_gpu_proof_next_step_v1")
+        self.assertEqual(report["gpu_proof_next_step"]["state"], "fresh-kaggle-gpu-not-verified")
+        self.assertEqual(report["gpu_proof_next_step"]["recommended_reason"], "verify_fresh_kaggle_gpu")
+        self.assertTrue(report["gpu_proof_next_step"]["requires_kaggle"])
+        self.assertTrue(report["gpu_proof_next_step"]["side_effectful"])
+        self.assertTrue(report["gpu_proof_next_step"]["cleanup_required"])
+        self.assertTrue(report["gpu_proof_next_step"]["token_rotation_required"])
+        gpu_commands = report["gpu_proof_next_step"]["commands"]
+        self.assertTrue(any(item["label"] == "run fresh Kaggle GPU proof" for item in gpu_commands))
+        self.assertTrue(any("public-swarm-gpu-beta kaggle-auto" in item["command_line"] for item in gpu_commands))
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
         self.assertEqual(report["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
         self.assertTrue(report["artifacts"]["generate_summary"]["present"])
@@ -1477,6 +1514,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
         self.assertEqual(persisted["gpu_status"], report["gpu_status"])
+        self.assertEqual(persisted["gpu_proof_next_step"], report["gpu_proof_next_step"])
         self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
         self.assertEqual(persisted["user_status"]["next_step"], "run_live_preflight")
         self.assertEqual(persisted["trace"]["request_count"], 1)
@@ -1517,6 +1555,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("- GPU status: `state=no-gpu-evidence", markdown)
         self.assertIn("note=no GPU execution evidence is claimed by this report`", markdown)
+        self.assertIn("- GPU proof next: `state=fresh-kaggle-gpu-not-verified", markdown)
+        self.assertIn("command=crowdtensor public-swarm-gpu-beta kaggle-auto", markdown)
+        self.assertIn("- GPU proof command: `run fresh Kaggle GPU proof`", markdown)
+        self.assertIn("side_effectful=`True` requires_kaggle=`True` cleanup_required=`True`", markdown)
         self.assertIn("- Evidence scope note: This was a preflight; no generation task was submitted.", markdown)
         self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
         self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
@@ -1633,6 +1675,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertIn("  gpu_status: state=no-gpu-evidence", rendered)
+        self.assertIn("  gpu_proof_next: state=fresh-kaggle-gpu-not-verified", rendered)
+        self.assertIn("command=crowdtensor public-swarm-gpu-beta kaggle-auto", rendered)
         self.assertIn("note=no GPU execution evidence is claimed by this report", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
         self.assertIn(f"  inspect_first: {output_dir / 'generate_summary.md'}", rendered)
@@ -9271,6 +9315,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(report["gpu_status"]["fresh_kaggle_gpu_verified"])
         self.assertTrue(report["gpu_status"]["public_artifact_safe"])
+        self.assertEqual(report["gpu_proof_next_step"]["schema"], "crowdtensor_gpu_proof_next_step_v1")
+        self.assertEqual(report["gpu_proof_next_step"]["state"], "fresh-kaggle-gpu-not-verified")
+        self.assertEqual(report["gpu_proof_next_step"]["recommended_reason"], "verify_fresh_kaggle_gpu")
+        self.assertTrue(report["gpu_proof_next_step"]["requires_kaggle"])
+        self.assertTrue(report["gpu_proof_next_step"]["side_effectful"])
+        self.assertTrue(report["gpu_proof_next_step"]["cleanup_required"])
+        self.assertTrue(report["gpu_proof_next_step"]["token_rotation_required"])
+        gpu_commands = report["gpu_proof_next_step"]["commands"]
+        self.assertTrue(any(item["label"] == "run fresh Kaggle GPU proof" for item in gpu_commands))
+        self.assertTrue(any("public-swarm-gpu-beta kaggle-auto" in item["command_line"] for item in gpu_commands))
         self.assertIn("crowdtensor_infer_ready", report["diagnosis_codes"])
         self.assertFalse((output_dir / ".private").exists())
         next_lines = [item["command_line"] for item in report["next_commands"]]
@@ -9318,6 +9372,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
         self.assertEqual(persisted["gpu_status"], report["gpu_status"])
+        self.assertEqual(persisted["gpu_proof_next_step"], report["gpu_proof_next_step"])
         self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
         self.assertNotIn(".private", json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
@@ -9339,6 +9394,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Evidence scope: `level=local-cpu-loopback executed=local-cpu source=product_swarm_mvp_check_v1", markdown)
         self.assertIn("fresh_kaggle_gpu_attempted=False retained_gpu=False fresh_kaggle_gpu=False", markdown)
         self.assertIn("- GPU status: `state=local-cpu-only", markdown)
+        self.assertIn("- GPU proof next: `state=fresh-kaggle-gpu-not-verified", markdown)
+        self.assertIn("command=crowdtensor public-swarm-gpu-beta kaggle-auto", markdown)
+        self.assertIn("- GPU proof command: `run fresh Kaggle GPU proof`", markdown)
         self.assertIn("fresh_kaggle_gpu=False user_expectation=This infer run executed the fast local CPU loopback proof.`", markdown)
         self.assertIn("- Answer scope: `state=json-suppressed ", markdown)
         self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
@@ -9359,6 +9417,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("fresh_kaggle_gpu_attempted=False retained_gpu=False fresh_kaggle_gpu=False", rendered)
         self.assertIn("  evidence_scope_note: This infer run executed the fast local CPU loopback proof.", rendered)
         self.assertIn("  gpu_status: state=local-cpu-only", rendered)
+        self.assertIn("  gpu_proof_next: state=fresh-kaggle-gpu-not-verified", rendered)
+        self.assertIn("command=crowdtensor public-swarm-gpu-beta kaggle-auto", rendered)
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertIn("recommended_next: optional broader local evidence reason=collect_broader_evidence", rendered)
         self.assertIn("next[1] rerun local inference", rendered)

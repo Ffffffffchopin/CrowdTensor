@@ -147,6 +147,10 @@ question: `local-cpu-only` means local CPU inference, `local-gpu-smoke-only`
 means only local/CI GPU smoke evidence, `retained-gpu-evidence` means imported
 historical GPU evidence, and only `fresh-kaggle-gpu-verified` means a fresh
 Kaggle GPU proof was verified.
+`gpu_proof_next_step` in the saved JSON/Markdown gives the explicit next
+commands for optional CUDA smoke, Kaggle GPU packaging, and the side-effectful
+fresh Kaggle GPU proof; it marks Kaggle commands as requiring explicit user
+action, cleanup, and token rotation.
 The current default quick-start inference path is local CPU / local loopback,
 not a fresh Kaggle GPU run.
 

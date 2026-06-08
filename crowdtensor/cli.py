@@ -998,6 +998,7 @@ NEXT_REASON_DETAILS = {
     "rerun_inference": "Rerun the inference request.",
     "rerun_generation": "Rerun the generation request.",
     "review_source_evidence": "Open the source evidence Markdown before sharing or rerunning.",
+    "verify_fresh_kaggle_gpu": "Run the explicit Kaggle GPU proof only when you are ready for side-effectful external execution.",
     "next_available_command": "Use the first available safe next command.",
 }
 
@@ -1622,6 +1623,144 @@ def gpu_status_text(provenance: dict[str, Any], scope: dict[str, Any] | None = N
         f"fresh_kaggle_gpu_attempted={bool(status.get('fresh_kaggle_gpu_attempted'))} "
         f"fresh_kaggle_gpu_verified={bool(status.get('fresh_kaggle_gpu_verified'))} "
         f"note={status.get('note') or ''}"
+    )
+
+
+def gpu_proof_next_step_summary(gpu_status: dict[str, Any]) -> dict[str, Any]:
+    status = gpu_status if isinstance(gpu_status, dict) else {}
+    state = str(status.get("state") or "no-gpu-evidence")
+    verified = bool(status.get("fresh_kaggle_gpu_verified"))
+    note = (
+        "Fresh Kaggle GPU proof is already verified in this report."
+        if verified
+        else "This report does not prove a fresh Kaggle GPU run; use the explicit GPU proof commands when you need that evidence."
+    )
+    commands = [
+        {
+            **command_entry(
+                "run local GPU smoke",
+                [
+                    "crowdtensor",
+                    "public-swarm-gpu-beta",
+                    "local-smoke",
+                    "--output-dir",
+                    "dist/public-swarm-gpu-beta",
+                    "--json",
+                ],
+            ),
+            "reason": "check_optional_cuda_locally",
+            "side_effectful": False,
+            "requires_kaggle": False,
+            "cleanup_required": False,
+            "public_artifact_safe": True,
+        },
+        {
+            **command_entry(
+                "package Kaggle GPU proof",
+                [
+                    "crowdtensor",
+                    "public-swarm-gpu-beta",
+                    "kaggle-package",
+                    "--output-dir",
+                    "dist/public-swarm-gpu-beta-kaggle",
+                    "--json",
+                ],
+            ),
+            "reason": "prepare_private_kaggle_gpu_templates",
+            "side_effectful": False,
+            "requires_kaggle": False,
+            "cleanup_required": False,
+            "public_artifact_safe": True,
+        },
+        {
+            **command_entry(
+                "run fresh Kaggle GPU proof",
+                [
+                    "crowdtensor",
+                    "public-swarm-gpu-beta",
+                    "kaggle-auto",
+                    "--public-host",
+                    "24.199.118.54",
+                    "--port",
+                    "9320",
+                    "--base-port",
+                    "9321",
+                    "--kaggle-owner",
+                    "YOUR_KAGGLE_USERNAME",
+                    "--request-count",
+                    "1",
+                    "--json",
+                ],
+            ),
+            "reason": "verify_fresh_kaggle_gpu",
+            "side_effectful": True,
+            "requires_kaggle": True,
+            "cleanup_required": True,
+            "token_rotation_required": True,
+            "public_artifact_safe": True,
+        },
+        {
+            **command_entry(
+                "run multi-token Kaggle GPU generation",
+                [
+                    "crowdtensor",
+                    "gpu-generate",
+                    "kaggle-auto",
+                    "--kaggle-owner",
+                    "YOUR_KAGGLE_USERNAME",
+                    "--max-new-tokens",
+                    "16",
+                    "--json",
+                ],
+            ),
+            "reason": "verify_multi_token_gpu_generation",
+            "side_effectful": True,
+            "requires_kaggle": True,
+            "cleanup_required": True,
+            "token_rotation_required": True,
+            "public_artifact_safe": True,
+        },
+    ]
+    return {
+        "schema": "crowdtensor_gpu_proof_next_step_v1",
+        "state": "fresh-kaggle-gpu-verified" if verified else "fresh-kaggle-gpu-not-verified",
+        "current_gpu_status_state": state,
+        "fresh_kaggle_gpu_verified": verified,
+        "recommended_label": "review verified GPU proof" if verified else "run fresh Kaggle GPU proof",
+        "recommended_reason": "already_verified" if verified else "verify_fresh_kaggle_gpu",
+        "note": note,
+        "requires_explicit_user_action": not verified,
+        "side_effectful": not verified,
+        "requires_kaggle": not verified,
+        "cleanup_required": not verified,
+        "token_rotation_required": not verified,
+        "commands": [] if verified else commands,
+        "public_artifact_safe": True,
+    }
+
+
+def gpu_proof_next_step_text(summary: dict[str, Any]) -> str:
+    if not isinstance(summary, dict):
+        return ""
+    command_items = summary.get("commands") if isinstance(summary.get("commands"), list) else []
+    command_text = ""
+    for item in command_items:
+        if isinstance(item, dict) and item.get("reason") == "verify_fresh_kaggle_gpu":
+            command_text = str(item.get("command_line") or "")
+            break
+    if not command_text and command_items:
+        first = command_items[0]
+        command_text = str(first.get("command_line") or "") if isinstance(first, dict) else ""
+    suffix = f" command={command_text}" if command_text else ""
+    return (
+        f"state={summary.get('state') or 'unknown'} "
+        f"recommended={summary.get('recommended_label') or 'none'} "
+        f"reason={summary.get('recommended_reason') or 'none'} "
+        f"requires_kaggle={bool(summary.get('requires_kaggle'))} "
+        f"side_effectful={bool(summary.get('side_effectful'))} "
+        f"cleanup_required={bool(summary.get('cleanup_required'))} "
+        f"token_rotation_required={bool(summary.get('token_rotation_required'))}"
+        f"{suffix}"
     )
 
 
@@ -7480,6 +7619,11 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     runtime_provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
     evidence_scope = summary.get("evidence_scope") if isinstance(summary.get("evidence_scope"), dict) else {}
     gpu_status = summary.get("gpu_status") if isinstance(summary.get("gpu_status"), dict) else {}
+    gpu_proof_next_step = (
+        summary.get("gpu_proof_next_step")
+        if isinstance(summary.get("gpu_proof_next_step"), dict)
+        else {}
+    )
     recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
@@ -7508,6 +7652,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Evidence scope: `{infer_evidence_scope_text(evidence_scope)}`")
     if runtime_provenance or evidence_scope:
         lines.append(f"- GPU status: `{gpu_status_text(gpu_status or gpu_status_summary(runtime_provenance, evidence_scope))}`")
+    if gpu_proof_next_step:
+        lines.append(f"- GPU proof next: `{gpu_proof_next_step_text(gpu_proof_next_step)}`")
     if output_display.get("summary"):
         lines.append(f"- Output display note: {output_display.get('summary')}")
     lines.extend([
@@ -7535,6 +7681,20 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Runtime provenance summary: {runtime_provenance.get('summary') or ''}")
     if evidence_scope:
         lines.append(f"- Evidence scope note: {evidence_scope.get('user_expectation') or ''}")
+    if gpu_proof_next_step:
+        lines.append(f"- GPU proof next note: {gpu_proof_next_step.get('note') or ''}")
+        for item in gpu_proof_next_step.get("commands") or []:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                "- GPU proof command: "
+                f"`{item.get('label')}` "
+                f"reason=`{item.get('reason')}` "
+                f"side_effectful=`{bool(item.get('side_effectful'))}` "
+                f"requires_kaggle=`{bool(item.get('requires_kaggle'))}` "
+                f"cleanup_required=`{bool(item.get('cleanup_required'))}` "
+                f"command=`{markdown_command_line(item)}`"
+            )
     if coordinator_ready:
         lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
     if stage_preflight:
@@ -8033,6 +8193,7 @@ def _infer_summary_from_payload(
     )
     summary["evidence_scope"] = _infer_evidence_scope(summary)
     summary["gpu_status"] = gpu_status_summary(summary["runtime_provenance"], summary["evidence_scope"])
+    summary["gpu_proof_next_step"] = gpu_proof_next_step_summary(summary["gpu_status"])
     artifacts = {
         "infer_summary": {
             "kind": "crowdtensor_infer_summary",
@@ -10970,6 +11131,11 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     runtime_provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
     evidence_scope = summary.get("evidence_scope") if isinstance(summary.get("evidence_scope"), dict) else {}
     gpu_status = summary.get("gpu_status") if isinstance(summary.get("gpu_status"), dict) else {}
+    gpu_proof_next_step = (
+        summary.get("gpu_proof_next_step")
+        if isinstance(summary.get("gpu_proof_next_step"), dict)
+        else {}
+    )
     recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
@@ -10995,6 +11161,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Evidence scope: `{generate_evidence_scope_text(evidence_scope)}`")
     if runtime_provenance or evidence_scope:
         lines.append(f"- GPU status: `{gpu_status_text(gpu_status or gpu_status_summary(runtime_provenance, evidence_scope))}`")
+    if gpu_proof_next_step:
+        lines.append(f"- GPU proof next: `{gpu_proof_next_step_text(gpu_proof_next_step)}`")
     if output_display.get("summary"):
         lines.append(f"- Output display note: {output_display.get('summary')}")
     lines.extend([
@@ -11022,6 +11190,20 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Runtime provenance summary: {runtime_provenance.get('summary') or ''}")
     if evidence_scope:
         lines.append(f"- Evidence scope note: {evidence_scope.get('user_expectation') or ''}")
+    if gpu_proof_next_step:
+        lines.append(f"- GPU proof next note: {gpu_proof_next_step.get('note') or ''}")
+        for item in gpu_proof_next_step.get("commands") or []:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                "- GPU proof command: "
+                f"`{item.get('label')}` "
+                f"reason=`{item.get('reason')}` "
+                f"side_effectful=`{bool(item.get('side_effectful'))}` "
+                f"requires_kaggle=`{bool(item.get('requires_kaggle'))}` "
+                f"cleanup_required=`{bool(item.get('cleanup_required'))}` "
+                f"command=`{markdown_command_line(item)}`"
+            )
     if coordinator_ready:
         lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
     if stage_preflight:
@@ -11447,6 +11629,7 @@ def _finalize_product_generate_report(
     report["runtime_provenance"] = _generate_runtime_provenance(report)
     report["evidence_scope"] = _generate_evidence_scope(report)
     report["gpu_status"] = gpu_status_summary(report["runtime_provenance"], report["evidence_scope"])
+    report["gpu_proof_next_step"] = gpu_proof_next_step_summary(report["gpu_status"])
     report["safety"] = _product_generate_safety_summary(report)
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -12350,6 +12533,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
     if runtime_provenance or evidence_scope:
         gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
         print(f"  gpu_status: {gpu_status_text(gpu_status or gpu_status_summary(runtime_provenance, evidence_scope))}")
+    gpu_proof_next_step = report.get("gpu_proof_next_step") if isinstance(report.get("gpu_proof_next_step"), dict) else {}
+    if gpu_proof_next_step:
+        print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step)}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
         print(
@@ -12678,6 +12864,9 @@ def print_infer(report: dict[str, Any]) -> None:
     if runtime_provenance or evidence_scope:
         gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
         print(f"  gpu_status: {gpu_status_text(gpu_status or gpu_status_summary(runtime_provenance, evidence_scope))}")
+    gpu_proof_next_step = report.get("gpu_proof_next_step") if isinstance(report.get("gpu_proof_next_step"), dict) else {}
+    if gpu_proof_next_step:
+        print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step)}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
