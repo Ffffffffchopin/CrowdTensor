@@ -11757,7 +11757,8 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
     print(
         "CrowdTensor infer: final output will start with review, review_next, "
         "inspect_first, and status/action; later lines include answer_scope, "
-        "runtime_options, and redacted JSON/Markdown artifacts.",
+        "answer_scope_note, output_display_note, runtime_options, and redacted "
+        "JSON/Markdown artifacts.",
         file=sys.stderr,
         flush=True,
     )
@@ -11792,7 +11793,8 @@ def print_generate_start_hint(args: argparse.Namespace) -> None:
     print(
         "CrowdTensor generate: final output will start with review, review_next, "
         "inspect_first, and status/action; later lines include answer_scope, "
-        "runtime_options, and redacted JSON/Markdown artifacts.",
+        "answer_scope_note, output_display_note, runtime_options, and redacted "
+        "JSON/Markdown artifacts.",
         file=sys.stderr,
         flush=True,
     )
