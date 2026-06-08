@@ -1595,7 +1595,12 @@ def step_status_text(step: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
+def stream_progress_lines(
+    progress: dict[str, Any],
+    *,
+    prefix: str = "  stream",
+    single_prefix: str | None = None,
+) -> list[str]:
     per_request = progress.get("per_request_progress") if isinstance(progress.get("per_request_progress"), list) else []
     lines = []
     expected_requests = _safe_int(progress.get("expected_request_count"), 1)
@@ -1608,7 +1613,7 @@ def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
             item_target = _safe_int(item.get("target_token_count")) or target
             request_label = stream_request_label(item)
             lines.append(
-                f"  stream[{index}]: "
+                f"{prefix}[{index}]: "
                 f"request={request_label} "
                 f"tokens={observed}/{item_target} "
                 f"counts={counts} "
@@ -1621,7 +1626,7 @@ def stream_progress_lines(progress: dict[str, Any]) -> list[str]:
         target = _safe_int(progress.get("target_token_count") or progress.get("max_new_tokens"))
         request_item = per_request[0] if per_request and isinstance(per_request[0], dict) else {}
         lines.append(
-            "  stream_progress: "
+            f"{single_prefix or (prefix + '_progress')}: "
             f"request={stream_request_label(request_item)} "
             f"tokens={observed}/{target} "
             f"counts={progress.get('observed_token_counts') or []} "
@@ -6364,6 +6369,12 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     if step:
         lines.append(f"- Step: `{step_status_text(step)}`")
     for line in infer_trace_request_lines(trace, prefix="- Trace request"):
+        lines.append(line)
+    for line in stream_progress_lines(
+        stream.get("progress") if isinstance(stream.get("progress"), dict) else {},
+        prefix="- Stream request",
+        single_prefix="- Stream progress",
+    ):
         lines.append(line)
     if local_output:
         lines.append(

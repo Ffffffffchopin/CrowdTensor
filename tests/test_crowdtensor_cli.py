@@ -89,12 +89,48 @@ class CrowdTensorCliTests(unittest.TestCase):
             ["  stream_progress: request=req-single tokens=2/2 counts=[1, 2] complete=True"],
         )
         self.assertEqual(
+            cli.stream_progress_lines(single, prefix="- Stream request", single_prefix="- Stream progress"),
+            ["- Stream progress: request=req-single tokens=2/2 counts=[1, 2] complete=True"],
+        )
+        self.assertEqual(
             cli.stream_progress_lines(batch),
             [
                 "  stream[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False",
                 "  stream[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False",
                 "  stream[3]: request=missing tokens=0/2 counts=[] complete=False missing=True",
             ],
+        )
+        self.assertEqual(
+            cli.stream_progress_lines(batch, prefix="- Stream request", single_prefix="- Stream progress"),
+            [
+                "- Stream request[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False",
+                "- Stream request[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False",
+                "- Stream request[3]: request=missing tokens=0/2 counts=[] complete=False missing=True",
+            ],
+        )
+        markdown = cli.render_infer_summary_markdown({
+            "ok": True,
+            "mode": "local",
+            "stream": {
+                "enabled": True,
+                "ready": True,
+                "event_count": 3,
+                "source": "admin-session-stream",
+                "progress": batch,
+            },
+            "diagnosis_codes": ["public_swarm_generate_ready"],
+        })
+        self.assertIn(
+            "- Stream request[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False",
+            markdown,
+        )
+        self.assertIn(
+            "- Stream request[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False",
+            markdown,
+        )
+        self.assertIn(
+            "- Stream request[3]: request=missing tokens=0/2 counts=[] complete=False missing=True",
+            markdown,
         )
         self.assertEqual(
             cli.stream_progress_issue_summary(batch),
@@ -10005,6 +10041,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("attention=request[2]=req-2:1/2", markdown)
         self.assertIn(
             "- Attention: `request[2]=req-2:1/2 - stream progress is incomplete; rerun with --stream if you need live token evidence.`",
+            markdown,
+        )
+        self.assertIn(
+            "- Stream request[1]: request=req-1 tokens=2/2 counts=[1, 2] complete=True missing=False",
+            markdown,
+        )
+        self.assertIn(
+            "- Stream request[2]: request=req-2 tokens=1/2 counts=[1] complete=False missing=False",
             markdown,
         )
         self.assertIn("- Review next: `label=rerun inference reason=rerun_inference", markdown)
