@@ -17353,6 +17353,49 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
             },
+            "user_status": {
+                "state": "ready",
+                "headline": "Public P2P Swarm Inference v1.0 RC evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Public P2P v1 RC evidence",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md",
+                "recommended_label": "inspect Public P2P v1 RC evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md",
+                "primary_code": "public_p2p_swarm_inference_v1_rc_ready",
+                "attention": "none",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Public P2P v1 RC evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect Public P2P v1 RC evidence",
+                    "command_line": "sed -n 1,220p dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/public-p2p-v1-rc/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md",
+                "summary_json": "dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.json",
+                "summary_markdown": "dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md",
+                "support_bundle": "dist/public-p2p-v1-rc/support_bundle.json",
+                "artifact_count": 3,
+                "present_artifact_count": 3,
+                "public_artifact_safe": True,
+            },
             "diagnosis_codes": ["public_p2p_swarm_inference_v1_rc_ready"],
             "artifacts": {},
         }
@@ -17362,6 +17405,26 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_p2p_swarm_inference_v1_rc(report)
         output = stdout.getvalue()
 
+        self.assertIn(
+            "  status: ready: Public P2P Swarm Inference v1.0 RC evidence is ready. next=review_artifacts recommendation=inspect Public P2P v1 RC evidence public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  review: state=ready next=review_artifacts inspect=dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md recommended=inspect Public P2P v1 RC evidence primary=public_p2p_swarm_inference_v1_rc_ready attention=none public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  recommended_next: inspect Public P2P v1 RC evidence reason=review_artifacts sed -n 1,220p dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md",
+            output,
+        )
+        self.assertIn(
+            "  next[2] inspect support bundle: sed -n 1,220p dist/public-p2p-v1-rc/support_bundle.json",
+            output,
+        )
+        self.assertIn(
+            "  artifacts: inspect=dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md json=dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.json markdown=dist/public-p2p-v1-rc/public_p2p_swarm_inference_v1_rc.md present=3/3 public_artifact_safe=True",
+            output,
+        )
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,

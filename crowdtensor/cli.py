@@ -13583,6 +13583,10 @@ def print_public_p2p_swarm_inference_v1_rc(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_summary_value = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     print("CrowdTensor Public P2P Swarm Inference v1.0 RC")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -13593,6 +13597,19 @@ def print_public_p2p_swarm_inference_v1_rc(report: dict[str, Any]) -> None:
     print(f"  signed peers: required={p2p.get('signed_announcement_required')} signed={p2p.get('signed_peer_count')} healthy={p2p.get('healthy_peer_count')}")
     print(f"  rescue ready: {rc.get('stage_rescue_ready')}")
     print(f"  tokens: {inference.get('max_new_tokens')} workload={inference.get('workload_type')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        suffix = " side_effectful=True" if recommended.get("side_effectful") else ""
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}{suffix}"
+        )
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -13601,6 +13618,13 @@ def print_public_p2p_swarm_inference_v1_rc(report: dict[str, Any]) -> None:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = " side_effectful=True" if item.get("side_effectful") else ""
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    if artifact_summary_value:
+        print(f"  artifacts: {artifact_summary_text(artifact_summary_value)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):

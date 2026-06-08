@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import secrets
+import shlex
 import subprocess
 import sys
 import time
@@ -77,6 +78,10 @@ def utc_now() -> str:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def shell_command(parts: list[Any]) -> str:
+    return shlex.join([str(part) for part in parts if str(part) != ""])
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
@@ -316,6 +321,231 @@ def shareable_summary() -> dict[str, Any]:
     }
 
 
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if side_effectful:
+        entry["side_effectful"] = True
+        entry["side_effect_note"] = (
+            "This command can create temporary public P2P endpoints or private Kaggle kernels; "
+            "delete kernels and rotate tokens/secrets after collection."
+        )
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    inspect_first = output_dir / "public_p2p_swarm_inference_v1_rc.md"
+    paths = {
+        "summary_json": output_dir / "public_p2p_swarm_inference_v1_rc.json",
+        "summary_markdown": inspect_first,
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    return {
+        "schema": "public_p2p_swarm_inference_v1_rc_artifact_summary_v1",
+        "inspect_first": str(inspect_first),
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": sum(1 for path in paths.values() if path.is_file()),
+        "shareable_paths": [str(path) for path in paths.values()],
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": (
+            "Open inspect_first first, then support_bundle for diagnostics; artifacts contain "
+            "signed P2P route readiness, hashes, and counts only."
+        ),
+    }
+
+
+def public_p2p_v1_command(report: dict[str, Any], output_dir: Path, mode: str) -> list[str]:
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    inference = report.get("inference") if isinstance(report.get("inference"), dict) else {}
+    return [
+        "crowdtensor",
+        "public-p2p-v1-rc",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--hf-model-id",
+        str(p2p.get("hf_model_id") or inference.get("model_id") or DEFAULT_HF_MODEL_ID),
+        "--max-new-tokens",
+        str(inference.get("max_new_tokens") or 8),
+        "--json",
+    ]
+
+
+def rc_ready(report: dict[str, Any]) -> bool:
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    return bool(report.get("ok") is True and "public_p2p_swarm_inference_v1_rc_ready" in codes)
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    items: list[str] = []
+    for item in report.get("not_completed") or []:
+        if isinstance(item, str) and item not in items:
+            items.append(item)
+    return items
+
+
+def recommended_next_command(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    if rc_ready(report):
+        return command_entry(
+            "inspect Public P2P v1 RC evidence",
+            artifact_command(output_dir, "public_p2p_swarm_inference_v1_rc.md"),
+            reason="review_artifacts",
+        )
+    if mode == MODE_PACKAGE and ((report.get("rc") or {}).get("runbook_ready") if isinstance(report.get("rc"), dict) else report.get("ok")):
+        return command_entry(
+            "run signed local P2P v1 RC smoke",
+            public_p2p_v1_command(report, output_dir, MODE_LOCAL_SMOKE),
+            reason="verify_signed_local_p2p_path",
+            side_effectful=True,
+        )
+    if mode == MODE_LOCAL_SMOKE:
+        return command_entry(
+            "inspect signed local P2P diagnostics",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_local_rc_diagnostics",
+        )
+    if mode == MODE_KAGGLE_AUTO:
+        return command_entry(
+            "inspect Public P2P v1 Kaggle diagnostics",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_kaggle_runtime_diagnostics",
+            side_effectful=True,
+        )
+    if mode == MODE_EVIDENCE_IMPORT:
+        return command_entry(
+            "inspect Public P2P v1 import diagnostics",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="fix_or_refresh_imported_evidence",
+        )
+    return command_entry(
+        "inspect Public P2P v1 diagnostics",
+        artifact_command(output_dir, "support_bundle.json"),
+        reason="inspect_diagnostics",
+    )
+
+
+def next_commands(report: dict[str, Any], *, output_dir: Path, recommended: dict[str, Any]) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect Public P2P v1 RC evidence",
+            artifact_command(output_dir, "public_p2p_swarm_inference_v1_rc.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    mode = str(report.get("mode") or "")
+    if mode == MODE_PACKAGE:
+        commands.append(command_entry(
+            "run signed local P2P v1 RC smoke",
+            public_p2p_v1_command(report, output_dir, MODE_LOCAL_SMOKE),
+            reason="verify_signed_local_p2p_path",
+            side_effectful=True,
+        ))
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    return commands
+
+
+def user_status(report: dict[str, Any], *, recommended: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    ready = rc_ready(report)
+    rc = report.get("rc") if isinstance(report.get("rc"), dict) else {}
+    package_ready = bool(mode == MODE_PACKAGE and rc.get("runbook_ready"))
+    if ready:
+        state = "ready"
+        headline = "Public P2P Swarm Inference v1.0 RC evidence is ready."
+        next_step = "review_artifacts"
+    elif package_ready:
+        state = "package-ready"
+        headline = "Public P2P v1 RC runbook/package is ready; proof execution is not complete."
+        next_step = "run_signed_local_or_import_evidence"
+    else:
+        state = "blocked"
+        headline = "Public P2P v1 RC evidence needs attention."
+        next_step = "fix_public_p2p_v1_rc_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(not_completed_items(report)),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(report: dict[str, Any], *, output_dir: Path, recommended: dict[str, Any]) -> dict[str, Any]:
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    mode = str(report.get("mode") or "")
+    ready = rc_ready(report)
+    rc = report.get("rc") if isinstance(report.get("rc"), dict) else {}
+    package_ready = bool(mode == MODE_PACKAGE and rc.get("runbook_ready"))
+    missing = not_completed_items(report)
+    if ready:
+        state = "ready"
+        next_step = "review_artifacts"
+        attention = "none"
+    elif package_ready:
+        state = "package-ready"
+        next_step = "run_signed_local_or_import_evidence"
+        attention = missing[0] if missing else "public_p2p_v1_rc_proof_not_run"
+    else:
+        state = "blocked"
+        next_step = "fix_public_p2p_v1_rc_blockers"
+        attention = missing[0] if missing else (codes[0] if codes else "public_p2p_v1_rc_blocked")
+    artifacts = artifact_summary(output_dir)
+    return {
+        "schema": "public_p2p_swarm_inference_v1_rc_review_summary_v1",
+        "state": state,
+        "ready": ready,
+        "headline": (
+            "Public P2P Swarm Inference v1.0 RC evidence is ready."
+            if ready
+            else "Public P2P v1 RC evidence needs follow-up before readiness is claimed."
+        ),
+        "next_step": next_step,
+        "inspect_first": artifacts["inspect_first"],
+        "support_bundle": artifacts["support_bundle"],
+        "recommended_next_command": recommended,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": "public_p2p_swarm_inference_v1_rc_ready" if ready else (codes[0] if codes else "public_p2p_v1_rc_blocked"),
+        "attention": attention,
+        "attention_detail": "; ".join(missing[:5]),
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
 def run_json_step(
     name: str,
     command: list[str],
@@ -528,6 +758,7 @@ def build_common_report(
         and model_metadata_ready
         and package_ready
     )
+    report_ok = bool(package_ready if package_only else ready)
     codes = set(diagnosis_codes(signed_local, external_v06, kaggle_v06))
     if signed_local_ready:
         codes.update({
@@ -567,13 +798,15 @@ def build_common_report(
             "not_large_model_throughput",
             "not_hivemind_petals_production_parity",
         })
+    elif package_only and package_ready:
+        codes.add("public_p2p_v1_rc_package_ready")
     else:
         codes.add("public_p2p_swarm_inference_v1_rc_blocked")
 
     artifacts = {
-        "public_p2p_swarm_inference_v1_rc_json": artifact_entry(output_dir / "public_p2p_swarm_inference_v1_rc.json", output_dir, kind="public_p2p_swarm_inference_v1_rc", schema=SCHEMA, ok=ready),
+        "public_p2p_swarm_inference_v1_rc_json": artifact_entry(output_dir / "public_p2p_swarm_inference_v1_rc.json", output_dir, kind="public_p2p_swarm_inference_v1_rc", schema=SCHEMA, ok=report_ok),
         "public_p2p_swarm_inference_v1_rc_markdown": artifact_entry(output_dir / "public_p2p_swarm_inference_v1_rc.md", output_dir, kind="public_p2p_swarm_inference_v1_rc_markdown"),
-        "support_bundle_json": artifact_entry(output_dir / "support_bundle.json", output_dir, kind="public_p2p_swarm_inference_v1_rc_support_bundle", schema=SUPPORT_SCHEMA, ok=ready),
+        "support_bundle_json": artifact_entry(output_dir / "support_bundle.json", output_dir, kind="public_p2p_swarm_inference_v1_rc_support_bundle", schema=SUPPORT_SCHEMA, ok=report_ok),
         "runbook": runbook,
     }
     if signed_local:
@@ -582,7 +815,7 @@ def build_common_report(
     report = {
         "schema": SCHEMA,
         "generated_at": utc_now(),
-        "ok": ready,
+        "ok": report_ok,
         "mode": mode,
         "output_dir": str(output_dir),
         "rc": {
@@ -653,14 +886,23 @@ def build_common_report(
             "Product serve/join/generate commands for P2P route selection",
             "Coordinator lease/result-ledger fallback",
         ],
-        "not_completed": [
-            "Production NAT traversal",
-            "libp2p DHT routing",
-            "Decentralized identity and Sybil resistance",
-            "Economic system",
-            "Hivemind/Petals production parity",
-            "Large-model throughput",
-        ],
+        "not_completed": (
+            [
+                "signed local P2P proof",
+                "external/Kaggle signed P2P proof",
+                "multi-token generation verification",
+                "stage rescue verification",
+            ]
+            if package_only
+            else [
+                "Production NAT traversal",
+                "libp2p DHT routing",
+                "Decentralized identity and Sybil resistance",
+                "Economic system",
+                "Hivemind/Petals production parity",
+                "Large-model throughput",
+            ]
+        ),
         "operator_action": [
             "Use PUBLIC_P2P_SWARM_INFERENCE_V1_RC.md for a public-preview rehearsal.",
             "Run a fresh kaggle-auto proof before making new external runtime claims.",
@@ -672,6 +914,10 @@ def build_common_report(
 
 def render_markdown(report: dict[str, Any]) -> str:
     rc = report.get("rc") if isinstance(report.get("rc"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     lines = [
         "# CrowdTensor Public P2P Swarm Inference v1.0 RC",
         "",
@@ -682,6 +928,33 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- external runtime ready: `{rc.get('external_runtime_ready')}`",
         f"- generation ready: `{rc.get('generation_ready')}`",
         f"- stage rescue ready: `{rc.get('stage_rescue_ready')}`",
+        "",
+        "## Review",
+        "",
+        f"- status: `{status.get('state') or review.get('state') or 'unknown'}`",
+        f"- headline: {status.get('headline') or review.get('headline') or 'No status available.'}",
+        f"- next step: `{review.get('next_step') or status.get('next_step') or 'none'}`",
+        f"- primary code: `{review.get('primary_code') or 'none'}`",
+        f"- attention: `{review.get('attention') or 'none'}`",
+        f"- inspect first: `{review.get('inspect_first') or artifacts.get('inspect_first') or 'none'}`",
+        "",
+        "## What To Do Next",
+        "",
+        f"- recommended next: `{recommended.get('command_line') or review.get('next_command') or 'none'}`",
+        f"- recommendation: `{recommended.get('label') or review.get('recommended_label') or 'none'}` reason=`{recommended.get('reason') or review.get('recommended_reason') or 'none'}`",
+        *[
+            f"- next[{index}] {item.get('label')}: `{item.get('command_line')}`"
+            for index, item in enumerate((report.get("next_commands") or []), start=1)
+            if isinstance(item, dict)
+        ],
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifacts.get('inspect_first') or 'none'}`",
+        f"- summary json: `{artifacts.get('summary_json') or 'none'}`",
+        f"- summary markdown: `{artifacts.get('summary_markdown') or 'none'}`",
+        f"- support bundle: `{artifacts.get('support_bundle') or 'none'}`",
+        f"- present: `{artifacts.get('present_artifact_count')}/{artifacts.get('artifact_count')}` public_artifact_safe=`{bool(artifacts.get('public_artifact_safe'))}`",
         "",
         "## Output Scope",
         "",
@@ -729,30 +1002,51 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     )
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
+    report["artifact_summary"] = artifact_summary(output_dir)
+    recommended = recommended_next_command(report, output_dir=output_dir)
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(report, recommended=recommended)
+    report["review_summary"] = review_summary(report, output_dir=output_dir, recommended=recommended)
     errors = validate_public_report(report)
     if errors:
         report["ok"] = False
         report["diagnosis_codes"] = sorted(set(report.get("diagnosis_codes") or []) | {"public_report_safety_failed"})
         report["safety_errors"] = errors
+        report["artifact_summary"] = artifact_summary(output_dir)
+        recommended = recommended_next_command(report, output_dir=output_dir)
+        report["recommended_next_command"] = recommended
+        report["next_commands"] = next_commands(report, output_dir=output_dir, recommended=recommended)
+        report["user_status"] = user_status(report, recommended=recommended)
+        report["review_summary"] = review_summary(report, output_dir=output_dir, recommended=recommended)
     report = support_bundle.sanitize(report)
-    write_json(output_dir / "public_p2p_swarm_inference_v1_rc.json", report)
-    (output_dir / "public_p2p_swarm_inference_v1_rc.md").write_text(render_markdown(report), encoding="utf-8")
+    json_path = output_dir / "public_p2p_swarm_inference_v1_rc.json"
+    markdown_path = output_dir / "public_p2p_swarm_inference_v1_rc.md"
+    support_path = output_dir / "support_bundle.json"
+    write_json(json_path, report)
+    markdown_path.write_text(render_markdown(report), encoding="utf-8")
     report["artifacts"]["public_p2p_swarm_inference_v1_rc_json"] = artifact_entry(
-        output_dir / "public_p2p_swarm_inference_v1_rc.json",
+        json_path,
         output_dir,
         kind="public_p2p_swarm_inference_v1_rc",
         schema=SCHEMA,
         ok=report.get("ok"),
     )
     report["artifacts"]["public_p2p_swarm_inference_v1_rc_markdown"] = artifact_entry(
-        output_dir / "public_p2p_swarm_inference_v1_rc.md",
+        markdown_path,
         output_dir,
         kind="public_p2p_swarm_inference_v1_rc_markdown",
     )
     bundle = support_bundle.sanitize({
         "schema": SUPPORT_SCHEMA,
+        "generated_at": utc_now(),
         "ok": report.get("ok"),
         "diagnosis_codes": report.get("diagnosis_codes"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
         "rc": report.get("rc"),
         "p2p": report.get("p2p"),
         "inference": report.get("inference"),
@@ -763,10 +1057,13 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),
     })
-    write_json(output_dir / "support_bundle.json", bundle)
-    report["artifacts"]["support_bundle_json"] = artifact_entry(output_dir / "support_bundle.json", output_dir, kind="public_p2p_swarm_inference_v1_rc_support_bundle", schema=SUPPORT_SCHEMA, ok=bundle.get("ok"))
-    (output_dir / "public_p2p_swarm_inference_v1_rc.md").write_text(render_markdown(report), encoding="utf-8")
-    write_json(output_dir / "public_p2p_swarm_inference_v1_rc.json", report)
+    write_json(support_path, bundle)
+    report["artifacts"]["support_bundle_json"] = artifact_entry(support_path, output_dir, kind="public_p2p_swarm_inference_v1_rc_support_bundle", schema=SUPPORT_SCHEMA, ok=bundle.get("ok"))
+    report["artifact_summary"] = artifact_summary(output_dir)
+    bundle["artifact_summary"] = report.get("artifact_summary")
+    write_json(support_path, bundle)
+    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    write_json(json_path, report)
     return report
 
 
@@ -781,6 +1078,20 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         step, signed_local = run_signed_local_smoke(args, output_dir=output_dir, runner=runner)
         signed_local_report_path = output_dir / "signed-local-v06" / "p2p_swarm_inference_v06.json"
         steps.append(step)
+    elif args.mode == MODE_PACKAGE:
+        runbook = write_runbook(args, output_dir)
+        report = build_common_report(
+            args,
+            output_dir=output_dir,
+            mode=args.mode,
+            signed_local={},
+            external_v06={},
+            kaggle_v06={},
+            steps=steps,
+            runbook=runbook,
+            signed_local_report_path=None,
+        )
+        return persist_report(report, output_dir=output_dir)
     elif args.mode == MODE_EVIDENCE_IMPORT:
         signed_local_report_path = args.signed_local_report or args.v06_local_report
         signed_local = load_json(signed_local_report_path)
