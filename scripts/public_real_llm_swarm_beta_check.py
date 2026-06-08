@@ -689,12 +689,17 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
     if int(beta.get("max_new_tokens") or 0) < expected_tokens:
         errors.append(f"beta_token_target_below_{expected_tokens}")
     local_model_variant = mode == pack.MODE_LOCAL_MODEL_VARIANT
+    local_smoke = mode == pack.MODE_LOCAL_SMOKE
+    full_release_scope = not (local_model_variant or local_smoke)
     if local_model_variant:
         if beta.get("local_model_variant_only") is not True:
             errors.append("local_model_variant_not_marked")
         for field in ["release_evidence_ready", "external_two_stage_ready", "external_stage_requeue_ready", "p2p_ready_product_beta"]:
             if beta.get(field) is not False:
                 errors.append(f"local_model_variant_claimed:{field}")
+    elif local_smoke:
+        if beta.get("local_smoke_only") is not True:
+            errors.append("local_smoke_not_marked")
     else:
         if beta.get("external_two_stage_ready") is not True:
             errors.append("external_two_stage_not_ready")
@@ -706,7 +711,7 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("p2p_live_requeue_not_ready")
         if beta.get("p2p_victim_result_not_accepted") is not True:
             errors.append("p2p_victim_result_not_rejected")
-    if beta.get("kv_cache_ready") is not True:
+    if full_release_scope and beta.get("kv_cache_ready") is not True:
         errors.append("kv_cache_not_ready")
     readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
     product = readiness.get("product_path") if isinstance(readiness.get("product_path"), dict) else {}
@@ -726,7 +731,7 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         for name, summary in [("external_kaggle", external), ("p2p_candidate", p2p)]:
             if summary.get("claimed") is not False or summary.get("ready") is not False:
                 errors.append(f"local_model_variant_claimed:{name}")
-    else:
+    elif full_release_scope:
         if not external_model.get("observed_hf_model_id") or external_model.get("model_id_present") is not True:
             errors.append("external_model_id_missing")
         if external_model.get("compatible") is not True:
@@ -735,60 +740,60 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("p2p_model_id_missing")
         if p2p_model.get("compatible") is not True:
             errors.append("p2p_model_not_compatible")
-    if public_swarm_v2.get("ready") is not True:
+    if not local_smoke and public_swarm_v2.get("ready") is not True:
         errors.append("public_swarm_v2_not_ready")
     v2_model = public_swarm_v2.get("model") if isinstance(public_swarm_v2.get("model"), dict) else {}
-    if v2_model.get("compatible") is not True:
+    if not local_smoke and v2_model.get("compatible") is not True:
         errors.append("public_swarm_v2_model_not_compatible")
-    if public_swarm_v2.get("generated_token_count", 0) < 1:
+    if not local_smoke and public_swarm_v2.get("generated_token_count", 0) < 1:
         errors.append("public_swarm_v2_generation_missing")
-    if int(public_swarm_v2.get("generated_token_count") or 0) < expected_tokens:
+    if not local_smoke and int(public_swarm_v2.get("generated_token_count") or 0) < expected_tokens:
         errors.append(f"public_swarm_v2_token_target_below_{expected_tokens}")
-    if int(public_swarm_v2.get("required_generated_token_count") or 0) < expected_tokens:
+    if not local_smoke and int(public_swarm_v2.get("required_generated_token_count") or 0) < expected_tokens:
         errors.append(f"public_swarm_v2_required_token_target_below_{expected_tokens}")
-    if public_swarm_v2.get("accepted_rows_ready") is not True:
+    if not local_smoke and public_swarm_v2.get("accepted_rows_ready") is not True:
         errors.append("public_swarm_v2_stage_rows_not_ready")
     if local_model_variant:
         if public_swarm_v2.get("local_model_variant_only") is not True:
             errors.append("public_swarm_v2_local_model_variant_not_marked")
         if public_swarm_v2.get("external_validation_claimed") is not False:
             errors.append("public_swarm_v2_external_claimed_in_local_variant")
-    elif public_swarm_v2.get("external_accepted_rows_ready") is not True:
+    elif full_release_scope and public_swarm_v2.get("external_accepted_rows_ready") is not True:
         errors.append("public_swarm_v2_external_stage_rows_not_ready")
-    if public_swarm_v2.get("kv_cache_ready") is not True:
+    if not local_smoke and public_swarm_v2.get("kv_cache_ready") is not True:
         errors.append("public_swarm_v2_kv_cache_not_ready")
-    if public_swarm_v2.get("stage_requeue_rescue_ready") is not True:
+    if not local_smoke and public_swarm_v2.get("stage_requeue_rescue_ready") is not True:
         errors.append("public_swarm_v2_requeue_not_ready")
-    if public_swarm_v2.get("real_p2p_local_route_hardening_ready") is not True:
+    if not local_smoke and public_swarm_v2.get("real_p2p_local_route_hardening_ready") is not True:
         errors.append("public_swarm_v2_real_p2p_local_not_ready")
-    if public_swarm_v2.get("real_p2p_local_stage_requeue_ready") is not True:
+    if not local_smoke and public_swarm_v2.get("real_p2p_local_stage_requeue_ready") is not True:
         errors.append("public_swarm_v2_real_p2p_local_requeue_not_ready")
-    if public_swarm_v2.get("batch_ready") is not True:
+    if not local_smoke and public_swarm_v2.get("batch_ready") is not True:
         errors.append("public_swarm_v2_batch_not_ready")
-    if public_swarm_v2.get("stream_ready") is not True:
+    if not local_smoke and public_swarm_v2.get("stream_ready") is not True:
         errors.append("public_swarm_v2_stream_not_ready")
-    if kv_cache.get("ready") is not True:
+    if full_release_scope and kv_cache.get("ready") is not True:
         errors.append("usable_kv_cache_not_ready")
-    if int(kv_cache.get("generated_token_count") or 0) < expected_tokens:
+    if full_release_scope and int(kv_cache.get("generated_token_count") or 0) < expected_tokens:
         errors.append(f"usable_kv_cache_token_target_below_{expected_tokens}")
-    if int(kv_cache.get("required_generated_token_count") or 0) < expected_tokens:
+    if full_release_scope and int(kv_cache.get("required_generated_token_count") or 0) < expected_tokens:
         errors.append(f"usable_kv_cache_required_token_target_below_{expected_tokens}")
-    if not kv_cache_model.get("observed_hf_model_id") or kv_cache_model.get("model_id_present") is not True:
+    if full_release_scope and (not kv_cache_model.get("observed_hf_model_id") or kv_cache_model.get("model_id_present") is not True):
         errors.append("usable_kv_cache_model_id_missing")
-    if kv_cache_model.get("compatible") is not True:
+    if full_release_scope and kv_cache_model.get("compatible") is not True:
         errors.append("usable_kv_cache_model_not_compatible")
     stage0 = kv_cache.get("stage0") if isinstance(kv_cache.get("stage0"), dict) else {}
     stage1 = kv_cache.get("stage1") if isinstance(kv_cache.get("stage1"), dict) else {}
-    if stage0.get("hit_count", 0) < 1:
+    if full_release_scope and stage0.get("hit_count", 0) < 1:
         errors.append("stage0_kv_cache_hits_missing")
-    if stage1.get("hit_count", 0) < 1:
+    if full_release_scope and stage1.get("hit_count", 0) < 1:
         errors.append("stage1_kv_cache_hits_missing")
     expected_hits = max(1, expected_tokens - 1)
-    if int(stage0.get("hit_count") or 0) < expected_hits:
+    if full_release_scope and int(stage0.get("hit_count") or 0) < expected_hits:
         errors.append(f"stage0_kv_cache_hits_below_{expected_hits}")
-    if int(stage1.get("hit_count") or 0) < expected_hits:
+    if full_release_scope and int(stage1.get("hit_count") or 0) < expected_hits:
         errors.append(f"stage1_kv_cache_hits_below_{expected_hits}")
-    if not local_model_variant:
+    if full_release_scope:
         if int(external.get("generated_token_count") or 0) < expected_tokens:
             errors.append(f"external_token_target_below_{expected_tokens}")
         if int(external.get("required_generated_token_count") or 0) < expected_tokens:
@@ -801,7 +806,29 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
     if payload.get("ok") is True:
         for code in sorted(code for code in codes if code.endswith("_blocked")):
             errors.append(f"unexpected_blocked_code:{code}")
-    required_codes = LOCAL_MODEL_VARIANT_REQUIRED_CODES if local_model_variant else REQUIRED_RELEASE_CODES
+    if local_model_variant:
+        required_codes = LOCAL_MODEL_VARIANT_REQUIRED_CODES
+    elif local_smoke:
+        required_codes = {
+            "public_real_llm_swarm_beta_local_smoke_ready",
+            "user_facing_serve_join_generate_ready",
+            "public_real_llm_product_path_ready",
+            "cpu_real_llm_default_ready",
+            "optional_cuda_fail_closed_ready",
+            "public_real_llm_swarm_beta_stream_ready",
+            "public_swarm_generate_stream_ready",
+            "serve_join_generate_loop_ready",
+            "serve_ready",
+            "stage0_join_ready",
+            "stage1_join_ready",
+            "generate_ready",
+            "read_only_workload",
+            "not_production",
+            "not_coordinator_free",
+            "not_large_model_serving",
+        }
+    else:
+        required_codes = REQUIRED_RELEASE_CODES
     for code in sorted(required_codes - codes):
         errors.append(f"missing_code:{code}")
     if local_model_variant:
@@ -985,7 +1012,7 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
     if review_summary.get("generated_token_ids_public") is not False:
         errors.append("review_summary_generated_token_ids_public_mismatch")
     user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
-    if user_status.get("state") not in {"ready", "blocked", "package-ready", "local-model-ready"}:
+    if user_status.get("state") not in {"ready", "blocked", "package-ready", "local-smoke-ready", "local-model-ready"}:
         errors.append("user_status_state_mismatch")
     if not user_status.get("headline"):
         errors.append("user_status_headline_missing")
@@ -1011,7 +1038,7 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         errors.append("inference_verdict_schema_mismatch")
     if verdict.get("kind") != "Public Real-LLM Swarm Beta":
         errors.append("inference_verdict_kind_mismatch")
-    if verdict.get("state") not in {"ready", "blocked", "package-ready", "local-model-ready"}:
+    if verdict.get("state") not in {"ready", "blocked", "package-ready", "local-smoke-ready", "local-model-ready"}:
         errors.append("inference_verdict_state_mismatch")
     expected_completed = bool(payload.get("ok") is True and beta.get("ready") is True and not not_completed)
     if verdict.get("completed") is not expected_completed:
@@ -1048,10 +1075,12 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         "public_real_llm_swarm_beta_markdown",
         "support_bundle_json",
         "runbook",
-        "usable_swarm_kv_cache_report",
-        "public_swarm_v2_report",
     ]
-    if not local_model_variant:
+    if local_smoke:
+        required_artifacts.extend(["product_report", "gpu_optional_report"])
+    else:
+        required_artifacts.extend(["usable_swarm_kv_cache_report", "public_swarm_v2_report"])
+    if full_release_scope:
         required_artifacts.extend(["external_real_llm_report", "p2p_candidate_report"])
     for name in required_artifacts:
         artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
@@ -1776,10 +1805,11 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
         output_dir = Path(tempfile.mkdtemp(prefix="crowdtensor_public_real_llm_beta_check_"))
     if beta_report:
         payload, load_errors = payload_for_existing_beta_report(beta_report)
+        check_mode = args.mode or str(payload.get("mode") or pack.MODE_RELEASE)
         result = check_result_from_payload(
             payload,
             output_dir=output_dir,
-            mode=args.mode,
+            mode=check_mode,
             expected_tokens=args.max_new_tokens,
             check_source="beta-report",
             checked_beta_report=str(beta_report.resolve()),
@@ -1787,14 +1817,15 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
             load_errors=load_errors,
         )
     else:
-        if args.mode == pack.MODE_LOCAL_MODEL_VARIANT:
+        check_mode = args.mode or pack.MODE_RELEASE
+        if check_mode == pack.MODE_LOCAL_MODEL_VARIANT:
             payload = build_fake_local_model_variant(output_dir, model_id=args.hf_model_id, tokens=args.max_new_tokens)
         else:
             payload = build_fake_release(output_dir, tokens=args.max_new_tokens)
         result = check_result_from_payload(
             payload,
             output_dir=output_dir,
-            mode=args.mode,
+            mode=check_mode,
             expected_tokens=args.max_new_tokens,
             check_source="ci-fixture",
             hf_model_id=args.hf_model_id,
@@ -1940,7 +1971,7 @@ def print_human_summary(result: dict[str, Any]) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check Public Real-LLM Swarm Inference Beta v1.")
-    parser.add_argument("--mode", choices=["release", pack.MODE_LOCAL_MODEL_VARIANT], default="release")
+    parser.add_argument("--mode", choices=["release", pack.MODE_LOCAL_SMOKE, pack.MODE_LOCAL_MODEL_VARIANT], default="")
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--beta-report", default="", help="Validate an existing public_real_llm_swarm_beta.json instead of building the CI-safe fixture.")
     parser.add_argument("--hf-model-id", default=pack.DEFAULT_HF_MODEL_ID)

@@ -2057,7 +2057,14 @@ def inference_verdict_summary(report: dict[str, Any]) -> dict[str, Any]:
     source_verdict = source_inference_verdict_summary(report)
     ready = report_ready(report)
     mode = str(report.get("mode") or "")
-    state = str(review.get("state") or user.get("state") or ("ready" if ready else "blocked"))
+    if ready and mode == MODE_LOCAL_SMOKE:
+        state = "local-smoke-ready"
+    elif ready and mode == MODE_LOCAL_MODEL_VARIANT:
+        state = "local-model-ready"
+    elif ready and mode == MODE_PACKAGE:
+        state = "package-ready"
+    else:
+        state = str(review.get("state") or user.get("state") or ("ready" if ready else "blocked"))
     preflight_only = mode == MODE_PACKAGE
     if preflight_only and ready:
         result_status = "package-only"
@@ -2074,6 +2081,21 @@ def inference_verdict_summary(report: dict[str, Any]) -> dict[str, Any]:
         message = "Public Real-LLM Swarm Beta package artifacts are ready, but no inference proof ran in package mode."
     else:
         message = "Public Real-LLM Swarm Beta evidence is blocked; review Not Completed and the recommended command."
+    if ready and mode == MODE_LOCAL_SMOKE:
+        primary_code = "public_real_llm_swarm_beta_local_smoke_ready"
+        message = (
+            "Public Real-LLM Swarm Beta local smoke evidence is ready. This scoped "
+            "report proves the local CPU serve/join/generate path and CUDA fail-closed "
+            "behavior; it does not claim the full release aggregate or fresh Kaggle GPU."
+        )
+    elif ready and mode == MODE_LOCAL_MODEL_VARIANT:
+        primary_code = "public_real_llm_swarm_beta_local_model_variant_ready"
+    elif ready and mode == MODE_PACKAGE:
+        primary_code = "public_real_llm_swarm_beta_package_ready"
+    elif ready:
+        primary_code = "public_real_llm_swarm_beta_ready"
+    else:
+        primary_code = "public_real_llm_swarm_beta_blocked"
     return {
         "schema": INFERENCE_VERDICT_SCHEMA,
         "kind": "Public Real-LLM Swarm Beta",
@@ -2099,7 +2121,7 @@ def inference_verdict_summary(report: dict[str, Any]) -> dict[str, Any]:
         "recommended_label": recommended.get("label") or review.get("recommended_label") or "",
         "recommended_reason": recommended.get("reason") or review.get("recommended_reason") or "",
         "next_step": review.get("next_step") or user.get("next_step") or "",
-        "primary_code": "public_real_llm_swarm_beta_ready" if ready else "public_real_llm_swarm_beta_blocked",
+        "primary_code": primary_code,
         "inspect_first": artifacts.get("inspect_first") or review.get("inspect_first") or "",
         "public_artifact_safe": True,
         "message": message,
@@ -2160,7 +2182,7 @@ def artifact_summary(report: dict[str, Any]) -> dict[str, Any]:
 
 def recommended_check_command(report: dict[str, Any]) -> dict[str, Any]:
     mode = str(report.get("mode") or "")
-    if mode not in {"release", MODE_LOCAL_MODEL_VARIANT}:
+    if mode not in {MODE_RELEASE, MODE_LOCAL_SMOKE, MODE_LOCAL_MODEL_VARIANT}:
         return {}
     output_dir = str(report.get("output_dir") or "").strip()
     if not output_dir:
@@ -2301,7 +2323,11 @@ def user_status(report: dict[str, Any]) -> dict[str, Any]:
     ready = report_ready(report)
     not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
-    if ready and mode == MODE_LOCAL_MODEL_VARIANT:
+    if ready and mode == MODE_LOCAL_SMOKE:
+        state = "local-smoke-ready"
+        headline = "Local CPU smoke evidence is ready; full release and fresh Kaggle GPU are not claimed."
+        next_step = "run_beta_report_check"
+    elif ready and mode == MODE_LOCAL_MODEL_VARIANT:
         state = "local-model-ready"
         headline = "Local model variant evidence is ready; external validation is not claimed."
         next_step = "run_beta_report_check"
@@ -2990,6 +3016,8 @@ def build_local_smoke(args: argparse.Namespace, *, output_dir: Path, runner: Run
             "ready": ready,
             "local_smoke_only": True,
             "workload_type": WORKLOAD_TYPE,
+            "hf_model_id": args.hf_model_id,
+            "max_new_tokens": args.max_new_tokens,
             "user_surface": ["serve", "join", "generate"],
             "batch": product_batch if product_batch else {"enabled": False, "batch_generation_ready": False},
             "stream": product_stream if product_stream else {"enabled": False, "stream_generation_ready": False},
@@ -3584,7 +3612,7 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("inference_verdict_schema_mismatch")
     if verdict.get("kind") != "Public Real-LLM Swarm Beta":
         errors.append("inference_verdict_kind_mismatch")
-    if verdict.get("state") not in {"ready", "blocked", "package-ready", "local-model-ready"}:
+    if verdict.get("state") not in {"ready", "blocked", "package-ready", "local-smoke-ready", "local-model-ready"}:
         errors.append("inference_verdict_state_mismatch")
     if verdict.get("completed") is not report_ready(report):
         errors.append("inference_verdict_completed_mismatch")

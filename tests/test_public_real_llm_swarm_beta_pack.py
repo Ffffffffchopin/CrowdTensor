@@ -634,6 +634,96 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(result["user_status"]["gpu_status_state"], "local-gpu-smoke-only")
         self.assertEqual(result["user_status"]["gpu_recommended_reason"], "verify_fresh_kaggle_gpu")
 
+    def test_local_smoke_check_uses_scoped_validation(self) -> None:
+        output_dir = self._tmp_dir()
+        args = pack.parse_args([
+            pack.MODE_LOCAL_SMOKE,
+            "--output-dir",
+            str(output_dir / "beta"),
+            "--max-new-tokens",
+            "2",
+            "--stream-generation",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            joined = " ".join(command)
+            if "public_swarm_product_beta_pack.py" in joined:
+                product = check.fake_product_payload(tokens=2)
+                product["product_beta"]["stream"] = {
+                    "enabled": True,
+                    "requested": True,
+                    "event_count": 2,
+                    "source": "admin-session-stream",
+                    "endpoint_ready": True,
+                    "progress": {
+                        "stream_progress_complete": True,
+                        "all_token_events_ready": True,
+                        "monotonic_progress": True,
+                        "expected_request_count": 1,
+                        "per_request_progress_complete": True,
+                        "per_request_monotonic_progress": True,
+                        "per_request_progress": [
+                            {
+                                "event_count": 2,
+                                "max_observed_token_count": 2,
+                                "monotonic_progress": True,
+                                "observed_token_counts": [1, 2],
+                                "stream_progress_complete": True,
+                                "target_token_count": 2,
+                            }
+                        ],
+                        "observed_token_counts": [1, 2],
+                        "max_observed_token_count": 2,
+                        "max_new_tokens": 2,
+                    },
+                    "events": [],
+                    "stream_generation_ready": True,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                }
+                product["diagnosis_codes"].extend([
+                    "public_swarm_generate_stream_ready",
+                    "public_swarm_generate_stream_endpoint_ready",
+                ])
+                child_dir = Path(command[command.index("--output-dir") + 1])
+                child_dir.mkdir(parents=True, exist_ok=True)
+                (child_dir / "public_swarm_product_beta.json").write_text(json.dumps(product) + "\n", encoding="utf-8")
+                return completed(product)
+            if "public_swarm_gpu_inference_beta_pack.py" in joined:
+                gpu = check.fake_gpu_payload()
+                child_dir = Path(command[command.index("--output-dir") + 1])
+                child_dir.mkdir(parents=True, exist_ok=True)
+                (child_dir / "public_swarm_gpu_inference_beta_local_smoke.json").write_text(json.dumps(gpu) + "\n", encoding="utf-8")
+                return completed(gpu)
+            raise AssertionError(command)
+
+        payload = pack.build_report(args, runner=fake_runner)
+        result = check.check_result_from_payload(
+            payload,
+            output_dir=output_dir / "check",
+            mode=payload["mode"],
+            expected_tokens=2,
+            check_source="beta-report",
+            checked_beta_report=str(output_dir / "beta" / "public_real_llm_swarm_beta.json"),
+        )
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["mode"], pack.MODE_LOCAL_SMOKE)
+        self.assertEqual(payload["beta"]["hf_model_id"], pack.DEFAULT_HF_MODEL_ID)
+        self.assertEqual(payload["beta"]["max_new_tokens"], 2)
+        self.assertEqual(payload["inference_verdict"]["primary_code"], "public_real_llm_swarm_beta_local_smoke_ready")
+        self.assertEqual(payload["inference_verdict"]["state"], "local-smoke-ready")
+        self.assertEqual(payload["inference_verdict"]["evidence_level"], "local-cpu")
+        self.assertEqual(payload["user_status"]["state"], "local-smoke-ready")
+        self.assertEqual(payload["gpu_status"]["state"], "local-gpu-smoke-only")
+        self.assertFalse(payload["gpu_status"]["fresh_kaggle_gpu_verified"])
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check", payload["recommended_check_command"]["command_line"])
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["mode"], pack.MODE_LOCAL_SMOKE)
+        self.assertEqual(result["checked_evidence_scope"]["level"], "local-cpu")
+        self.assertEqual(result["checked_gpu_status"]["state"], "local-gpu-smoke-only")
+        self.assertEqual(result["checked_inference_verdict"]["primary_code"], "public_real_llm_swarm_beta_local_smoke_ready")
+
     def test_release_prefers_fresh_usable_report_written_by_public_swarm_v2(self) -> None:
         output_dir = self._tmp_dir()
         external_path, p2p_path, usable_path, public_swarm_v2_path = write_default_sources(output_dir)

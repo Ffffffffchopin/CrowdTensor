@@ -8179,6 +8179,40 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  check_source: beta-report", rendered)
         self.assertIn(f"  checked_beta_report: {beta_report.resolve()}", rendered)
 
+    def test_public_real_llm_swarm_beta_check_beta_report_lets_script_infer_mode(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        beta_report = output_dir / "local-smoke" / "public_real_llm_swarm_beta.json"
+        args = cli.parse_args([
+            "public-real-llm-swarm-beta",
+            "check",
+            "--beta-report",
+            str(beta_report),
+            "--output-dir",
+            str(output_dir / "check"),
+            "--json",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_real_llm_swarm_beta_check.py", command[1])
+            self.assertNotIn("--mode", command)
+            self.assertIn("--beta-report", command)
+            self.assertEqual(command[command.index("--beta-report") + 1], str(beta_report))
+            return completed({
+                "schema": "public_real_llm_swarm_beta_check_v1",
+                "ok": True,
+                "mode": "local-smoke",
+                "check_source": "beta-report",
+                "checked_beta_report": str(beta_report.resolve()),
+                "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"],
+            })
+
+        report = cli.build_public_real_llm_swarm_beta(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["cli_mode"], "check")
+        self.assertEqual(report["mode"], "local-smoke")
+        self.assertEqual(report["check_source"], "beta-report")
+
     def test_public_real_llm_swarm_beta_check_failure_includes_review_guidance(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([

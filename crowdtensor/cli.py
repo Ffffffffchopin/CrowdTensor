@@ -5411,8 +5411,6 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
     command = [
         sys.executable,
         str(SCRIPTS_DIR / "public_real_llm_swarm_beta_check.py"),
-        "--mode",
-        "local-model-variant" if getattr(args, "hf_model_id", "") != "sshleifer/tiny-gpt2" else "release",
         "--output-dir",
         str(output_dir),
         "--max-new-tokens",
@@ -5422,6 +5420,10 @@ def build_public_real_llm_swarm_beta_check(args: argparse.Namespace, *, runner: 
         "--json",
     ]
     beta_report = str(getattr(args, "beta_report", "") or "")
+    if getattr(args, "hf_model_id", "") != "sshleifer/tiny-gpt2":
+        command.extend(["--mode", "local-model-variant"])
+    elif not beta_report:
+        command.extend(["--mode", "release"])
     if beta_report:
         command.extend(["--beta-report", beta_report])
     step, payload = run_json_step(
