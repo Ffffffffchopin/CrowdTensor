@@ -390,6 +390,32 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def prompt_scope_summary() -> dict[str, Any]:
+    return {
+        "source": "prompt-text",
+        "prompt_count": 1,
+        "inline_prompt_text": True,
+        "terminal_next_commands_local_private": True,
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Live Preview RC artifact records inherited prompt source/count and placeholder safety only; "
+            "raw prompt text is excluded from public JSON, Markdown, and support bundles."
+        ),
+    }
+
+
+def inherited_prompt_scope(developer_payload: dict[str, Any]) -> dict[str, Any]:
+    prompt_scope = developer_payload.get("prompt_scope") if isinstance(developer_payload.get("prompt_scope"), dict) else {}
+    if prompt_scope:
+        return dict(prompt_scope)
+    return prompt_scope_summary()
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -429,6 +455,18 @@ def shareable_summary() -> dict[str, Any]:
     }
 
 
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def support_bundle_artifact(output_dir: Path, report: dict[str, Any]) -> dict[str, Any]:
     bundle = support_bundle.sanitize(redact_values({
         "schema": "public_swarm_live_preview_rc_support_bundle_v1",
@@ -440,6 +478,7 @@ def support_bundle_artifact(output_dir: Path, report: dict[str, Any]) -> dict[st
         "artifacts": report.get("artifacts") or {},
         "safety": report.get("safety") or {},
         "output_request": report.get("output_request") or output_request_summary(),
+        "prompt_scope": report.get("prompt_scope") or prompt_scope_summary(),
         "answer_scope": report.get("answer_scope") or answer_scope_summary(),
         "shareable_summary": report.get("shareable_summary") or shareable_summary(),
         "limitations": report.get("limitations") or [],
@@ -760,6 +799,7 @@ def build_local_smoke(args: argparse.Namespace, *, output_dir: Path, runner: Run
         "operator_action": operator_actions(MODE_LOCAL_SMOKE),
         "limitations": limitations(),
     }
+    report["prompt_scope"] = inherited_prompt_scope(developer_payload)
     report["artifacts"]["gpu_generation_evidence_json"] = artifact_entry(
         Path(args.gpu_report),
         output_dir,
@@ -830,6 +870,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path, runner: Runner)
         "operator_action": operator_actions(MODE_PACKAGE),
         "limitations": limitations(),
     }
+    report["prompt_scope"] = inherited_prompt_scope(developer_payload)
     report["artifacts"]["developer_preview_json"] = artifact_entry(
         output_dir / "developer-preview-package" / "public_swarm_developer_preview.json",
         output_dir,
@@ -945,6 +986,7 @@ def build_live_kaggle(args: argparse.Namespace, *, output_dir: Path, runner: Run
         "operator_action": operator_actions(MODE_LIVE_KAGGLE),
         "limitations": limitations(),
     }
+    report["prompt_scope"] = inherited_prompt_scope(developer_payload)
     report["artifacts"]["public_swarm_alpha_json"] = artifact_entry(
         output_dir / "public-swarm-alpha-live" / "public_swarm_inference_alpha.json",
         output_dir,
@@ -1033,6 +1075,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
         "operator_action": operator_actions(MODE_EVIDENCE_IMPORT),
         "limitations": limitations(),
     }
+    report["prompt_scope"] = inherited_prompt_scope(developer_payload)
     report["artifacts"]["developer_preview_json"] = artifact_entry(
         developer_path,
         output_dir,
@@ -1060,6 +1103,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary())
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report))
@@ -1085,6 +1129,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
 def render_markdown(report: dict[str, Any]) -> str:
     preview = report.get("live_preview") if isinstance(report.get("live_preview"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -1102,6 +1147,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
