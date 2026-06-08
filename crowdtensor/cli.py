@@ -6072,7 +6072,6 @@ def _strip_shareable_terminal_private_text(report: dict[str, Any]) -> dict[str, 
         "local_prompt_texts",
         "local_prompt_file",
         "local_prompt_texts_file",
-        "local_prompt_stdin",
     ]:
         terminal_report.pop(key, None)
     local_output = (
@@ -17011,6 +17010,8 @@ def main(argv: list[str] | None = None) -> None:
                 if not str(getattr(args, "prompt_texts_file", "") or ""):
                     local_report["local_prompt_texts"] = str(getattr(args, "prompt_texts", "") or "")
             else:
+                if bool(getattr(args, "prompt_stdin", False)):
+                    local_report["local_prompt_stdin"] = True
                 local_report = _strip_shareable_terminal_private_text(local_report)
             print_infer(local_report)
         raise SystemExit(0 if report.get("ok") else 1)
@@ -17048,6 +17049,8 @@ def main(argv: list[str] | None = None) -> None:
                 if not str(getattr(args, "prompt_texts_file", "") or ""):
                     local_report["local_prompt_texts"] = str(getattr(args, "prompt_texts", "") or "")
             else:
+                if bool(getattr(args, "prompt_stdin", False)):
+                    local_report["local_prompt_stdin"] = True
                 local_report = _strip_shareable_terminal_private_text(local_report)
             print_product_generate(local_report)
         raise SystemExit(0 if report.get("ok") else 1)

@@ -1713,6 +1713,64 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("local_output: available=False display_only=False public_artifact_safe=True", rendered)
         self.assertNotIn(prompt, stderr.getvalue())
 
+    def test_generate_shareable_terminal_keeps_safe_stdin_next_command(self) -> None:
+        prompt = "Prompt stdin private text"
+
+        def fake_build_product_generate(args: object) -> dict[str, object]:
+            self.assertTrue(getattr(args, "shareable_terminal"))
+            self.assertTrue(getattr(args, "prompt_stdin"))
+            self.assertEqual(getattr(args, "prompt_text"), prompt)
+            return {
+                "schema": "public_swarm_product_cli_v1",
+                "ok": True,
+                "mode": "generate",
+                "json_mode": False,
+                "diagnosis_codes": ["generate_dry_run_ready"],
+                "route": {"route_source": "coordinator-url", "coordinator_url_present": True, "missing_capabilities": []},
+                "generation": {"generated_token_count": 0, "max_new_tokens": 2, "generated_text_hash": ""},
+                "result": {"status": "preflight-ready", "output_count": 0, "display": "hash-only", "public_artifact_safe": True},
+                "local_output": {},
+                "next_commands": [
+                    cli.command_entry(
+                        "check generation route",
+                        ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER, "--dry-run"],
+                    )
+                ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check generation route",
+                        ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER, "--dry-run"],
+                    ),
+                    "reason": "verify_stage_miners",
+                },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check generation route",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": "crowdtensor generate --prompt-text '<prompt>' --dry-run",
+                    "public_artifact_safe": True,
+                },
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli.sys, "stdin", io.StringIO(prompt + "\n")):
+            with patch.object(cli, "build_product_generate", side_effect=fake_build_product_generate):
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                    cli.main(["generate", "--prompt-stdin", "--dry-run", "--shareable-terminal"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("printf %s '<prompt>' | crowdtensor generate --prompt-stdin --dry-run", rendered)
+        self.assertNotIn("--prompt-text '<prompt>'", rendered)
+        self.assertNotIn(prompt, rendered)
+        self.assertNotIn(prompt, stderr.getvalue())
+        self.assertIn(
+            "  shareable_terminal: enabled=True prompt_sources_redacted=True answer_text_redacted=False public_artifact_safe=True",
+            rendered,
+        )
+
     def test_generate_main_prints_copyable_batch_prompt_without_single_prompt_placeholder(self) -> None:
         prompts = "first private prompt,second private prompt"
 
@@ -10445,6 +10503,82 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, progress)
         self.assertNotIn(answer, progress)
         self.assertNotIn("admin-secret", progress)
+
+    def test_infer_shareable_terminal_keeps_safe_stdin_next_command(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "Infer stdin private text"
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            self.assertTrue(getattr(args, "shareable_terminal"))
+            self.assertTrue(getattr(args, "prompt_stdin"))
+            self.assertEqual(getattr(args, "prompt_text"), prompt)
+            return {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": True,
+                "mode": "existing",
+                "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "generation": {"generated_token_count": 0, "max_new_tokens": 2, "generated_text_hash": ""},
+                "result": {"status": "preflight-ready", "output_count": 0, "display": "hash-only", "public_artifact_safe": True},
+                "route": {"route_source": "coordinator-url", "route_ready": True, "distinct_stage_miners": True},
+                "stream": {},
+                "local_output": {},
+                "output_dir": str(output_dir),
+                "next_commands": [
+                    cli.command_entry(
+                        "check existing swarm",
+                        ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing", "--dry-run"],
+                    )
+                ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "check existing swarm",
+                        ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing", "--dry-run"],
+                    ),
+                    "reason": "verify_stage_miners",
+                },
+                "review_summary": {
+                    "state": "preflight-ready",
+                    "next_step": "submit",
+                    "recommended_label": "check existing swarm",
+                    "recommended_reason": "verify_stage_miners",
+                    "next_command": "crowdtensor infer '<prompt>' --mode existing --dry-run",
+                    "public_artifact_safe": True,
+                },
+                "diagnosis_codes": ["crowdtensor_infer_ready"],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli.sys, "stdin", io.StringIO(prompt + "\n")):
+            with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                    cli.main([
+                        "infer",
+                        "--prompt-stdin",
+                        "--mode",
+                        "existing",
+                        "--coordinator-url",
+                        "http://127.0.0.1:8787",
+                        "--admin-token",
+                        "admin-secret",
+                        "--output-dir",
+                        str(output_dir),
+                        "--dry-run",
+                        "--shareable-terminal",
+                    ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertIn("printf %s '<prompt>' | crowdtensor infer --prompt-stdin --mode existing --dry-run", rendered)
+        self.assertNotIn("infer '<prompt>'", rendered)
+        self.assertNotIn(prompt, rendered)
+        self.assertNotIn(prompt, progress)
+        self.assertNotIn("admin-secret", rendered)
+        self.assertIn(
+            "  shareable_terminal: enabled=True prompt_sources_redacted=True answer_text_redacted=False public_artifact_safe=True",
+            rendered,
+        )
 
     def test_infer_prompt_file_does_not_pollute_startup_commands(self) -> None:
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"
