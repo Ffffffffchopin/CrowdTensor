@@ -14030,6 +14030,9 @@ def print_public_swarm_live_preview_rc(report: dict[str, Any]) -> None:
 
 def print_public_swarm_operator_preview(report: dict[str, Any]) -> None:
     preview = report.get("operator_preview") if isinstance(report.get("operator_preview"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -14045,6 +14048,18 @@ def print_public_swarm_operator_preview(report: dict[str, Any]) -> None:
     print(f"  live_preview_ready: {preview.get('live_preview_ready')}")
     print(f"  external_runtime_verified: {preview.get('external_runtime_verified')}")
     print(f"  external_runtime_blocked: {preview.get('external_runtime_blocked')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -14053,6 +14068,19 @@ def print_public_swarm_operator_preview(report: dict[str, Any]) -> None:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = " side_effectful=True" if item.get("side_effectful") else ""
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary.get('present_artifact_count')}/{artifact_summary.get('artifact_count')} "
+            f"support={artifact_summary.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
+        )
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -15768,6 +15796,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     operator_preview = subparsers.add_parser(
         "operator-preview",
         help="Build the Public Swarm v0.1 Operator Preview artifact.",
+        description=(
+            "Build the Public Swarm v0.1 Operator Preview over the current Coordinator-backed inference stack.\n\n"
+            "Modes:\n"
+            "  local-smoke      Run CPU-safe local Operator Preview smoke over Developer Preview, Live Preview evidence, release readiness, and CPU fallback.\n"
+            "  package          Generate the operator runbook and join/package artifacts without creating Kaggle resources.\n"
+            "  live-kaggle      Run the side-effectful public Coordinator plus private Kaggle proof, or fall back to retained evidence when blocked.\n"
+            "  evidence-import  Aggregate retained Developer Preview, live stage0/stage1, release readiness, and GPU evidence reports.\n\n"
+            "Reports print status, review, recommended_next, next[...] commands, output scope, and artifact counts. "
+            "Share only the generated JSON, Markdown, and support bundle; keep private env files, Kaggle payloads, "
+            "runtime state, credentials, leases, activations, raw prompts, generated text, and generated token ids local. "
+            "live-kaggle is side-effectful and requires cleanup plus token rotation after collection."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crowdtensor operator-preview local-smoke --output-dir dist/public-swarm-operator-preview --allow-dirty-release\n"
+            "  crowdtensor operator-preview package --public-host 24.199.118.54 --output-dir dist/operator-preview-package\n"
+            "  crowdtensor operator-preview evidence-import --developer-preview-report dist/public-swarm-developer-preview/public_swarm_developer_preview.json --live-stage0-report dist/public-swarm-live-preview-rc-live-stage0-20260529043801-rc/public_swarm_live_preview_rc.json --live-stage1-report dist/public-swarm-live-preview-rc-live-stage1-20260529044328-rc/public_swarm_live_preview_rc.json\n"
+            "  crowdtensor operator-preview live-kaggle --kaggle-owner KAGGLE_OWNER --public-host 24.199.118.54 --failure-mode kill-stage0-after-claim"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     operator_preview.add_argument("operator_preview_mode", choices=["local-smoke", "package", "live-kaggle", "evidence-import"])
     operator_preview.add_argument("--output-dir", default="dist/public-swarm-operator-preview")

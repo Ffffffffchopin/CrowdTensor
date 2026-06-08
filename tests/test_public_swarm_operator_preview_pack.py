@@ -53,7 +53,21 @@ class PublicSwarmOperatorPreviewPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["recommended_label"], "inspect Operator Preview evidence")
+        self.assertEqual(report["review_summary"]["schema"], "public_swarm_operator_preview_review_summary_v1")
+        self.assertEqual(report["review_summary"]["next_step"], "review_artifacts")
+        self.assertEqual(report["recommended_next_command"]["label"], "inspect Operator Preview evidence")
+        self.assertTrue(any(item["label"] == "inspect support bundle" for item in report["next_commands"]))
+        self.assertEqual(report["artifact_summary"]["present_artifact_count"], report["artifact_summary"]["artifact_count"])
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
         markdown = (Path(result["output_dir"]) / "operator-preview" / "public_swarm_operator_preview.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("- recommended: `inspect Operator Preview evidence` reason=`review_artifacts`", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("- present: `4` / `4`", markdown)
+        self.assertIn("## Not Completed", markdown)
         self.assertIn("## Output Scope", markdown)
         self.assertIn("- output request note:", markdown)
         self.assertIn("local answer", markdown)
@@ -76,6 +90,10 @@ class PublicSwarmOperatorPreviewPackTests(unittest.TestCase):
         self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(support["user_status"], report["user_status"])
+        self.assertEqual(support["review_summary"], report["review_summary"])
+        self.assertEqual(support["artifact_summary"], report["artifact_summary"])
+        self.assertEqual(support["recommended_next_command"]["label"], "inspect Operator Preview evidence")
 
     def test_check_builds_ready_package(self) -> None:
         result = check.run_check(check.parse_args([
@@ -316,6 +334,8 @@ class PublicSwarmOperatorPreviewPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["include_output"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(report["recommended_next_command"]["label"], "inspect Operator Preview evidence")
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
 
 
 if __name__ == "__main__":
