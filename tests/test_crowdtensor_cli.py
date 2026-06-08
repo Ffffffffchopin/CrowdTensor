@@ -18046,6 +18046,53 @@ class CrowdTensorCliTests(unittest.TestCase):
             "mode": "local-smoke",
             "output_dir": "dist/public-swarm-gpu-beta",
             "beta": {"ready": True, "backend": "hf_transformers_cuda"},
+            "review_summary": {
+                "state": "ready",
+                "ready": True,
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/public-swarm-gpu-beta/public_swarm_gpu_inference_beta_local_smoke.md",
+                "support_bundle": "dist/public-swarm-gpu-beta/support_bundle.json",
+                "recommended_label": "inspect GPU Beta evidence",
+                "recommended_next_command": {
+                    "label": "inspect GPU Beta evidence",
+                    "command_line": "sed -n 1,220p dist/public-swarm-gpu-beta/public_swarm_gpu_inference_beta_local_smoke.md",
+                    "public_artifact_safe": True,
+                },
+                "public_artifact_safe": True,
+            },
+            "user_status": {
+                "state": "smoke-ready",
+                "headline": "GPU Beta smoke evidence is ready; CUDA generation readiness is not claimed.",
+                "next_step": "run_cuda_local_loopback",
+                "recommended_label": "inspect GPU Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect GPU Beta evidence",
+                "command_line": "sed -n 1,220p dist/public-swarm-gpu-beta/public_swarm_gpu_inference_beta_local_smoke.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect GPU Beta evidence",
+                    "command_line": "sed -n 1,220p dist/public-swarm-gpu-beta/public_swarm_gpu_inference_beta_local_smoke.md",
+                    "public_artifact_safe": True,
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/public-swarm-gpu-beta/support_bundle.json",
+                    "public_artifact_safe": True,
+                },
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/public-swarm-gpu-beta/public_swarm_gpu_inference_beta_local_smoke.md",
+                "summary_json": "dist/public-swarm-gpu-beta/public_swarm_gpu_inference_beta_local_smoke.json",
+                "support_bundle": "dist/public-swarm-gpu-beta/support_bundle.json",
+                "artifact_count": 3,
+                "present_artifact_count": 3,
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_generated_text_public": False,
@@ -18089,6 +18136,12 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_swarm_gpu_inference_beta(report)
         output = stdout.getvalue()
 
+        self.assertIn("  status: smoke-ready", output)
+        self.assertIn("  review: state=ready next=review_artifacts", output)
+        self.assertIn("  recommended_next: sed -n 1,220p", output)
+        self.assertIn("  next[1] inspect GPU Beta evidence:", output)
+        self.assertIn("  next[2] inspect support bundle:", output)
+        self.assertIn("  artifacts: inspect=dist/public-swarm-gpu-beta/public_swarm_gpu_inference_beta_local_smoke.md present=3/3", output)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,

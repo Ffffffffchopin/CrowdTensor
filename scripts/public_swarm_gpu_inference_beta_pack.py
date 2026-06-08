@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -62,6 +63,10 @@ def utc_now() -> str:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def shell_command(parts: list[Any]) -> str:
+    return shlex.join([str(part) for part in parts])
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -361,13 +366,210 @@ def shareable_summary_text(summary: dict[str, Any]) -> str:
     )
 
 
+def command_entry(label: str, command: list[Any], *, reason: str = "") -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    return entry
+
+
 def report_filenames(mode: str) -> tuple[str, str]:
     safe = str(mode).replace("-", "_")
     return f"public_swarm_gpu_inference_beta_{safe}.json", f"public_swarm_gpu_inference_beta_{safe}.md"
 
 
+def artifact_summary(output_dir: Path, *, mode: str) -> dict[str, Any]:
+    json_name, markdown_name = report_filenames(mode)
+    paths = {
+        "inspect_first": output_dir / markdown_name,
+        "summary_json": output_dir / json_name,
+        "summary_markdown": output_dir / markdown_name,
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    return {
+        "schema": "public_swarm_gpu_inference_beta_artifact_summary_v1",
+        "inspect_first": str(paths["inspect_first"]),
+        "summary_json": str(paths["summary_json"]),
+        "summary_markdown": str(paths["summary_markdown"]),
+        "support_bundle": str(paths["support_bundle"]),
+        "shareable_paths": [str(path) for path in paths.values()],
+        "artifact_count": len(paths),
+        "present_artifact_count": sum(1 for path in paths.values() if path.is_file()),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": "Open inspect_first first, then support_bundle for diagnostics; artifacts contain hashes/counts only.",
+    }
+
+
+def gpu_beta_command(report: dict[str, Any], mode: str) -> list[str]:
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    command = [
+        "crowdtensor",
+        "public-swarm-gpu-beta",
+        mode,
+        "--output-dir",
+        str(report.get("output_dir") or DEFAULT_OUTPUT_DIR),
+        "--hf-model-id",
+        str(beta.get("model_id") or DEFAULT_MODEL_ID),
+        "--request-count",
+        str(beta.get("request_count") or 1),
+        "--max-new-tokens",
+        str(beta.get("max_new_tokens") or 1),
+        "--json",
+    ]
+    if beta.get("partition_mode"):
+        command.extend(["--real-llm-partition-mode", str(beta.get("partition_mode"))])
+    return command
+
+
+def recommended_next_command(report: dict[str, Any], *, output_dir: Path, mode: str) -> dict[str, Any]:
+    artifacts = artifact_summary(output_dir, mode=mode)
+    if mode == "local-smoke":
+        return command_entry(
+            "run CUDA local loopback",
+            gpu_beta_command(report, "local-loopback"),
+            reason="produce_gpu_ready_evidence",
+        )
+    if mode == "kaggle-package":
+        return command_entry(
+            "import retained GPU evidence",
+            [
+                "crowdtensor",
+                "public-swarm-gpu-beta",
+                "evidence-import",
+                "--gpu-report",
+                "dist/<gpu-proof>/public_swarm_gpu_inference_beta_kaggle_auto.json",
+                "--output-dir",
+                str(report.get("output_dir") or DEFAULT_OUTPUT_DIR),
+                "--json",
+            ],
+            reason="validate_external_gpu_evidence",
+        )
+    ready = bool(report.get("ok") is True and (report.get("beta") if isinstance(report.get("beta"), dict) else {}).get("ready") is True)
+    if ready:
+        return command_entry(
+            "inspect GPU Beta evidence",
+            ["sed", "-n", "1,220p", artifacts["inspect_first"]],
+            reason="review_artifacts",
+        )
+    if mode == "evidence-import":
+        return command_entry(
+            "rerun GPU evidence import",
+            gpu_beta_command(report, "evidence-import"),
+            reason="fix_or_refresh_imported_evidence",
+        )
+    if mode == "kaggle-auto":
+        return command_entry(
+            "rerun GPU Kaggle proof",
+            gpu_beta_command(report, "kaggle-auto"),
+            reason="verify_external_gpu_runtime",
+        )
+    return command_entry(
+        "inspect GPU Beta diagnostics",
+        ["sed", "-n", "1,220p", artifacts["support_bundle"]],
+        reason="inspect_diagnostics",
+    )
+
+
+def next_commands(report: dict[str, Any], *, output_dir: Path, mode: str, recommended: dict[str, Any]) -> list[dict[str, Any]]:
+    artifacts = artifact_summary(output_dir, mode=mode)
+    commands = [
+        command_entry(
+            "inspect GPU Beta evidence",
+            ["sed", "-n", "1,220p", artifacts["inspect_first"]],
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            ["sed", "-n", "1,220p", artifacts["support_bundle"]],
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    if mode == "local-smoke":
+        loopback = command_entry(
+            "run CUDA local loopback",
+            gpu_beta_command(report, "local-loopback"),
+            reason="produce_gpu_ready_evidence",
+        )
+        if all(item.get("command_line") != loopback.get("command_line") for item in commands):
+            commands.append(loopback)
+    elif mode == "kaggle-package":
+        commands.append(command_entry(
+            "run GPU Kaggle proof",
+            gpu_beta_command(report, "kaggle-auto"),
+            reason="verify_external_gpu_runtime",
+        ))
+    return commands
+
+
+def user_status(report: dict[str, Any], *, recommended: dict[str, Any]) -> dict[str, Any]:
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    ready = bool(report.get("ok") is True and beta.get("ready") is True)
+    mode = str(report.get("mode") or "")
+    if ready and mode == "local-smoke":
+        state = "smoke-ready"
+        headline = "GPU Beta smoke evidence is ready; CUDA generation readiness is not claimed."
+        next_step = "run_cuda_local_loopback"
+    elif ready and mode == "kaggle-package":
+        state = "package-ready"
+        headline = "GPU Kaggle package is ready for a private external proof."
+        next_step = "run_or_import_gpu_proof"
+    elif ready:
+        state = "ready"
+        headline = "Public Swarm GPU Inference Beta evidence is ready."
+        next_step = "review_artifacts"
+    else:
+        state = "blocked"
+        headline = "Public Swarm GPU Inference Beta evidence needs attention."
+        next_step = "fix_gpu_beta_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(report: dict[str, Any], *, output_dir: Path, mode: str, recommended: dict[str, Any]) -> dict[str, Any]:
+    artifacts = artifact_summary(output_dir, mode=mode)
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    ready = bool(report.get("ok") is True and beta.get("ready") is True)
+    return {
+        "schema": "public_swarm_gpu_inference_beta_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "ready": ready,
+        "next_step": "review_artifacts" if ready else "fix_gpu_beta_blockers",
+        "inspect_first": artifacts["inspect_first"],
+        "support_bundle": artifacts["support_bundle"],
+        "recommended_next_command": recommended,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": (report.get("diagnosis_codes") or ["none"])[0],
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -381,6 +583,33 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- ready: `{beta.get('ready')}`",
         f"- backend: `{beta.get('backend')}`",
         f"- output_dir: `{report.get('output_dir')}`",
+        "",
+        "## Review",
+        "",
+        f"- status: `{user.get('state')}` {user.get('headline') or ''}",
+        f"- state: `{review.get('state')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- support bundle: `{review.get('support_bundle')}`",
+        f"- recommended next: `{recommended.get('command_line') or 'none'}`",
+        f"- public artifact safe: `{review.get('public_artifact_safe')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    for item in report.get("next_commands") or []:
+        if isinstance(item, dict):
+            lines.append(f"- {item.get('label')}: `{item.get('command_line')}`")
+    if not report.get("next_commands"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifacts.get('inspect_first')}`",
+        f"- summary JSON: `{artifacts.get('summary_json')}`",
+        f"- support bundle: `{artifacts.get('support_bundle')}`",
+        f"- present artifacts: `{artifacts.get('present_artifact_count')}/{artifacts.get('artifact_count')}`",
         "",
         "## Output Scope",
         "",
@@ -400,7 +629,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Boundaries",
         "",
-    ]
+    ])
     for item in report.get("limitations") or []:
         lines.append(f"- {item}")
     return "\n".join(lines) + "\n"
@@ -441,6 +670,12 @@ def persist_report(
     json_path = output_dir / json_name
     markdown_path = output_dir / markdown_name
     report.setdefault("artifacts", {})
+    report["artifact_summary"] = artifact_summary(output_dir, mode=mode)
+    recommended = recommended_next_command(report, output_dir=output_dir, mode=mode)
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, output_dir=output_dir, mode=mode, recommended=recommended)
+    report["user_status"] = user_status(report, recommended=recommended)
+    report["review_summary"] = review_summary(report, output_dir=output_dir, mode=mode, recommended=recommended)
     report["artifacts"]["public_swarm_gpu_inference_beta_json"] = artifact_entry(
         json_path,
         output_dir,
@@ -453,10 +688,39 @@ def persist_report(
         output_dir,
         kind="public_swarm_gpu_inference_beta_markdown",
     )
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        output_dir / "support_bundle.json",
+        output_dir,
+        kind="public_swarm_gpu_inference_beta_support_bundle",
+        schema="public_swarm_gpu_inference_beta_support_bundle_v1",
+    )
     write_json(json_path, report)
     markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    bundle = support_bundle.sanitize({
+        "schema": "public_swarm_gpu_inference_beta_support_bundle_v1",
+        "generated_at": utc_now(),
+        "mode": mode,
+        "ok": report.get("ok"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
+        "steps": report.get("steps"),
+        "safety": report.get("safety"),
+    })
+    write_json(output_dir / "support_bundle.json", bundle)
     report["artifacts"]["public_swarm_gpu_inference_beta_json"]["present"] = True
     report["artifacts"]["public_swarm_gpu_inference_beta_markdown"]["present"] = True
+    report["artifacts"]["support_bundle_json"]["present"] = True
+    report["artifact_summary"] = artifact_summary(output_dir, mode=mode)
+    bundle["artifact_summary"] = report.get("artifact_summary")
+    write_json(output_dir / "support_bundle.json", bundle)
     write_json(json_path, report)
     return report
 
