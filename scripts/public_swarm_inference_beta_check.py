@@ -174,6 +174,44 @@ def output_scope_errors(payload: dict[str, Any]) -> list[str]:
     return errors
 
 
+def guidance_errors(payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    recommended = payload.get("recommended_next_command") if isinstance(payload.get("recommended_next_command"), dict) else {}
+    next_commands = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    not_completed = payload.get("not_completed") if isinstance(payload.get("not_completed"), list) else []
+    if user_status.get("public_artifact_safe") is not True:
+        errors.append("user_status_public_artifact_safe_mismatch")
+    if payload.get("ok") is True and user_status.get("state") != "ready":
+        errors.append("user_status_ready_state_mismatch")
+    if review.get("schema") != "public_swarm_inference_beta_review_summary_v1":
+        errors.append("review_schema_mismatch")
+    if payload.get("ok") is True and review.get("state") != "ready":
+        errors.append("review_ready_state_mismatch")
+    if not isinstance(review.get("inspect_first"), str) or not review.get("inspect_first"):
+        errors.append("review_inspect_first_missing")
+    if not isinstance(review.get("support_bundle"), str) or not review.get("support_bundle"):
+        errors.append("review_support_bundle_missing")
+    if not isinstance(recommended.get("command_line"), str) or not recommended.get("command_line"):
+        errors.append("recommended_command_missing")
+    if recommended.get("public_artifact_safe") is not True:
+        errors.append("recommended_public_artifact_safe_mismatch")
+    if len(next_commands) < 2:
+        errors.append("next_commands_missing")
+    if not_completed:
+        errors.append("ready_report_not_completed_nonempty")
+    if artifact_summary.get("public_artifact_safe") is not True:
+        errors.append("artifact_summary_public_artifact_safe_mismatch")
+    if artifact_summary.get("present_artifact_count") != artifact_summary.get("artifact_count"):
+        errors.append("artifact_summary_present_count_mismatch")
+    shareable_paths = artifact_summary.get("shareable_paths")
+    if not isinstance(shareable_paths, list) or len(shareable_paths) < 3:
+        errors.append("artifact_summary_shareable_paths_missing")
+    return errors
+
+
 def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[str]) -> None:
     if payload.get("schema") != "public_swarm_inference_beta_v1" or payload.get("ok") is not True:
         raise SystemExit(f"unexpected Public Swarm Inference Beta report: {json.dumps(payload, sort_keys=True)}")
@@ -203,6 +241,13 @@ def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[
     scope_errors = output_scope_errors(payload)
     if scope_errors:
         raise SystemExit(f"Public Swarm Inference Beta output scope mismatch: {scope_errors}")
+    guide_errors = guidance_errors(payload)
+    if guide_errors:
+        raise SystemExit(f"Public Swarm Inference Beta user guidance mismatch: {guide_errors}")
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    support = artifacts.get("support_bundle_json") if isinstance(artifacts.get("support_bundle_json"), dict) else {}
+    if support.get("present") is not True:
+        raise SystemExit("Public Swarm Inference Beta support bundle artifact was not reported present")
 
 
 def parse_args() -> argparse.Namespace:

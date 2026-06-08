@@ -15655,6 +15655,50 @@ class CrowdTensorCliTests(unittest.TestCase):
             "mode": "product-beta",
             "beta": {"ready": True},
             "output_dir": "/tmp/public-swarm-beta",
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Swarm Inference Beta evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Public Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "public_swarm_inference_beta_review_summary_v1",
+                "state": "ready",
+                "headline": "Public Swarm Inference Beta evidence is ready.",
+                "next_step": "review_artifacts",
+                "inspect_first": "/tmp/public-swarm-beta/public_swarm_inference_beta.md",
+                "support_bundle": "/tmp/public-swarm-beta/support_bundle.json",
+                "recommended_label": "inspect Public Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p /tmp/public-swarm-beta/public_swarm_inference_beta.md",
+                "attention": "none",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Public Beta evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p /tmp/public-swarm-beta/public_swarm_inference_beta.md",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p /tmp/public-swarm-beta/public_swarm_inference_beta.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p /tmp/public-swarm-beta/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "present_artifact_count": 4,
+                "artifact_count": 4,
+                "support_bundle": "/tmp/public-swarm-beta/support_bundle.json",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_prompt_public": False,
@@ -15701,6 +15745,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_swarm_inference_beta(report)
 
         output = stream.getvalue()
+        self.assertIn("status: ready", output)
+        self.assertIn("review: state=ready", output)
+        self.assertIn("recommended_next: inspect Public Beta evidence", output)
+        self.assertIn("next[1] inspect shareable summary", output)
+        self.assertIn("artifacts: present=4/4", output)
         self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
         self.assertIn("prompt_scope: source=prompt-text count=1 inline_prompt_text=True", output)
         self.assertIn("prompt_scope_note: Public Swarm Beta excludes raw prompt text from public artifacts.", output)

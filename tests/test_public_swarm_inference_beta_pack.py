@@ -14,6 +14,27 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
     def _tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="crowdtensor_public_swarm_beta_test_"))
 
+    def _assert_ready_guidance(self, report: dict, output_dir: Path, *, mode: str) -> None:
+        _json_name, markdown_name = pack.report_filenames(mode)
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["review_summary"]["schema"], "public_swarm_inference_beta_review_summary_v1")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertEqual(report["not_completed"], [])
+        self.assertTrue(report["recommended_next_command"]["command_line"])
+        self.assertGreaterEqual(len(report["next_commands"]), 2)
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+        self.assertEqual(report["artifact_summary"]["present_artifact_count"], report["artifact_summary"]["artifact_count"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        self.assertTrue((output_dir / "support_bundle.json").is_file())
+        markdown = (output_dir / markdown_name).read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("## Not Completed", markdown)
+        support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["schema"], "public_swarm_inference_beta_support_bundle_v1")
+        self.assertTrue(support["public_artifact_safe"])
+
     def _alpha_stage_report(self, *, stage: str) -> dict:
         failure_mode = f"kill-{stage}-after-claim"
         stage_code = f"live_{stage}_requeue_ready"
@@ -154,6 +175,7 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
             self.assertIn(code, report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["public_swarm_inference_beta_json"]["present"])
         self.assertTrue((output_dir / "public_swarm_inference_beta.md").is_file())
+        self._assert_ready_guidance(report, output_dir, mode="evidence-import")
 
     def test_evidence_import_blocks_when_alpha_rc_missing(self) -> None:
         root = self._tmp_dir()
@@ -175,6 +197,10 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("alpha_rc_report_missing", report["imported_reports"]["alpha_rc"]["failed_checks"])
         self.assertIn("public_swarm_inference_beta_blocked", report["diagnosis_codes"])
+        self.assertIn("Alpha RC ready", report["not_completed"])
+        self.assertEqual(report["user_status"]["state"], "evidence-import-blocked")
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun evidence import")
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
 
     def test_local_loopback_wraps_remote_real_llm_check(self) -> None:
         output_dir = self._tmp_dir()
@@ -254,6 +280,9 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertNotIn("private local prompt one", encoded)
         self.assertNotIn("private local prompt two", encoded)
+        self.assertNotIn("private local prompt one", report["recommended_next_command"]["command_line"])
+        self.assertIn("PROMPT_1,PROMPT_2", report["next_commands"][2]["command_line"])
+        self._assert_ready_guidance(report, output_dir, mode="local-loopback")
         self.assertTrue(calls)
 
     def test_product_beta_aggregates_product_rc_and_cpu_fallback(self) -> None:
@@ -415,6 +444,9 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertNotIn("private product prompt two", encoded)
         self.assertNotIn("private product prompt one", markdown)
         self.assertNotIn("private product prompt two", markdown)
+        self.assertNotIn("private product prompt one", report["recommended_next_command"]["command_line"])
+        self.assertIn("PROMPT_1,PROMPT_2", report["next_commands"][2]["command_line"])
+        self._assert_ready_guidance(report, output_dir, mode="product-beta")
         self.assertTrue(calls)
 
     def test_product_beta_blocks_when_cpu_fallback_missing(self) -> None:
@@ -465,6 +497,9 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertIn("public_swarm_inference_beta_blocked", report["diagnosis_codes"])
         self.assertFalse(report["beta"]["cpu_fallback_ready"])
+        self.assertIn("CPU fallback ready", report["not_completed"])
+        self.assertEqual(report["user_status"]["state"], "product-beta-blocked")
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun product Beta aggregate")
 
     def test_prepare_wraps_existing_swarm_beta_without_leaking_tokens(self) -> None:
         output_dir = self._tmp_dir()
@@ -517,6 +552,8 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         broken_prompt = dict(report)
         broken_prompt["prompt_scope"] = {**report["prompt_scope"], "raw_prompt_public": True}
         self.assertIn("prompt_scope_raw_prompt_public_mismatch", check.output_scope_errors(broken_prompt))
+        self.assertEqual(check.guidance_errors(report), [])
+        self._assert_ready_guidance(report, output_dir, mode="prepare")
         self.assertTrue(calls)
 
     def test_product_beta_redacts_prompt_texts_from_failed_child_output(self) -> None:
