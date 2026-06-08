@@ -1536,6 +1536,19 @@ def generate_evidence_scope_text(scope: dict[str, Any]) -> str:
     )
 
 
+def public_real_llm_beta_evidence_scope_text(scope: dict[str, Any]) -> str:
+    return (
+        f"level={scope.get('level') or 'unknown'} "
+        f"executed={scope.get('executed_where') or 'unknown'} "
+        f"source={scope.get('source') or 'unknown'} "
+        f"local_cpu={bool(scope.get('local_cpu'))} "
+        f"retained_external={bool(scope.get('retained_external_evidence_imported'))} "
+        f"local_gpu_smoke={bool(scope.get('local_gpu_smoke_ran'))} "
+        f"retained_gpu={bool(scope.get('retained_gpu_evidence_imported'))} "
+        f"fresh_kaggle_gpu={bool(scope.get('fresh_kaggle_gpu_verified'))}"
+    )
+
+
 def _infer_evidence_scope(summary: dict[str, Any]) -> dict[str, Any]:
     provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
     dry_run = bool(summary.get("dry_run") or provenance.get("dry_run"))
@@ -14890,6 +14903,7 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
     review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
@@ -14960,6 +14974,9 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     print(f"  cuda_optional_fail_closed_ready: {beta.get('cuda_optional_fail_closed_ready')}")
     if runtime_provenance:
         print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
+    if evidence_scope:
+        print(f"  evidence_scope: {public_real_llm_beta_evidence_scope_text(evidence_scope)}")
+        print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -15042,17 +15059,7 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
             f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
         )
     if checked_evidence_scope:
-        print(
-            "  checked_evidence_scope: "
-            f"level={checked_evidence_scope.get('level') or 'unknown'} "
-            f"executed={checked_evidence_scope.get('executed_where') or 'unknown'} "
-            f"source={checked_evidence_scope.get('source') or 'unknown'} "
-            f"local_cpu={bool(checked_evidence_scope.get('local_cpu'))} "
-            f"retained_external={bool(checked_evidence_scope.get('retained_external_evidence_imported'))} "
-            f"local_gpu_smoke={bool(checked_evidence_scope.get('local_gpu_smoke_ran'))} "
-            f"retained_gpu={bool(checked_evidence_scope.get('retained_gpu_evidence_imported'))} "
-            f"fresh_kaggle_gpu={bool(checked_evidence_scope.get('fresh_kaggle_gpu_verified'))}"
-        )
+        print(f"  checked_evidence_scope: {public_real_llm_beta_evidence_scope_text(checked_evidence_scope)}")
         print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")

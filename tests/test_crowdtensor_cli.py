@@ -8338,6 +8338,17 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "fresh_kaggle_gpu_verified": False,
                 "public_artifact_safe": True,
             },
+            "evidence_scope": {
+                "level": "release-local-cpu-with-retained-external",
+                "executed_where": "local-cpu-plus-retained-evidence",
+                "source": "public_real_llm_swarm_beta_v1",
+                "local_cpu": True,
+                "retained_external_evidence_imported": True,
+                "local_gpu_smoke_ran": True,
+                "retained_gpu_evidence_imported": False,
+                "fresh_kaggle_gpu_verified": False,
+                "user_expectation": "This release mixes fresh local CPU checks with retained external/P2P evidence.",
+            },
             "artifact_summary": {
                 "inspect_first": "public_real_llm_swarm_beta.md",
                 "machine_readable": "public_real_llm_swarm_beta.json",
@@ -8443,6 +8454,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  runtime_provenance: proof=release-local-cpu-with-retained-external-and-local-gpu-smoke local_cpu_product=True external_kaggle_cpu=True p2p_candidate=True gpu_mode=local-smoke local_gpu_smoke=True retained_gpu_import=False fresh_kaggle_gpu_attempted=False fresh_kaggle_gpu_verified=False",
             output,
         )
+        self.assertIn("  evidence_scope: level=release-local-cpu-with-retained-external", output)
+        self.assertIn("fresh_kaggle_gpu=False", output)
+        self.assertIn("  evidence_scope_note:", output)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
