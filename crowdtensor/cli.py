@@ -8341,6 +8341,11 @@ def _infer_summary_from_payload(
     output_dir.mkdir(parents=True, exist_ok=True)
     persisted_summary = json.loads(json.dumps(summary))
     _strip_infer_local_output_text(persisted_summary)
+    persisted_summary["artifact_summary"] = _artifact_summary_from_report(persisted_summary, kind="infer")
+    persisted_summary["review_summary"] = _review_summary_from_report(persisted_summary, kind="infer")
+    if source_evidence_paths:
+        _prefer_source_review_for_infer(persisted_summary, source_review)
+    persisted_summary["inference_verdict"] = inference_verdict_summary(persisted_summary, kind="Inference")
     (output_dir / "infer_summary.json").write_text(
         json.dumps(sanitize(redact_values(persisted_summary)), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -11753,6 +11758,9 @@ def _finalize_product_generate_report(
         report["inference_verdict"] = inference_verdict_summary(report, kind="Generation")
         persisted_summary = copy.deepcopy(report)
         _strip_local_output_text(persisted_summary)
+        persisted_summary["artifact_summary"] = _artifact_summary_from_report(persisted_summary, kind="generate")
+        persisted_summary["review_summary"] = _review_summary_from_report(persisted_summary, kind="generate")
+        persisted_summary["inference_verdict"] = inference_verdict_summary(persisted_summary, kind="Generation")
         safe_persisted = sanitize(redact_values(persisted_summary, [admin_token]))
         (output_dir / "generate_summary.json").write_text(
             json.dumps(safe_persisted, indent=2, sort_keys=True) + "\n",

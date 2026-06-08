@@ -5230,6 +5230,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["answer_scope"]["terminal_only"])
         self.assertTrue(report["answer_scope"]["visible_in_terminal"])
         self.assertEqual(report["answer_scope"]["scope_state"], "terminal-visible")
+        self.assertTrue(report["inference_verdict"]["answer_visible_in_terminal"])
+        self.assertEqual(report["inference_verdict"]["answer_scope_state"], "terminal-visible")
         self.assertEqual(report["answer_scope"]["saved_json_display"], "hash-only")
         self.assertEqual(report["answer_scope"]["saved_markdown_display"], "hash-only")
         self.assertTrue(report["answer_scope"]["public_artifact_safe"])
@@ -5250,6 +5252,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["answer_scope"]["terminal_only"])
         self.assertFalse(persisted["answer_scope"]["visible_in_terminal"])
         self.assertEqual(persisted["answer_scope"]["scope_state"], "saved-terminal-redacted")
+        self.assertFalse(persisted["inference_verdict"]["answer_visible_in_terminal"])
+        self.assertEqual(persisted["inference_verdict"]["answer_scope_state"], "saved-terminal-redacted")
+        self.assertEqual(persisted["inference_verdict"]["result_status"], "complete")
+        self.assertTrue(persisted["inference_verdict"]["public_artifact_safe"])
         self.assertEqual(persisted["answer_scope"]["saved_json_display"], "hash-only")
         self.assertEqual(persisted["answer_scope"]["saved_markdown_display"], "hash-only")
         self.assertTrue(persisted["answer_scope"]["public_artifact_safe"])
@@ -10988,6 +10994,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("raw_public=False`", markdown)
         self.assertIn("- Result: `status=complete tokens=8/8 outputs=1 display=hash-only hash=", markdown)
         self.assertIn("public_artifact_safe=True`", markdown)
+        self.assertIn(
+            "- Verdict: `state=completed completed=True preflight_only=False answer=saved-terminal-redacted answer_visible=False artifacts_public=True",
+            markdown,
+        )
+        self.assertNotIn("answer=terminal-visible answer_visible=True", markdown)
         self.assertIn(
             "- Output display: `terminal=saved-terminal-redacted terminal_text=False saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False public_artifact_safe=True`",
             markdown,
