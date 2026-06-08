@@ -112,6 +112,18 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("LICENSE", failed_details(report, "required_files"))
 
+    def test_frontdoor_check_script_is_required_file(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        (tmp_root / "scripts" / "user_friendly_inference_frontdoor_check.py").unlink()
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "scripts/user_friendly_inference_frontdoor_check.py",
+            failed_details(report, "required_files"),
+        )
+
     def test_broken_markdown_link_fails(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
         readme = tmp_root / "README.md"
@@ -1217,6 +1229,24 @@ class ReleaseGateTests(unittest.TestCase):
         ci_details = failed_details(report, "ci_workflow")
         self.assertTrue(any("Public Swarm GPU Inference Beta Kaggle package" in detail for detail in ci_details))
         self.assertTrue(any("Public Swarm GPU Inference Beta Kaggle auto" in detail for detail in ci_details))
+
+    def test_ci_workflow_must_run_frontdoor_report_check(self) -> None:
+        tmp_root = copy_release_fixture(Path(self._tmp_dir()))
+        workflow = tmp_root / ".github" / "workflows" / "ci.yml"
+        workflow.write_text(
+            workflow.read_text(encoding="utf-8").replace(
+                "      - name: User-friendly inference frontdoor report check\n"
+                "        run: python scripts/user_friendly_inference_frontdoor_check.py --json\n",
+                "",
+            ),
+            encoding="utf-8",
+        )
+
+        report = release_gate.run_release_gate(tmp_root)
+
+        self.assertFalse(report["ok"])
+        ci_details = failed_details(report, "ci_workflow")
+        self.assertTrue(any("user-friendly inference frontdoor report check" in detail for detail in ci_details))
 
     def _tmp_dir(self) -> str:
         path = Path(self.id().replace(".", "_").replace("/", "_"))

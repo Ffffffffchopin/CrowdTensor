@@ -63,6 +63,8 @@ class FakeRunner:
             return "crowdtensord_help"
         if command[-1:] == ["--help"]:
             return "crowdtensor_help"
+        if any("user_friendly_inference_frontdoor_check.py" in part for part in command):
+            return "user_friendly_inference_frontdoor"
         if "local-proof" in command:
             return "local_proof"
         if "home-infer" in command:
@@ -88,6 +90,13 @@ class FakeRunner:
         output_dir = self.output_dir_after(command)
         assert output_dir is not None
         output_dir.mkdir(parents=True, exist_ok=True)
+        if step == "user_friendly_inference_frontdoor":
+            (output_dir / "user_friendly_inference_frontdoor_check.json").write_text("{}", encoding="utf-8")
+            return json.dumps({
+                "schema": "user_friendly_inference_frontdoor_check_v1",
+                "ok": True,
+                "diagnosis_codes": ["user_friendly_inference_frontdoor_check_ready"],
+            })
         if step == "local_proof":
             (output_dir / "local_proof_summary.json").write_text("{}", encoding="utf-8")
             return json.dumps({"schema": "local_proof_summary_v1", "ok": True, "diagnosis_codes": ["home_compute_ready"]})
@@ -127,6 +136,7 @@ class OnboardingGateTests(unittest.TestCase):
             "crowdtensor --help",
             "crowdtensord --help",
             "crowdtensor-miner --help",
+            "user_friendly_inference_frontdoor_check.py",
             "local-proof",
             "home-infer",
             "llm-infer --mock",
@@ -141,6 +151,11 @@ class OnboardingGateTests(unittest.TestCase):
         persisted = json.loads((tmp_root / "onboarding.json").read_text(encoding="utf-8"))
         self.assertTrue(persisted["artifacts"]["onboarding_gate_json"]["present"])
         self.assertEqual(persisted["artifacts"]["onboarding_gate_json"]["schema"], "onboarding_gate_v1")
+        self.assertEqual(
+            summary["payload_summaries"]["user_friendly_inference_frontdoor"]["schema"],
+            "user_friendly_inference_frontdoor_check_v1",
+        )
+        self.assertTrue(summary["artifacts"]["user_friendly_inference_frontdoor_check"]["present"])
         self.assertEqual(
             summary["payload_summaries"]["cpu_infer_beta"]["schema"],
             "cpu_inference_beta_v1",

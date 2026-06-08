@@ -262,6 +262,18 @@ def command_plan(args: argparse.Namespace, *, venv_dir: Path, output_dir: Path) 
             "diagnosis": "console_script_failed",
         },
         {
+            "name": "user_friendly_inference_frontdoor",
+            "command": [
+                str(venv_python(venv_dir)),
+                str(ROOT / "scripts" / "user_friendly_inference_frontdoor_check.py"),
+                "--output-dir",
+                str(output_dir / "user-friendly-inference-frontdoor"),
+                "--json",
+            ],
+            "expect_json": True,
+            "diagnosis": "user_friendly_inference_frontdoor_failed",
+        },
+        {
             "name": "local_proof",
             "command": [
                 crowdtensor,
@@ -431,6 +443,12 @@ def build_onboarding_gate(args: argparse.Namespace, *, runner: Runner = subproce
             kind="cpu_inference_beta",
             schema="cpu_inference_beta_v1",
         ),
+        "user_friendly_inference_frontdoor_check": artifact_entry(
+            output_dir / "user-friendly-inference-frontdoor" / "user_friendly_inference_frontdoor_check.json",
+            output_dir,
+            kind="user_friendly_inference_frontdoor_check",
+            schema="user_friendly_inference_frontdoor_check_v1",
+        ),
         "release_readiness_json": artifact_entry(
             output_dir / "release-ready" / "release_readiness.json",
             output_dir,
@@ -492,6 +510,7 @@ def build_onboarding_gate(args: argparse.Namespace, *, runner: Runner = subproce
             "crowdtensor cpu-infer --mode local --json",
             "crowdtensor home-infer --scenario-id route-baseline --json",
             "crowdtensor llm-infer --mock --json",
+            "python scripts/user_friendly_inference_frontdoor_check.py --json",
             "crowdtensor release-ready --json",
         ],
     }

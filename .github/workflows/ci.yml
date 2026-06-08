@@ -26,6 +26,8 @@ jobs:
         run: python scripts/release_readiness_check.py --allow-dirty
       - name: Fresh clone onboarding gate
         run: python scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
+      - name: User-friendly inference frontdoor report check
+        run: python scripts/user_friendly_inference_frontdoor_check.py --json
       - name: First-run Doctor
         run: python scripts/doctor.py --json
       - name: Local proof CLI
