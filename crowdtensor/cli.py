@@ -795,6 +795,37 @@ def next_reason_detail(reason: str) -> str:
     return NEXT_REASON_DETAILS.get(str(reason or ""), str(reason or ""))
 
 
+STARTUP_BLOCKER_CODES = {
+    "generate_route_unavailable",
+    "coordinator_route_missing",
+    "coordinator_ready_failed",
+    "stage_preflight_not_checked",
+    "stage_preflight_failed",
+}
+
+
+def pick_startup_blocker_command(
+    next_commands: list[dict[str, Any]],
+    diagnosis_codes: set[str],
+    *,
+    existing_check_label: str,
+    existing_check_reason: str,
+) -> dict[str, Any]:
+    if not diagnosis_codes.intersection(STARTUP_BLOCKER_CODES):
+        return {}
+    label = lambda item: str(item.get("label") or "")
+    equals = lambda value: lambda item: label(item) == value
+    for expected_label, reason in [
+        ("start Coordinator", "start_coordinator"),
+        ("start stage0 Miner", "start_stage0_miner"),
+        (existing_check_label, existing_check_reason),
+    ]:
+        found = _pick_next_command(next_commands, equals(expected_label), reason=reason)
+        if found:
+            return found
+    return {}
+
+
 def _infer_recommended_next_command(
     next_commands: list[dict[str, Any]],
     *,
@@ -818,6 +849,15 @@ def _infer_recommended_next_command(
         found = _pick_next_command(next_commands, equals("start P2P discovery daemon"), reason="start_discovery")
         if found:
             return found
+    if not ok:
+        found = pick_startup_blocker_command(
+            next_commands,
+            diagnosis_codes,
+            existing_check_label="check existing swarm",
+            existing_check_reason="check_existing_swarm",
+        )
+        if found:
+            return found
     if "generation_timeout" in diagnosis_codes:
         found = _pick_next_command(next_commands, equals("retry inference with longer timeout"), reason="retry_timeout")
         if found:
@@ -837,22 +877,6 @@ def _infer_recommended_next_command(
             if found:
                 return found
     if not ok:
-        startup_codes = {
-            "generate_route_unavailable",
-            "coordinator_route_missing",
-            "coordinator_ready_failed",
-            "stage_preflight_not_checked",
-            "stage_preflight_failed",
-        }
-        if diagnosis_codes.intersection(startup_codes):
-            for expected_label, reason in [
-                ("start Coordinator", "start_coordinator"),
-                ("start stage0 Miner", "start_stage0_miner"),
-                ("check existing swarm", "check_existing_swarm"),
-            ]:
-                found = _pick_next_command(next_commands, equals(expected_label), reason=reason)
-                if found:
-                    return found
         if "admin_token_required" in diagnosis_codes:
             found = _pick_next_command(next_commands, starts("submit inference"), reason="set_admin_token")
             if found:
@@ -909,6 +933,15 @@ def _generate_recommended_next_command(
         found = _pick_next_command(next_commands, equals("start P2P discovery daemon"), reason="start_discovery")
         if found:
             return found
+    if not ok:
+        found = pick_startup_blocker_command(
+            next_commands,
+            diagnosis_codes,
+            existing_check_label="check generation route",
+            existing_check_reason="check_generation_route",
+        )
+        if found:
+            return found
     if "generation_timeout" in diagnosis_codes:
         found = _pick_next_command(next_commands, equals("retry generation with longer timeout"), reason="retry_timeout")
         if found:
@@ -928,22 +961,6 @@ def _generate_recommended_next_command(
             if found:
                 return found
     if not ok:
-        startup_codes = {
-            "generate_route_unavailable",
-            "coordinator_route_missing",
-            "coordinator_ready_failed",
-            "stage_preflight_not_checked",
-            "stage_preflight_failed",
-        }
-        if diagnosis_codes.intersection(startup_codes):
-            for expected_label, reason in [
-                ("start Coordinator", "start_coordinator"),
-                ("start stage0 Miner", "start_stage0_miner"),
-                ("check generation route", "check_generation_route"),
-            ]:
-                found = _pick_next_command(next_commands, equals(expected_label), reason=reason)
-                if found:
-                    return found
         if "admin_token_required" in diagnosis_codes:
             found = _pick_next_command(next_commands, starts("submit generation"), reason="set_admin_token")
             if found:

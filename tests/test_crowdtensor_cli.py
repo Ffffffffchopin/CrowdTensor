@@ -10359,6 +10359,60 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("  answer: ", rendered)
         self.assertLess(rendered.index("  output_display: "), rendered.index("  answer_scope: "))
 
+    def test_infer_recommended_next_prioritizes_startup_blocker_over_timeout(self) -> None:
+        next_commands = [
+            cli.command_entry("start Coordinator", ["crowdtensor", "serve", "--run"]),
+            cli.command_entry(
+                "check existing swarm",
+                ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing", "--dry-run"],
+                requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
+            ),
+            cli.command_entry(
+                "retry inference with longer timeout",
+                ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing", "--timeout-seconds", "240"],
+                requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+            ),
+        ]
+
+        recommended = cli._infer_recommended_next_command(
+            next_commands,
+            ok=False,
+            mode="existing",
+            dry_run=False,
+            ready_to_submit={},
+            diagnosis_codes={"coordinator_route_missing", "generation_timeout"},
+            full_evidence=False,
+        )
+
+        self.assertEqual(recommended["label"], "start Coordinator")
+        self.assertEqual(recommended["reason"], "start_coordinator")
+
+    def test_generate_recommended_next_prioritizes_startup_blocker_over_timeout(self) -> None:
+        next_commands = [
+            cli.command_entry("start Coordinator", ["crowdtensor", "serve", "--run"]),
+            cli.command_entry(
+                "check generation route",
+                ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER, "--dry-run"],
+                requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
+            ),
+            cli.command_entry(
+                "retry generation with longer timeout",
+                ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER, "--timeout-seconds", "240"],
+                requires_env=["CROWDTENSOR_ADMIN_TOKEN"],
+            ),
+        ]
+
+        recommended = cli._generate_recommended_next_command(
+            next_commands,
+            ok=False,
+            dry_run=False,
+            ready_to_submit={},
+            diagnosis_codes={"coordinator_route_missing", "generation_timeout"},
+        )
+
+        self.assertEqual(recommended["label"], "start Coordinator")
+        self.assertEqual(recommended["reason"], "start_coordinator")
+
     def test_print_infer_no_local_answer_shows_answer_scope(self) -> None:
         report = {
             "ok": False,
