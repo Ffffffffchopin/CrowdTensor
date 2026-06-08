@@ -881,6 +881,9 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         errors.append("shareable_local_answer_terminal_only_mismatch")
     if shareable.get("public_artifact_safe") is not True:
         errors.append("shareable_public_artifact_safe_mismatch")
+    for error in pack.validate_public_report(payload):
+        if error not in errors:
+            errors.append(error)
     artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
     if artifact_summary.get("schema") != pack.ARTIFACT_SUMMARY_SCHEMA:
         errors.append("artifact_summary_schema_mismatch")
@@ -1026,6 +1029,10 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("machine_readable_operator_action_mismatch")
         if machine.get("not_completed") != payload.get("not_completed"):
             errors.append("machine_readable_not_completed_mismatch")
+        if machine.get("runtime_provenance") != payload.get("runtime_provenance"):
+            errors.append("machine_readable_runtime_provenance_mismatch")
+        if machine.get("evidence_scope") != payload.get("evidence_scope"):
+            errors.append("machine_readable_evidence_scope_mismatch")
         machine_review = machine.get("review_summary") if isinstance(machine.get("review_summary"), dict) else {}
         if machine_review.get("next_step") != review_summary.get("next_step"):
             errors.append("machine_readable_review_next_step_mismatch")
@@ -1042,6 +1049,8 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         append_sensitive_artifact_errors(errors, artifact_name="public_real_llm_swarm_beta_markdown", text=markdown)
         required_markdown_sections = {
             "## Review": "review",
+            "## Runtime Provenance": "runtime_provenance",
+            "## Evidence Scope": "evidence_scope",
             "## Operator Action": "operator_action",
             "## Output Scope": "output_scope",
             "## Artifacts": "artifacts",
@@ -1074,6 +1083,11 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("markdown_answer_scope_missing")
         if "- prompt scope: `" not in markdown or "raw_prompt_public=False" not in markdown:
             errors.append("markdown_prompt_scope_missing")
+        evidence_scope = payload.get("evidence_scope") if isinstance(payload.get("evidence_scope"), dict) else {}
+        if f"- level: `{evidence_scope.get('level')}`" not in markdown:
+            errors.append("markdown_evidence_scope_level_missing")
+        if f"- fresh Kaggle GPU verified: `{evidence_scope.get('fresh_kaggle_gpu_verified')}`" not in markdown:
+            errors.append("markdown_evidence_scope_fresh_gpu_missing")
         for item in operator_actions[:3]:
             if item not in markdown:
                 errors.append("markdown_operator_action_missing")
@@ -1121,6 +1135,10 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("support_bundle_next_commands_mismatch")
         if support.get("user_status") != payload.get("user_status"):
             errors.append("support_bundle_user_status_mismatch")
+        if support.get("runtime_provenance") != payload.get("runtime_provenance"):
+            errors.append("support_bundle_runtime_provenance_mismatch")
+        if support.get("evidence_scope") != payload.get("evidence_scope"):
+            errors.append("support_bundle_evidence_scope_mismatch")
         support_artifacts = support.get("artifact_summary") if isinstance(support.get("artifact_summary"), dict) else {}
         if support_artifacts.get("inspect_first") != "public_real_llm_swarm_beta.md":
             errors.append("support_bundle_inspect_first_mismatch")

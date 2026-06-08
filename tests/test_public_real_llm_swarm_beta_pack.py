@@ -2210,6 +2210,30 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("support_bundle_operator_action_mismatch", errors)
         self.assertIn("support_bundle_not_completed_mismatch", errors)
 
+    def test_check_validation_requires_evidence_scope_consistency(self) -> None:
+        output_dir = self._tmp_dir()
+        payload = check.build_fake_release(output_dir, tokens=16)
+        payload["evidence_scope"]["fresh_kaggle_gpu_verified"] = True
+        report_path = output_dir / "beta" / "public_real_llm_swarm_beta.json"
+        persisted = json.loads(report_path.read_text(encoding="utf-8"))
+        persisted["evidence_scope"]["level"] = "fresh-kaggle-gpu"
+        report_path.write_text(json.dumps(persisted, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        markdown_path = output_dir / "beta" / "public_real_llm_swarm_beta.md"
+        markdown = markdown_path.read_text(encoding="utf-8")
+        markdown = markdown.replace("## Evidence Scope", "## Evidence")
+        markdown_path.write_text(markdown, encoding="utf-8")
+        support_path = output_dir / "beta" / "support_bundle.json"
+        support = json.loads(support_path.read_text(encoding="utf-8"))
+        support["evidence_scope"]["level"] = "fresh-kaggle-gpu"
+        support_path.write_text(json.dumps(support, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        errors = check.validate_report(payload, mode="release", expected_tokens=16)
+
+        self.assertIn("evidence_scope_fresh_kaggle_gpu_verified_mismatch", errors)
+        self.assertIn("machine_readable_evidence_scope_mismatch", errors)
+        self.assertIn("markdown_section_missing:evidence_scope", errors)
+        self.assertIn("support_bundle_evidence_scope_mismatch", errors)
+
     def test_check_validation_requires_user_guidance_fields(self) -> None:
         output_dir = self._tmp_dir()
         payload = check.build_fake_release(output_dir, tokens=16)
