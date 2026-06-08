@@ -9938,6 +9938,75 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Terminal answer text is truncated", rendered)
         self.assertNotIn(tail, rendered)
 
+    def test_infer_local_shareable_terminal_persisted_note_hides_answer(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor shareable local prompt"
+        generated_text = " local answer hidden from shareable terminal"
+        args = cli.parse_args([
+            "infer",
+            prompt,
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "8",
+            "--shareable-terminal",
+        ])
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("--keep-private-state", command)
+            state_dir = output_dir / "product-swarm-mvp" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            row = {
+                "type": "task_completed",
+                "validation": {
+                    "generated_text": generated_text,
+                    "generated_text_hash": cli.stable_hash_text(generated_text),
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "prompt_hash": cli.stable_hash_text(prompt),
+                    "decoded_tokens_match": True,
+                    "stage_id": 1,
+                },
+            }
+            (state_dir / "tasks.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "generation": {
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "generated_text_hash": cli.stable_hash_text(generated_text),
+                    "decoded_tokens_match": True,
+                },
+                "stage_assignment": {"distinct_stage_miners": True},
+                "ledger": {"accepted_rows": 16},
+                "diagnosis_codes": ["product_swarm_mvp_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertEqual(report["shareable_terminal"]["answer_text_redacted"], True)
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["shareable_terminal"]["answer_text_redacted"], True)
+        self.assertEqual(persisted["local_output"]["note"], cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT)
+        self.assertEqual(persisted["local_output_note"], cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT)
+        self.assertEqual(persisted["answer_scope"]["scope_state"], "shareable-terminal-redacted")
+        self.assertEqual(persisted["answer_scope"]["summary"], cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT)
+        self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "shareable-terminal-redacted")
+        self.assertFalse(persisted["shareable_summary"]["local_answer_terminal_only"])
+        self.assertTrue(persisted["local_output"]["shareable_terminal_redacted"])
+        self.assertNotIn(generated_text, json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(f"- Local output note: {cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Answer scope note: {cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(
+            "- Shareable terminal: `enabled=True prompt_sources_redacted=True answer_text_redacted=True public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertNotIn("Shown only in local human output", markdown)
+        self.assertNotIn(generated_text, markdown)
+
     def test_infer_existing_uses_generate_and_does_not_persist_raw_text(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([

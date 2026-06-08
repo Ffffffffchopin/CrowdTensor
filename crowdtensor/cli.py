@@ -6084,6 +6084,12 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     local_output["generated_text"] = ""
     local_output["display_only"] = False
     local_output["public_artifact_safe"] = True
+    shareable_terminal = summary.get("shareable_terminal") if isinstance(summary.get("shareable_terminal"), dict) else {}
+    if had_terminal_text and shareable_terminal.get("enabled"):
+        local_output["shareable_terminal_redacted"] = True
+        local_output["note"] = SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT
+        if summary.get("local_output_note"):
+            summary["local_output_note"] = SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT
     outputs = local_output.get("outputs")
     if isinstance(outputs, list):
         for output in outputs:
@@ -6108,8 +6114,9 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     had_terminal_answer = bool(answer_scope.get("visible_in_terminal"))
     original_scope_state = str(answer_scope.get("scope_state") or "")
     if answer_scope:
+        saved_scope_state = "shareable-terminal-redacted" if shareable_terminal.get("enabled") else "saved-terminal-redacted"
         answer_scope["scope_state"] = (
-            "saved-terminal-redacted"
+            saved_scope_state
             if had_terminal_answer
             else (original_scope_state or "no-local-answer")
         )
@@ -6121,7 +6128,11 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         answer_scope["raw_generated_text_public"] = False
         answer_scope["generated_token_ids_public"] = False
         answer_scope["public_artifact_safe"] = True
-        answer_scope["summary"] = SAVED_TERMINAL_ANSWER_SCOPE_TEXT if had_terminal_answer else SAVED_ANSWER_SCOPE_TEXT
+        answer_scope["summary"] = (
+            SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT
+            if had_terminal_answer and shareable_terminal.get("enabled")
+            else (SAVED_TERMINAL_ANSWER_SCOPE_TEXT if had_terminal_answer else SAVED_ANSWER_SCOPE_TEXT)
+        )
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     if shareable_summary and answer_scope:
         shareable_summary["answer_scope_state"] = answer_scope.get("scope_state") or "unknown"
@@ -6147,13 +6158,7 @@ def _strip_shareable_terminal_private_text(report: dict[str, Any]) -> dict[str, 
         if isinstance(terminal_report.get("local_output"), dict)
         else {}
     )
-    had_terminal_text = bool(
-        local_output.get("generated_text")
-        or any(
-            isinstance(output, dict) and output.get("generated_text")
-            for output in (local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else [])
-        )
-    )
+    had_terminal_text = _local_output_has_terminal_text(local_output)
     if local_output:
         local_output["available"] = False
         local_output["generated_text"] = ""
