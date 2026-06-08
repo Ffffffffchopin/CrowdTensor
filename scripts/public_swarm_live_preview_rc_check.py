@@ -383,6 +383,33 @@ def validate_payload(payload: dict[str, Any], *, mode: str) -> list[str]:
             errors.append(f"shareable_{key}_mismatch")
     if shareable.get("answer_scope_state") != "no-local-answer":
         errors.append("shareable_answer_scope_state_mismatch")
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    if user_status.get("state") not in {"ready", "blocked", "package-blocked", "live-blocked"}:
+        errors.append("user_status_state_mismatch")
+    if not user_status.get("recommended_label"):
+        errors.append("user_status_recommended_missing")
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    if review.get("schema") != "public_swarm_live_preview_rc_review_summary_v1":
+        errors.append("review_summary_schema_mismatch")
+    if not review.get("inspect_first"):
+        errors.append("review_summary_inspect_first_missing")
+    if not review.get("recommended_label"):
+        errors.append("review_summary_recommended_missing")
+    recommended = payload.get("recommended_next_command") if isinstance(payload.get("recommended_next_command"), dict) else {}
+    if not recommended.get("label") or not recommended.get("command_line"):
+        errors.append("recommended_next_command_missing")
+    next_commands = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    if not next_commands:
+        errors.append("next_commands_missing")
+    if not any(isinstance(item, dict) and item.get("label") == "inspect support bundle" for item in next_commands):
+        errors.append("next_commands_support_missing")
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    if artifact_summary.get("public_artifact_safe") is not True:
+        errors.append("artifact_summary_public_safe_mismatch")
+    if artifact_summary.get("present_artifact_count") != artifact_summary.get("artifact_count"):
+        errors.append("artifact_summary_present_count_mismatch")
+    if not isinstance(payload.get("not_completed"), list):
+        errors.append("not_completed_missing")
     artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
     for name in ["public_swarm_live_preview_rc_json", "public_swarm_live_preview_rc_markdown", "support_bundle_json"]:
         artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}

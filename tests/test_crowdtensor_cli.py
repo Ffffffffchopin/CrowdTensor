@@ -8363,6 +8363,22 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("The report prints status, review, recommended_next, next[...] commands, output scope", normalized)
         self.assertIn("Public artifacts contain hashes/counts/readiness evidence only", normalized)
 
+    def test_live_preview_help_explains_modes_output_scope_and_side_effects(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(["live-preview", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        normalized = " ".join(rendered.split())
+        self.assertIn("local-smoke run CI-safe Developer Preview and Alpha contract checks", normalized)
+        self.assertIn("package generate the runbook/package without creating Kaggle resources", normalized)
+        self.assertIn("live-kaggle run the side-effectful public Coordinator plus private Kaggle proof", normalized)
+        self.assertIn("evidence-import aggregate retained Developer Preview and Alpha RC evidence", normalized)
+        self.assertIn("Reports print status, review, recommended_next, next[...] commands, output scope", normalized)
+        self.assertIn("live-kaggle is side-effectful and requires deleting temporary kernels", normalized)
+
     def test_usable_swarm_prints_output_scope(self) -> None:
         report = {
             "schema": "usable_swarm_inference_v1",
@@ -16348,6 +16364,45 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "external_runtime_verified": False,
                 "fresh_live_kaggle_run": False,
             },
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Swarm Live Preview RC evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Live Preview RC evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "public_swarm_live_preview_rc_review_summary_v1",
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/live-preview/public_swarm_live_preview_rc.md",
+                "support_bundle": "dist/live-preview/support_bundle.json",
+                "recommended_label": "inspect Live Preview RC evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/live-preview/public_swarm_live_preview_rc.md",
+                "primary_code": "public_swarm_live_preview_rc_ready",
+                "attention": "none",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Live Preview RC evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p dist/live-preview/public_swarm_live_preview_rc.md",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/live-preview/support_bundle.json",
+                }
+            ],
+            "artifact_summary": {
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "support_bundle": "dist/live-preview/support_bundle.json",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_generated_text_public": False,
@@ -16378,9 +16433,21 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_swarm_live_preview_rc(report)
 
         rendered = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("status: ready: Public Swarm Live Preview RC evidence is ready.", rendered)
+        self.assertIn("review: state=ready next=review_artifacts", rendered)
+        self.assertIn(
+            "review_next: label=inspect Live Preview RC evidence reason=review_artifacts command=sed -n 1,220p dist/live-preview/public_swarm_live_preview_rc.md",
+            rendered,
+        )
+        self.assertIn(
+            "recommended_next: inspect Live Preview RC evidence reason=review_artifacts sed -n 1,220p dist/live-preview/public_swarm_live_preview_rc.md",
+            rendered,
+        )
         self.assertIn("output_request: include_output=False", rendered)
         self.assertIn("answer_scope: state=no-local-answer", rendered)
         self.assertIn("shareable: saved_artifacts=True", rendered)
+        self.assertIn("next[1] inspect support bundle: sed -n 1,220p dist/live-preview/support_bundle.json", rendered)
+        self.assertIn("artifacts: present=4/4 support=dist/live-preview/support_bundle.json public_artifact_safe=True", rendered)
 
     def test_operator_preview_wraps_pack_and_redacts_tokens(self) -> None:
         output_dir = Path(self._tmp_dir())
