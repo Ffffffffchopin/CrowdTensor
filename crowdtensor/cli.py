@@ -525,10 +525,12 @@ def terminal_prompt_scope_text(report: dict[str, Any]) -> str:
         else:
             source = "prompt-text"
     inline_prompt_text = bool(prompt_scope.get("inline_prompt_text", source in INLINE_PROMPT_SCOPE_SOURCES))
-    terminal_scope = "local-private" if inline_prompt_text else "shareable"
+    local_path_source = source in {"prompt-file", "prompt-texts-file"}
+    terminal_scope = "local-private" if inline_prompt_text or local_path_source else "shareable"
     prefer_safe_sources = bool(prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs", True))
     return (
         f"terminal_next_commands={terminal_scope} inline_prompt_text={inline_prompt_text} "
+        f"terminal_local_paths={local_path_source} "
         "saved_artifacts=prompt-placeholders "
         f"prefer_prompt_file_or_stdin_for_shareable_logs={prefer_safe_sources} "
         f"source={source} prompt_file_path_public=False raw_prompt_public=False"
