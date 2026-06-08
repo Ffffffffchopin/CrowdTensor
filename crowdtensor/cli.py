@@ -11055,8 +11055,9 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
             flush=True,
         )
     print(
-        "CrowdTensor infer: final output will include status, action, recommended_next, "
-        "answer_scope, runtime_options, and redacted JSON/Markdown artifacts.",
+        "CrowdTensor infer: final output will start with review, review_next, "
+        "inspect_first, status/action, answer_scope, runtime_options, and "
+        "redacted JSON/Markdown artifacts.",
         file=sys.stderr,
         flush=True,
     )
@@ -11082,8 +11083,9 @@ def print_generate_start_hint(args: argparse.Namespace) -> None:
             flush=True,
         )
     print(
-        "CrowdTensor generate: final output will include status, action, recommended_next, "
-        "answer_scope, runtime_options, and redacted JSON/Markdown artifacts.",
+        "CrowdTensor generate: final output will start with review, review_next, "
+        "inspect_first, status/action, answer_scope, runtime_options, and "
+        "redacted JSON/Markdown artifacts.",
         file=sys.stderr,
         flush=True,
     )
@@ -13227,10 +13229,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "--coordinator-port only when you need a reproducible fixed local port.\n"
             "In non-JSON mode, the CLI prints a short safe stderr start hint before long-running\n"
             "checks; --json keeps stdout machine-readable.\n"
-            "Start with the status/user_status line: completed means done, preflight-ready\n"
-            "means submit next, preflight-partial means run the recommended check first, and\n"
-            "blocked means follow action. Reports include action, recommended_next, and next[...] lines\n"
-            "with copyable follow-up commands.\n"
+            "Start with the review/review_summary line and inspect_first: review shows\n"
+            "the current state, first Markdown artifact to open, recommended command,\n"
+            "primary diagnosis, and attention warning. The status/user_status line then\n"
+            "spells out completed, preflight-ready, preflight-partial, or blocked state.\n"
+            "Reports include action, recommended_next, and next[...] lines with copyable\n"
+            "follow-up commands.\n"
             "ready_to_submit labels mean: verified is ready\n"
             "after route, Coordinator, and stage Miner checks; partial can submit but still needs\n"
             "the printed follow-up preflight; blocked needs the printed operator_action;\n"
@@ -13445,9 +13449,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "parser error.\n"
             "In non-JSON mode, the CLI prints a short safe stderr start hint before long-running\n"
             "checks; --json keeps stdout machine-readable.\n"
-            "Start with the status/user_status line: completed means done, preflight-ready\n"
-            "means submit next, preflight-partial means run the recommended check first, and\n"
-            "blocked means follow action/recommended_next.\n"
+            "Start with the review/review_summary line and inspect_first: review shows\n"
+            "the current state, first Markdown artifact to open, recommended command,\n"
+            "primary diagnosis, and attention warning. The status/user_status line then\n"
+            "spells out completed, preflight-ready, preflight-partial, or blocked state.\n"
             "ready_to_submit labels mean: verified is ready after route,\n"
             "Coordinator, and stage Miner checks; partial can submit but still needs the printed\n"
             "follow-up preflight; blocked needs the printed operator_action; skipped is request-shape only.\n"
