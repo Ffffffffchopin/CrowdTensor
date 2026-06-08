@@ -137,6 +137,9 @@ without submitting work, `existing-runtime-submit` submitted to an existing
 Coordinator, and `p2p-runtime-*` came through discovery. `retained_gpu=True`
 means imported historical GPU evidence was referenced; only
 `fresh_kaggle_gpu=True` means this run verified a fresh Kaggle GPU proof.
+The adjacent `evidence_scope_note` terminal line and Markdown note spell out the
+same scope in plain text, for example that a `generate --dry-run` was only a
+preflight and submitted no generation task.
 The current default quick-start inference path is local CPU / local loopback,
 not a fresh Kaggle GPU run.
 
