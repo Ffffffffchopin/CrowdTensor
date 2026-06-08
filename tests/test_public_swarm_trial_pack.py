@@ -155,7 +155,10 @@ class PublicSwarmTrialPackTests(unittest.TestCase):
                 return completed(self._gpu_payload())
             raise AssertionError(command)
 
-        args = pack.parse_args(["local-loopback", *self._base_args(output_dir)])
+        args = pack.parse_args([
+            "local-loopback",
+            *self._base_args(output_dir, "--prompt-text", "private local trial prompt"),
+        ])
         report = pack.build_report(args, runner=fake_runner)
 
         self.assertTrue(report["ok"], report)
@@ -166,11 +169,23 @@ class PublicSwarmTrialPackTests(unittest.TestCase):
         self.assertIn("serve_join_generate_trial_ready", report["diagnosis_codes"])
         self.assertTrue(calls)
         saved = json.loads((output_dir / "trial" / "public_swarm_trial.json").read_text(encoding="utf-8"))
+        encoded = json.dumps(saved, sort_keys=True)
         self.assertFalse(saved["output_request"]["include_output"])
         self.assertFalse(saved["output_request"]["raw_prompt_public"])
         self.assertFalse(saved["output_request"]["raw_generated_text_public"])
         self.assertFalse(saved["output_request"]["generated_token_ids_public"])
         self.assertTrue(saved["output_request"]["public_artifact_safe"])
+        self.assertEqual(saved["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(saved["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(saved["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(saved["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(saved["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(saved["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(saved["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(saved["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(saved["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(saved["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(saved["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(saved["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(saved["answer_scope"]["visible_in_terminal"])
         self.assertFalse(saved["answer_scope"]["terminal_only"])
@@ -185,14 +200,21 @@ class PublicSwarmTrialPackTests(unittest.TestCase):
         self.assertFalse(saved["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "trial" / "public_swarm_trial.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn(
+            "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
         support = json.loads((output_dir / "trial" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["prompt_scope"], saved["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertNotIn("private local trial prompt", encoded)
+        self.assertNotIn("private local trial prompt", markdown)
 
     def test_local_loopback_degrades_to_cpu_fallback_when_hf_missing(self) -> None:
         output_dir = self._tmp_dir()
@@ -235,8 +257,39 @@ class PublicSwarmTrialPackTests(unittest.TestCase):
         for fragment in pack.SECRET_FRAGMENTS:
             self.assertNotIn(fragment, encoded)
         self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+
+    def test_package_runbook_uses_prompt_placeholder(self) -> None:
+        output_dir = self._tmp_dir()
+        private_prompt = "private package trial prompt"
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            if "public_swarm_product_beta_pack.py" in command[1]:
+                return completed(self._product_payload())
+            if "public_swarm_operator_preview_pack.py" in command[1]:
+                return completed(self._operator_payload("package"))
+            if "gpu_sharded_generation_beta_pack.py" in command[1]:
+                return completed(self._gpu_payload())
+            raise AssertionError(command)
+
+        args = pack.parse_args([
+            "package",
+            *self._base_args(output_dir, "--prompt-text", private_prompt),
+        ])
+        report = pack.build_report(args, runner=fake_runner)
+        runbook = (output_dir / "trial" / "SWARM_TRIAL.md").read_text(encoding="utf-8")
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("CROWDTENSOR_PROMPT_TEXT", runbook)
+        self.assertNotIn(private_prompt, runbook)
+        self.assertNotIn(private_prompt, encoded)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
 
 
 if __name__ == "__main__":

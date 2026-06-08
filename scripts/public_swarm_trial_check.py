@@ -311,6 +311,29 @@ def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[
         errors.append("output_request_generated_token_ids_public_mismatch")
     if output_request.get("public_artifact_safe") is not True:
         errors.append("output_request_public_artifact_safe_mismatch")
+    prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
+    if prompt_scope.get("source") != "prompt-text":
+        errors.append("prompt_scope_source_mismatch")
+    if prompt_scope.get("prompt_count") != 1:
+        errors.append("prompt_scope_count_mismatch")
+    if prompt_scope.get("inline_prompt_text") is not True:
+        errors.append("prompt_scope_inline_prompt_text_mismatch")
+    if prompt_scope.get("terminal_next_commands_local_private") is not True:
+        errors.append("prompt_scope_terminal_next_commands_mismatch")
+    if prompt_scope.get("terminal_logs_local_private") is not True:
+        errors.append("prompt_scope_terminal_logs_mismatch")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        errors.append("prompt_scope_saved_placeholders_mismatch")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not True:
+        errors.append("prompt_scope_shareable_log_guidance_mismatch")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append("prompt_scope_file_path_public_mismatch")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append("prompt_scope_raw_prompt_public_mismatch")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        errors.append("prompt_scope_public_artifact_safe_mismatch")
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
     if answer_scope.get("scope_state") != "no-local-answer":
         errors.append("answer_scope_state_mismatch")
@@ -390,6 +413,8 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
         str(stage1_report),
         "--release-readiness-report",
         str(release_report),
+        "--prompt-text",
+        "private swarm trial check prompt",
         "--kaggle-owner",
         "operator",
         "--max-new-tokens",

@@ -312,6 +312,26 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "source": "prompt-text",
+        "prompt_count": 1,
+        "inline_prompt_text": True,
+        "terminal_next_commands_local_private": True,
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Public Swarm Trial report records prompt source/count and placeholder safety only; "
+            "raw prompt text is excluded from public JSON, Markdown, runbooks, and support bundles."
+        ),
+    }
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -350,6 +370,19 @@ def output_request_text(summary: dict[str, Any]) -> str:
         f"include_output={bool(summary.get('include_output'))} "
         f"raw_generated_text_public={bool(summary.get('raw_generated_text_public'))} "
         f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
+    )
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
     )
 
 
@@ -669,7 +702,8 @@ def write_trial_runbook(args: argparse.Namespace, output_dir: Path) -> dict[str,
         f"crowdtensor serve --public-host {args.public_host} --port {args.port} --json",
         f"crowdtensor join --coordinator-url http://{args.public_host}:{args.port} --stage stage0 --json",
         f"crowdtensor join --coordinator-url http://{args.public_host}:{args.port} --stage stage1 --json",
-        f"crowdtensor generate --coordinator-url http://{args.public_host}:{args.port} --prompt-text 'CrowdTensor trial' --max-new-tokens {args.max_new_tokens} --json",
+        "read -r -p 'Prompt: ' CROWDTENSOR_PROMPT_TEXT",
+        f"crowdtensor generate --coordinator-url http://{args.public_host}:{args.port} --prompt-text \"$CROWDTENSOR_PROMPT_TEXT\" --max-new-tokens {args.max_new_tokens} --json",
         "```",
         "",
         "## Optional Live Proof",
@@ -695,6 +729,7 @@ def support_bundle_artifact(output_dir: Path, report: dict[str, Any]) -> dict[st
         "payload_summaries": report.get("payload_summaries") or {},
         "artifacts": report.get("artifacts") or {},
         "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety") or {},
@@ -895,6 +930,7 @@ def build_common_report(
         "limitations": limitations(),
     }
     report["output_request"] = output_request_summary()
+    report["prompt_scope"] = prompt_scope_summary(args)
     report["answer_scope"] = answer_scope_summary()
     report["shareable_summary"] = shareable_summary()
     return report
@@ -926,6 +962,19 @@ def limitations() -> list[str]:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", {
+        "source": "prompt-text",
+        "prompt_count": 1,
+        "inline_prompt_text": True,
+        "terminal_next_commands_local_private": True,
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+    })
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report["artifacts"]["support_bundle_json"] = support_bundle_artifact(output_dir, report)
@@ -949,6 +998,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
 def render_markdown(report: dict[str, Any]) -> str:
     trial = report.get("trial") if isinstance(report.get("trial"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -967,6 +1017,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -1210,6 +1261,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def print_human(report: dict[str, Any]) -> None:
     trial = report.get("trial") if isinstance(report.get("trial"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Public Swarm v0.2 Usable Inference Trial")
@@ -1221,6 +1273,8 @@ def print_human(report: dict[str, Any]) -> None:
     print(f"  degraded CPU fallback: {trial.get('degraded_cpu_fallback_ready')}")
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
+    if prompt_scope:
+        print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
     if answer_scope:
         print(f"  answer_scope: {answer_scope_text(answer_scope)}")
     if shareable:
