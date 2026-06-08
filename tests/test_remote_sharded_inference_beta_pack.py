@@ -104,6 +104,22 @@ class RemoteShardedInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("remote_sharded_loopback_ready", report["diagnosis_codes"])
         self.assertIn("stage_requeue_ready", report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["remote_sharded_inference_beta_json"]["present"])
+        self.assertTrue(report["artifacts"]["remote_sharded_inference_beta_markdown"]["present"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["proof_level"], "local-loopback-remote-stand-in")
+        self.assertEqual(report["review_summary"]["schema"], "remote_sharded_inference_beta_review_summary_v1")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertEqual(report["not_completed"], [])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_result_public"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertIn("support_bundle.json", report["artifact_summary"]["support_bundle"])
+        self.assertTrue((output_dir / "support_bundle.json").is_file())
+        markdown = (output_dir / "remote_sharded_inference_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("local-loopback-remote-stand-in", markdown)
         self.assertTrue(calls)
 
     def test_local_mode_wraps_cli_shard_infer(self) -> None:
@@ -130,6 +146,8 @@ class RemoteShardedInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("local_sharded_inference_ready", report["diagnosis_codes"])
         self.assertIn("remote_sharded_inference_ready", report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["local_sharded_inference_cli_summary"]["present"])
+        self.assertEqual(report["user_status"]["proof_level"], "local-cpu")
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
 
     def test_remote_existing_requires_tokens(self) -> None:
         with self.assertRaises(SystemExit):
@@ -139,6 +157,48 @@ class RemoteShardedInferenceBetaPackTests(unittest.TestCase):
                 "--coordinator-url",
                 "https://coord.example",
             ])
+
+    def test_remote_existing_next_command_redacts_tokens(self) -> None:
+        output_dir = self._tmp_dir()
+        args = pack.parse_args([
+            "--mode",
+            "remote-existing",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://coord.example",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--remote-timeout-seconds",
+            "0.01",
+            "--poll-interval",
+            "0.01",
+        ])
+
+        def fake_request(method: str, base_url: str, path: str, **_: object) -> dict:
+            if method == "POST":
+                return {"schema": "sharded_inference_session_v1", "session_id": "session-test"}
+            if path == "/state":
+                return {"tasks": [], "model": {"model_bundle": {"version": 0, "optimizer_step": 0}, "global_step": 0}, "model_updates": 0}
+            return {"results": []}
+
+        original_request_json = pack.request_json
+        try:
+            pack.request_json = fake_request
+            report = pack.build_report(args)
+        finally:
+            pack.request_json = original_request_json
+
+        self.assertFalse(report["ok"])
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn("observer-secret", encoded)
+        self.assertNotIn("admin-secret", encoded)
+        self.assertIn("<observer-token>", report["recommended_next_command"]["command_line"])
+        self.assertIn("<admin-token>", report["recommended_next_command"]["command_line"])
+        self.assertEqual(report["user_status"]["proof_level"], "external-existing-runtime")
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
 
 
 if __name__ == "__main__":

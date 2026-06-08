@@ -15752,6 +15752,74 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "schema": "remote_sharded_inference_beta_v1",
                 "ok": True,
                 "mode": "remote-loopback",
+                "user_status": {
+                    "state": "ready",
+                    "headline": "Remote sharded inference Beta evidence is ready.",
+                    "next_step": "review_artifacts",
+                    "proof_level": "local-loopback-remote-stand-in",
+                    "public_artifact_safe": True,
+                },
+                "review_summary": {
+                    "schema": "remote_sharded_inference_beta_review_summary_v1",
+                    "state": "ready",
+                    "next_step": "review_artifacts",
+                    "inspect_first": str(output_dir / "remote_sharded_inference_beta.md"),
+                    "support_bundle": str(output_dir / "support_bundle.json"),
+                    "recommended_label": "inspect Remote sharded inference Beta evidence",
+                    "primary_code": "remote_sharded_inference_ready",
+                    "public_artifact_safe": True,
+                },
+                "recommended_next_command": {
+                    "label": "inspect Remote sharded inference Beta evidence",
+                    "command_line": f"sed -n 1,220p {output_dir / 'remote_sharded_inference_beta.md'}",
+                    "public_artifact_safe": True,
+                },
+                "next_commands": [
+                    {"label": "inspect support bundle", "command_line": f"sed -n 1,220p {output_dir / 'support_bundle.json'}", "public_artifact_safe": True},
+                ],
+                "artifact_summary": {
+                    "inspect_first": str(output_dir / "remote_sharded_inference_beta.md"),
+                    "summary_json": str(output_dir / "remote_sharded_inference_beta.json"),
+                    "support_bundle": str(output_dir / "support_bundle.json"),
+                    "artifact_count": 4,
+                    "present_artifact_count": 4,
+                    "public_artifact_safe": True,
+                },
+                "output_request": {
+                    "include_output": False,
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "public_artifact_safe": True,
+                },
+                "prompt_scope": {
+                    "source": "fixed-model-bundle-scenario",
+                    "prompt_count": 2,
+                    "inline_prompt_text": False,
+                    "terminal_next_commands_local_private": False,
+                    "saved_artifacts_prompt_placeholders": True,
+                    "prompt_file_path_public": False,
+                    "raw_prompt_public": False,
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "evidence-only",
+                    "saved_json_display": "validation-summary-only",
+                    "saved_markdown_display": "validation-summary-only",
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "public_artifact_safe": True,
+                },
+                "shareable_summary": {
+                    "saved_artifacts_public_safe": True,
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "local_output_display_only": False,
+                    "answer_scope_state": "evidence-only",
+                    "local_answer_terminal_only": False,
+                },
+                "not_completed": [],
                 "diagnosis_codes": [
                     "remote_sharded_inference_ready",
                     "remote_sharded_loopback_ready",
@@ -15777,7 +15845,96 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(summary["schema"], "remote_sharded_inference_beta_v1")
         self.assertEqual(summary["cli_schema"], "remote_sharded_inference_beta_cli_v1")
         self.assertIn("remote_sharded_inference_ready", summary["diagnosis_codes"])
+        self.assertEqual(summary["user_status"]["proof_level"], "local-loopback-remote-stand-in")
+        self.assertEqual(summary["review_summary"]["schema"], "remote_sharded_inference_beta_review_summary_v1")
+        self.assertFalse(summary["output_request"]["raw_prompt_public"])
+        self.assertTrue(summary["shareable_summary"]["saved_artifacts_public_safe"])
         self.assertTrue(calls)
+
+    def test_print_shard_infer_beta_outputs_user_guidance(self) -> None:
+        summary = {
+            "schema": "remote_sharded_inference_beta_v1",
+            "cli_schema": "remote_sharded_inference_beta_cli_v1",
+            "ok": True,
+            "mode": "remote-loopback",
+            "failure_mode": "none",
+            "output_dir": "dist/remote-sharded-inference",
+            "diagnosis_codes": ["remote_sharded_inference_ready"],
+            "user_status": {
+                "state": "ready",
+                "headline": "Remote sharded inference Beta evidence is ready.",
+                "next_step": "review_artifacts",
+                "proof_level": "local-loopback-remote-stand-in",
+            },
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/remote-sharded-inference/remote_sharded_inference_beta.md",
+                "recommended_label": "inspect evidence",
+                "primary_code": "remote_sharded_inference_ready",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "command_line": "sed -n 1,220p dist/remote-sharded-inference/remote_sharded_inference_beta.md",
+            },
+            "next_commands": [
+                {"label": "inspect support bundle", "command_line": "sed -n 1,220p dist/remote-sharded-inference/support_bundle.json"},
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/remote-sharded-inference/remote_sharded_inference_beta.md",
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "support_bundle": "dist/remote-sharded-inference/support_bundle.json",
+                "public_artifact_safe": True,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "prompt_scope": {
+                "source": "fixed-model-bundle-scenario",
+                "prompt_count": 2,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "evidence-only",
+                "saved_json_display": "validation-summary-only",
+                "saved_markdown_display": "validation-summary-only",
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "local_output_display_only": False,
+                "answer_scope_state": "evidence-only",
+                "local_answer_terminal_only": False,
+            },
+        }
+        with patch("builtins.print") as mocked_print:
+            cli.print_remote_sharded_inference_beta(summary)
+
+        output = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("status: ready:", output)
+        self.assertIn("proof_level=local-loopback-remote-stand-in", output)
+        self.assertIn("review: state=ready", output)
+        self.assertIn("next[1] inspect support bundle", output)
+        self.assertIn("artifacts: inspect=dist/remote-sharded-inference/remote_sharded_inference_beta.md", output)
+        self.assertIn("output_request: include_output=False", output)
+        self.assertIn("prompt_scope:", output)
+        self.assertIn("answer_scope:", output)
+        self.assertIn("shareable:", output)
 
     def test_main_shard_infer_beta_json_outputs_summary(self) -> None:
         summary = {"schema": "remote_sharded_inference_beta_v1", "ok": True}
