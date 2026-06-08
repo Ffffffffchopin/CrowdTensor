@@ -82,6 +82,17 @@ class PetalsClassP2pCandidatePackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -96,9 +107,11 @@ class PetalsClassP2pCandidatePackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "candidate" / "petals_class_p2p_candidate.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("prompt scope: `source=prompt-text count=1", markdown)
         self.assertIn("state=no-local-answer", markdown)
         self.assertIn("raw_generated_text_public=False", markdown)
         support = json.loads((output_dir / "candidate" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
 
@@ -206,6 +219,8 @@ class PetalsClassP2pCandidatePackTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["candidate"]["batch_stream_source"], "batch_stream_report")
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
         self.assertTrue(report["candidate"]["batch_ready"])
         self.assertTrue(report["candidate"]["stream_ready"])
         self.assertTrue(report["candidate"]["batch"]["batch_generation_ready"])
@@ -214,6 +229,111 @@ class PetalsClassP2pCandidatePackTests(unittest.TestCase):
         self.assertTrue(report["artifacts"]["batch_stream_report"]["present"])
         self.assertIn("p2p_candidate_batch_generation_ready", report["diagnosis_codes"])
         self.assertIn("p2p_candidate_stream_generation_ready", report["diagnosis_codes"])
+
+    def test_evidence_import_prefers_batch_stream_prompt_scope(self) -> None:
+        output_dir = self._tmp_dir()
+        requeue_report = check.fake_real_p2p_report(mode="kaggle-auto", requeue=True)
+        source_dir = output_dir / "sources"
+        local_path = source_dir / "local.json"
+        runtime_path = source_dir / "runtime.json"
+        external_path = source_dir / "external.json"
+        requeue_path = source_dir / "requeue.json"
+        batch_stream_path = source_dir / "batch-stream.json"
+        batch_stream = check.add_safe_batch_stream(check.fake_real_p2p_report(mode="local-smoke", generated_tokens=16))
+        batch_stream["prompt_scope"] = {
+            "source": "prompt-texts",
+            "prompt_count": 2,
+            "inline_prompt_text": True,
+            "terminal_next_commands_local_private": True,
+            "terminal_logs_local_private": True,
+            "saved_artifacts_prompt_placeholders": True,
+            "saved_artifacts_public_safe": True,
+            "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+            "prompt_file_path_public": False,
+            "raw_prompt_public": False,
+            "public_artifact_safe": True,
+        }
+        self._write(local_path, check.fake_real_p2p_report(mode="local-smoke", generated_tokens=16))
+        self._write(runtime_path, check.fake_real_p2p_report(mode="kaggle-runtime-smoke", generated_tokens=16))
+        self._write(external_path, check.fake_real_p2p_report(mode="kaggle-auto", generated_tokens=16))
+        self._write(requeue_path, requeue_report)
+        self._write(batch_stream_path, batch_stream)
+
+        report = pack.build_report(pack.parse_args([
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "candidate"),
+            "--local-report",
+            str(local_path),
+            "--runtime-smoke-report",
+            str(runtime_path),
+            "--external-report",
+            str(external_path),
+            "--requeue-report",
+            str(requeue_path),
+            "--batch-stream-report",
+            str(batch_stream_path),
+            "--max-new-tokens",
+            "16",
+        ]))
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
+
+    def test_evidence_import_without_source_prompt_scope_uses_safe_fallback(self) -> None:
+        output_dir = self._tmp_dir()
+        requeue_report = check.fake_real_p2p_report(mode="kaggle-auto", requeue=True)
+        for payload in [
+            requeue_report,
+        ]:
+            payload.pop("prompt_scope", None)
+        source_dir = output_dir / "sources"
+        local_path = source_dir / "local.json"
+        runtime_path = source_dir / "runtime.json"
+        external_path = source_dir / "external.json"
+        requeue_path = source_dir / "requeue.json"
+        local = check.fake_real_p2p_report(mode="local-smoke")
+        runtime = check.fake_real_p2p_report(mode="kaggle-runtime-smoke")
+        external = check.fake_real_p2p_report(mode="kaggle-auto")
+        for payload in [local, runtime, external]:
+            payload.pop("prompt_scope", None)
+        self._write(local_path, local)
+        self._write(runtime_path, runtime)
+        self._write(external_path, external)
+        self._write(requeue_path, requeue_report)
+
+        report = pack.build_report(pack.parse_args([
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "candidate"),
+            "--local-report",
+            str(local_path),
+            "--runtime-smoke-report",
+            str(runtime_path),
+            "--external-report",
+            str(external_path),
+            "--requeue-report",
+            str(requeue_path),
+            "--max-new-tokens",
+            "8",
+        ]))
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt_scope"]["source"], "imported-or-built-in-validation-prompts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertFalse(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
+        self.assertNotIn("CrowdTensor Petals candidate", encoded)
 
     def test_evidence_import_rejects_batch_stream_ready_codes_without_structured_evidence(self) -> None:
         output_dir = self._tmp_dir()
