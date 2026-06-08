@@ -12302,6 +12302,32 @@ class CrowdTensorCliTests(unittest.TestCase):
             "mode": "evidence-import",
             "output_dir": "dist/public-swarm-inference-v2",
             "public_swarm_v2": {"ready": True},
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Swarm v2 inference evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "review v2 evidence",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/public-swarm-inference-v2/public_swarm_inference_v2.md",
+                "recommended_label": "review v2 evidence",
+                "recommended_reason": "v2_ready",
+                "next_command": "less public_swarm_inference_v2.md",
+                "requires_env": [],
+                "primary_code": "public_swarm_inference_v2_ready",
+                "attention": "",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "review v2 evidence",
+                "reason": "v2_ready",
+                "command_line": "less public_swarm_inference_v2.md",
+                "requires_env": [],
+                "public_artifact_safe": True,
+            },
             "readiness": {
                 "local_p2p_generate": {
                     "generated_token_count": 16,
@@ -12365,6 +12391,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         output = buf.getvalue()
 
         self.assertIn("local accepted rows: 32 ready=True", output)
+        self.assertIn(
+            "  status: ready: Public Swarm v2 inference evidence is ready. next=review_artifacts recommendation=review v2 evidence public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  review: state=ready next=review_artifacts inspect=dist/public-swarm-inference-v2/public_swarm_inference_v2.md recommended=review v2 evidence primary=public_swarm_inference_v2_ready attention=none public_artifact_safe=True",
+            output,
+        )
+        self.assertIn("  review_next: label=review v2 evidence reason=v2_ready command=less public_swarm_inference_v2.md", output)
+        self.assertIn("  recommended_next: review v2 evidence reason=v2_ready less public_swarm_inference_v2.md", output)
         self.assertIn("kv cache ready: True", output)
         self.assertIn("batch ready: True", output)
         self.assertIn("stream ready: True", output)

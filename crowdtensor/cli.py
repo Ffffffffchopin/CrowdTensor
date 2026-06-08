@@ -13129,6 +13129,9 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
 def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     v2 = report.get("public_swarm_v2") if isinstance(report.get("public_swarm_v2"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     local = readiness.get("local_p2p_generate") if isinstance(readiness.get("local_p2p_generate"), dict) else {}
     external = readiness.get("external_validation") if isinstance(readiness.get("external_validation"), dict) else {}
     p2p = readiness.get("p2p_route_hardening") if isinstance(readiness.get("p2p_route_hardening"), dict) else {}
@@ -13143,6 +13146,22 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {v2.get('ready')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
+        if recommended.get("requires_env"):
+            print(f"  recommended_requires: {', '.join(str(name) for name in recommended.get('requires_env') or [])}")
+    for index, item in enumerate((report.get("not_completed") or [])[:5], start=1):
+        print(f"  not_completed[{index}]: {item}")
     print(f"  local tokens: {local.get('generated_token_count')}/{local.get('max_new_tokens')}")
     print(f"  local accepted rows: {local.get('accepted_rows')} ready={local.get('accepted_rows_ready')}")
     print(f"  kv cache ready: {local.get('kv_cache_ready')}")

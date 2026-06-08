@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -55,6 +56,8 @@ DEFAULT_HF_MODEL_ID = "sshleifer/tiny-gpt2"
 DEFAULT_REAL_P2P_LOCAL_P2P_PORT = 9890
 DEFAULT_REAL_P2P_LOCAL_COORDINATOR_PORT = 9891
 DEFAULT_REAL_P2P_DISCOVERY_BACKEND = "http-provider-store"
+PROMPT_PLACEHOLDER = "<prompt>"
+BATCH_PROMPTS_PLACEHOLDER = "<prompt-1>,<prompt-2>"
 
 SECRET_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN=",
@@ -777,7 +780,7 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
         "terminal_logs_local_private": inline_prompt_text,
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
-        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": source in {"prompt-text", "prompt-texts", "prompt-texts-file"},
         "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
@@ -862,6 +865,157 @@ def shareable_summary_text(summary: dict[str, Any]) -> str:
         f"answer_scope_state={summary.get('answer_scope_state') or 'unknown'} "
         f"local_answer_terminal_only={bool(summary.get('local_answer_terminal_only'))}"
     )
+
+
+def _shell_join(parts: list[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in parts if str(part))
+
+
+def _safe_prompt_args(args: argparse.Namespace) -> list[str]:
+    if str(getattr(args, "prompt_texts_file", "") or ""):
+        return ["--prompt-texts-file", "prompts.txt"]
+    if str(getattr(args, "prompt_texts", "") or ""):
+        return ["--prompt-texts", BATCH_PROMPTS_PLACEHOLDER]
+    return ["--prompt-text", PROMPT_PLACEHOLDER]
+
+
+def local_gate_command(args: argparse.Namespace) -> str:
+    command = [
+        "crowdtensor",
+        "public-swarm-v2",
+        "local-model-variant" if getattr(args, "mode", "") == MODE_LOCAL_MODEL_VARIANT else "local",
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--http-timeout",
+        str(args.http_timeout),
+    ]
+    if args.hf_model_id != DEFAULT_HF_MODEL_ID:
+        command.extend(["--hf-model-id", args.hf_model_id])
+    if args.backend != "cpu":
+        command.extend(["--backend", args.backend])
+    if args.stream_generation:
+        command.append("--stream-generation")
+    command.extend(_safe_prompt_args(args))
+    return _shell_join(command)
+
+
+def evidence_import_command(args: argparse.Namespace) -> str:
+    command = [
+        "crowdtensor",
+        "public-swarm-v2",
+        "evidence-import",
+        "--real-p2p-report",
+        "dist/<fresh-real-p2p-run>/real_p2p_swarm_inference_core_rc.json",
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+    ]
+    if args.hf_model_id != DEFAULT_HF_MODEL_ID:
+        command.extend(["--hf-model-id", args.hf_model_id])
+    if args.fresh_external_report:
+        command.append("--fresh-external-report")
+    return _shell_join(command)
+
+
+def recommended_next_command(
+    args: argparse.Namespace,
+    *,
+    ready: bool,
+    mode: str,
+    not_completed: list[str],
+    local_model_variant: bool,
+) -> dict[str, Any]:
+    if ready:
+        return {
+            "label": "review v2 evidence",
+            "reason": "v2_ready",
+            "command_line": _shell_join(["less", "public_swarm_inference_v2.md"]),
+            "reason_detail": "Open the Markdown summary first, then share the JSON/support bundle if needed.",
+            "requires_env": [],
+            "public_artifact_safe": True,
+        }
+    if local_model_variant:
+        label = "rerun local model variant"
+        reason = "fix_local_model_variant_evidence"
+        command = local_gate_command(args)
+    elif any("external signed/real P2P" in item for item in not_completed):
+        label = "import fresh external evidence"
+        reason = "refresh_external_p2p_evidence"
+        command = evidence_import_command(args)
+    elif mode in {MODE_LOCAL, MODE_LOCAL_MODEL_VARIANT}:
+        label = "rerun local v2 gate"
+        reason = "fix_local_v2_evidence"
+        command = local_gate_command(args)
+    else:
+        label = "rerun local v2 gate"
+        reason = "collect_local_v2_evidence"
+        command = local_gate_command(args)
+    return {
+        "label": label,
+        "reason": reason,
+        "command_line": command,
+        "reason_detail": "Fix the first not_completed item, then rerun the recommended command.",
+        "requires_env": ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_MINER_TOKEN"],
+        "public_artifact_safe": True,
+    }
+
+
+def public_swarm_v2_user_status(
+    *,
+    ready: bool,
+    not_completed: list[str],
+    recommended: dict[str, Any],
+) -> dict[str, Any]:
+    if ready:
+        return {
+            "state": "ready",
+            "headline": "Public Swarm v2 inference evidence is ready.",
+            "next_step": "review_artifacts",
+            "recommended_label": recommended.get("label"),
+            "public_artifact_safe": True,
+        }
+    primary = not_completed[0] if not_completed else "unknown blocker"
+    return {
+        "state": "blocked",
+        "headline": f"Public Swarm v2 evidence is blocked: {primary}.",
+        "next_step": "fix_blockers",
+        "recommended_label": recommended.get("label"),
+        "public_artifact_safe": True,
+    }
+
+
+def public_swarm_v2_review_summary(
+    *,
+    report: dict[str, Any],
+    recommended: dict[str, Any],
+    not_completed: list[str],
+) -> dict[str, Any]:
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    inspect_first = str(report.get("output_dir") or "")
+    if inspect_first:
+        inspect_first = str(Path(inspect_first) / "public_swarm_inference_v2.md")
+    primary_code = (
+        "public_swarm_inference_v2_ready"
+        if report.get("ok")
+        else (report.get("diagnosis_codes") or ["public_swarm_inference_v2_blocked"])[0]
+    )
+    attention = ",".join(not_completed[:3])
+    return {
+        "schema": "public_swarm_inference_v2_review_summary_v1",
+        "state": "ready" if report.get("ok") else "blocked",
+        "headline": "Public Swarm v2 inference evidence is ready." if report.get("ok") else "Public Swarm v2 inference evidence needs attention.",
+        "next_step": "review_artifacts" if report.get("ok") else "fix_blockers",
+        "inspect_first": inspect_first,
+        "recommended_label": recommended.get("label"),
+        "recommended_reason": recommended.get("reason"),
+        "next_command": recommended.get("command_line"),
+        "requires_env": recommended.get("requires_env") or [],
+        "primary_code": primary_code,
+        "attention": attention,
+        "attention_detail": "; ".join(not_completed[:3]),
+        "not_completed_count": len(not_completed),
+        "artifact_count": len(artifacts),
+        "public_artifact_safe": True,
+    }
 
 
 def limitations() -> list[str]:
@@ -955,7 +1109,7 @@ def write_runbook(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
         "```bash",
         f"crowdtensor join --stage stage0 --p2p --peer-bootstrap \"http://$COORDINATOR_PUBLIC_HOST:{args.p2p_port}\" --swarm-id public-swarm-v2 --miner-id \"$(hostname)-stage0\" --run",
         f"crowdtensor join --stage stage1 --p2p --peer-bootstrap \"http://$COORDINATOR_PUBLIC_HOST:{args.p2p_port}\" --swarm-id public-swarm-v2 --miner-id \"$(hostname)-stage1\" --run",
-        f"crowdtensor generate --p2p --peer-bootstrap \"http://$COORDINATOR_PUBLIC_HOST:{args.p2p_port}\" --prompt \"{args.prompt_text}\" --max-new-tokens {args.max_new_tokens}",
+        f"crowdtensor generate --p2p --peer-bootstrap \"http://$COORDINATOR_PUBLIC_HOST:{args.p2p_port}\" --prompt \"{PROMPT_PLACEHOLDER}\" --max-new-tokens {args.max_new_tokens}",
         "```",
         "",
         "For Kaggle, use two private notebooks as external Miner hosts. Put only the Miner token in notebooks; keep the admin token on the operator host. Rotate tokens after public HTTP tests.",
@@ -1134,6 +1288,38 @@ def build_common_report(
             codes.update({"public_swarm_inference_v2_ready", "public_swarm_inference_v2_preview_ready"})
     else:
         codes.add("public_swarm_v2_local_model_variant_blocked" if local_model_variant else "public_swarm_inference_v2_blocked")
+    not_completed = [] if ready else [
+        item for item, ok in [
+            ("local p2pd/serve/join/generate 16-token proof", local["ready"] and local["generated_token_count"] >= args.max_new_tokens),
+            ("local batch generation", (not batch_requested) or local["batch_ready"]),
+            ("local safe stream progress", (not args.stream_generation) or local["stream_ready"]),
+            ("local persistent dual-stage KV cache reuse", local["kv_cache_ready"]),
+            ("local evidence model match", local.get("model", {}).get("compatible")),
+            ("fresh local real-P2P route hardening proof", p2p["ready"] and ((not local_route_mode) or p2p_route_payload.get("mode") == "local-smoke")),
+            ("fresh local real-P2P stage requeue proof", (not local_route_mode) or real_p2p_local_requeue_ready),
+            ("signed or real P2P preferred route evidence", p2p["ready"]),
+            ("signed or real P2P evidence model match", p2p.get("model", {}).get("compatible")),
+            ("external signed/real P2P validation at token target", local_model_variant or external["ready"]),
+            ("external signed/real P2P accepted stage rows", local_model_variant or external["accepted_rows_ready"]),
+            ("external signed/real P2P evidence model match", local_model_variant or external.get("model", {}).get("compatible")),
+            ("stage requeue/rescue", local["stage_requeue_rescue_ready"] or external["stage_requeue_ready"]),
+            ("CUDA optional fail-closed", gpu["fail_closed_ready"]),
+            ("latency/throughput/memory evidence", performance["stage_latency_ready"] and performance["throughput_summary_ready"] and performance["memory_or_vram_summary_ready"]),
+        ]
+        if not ok
+    ]
+    recommended = recommended_next_command(
+        args,
+        ready=ready,
+        mode=mode,
+        not_completed=not_completed,
+        local_model_variant=local_model_variant,
+    )
+    user_status = public_swarm_v2_user_status(
+        ready=ready,
+        not_completed=not_completed,
+        recommended=recommended,
+    )
     report = {
         "schema": SCHEMA,
         "generated_at": utc_now(),
@@ -1194,33 +1380,21 @@ def build_common_report(
         "answer_scope": answer_scope_summary(),
         "shareable_summary": shareable_summary(),
         "safety": safety_summary(external_ready=external["ready"], cuda_optional_ready=gpu["fail_closed_ready"]),
+        "user_status": user_status,
+        "recommended_next_command": recommended,
         "operator_action": [
             "Run `crowdtensor public-swarm-v2 local --max-new-tokens 16 --json` for the local 16-token gate.",
             "Run or inspect the two-machine/Kaggle commands in PUBLIC_SWARM_INFERENCE_V2.md for fresh external proof diagnostics.",
             "If CUDA is unavailable, preserve the fail-closed diagnostic instead of claiming GPU pooling.",
         ],
-        "not_completed": [] if ready else [
-            item for item, ok in [
-                ("local p2pd/serve/join/generate 16-token proof", local["ready"] and local["generated_token_count"] >= args.max_new_tokens),
-                ("local batch generation", (not batch_requested) or local["batch_ready"]),
-                ("local safe stream progress", (not args.stream_generation) or local["stream_ready"]),
-                ("local persistent dual-stage KV cache reuse", local["kv_cache_ready"]),
-                ("local evidence model match", local.get("model", {}).get("compatible")),
-                ("fresh local real-P2P route hardening proof", p2p["ready"] and ((not local_route_mode) or p2p_route_payload.get("mode") == "local-smoke")),
-                ("fresh local real-P2P stage requeue proof", (not local_route_mode) or real_p2p_local_requeue_ready),
-                ("signed or real P2P preferred route evidence", p2p["ready"]),
-                ("signed or real P2P evidence model match", p2p.get("model", {}).get("compatible")),
-                ("external signed/real P2P validation at token target", local_model_variant or external["ready"]),
-                ("external signed/real P2P accepted stage rows", local_model_variant or external["accepted_rows_ready"]),
-                ("external signed/real P2P evidence model match", local_model_variant or external.get("model", {}).get("compatible")),
-                ("stage requeue/rescue", local["stage_requeue_rescue_ready"] or external["stage_requeue_ready"]),
-                ("CUDA optional fail-closed", gpu["fail_closed_ready"]),
-                ("latency/throughput/memory evidence", performance["stage_latency_ready"] and performance["throughput_summary_ready"] and performance["memory_or_vram_summary_ready"]),
-            ]
-            if not ok
-        ],
+        "not_completed": not_completed,
         "limitations": limitations(),
     }
+    report["review_summary"] = public_swarm_v2_review_summary(
+        report=report,
+        recommended=recommended,
+        not_completed=not_completed,
+    )
     return persist_report(report, output_dir=output_dir)
 
 
@@ -1401,6 +1575,9 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
 def render_markdown(report: dict[str, Any]) -> str:
     v2 = report.get("public_swarm_v2") if isinstance(report.get("public_swarm_v2"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     local = readiness.get("local_p2p_generate") if isinstance(readiness.get("local_p2p_generate"), dict) else {}
     external = readiness.get("external_validation") if isinstance(readiness.get("external_validation"), dict) else {}
     p2p = readiness.get("p2p_route_hardening") if isinstance(readiness.get("p2p_route_hardening"), dict) else {}
@@ -1419,6 +1596,16 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- model: `{v2.get('hf_model_id')}`",
         f"- max_new_tokens: `{v2.get('max_new_tokens')}`",
         f"- output_dir: `{report.get('output_dir')}`",
+        "",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- status: `{user_status.get('headline')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
+        f"- recommended command: `{recommended.get('command_line')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
         "",
         "## Readiness",
         "",
@@ -1472,7 +1659,8 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("prompt_scope_saved_placeholders_mismatch")
     if prompt_scope.get("saved_artifacts_public_safe") is not True:
         errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
-    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not inline_prompt_text:
+    prefer_safe_source = prompt_scope.get("source") in {"prompt-text", "prompt-texts", "prompt-texts-file"}
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not prefer_safe_source:
         errors.append("prompt_scope_shareable_log_guidance_mismatch")
     if prompt_scope.get("prompt_file_path_public") is not False:
         errors.append("prompt_scope_file_path_public_mismatch")
@@ -1525,6 +1713,9 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
         "safety": report.get("safety"),
         "limitations": report.get("limitations"),
         "not_completed": report.get("not_completed"),
@@ -1611,14 +1802,28 @@ def main() -> None:
         print(json.dumps(report, sort_keys=True))
     else:
         v2 = report.get("public_swarm_v2") if isinstance(report.get("public_swarm_v2"), dict) else {}
+        review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+        user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+        recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
         output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
         prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
         answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
         shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+        not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
         print("CrowdTensor Public Swarm Inference v2")
         print(f"  ok: {report.get('ok')}")
         print(f"  mode: {report.get('mode')}")
         print(f"  ready: {v2.get('ready')}")
+        if user_status:
+            print(f"  status: {user_status.get('state')}: {user_status.get('headline')} next={user_status.get('next_step')} recommendation={user_status.get('recommended_label')} public_artifact_safe={bool(user_status.get('public_artifact_safe'))}")
+        if review:
+            print(f"  review: state={review.get('state')} next={review.get('next_step')} inspect={review.get('inspect_first')} recommended={review.get('recommended_label')} primary={review.get('primary_code')} attention={review.get('attention') or 'none'} public_artifact_safe={bool(review.get('public_artifact_safe'))}")
+        if recommended:
+            print(f"  recommended_next: {recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}")
+            if recommended.get("requires_env"):
+                print(f"  recommended_requires: {', '.join(str(name) for name in recommended.get('requires_env') or [])}")
+        for index, item in enumerate(not_completed[:5], start=1):
+            print(f"  not_completed[{index}]: {item}")
         if output_request:
             print(f"  output_request: {output_request_text(output_request)}")
         if prompt_scope:

@@ -217,6 +217,14 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertIn("public_swarm_v2_model_match_ready", report["diagnosis_codes"])
         self.assertIn("public_swarm_v2_fresh_external_runtime_verified", report["diagnosis_codes"])
         self.assertIn("public_swarm_v2_external_stage_rows_ready", report["diagnosis_codes"])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["next_step"], "review_artifacts")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertEqual(report["review_summary"]["next_step"], "review_artifacts")
+        self.assertEqual(report["review_summary"]["recommended_label"], "review v2 evidence")
+        self.assertIn("public_swarm_inference_v2.md", report["review_summary"]["inspect_first"])
+        self.assertEqual(report["recommended_next_command"]["reason"], "v2_ready")
+        self.assertIn("public_swarm_inference_v2.md", report["recommended_next_command"]["command_line"])
         self.assertFalse(report["output_request"]["include_output"])
         self.assertFalse(report["output_request"]["raw_prompt_public"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
@@ -247,6 +255,9 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "v2" / "public_swarm_inference_v2.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("## Review", markdown)
+        self.assertIn("- state: `ready`", markdown)
+        self.assertIn("- recommended: `review v2 evidence` reason=`v2_ready`", markdown)
         self.assertIn(
             "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,
@@ -260,6 +271,9 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(support["review_summary"]["state"], "ready")
+        self.assertEqual(support["user_status"]["state"], "ready")
+        self.assertEqual(support["recommended_next_command"]["reason"], "v2_ready")
 
     def test_fresh_external_blocks_when_stage_rows_below_token_target(self) -> None:
         output_dir = self._tmp_dir()
@@ -297,6 +311,12 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertEqual(external["accepted_rows"], 30)
         self.assertFalse(external["accepted_rows_ready"])
         self.assertIn("external signed/real P2P accepted stage rows", report["not_completed"])
+        self.assertEqual(report["user_status"]["state"], "blocked")
+        self.assertEqual(report["user_status"]["next_step"], "fix_blockers")
+        self.assertEqual(report["review_summary"]["state"], "blocked")
+        self.assertEqual(report["review_summary"]["recommended_label"], "import fresh external evidence")
+        self.assertEqual(report["recommended_next_command"]["reason"], "refresh_external_p2p_evidence")
+        self.assertIn("dist/<fresh-real-p2p-run>/real_p2p_swarm_inference_core_rc.json", report["recommended_next_command"]["command_line"])
         self.assertNotIn("public_swarm_v2_external_stage_rows_ready", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_v2_fresh_external_runtime_verified", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_inference_v2_ready", report["diagnosis_codes"])
@@ -467,7 +487,7 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
         self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
         self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
-        self.assertFalse(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
         self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
         self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
@@ -475,6 +495,80 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         self.assertNotIn(str(prompt_file), encoded)
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
+        runbook = (output_dir / "v2-local-file" / "PUBLIC_SWARM_INFERENCE_V2.md").read_text(encoding="utf-8")
+        self.assertIn('--prompt "<prompt>"', runbook)
+        self.assertNotIn(str(prompt_file), runbook)
+        for prompt in prompts:
+            self.assertNotIn(prompt, runbook)
+
+    def test_runbook_and_recommended_command_do_not_leak_single_prompt_text(self) -> None:
+        output_dir = self._tmp_dir()
+        sources = self._write_sources(output_dir, external_tokens=16)
+        private_prompt = "private customer prompt must stay local"
+
+        report = pack.build_report(pack.parse_args([
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "v2-private-prompt"),
+            "--usable-report",
+            str(sources["usable"]),
+            "--preview-report",
+            str(sources["preview"]),
+            "--real-p2p-report",
+            str(sources["real_p2p"]),
+            "--gpu-report",
+            str(sources["gpu"]),
+            "--prompt-text",
+            private_prompt,
+            "--fresh-external-report",
+            "--max-new-tokens",
+            "16",
+        ]))
+
+        encoded = json.dumps(report, sort_keys=True)
+        runbook = (output_dir / "v2-private-prompt" / "PUBLIC_SWARM_INFERENCE_V2.md").read_text(encoding="utf-8")
+        markdown = (output_dir / "v2-private-prompt" / "public_swarm_inference_v2.md").read_text(encoding="utf-8")
+        support = (output_dir / "v2-private-prompt" / "support_bundle.json").read_text(encoding="utf-8")
+        self.assertTrue(report["ok"], report)
+        self.assertIn("public_swarm_inference_v2.md", report["recommended_next_command"]["command_line"])
+        self.assertIn('--prompt "<prompt>"', runbook)
+        self.assertNotIn(private_prompt, encoded)
+        self.assertNotIn(private_prompt, runbook)
+        self.assertNotIn(private_prompt, markdown)
+        self.assertNotIn(private_prompt, support)
+
+    def test_blocked_recommended_command_uses_prompt_placeholder(self) -> None:
+        output_dir = self._tmp_dir()
+        sources = self._write_sources(output_dir, external_tokens=16)
+        private_prompt = "blocked private prompt"
+        usable_payload = check.fake_usable_report(16)
+        usable_payload["readiness"]["p2p_product_path"]["kv_cache_ready"] = False
+        sources["usable"].write_text(json.dumps(usable_payload) + "\n", encoding="utf-8")
+
+        report = pack.build_report(pack.parse_args([
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "v2-private-prompt-blocked"),
+            "--usable-report",
+            str(sources["usable"]),
+            "--preview-report",
+            str(sources["preview"]),
+            "--real-p2p-report",
+            str(sources["real_p2p"]),
+            "--gpu-report",
+            str(sources["gpu"]),
+            "--prompt-text",
+            private_prompt,
+            "--fresh-external-report",
+            "--max-new-tokens",
+            "16",
+        ]))
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun local v2 gate")
+        self.assertIn("--prompt-text '<prompt>'", report["recommended_next_command"]["command_line"])
+        self.assertNotIn(private_prompt, encoded)
 
     def test_local_mode_rejects_usable_batch_ready_code_without_batch_evidence(self) -> None:
         output_dir = self._tmp_dir()
