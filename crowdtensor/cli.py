@@ -10859,10 +10859,6 @@ def build_product_generate(args: argparse.Namespace) -> dict[str, Any]:
 
 def print_product_generate(report: dict[str, Any]) -> None:
     print("CrowdTensor generate")
-    print(f"  ok: {report.get('ok')}")
-    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
-    if user_status:
-        print(f"  status: {infer_user_status_text(user_status)}")
     review_summary = display_review_summary(report, local_generate_command_line)
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
@@ -10870,6 +10866,10 @@ def print_product_generate(report: dict[str, Any]) -> None:
         attention_text = review_attention_display_text(review_summary)
         if attention_text:
             print(f"  attention: {attention_text}")
+    print(f"  ok: {report.get('ok')}")
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")
@@ -11152,11 +11152,6 @@ def print_product_join(report: dict[str, Any]) -> None:
 
 def print_infer(report: dict[str, Any]) -> None:
     print("CrowdTensor infer")
-    print(f"  ok: {report.get('ok')}")
-    print(f"  mode: {report.get('mode')}")
-    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
-    if user_status:
-        print(f"  status: {infer_user_status_text(user_status)}")
     review_summary = display_review_summary(report, local_infer_command_line)
     if review_summary:
         print(f"  review: {review_summary_text(review_summary)}")
@@ -11164,6 +11159,11 @@ def print_infer(report: dict[str, Any]) -> None:
         attention_text = review_attention_display_text(review_summary)
         if attention_text:
             print(f"  attention: {attention_text}")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  mode: {report.get('mode')}")
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
     issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
     if issue_summary:
         print(f"  issue: {issue_summary_text(issue_summary)}")

@@ -1320,6 +1320,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  action: Generation request shape is valid, but live readiness was skipped", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
         self.assertIn(f"  inspect_first: {output_dir / 'generate_summary.md'}", rendered)
+        self.assertLess(rendered.index("  review: "), rendered.index("  ok: "))
+        self.assertLess(rendered.index("  review: "), rendered.index("  status: "))
         self.assertLess(rendered.index("  attention: "), rendered.index("  action: "))
         self.assertLess(rendered.index("  action: "), rendered.index("  diagnosis: "))
         self.assertLess(rendered.index("  inspect_first: "), rendered.index("  diagnosis: "))
@@ -8899,6 +8901,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"  review: state=completed next=rerun_or_review_artifacts inspect={output_dir / 'infer_summary.md'} recommended=rerun inference primary=crowdtensor_infer_ready attention=none public_artifact_safe=True",
             stdout.getvalue(),
         )
+        self.assertLess(stdout.getvalue().index("  review: "), stdout.getvalue().index("  ok: "))
+        self.assertLess(stdout.getvalue().index("  review: "), stdout.getvalue().index("  status: "))
         self.assertIn(
             "  review_next: label=rerun inference reason=rerun_inference command=CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
             stdout.getvalue(),
@@ -11273,6 +11277,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  status: preflight-ready: Preflight passed; submit inference next. next=submit recommendation=submit inference public_artifact_safe=True",
             rendered,
         )
+        self.assertLess(rendered.index("  review: "), rendered.index("  ok: "))
+        self.assertLess(rendered.index("  review: "), rendered.index("  status: "))
         self.assertIn("  ready_to_submit: ready label=verified fully_verified=True route=True coordinator=ready stage=ready stage_verification=ready next_step=submit warnings=none", rendered)
         self.assertIn("  readiness: Route, Coordinator, and distinct stage Miners are verified.", rendered)
         self.assertIn("recommended_next: submit inference reason=submit_verified_inference", rendered)
