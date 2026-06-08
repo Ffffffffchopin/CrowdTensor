@@ -244,6 +244,13 @@ def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
     )
 
 
+def prompt_scope_note(prompt_scope: dict[str, Any]) -> str:
+    return str(
+        prompt_scope.get("summary")
+        or "Public artifacts record prompt source/count only and exclude raw prompt text."
+    )
+
+
 def find_private_artifacts(root: Path) -> list[str]:
     if not root.exists():
         return []
@@ -673,6 +680,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         f"- include output: `{output_request.get('include_output')}`",
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -723,12 +731,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def print_human(report: dict[str, Any]) -> None:
     rc = report.get("release_candidate") if isinstance(report.get("release_candidate"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     print("CrowdTensor Public Swarm Inference Alpha RC")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {rc.get('ready')}")
     print(f"  output: {report.get('output_dir')}")
+    if prompt_scope:
+        print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
+        print(f"  prompt_scope_note: {prompt_scope_note(prompt_scope)}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 

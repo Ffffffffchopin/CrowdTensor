@@ -67,6 +67,8 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
             "- prompt scope: `source=prompt-texts count=2 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
             markdown,
         )
+        self.assertIn("- prompt scope note:", markdown)
+        self.assertIn("raw prompt text is excluded from public JSON, Markdown", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",

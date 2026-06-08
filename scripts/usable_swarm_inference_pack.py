@@ -734,6 +734,13 @@ def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
     )
 
 
+def prompt_scope_note(prompt_scope: dict[str, Any]) -> str:
+    return str(
+        prompt_scope.get("summary")
+        or "Public artifacts record prompt source/count only and exclude raw prompt text."
+    )
+
+
 def limitations() -> list[str]:
     return [
         "Usable Swarm Inference v1 is a user-facing, Coordinator-backed product path.",
@@ -1062,6 +1069,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         f"- include output: `{output_request.get('include_output')}`",
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",

@@ -403,6 +403,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         f"- include output: `{output_request.get('include_output')}`",
         f"- prompt scope: `source={prompt_scope.get('source')} count={prompt_scope.get('prompt_count')} inline_prompt_text={prompt_scope.get('inline_prompt_text')} terminal_next_commands_local_private={prompt_scope.get('terminal_next_commands_local_private')} saved_artifacts_prompt_placeholders={prompt_scope.get('saved_artifacts_prompt_placeholders')} prompt_file_path_public={prompt_scope.get('prompt_file_path_public')} raw_prompt_public={prompt_scope.get('raw_prompt_public')} public_artifact_safe={prompt_scope.get('public_artifact_safe')}`",
+        f"- prompt scope note: {prompt_scope.get('summary') or 'Public artifacts record prompt source/count only and exclude raw prompt text.'}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -443,6 +444,11 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str, secre
         "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
+        "summary": (
+            "Public Swarm Beta artifacts record prompt source/count and placeholder "
+            "safety only; raw prompt text is excluded from public JSON, Markdown, and "
+            "support bundles."
+        ),
     })
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())

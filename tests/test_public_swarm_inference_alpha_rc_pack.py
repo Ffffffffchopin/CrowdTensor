@@ -167,6 +167,7 @@ class PublicSwarmInferenceAlphaRcPackTests(unittest.TestCase):
         markdown = (output_dir / "public_swarm_inference_alpha_rc.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
         self.assertIn("prompt scope: `source=imported-or-built-in-validation-prompts", markdown)
+        self.assertIn("prompt scope note: Public Swarm Alpha RC imports retained validation evidence", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generation_public=False generation_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
