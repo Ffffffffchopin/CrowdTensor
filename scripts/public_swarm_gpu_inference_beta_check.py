@@ -211,6 +211,26 @@ def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[
         raise SystemExit(f"unexpected output_request.generated_token_ids_public: {output_request}")
     if output_request.get("public_artifact_safe") is not True:
         raise SystemExit(f"unexpected output_request.public_artifact_safe: {output_request}")
+    prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
+    expected_prompt_source = "prompt-texts" if mode in {"local-loopback", "verify"} else "none"
+    expected_inline = mode in {"local-loopback", "verify"}
+    if prompt_scope.get("source") != expected_prompt_source:
+        raise SystemExit(f"unexpected prompt_scope.source: {prompt_scope}")
+    prompt_count = prompt_scope.get("prompt_count")
+    if expected_inline:
+        if not isinstance(prompt_count, int) or prompt_count < 1:
+            raise SystemExit(f"unexpected prompt_scope.prompt_count: {prompt_scope}")
+    elif prompt_count != 0:
+        raise SystemExit(f"unexpected prompt_scope.prompt_count: {prompt_scope}")
+    for key in ["inline_prompt_text", "terminal_next_commands_local_private", "terminal_logs_local_private", "prefer_prompt_file_or_stdin_for_shareable_logs"]:
+        if prompt_scope.get(key) is not expected_inline:
+            raise SystemExit(f"unexpected prompt_scope.{key}: {prompt_scope}")
+    for key in ["saved_artifacts_prompt_placeholders", "saved_artifacts_public_safe", "public_artifact_safe"]:
+        if prompt_scope.get(key) is not True:
+            raise SystemExit(f"unexpected prompt_scope.{key}: {prompt_scope}")
+    for key in ["prompt_file_path_public", "raw_prompt_public"]:
+        if prompt_scope.get(key) is not False:
+            raise SystemExit(f"unexpected prompt_scope.{key}: {prompt_scope}")
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
     if answer_scope.get("scope_state") != "no-local-answer":
         raise SystemExit(f"unexpected answer_scope.scope_state: {answer_scope}")

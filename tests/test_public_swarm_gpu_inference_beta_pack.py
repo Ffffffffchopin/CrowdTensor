@@ -14,11 +14,22 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         return Path(tempfile.mkdtemp(prefix="crowdtensor_public_swarm_gpu_beta_test_"))
 
     def _assert_output_scope(self, report: dict, output_dir: Path, mode: str) -> None:
+        prompt_inline_modes = {"local-loopback", "verify"}
+        prompt_inline = mode in prompt_inline_modes
         self.assertFalse(report["output_request"]["include_output"])
         self.assertFalse(report["output_request"]["raw_prompt_public"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts" if prompt_inline else "none")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], len(pack.DEFAULT_PROMPTS) if prompt_inline else 0)
+        self.assertIs(report["prompt_scope"]["inline_prompt_text"], prompt_inline)
+        self.assertIs(report["prompt_scope"]["terminal_next_commands_local_private"], prompt_inline)
+        self.assertIs(report["prompt_scope"]["terminal_logs_local_private"], prompt_inline)
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -33,6 +44,7 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / f"public_swarm_gpu_inference_beta_{mode.replace('-', '_')}.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn(f"prompt scope: `source={'prompt-texts' if prompt_inline else 'none'}", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
 
     def test_local_smoke_is_ci_safe_without_gpu_claim(self) -> None:
@@ -124,6 +136,36 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("gpu_stage1_ready", report["diagnosis_codes"])
         self._assert_output_scope(report, output_dir, "local-loopback")
         self.assertTrue(calls)
+
+    def test_local_loopback_redacts_prompt_texts_from_failure_tails(self) -> None:
+        output_dir = self._tmp_dir()
+        prompts = "private gpu prompt one,private gpu prompt two"
+
+        def failing_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            del command
+            return subprocess.CompletedProcess(
+                args=["cmd"],
+                returncode=1,
+                stdout="private gpu prompt one failed\n",
+                stderr="private gpu prompt two failed\n",
+            )
+
+        report = pack.build_report(pack.parse_args([
+            "local-loopback",
+            "--output-dir",
+            str(output_dir),
+            "--prompt-texts",
+            prompts,
+        ]), runner=failing_runner)
+        markdown = (output_dir / "public_swarm_gpu_inference_beta_local_loopback.md").read_text(encoding="utf-8")
+        encoded = json.dumps({"report": report, "markdown": markdown}, sort_keys=True)
+
+        self.assertFalse(report["ok"])
+        self.assertNotIn("private gpu prompt one", encoded)
+        self.assertNotIn("private gpu prompt two", encoded)
+        self.assertIn("<redacted>", encoded)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
 
     def test_kaggle_package_writes_private_gpu_runbook(self) -> None:
         output_dir = self._tmp_dir()

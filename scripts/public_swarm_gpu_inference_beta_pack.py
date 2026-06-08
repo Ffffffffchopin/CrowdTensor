@@ -47,6 +47,9 @@ PUBLIC_ACTIONS = (
 )
 SECRET_FRAGMENTS = cpu_beta.SECRET_FRAGMENTS + (
     "real_llm_sharded_result",
+    '"generated_text":',
+    '"generated_token_ids":',
+    '"prompt_text":',
 )
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -222,6 +225,44 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def parse_prompt_texts(value: str) -> list[str]:
+    prompts = [item.strip() for item in str(value or "").split(",") if item.strip()]
+    return prompts or list(DEFAULT_PROMPTS)
+
+
+def prompt_uses_inline_text(args: argparse.Namespace) -> bool:
+    return getattr(args, "mode", "") in {"local-loopback", "verify"}
+
+
+def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    prompts = parse_prompt_texts(getattr(args, "prompt_texts", "")) if prompt_uses_inline_text(args) else []
+    inline_prompt_text = bool(prompts)
+    return {
+        "source": "prompt-texts" if inline_prompt_text else "none",
+        "prompt_count": len(prompts),
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Public Swarm GPU Inference Beta artifacts record prompt source/count and "
+            "placeholder safety only; raw prompt text is excluded from public JSON, "
+            "Markdown, and imported evidence summaries."
+        ),
+    }
+
+
+def prompt_secret_values(args: argparse.Namespace) -> list[str]:
+    if not prompt_uses_inline_text(args):
+        return []
+    return parse_prompt_texts(getattr(args, "prompt_texts", ""))
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -266,6 +307,19 @@ def output_request_text(summary: dict[str, Any]) -> str:
     )
 
 
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def answer_scope_text(answer_scope: dict[str, Any]) -> str:
     return (
         f"state={answer_scope.get('scope_state') or 'unknown'} "
@@ -297,6 +351,7 @@ def report_filenames(mode: str) -> tuple[str, str]:
 def render_markdown(report: dict[str, Any]) -> str:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -312,6 +367,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -329,8 +385,28 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str, secret_values: list[str] | None = None) -> dict[str, Any]:
+def persist_report(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    mode: str,
+    prompt_scope: dict[str, Any] | None = None,
+    secret_values: list[str] | None = None,
+) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope or {
+        "source": "none",
+        "prompt_count": 0,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+    })
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report, secret_values))
@@ -511,6 +587,7 @@ def build_local_loopback(args: argparse.Namespace, *, output_dir: Path, runner: 
         command,
         runner=runner,
         timeout_seconds=float(args.timeout_seconds) + 180.0,
+        secret_values=prompt_secret_values(args),
     )
     codes = set(diagnosis_codes(payload))
     required = {
@@ -1024,7 +1101,7 @@ def build_cpu_wrapped_action(args: argparse.Namespace, *, output_dir: Path, runn
             command.append("--include-private")
         if args.remove_empty_dir:
             command.append("--remove-empty-dir")
-    secret_values = [args.observer_token, args.admin_token]
+    secret_values = [args.observer_token, args.admin_token, *prompt_secret_values(args)]
     step, payload = run_json_step(
         f"public_swarm_beta_{action}",
         command,
@@ -1094,7 +1171,8 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         report,
         output_dir=output_dir,
         mode=args.mode,
-        secret_values=[getattr(args, "observer_token", ""), getattr(args, "admin_token", "")],
+        prompt_scope=prompt_scope_summary(args),
+        secret_values=[getattr(args, "observer_token", ""), getattr(args, "admin_token", ""), *prompt_secret_values(args)],
     )
 
 
@@ -1212,6 +1290,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def print_human(report: dict[str, Any]) -> None:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Public Swarm GPU Inference Beta")
@@ -1222,6 +1301,8 @@ def print_human(report: dict[str, Any]) -> None:
     print(f"  backend: {beta.get('backend')}")
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
+    if prompt_scope:
+        print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
     if answer_scope:
         print(f"  answer_scope: {answer_scope_text(answer_scope)}")
     if shareable:
