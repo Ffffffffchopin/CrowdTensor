@@ -107,6 +107,29 @@ def validate_report(payload: dict[str, Any], *, mode: str) -> None:
         raise SystemExit(f"output_request local_output_display_only mismatch: {output_request}")
     if output_request.get("public_artifact_safe") is not True:
         raise SystemExit(f"output_request public_artifact_safe mismatch: {output_request}")
+    prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
+    if prompt_scope.get("source") != "imported-or-built-in-validation-prompts":
+        raise SystemExit(f"prompt_scope source mismatch: {prompt_scope}")
+    if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 0:
+        raise SystemExit(f"prompt_scope count mismatch: {prompt_scope}")
+    if prompt_scope.get("inline_prompt_text") is not False:
+        raise SystemExit(f"prompt_scope inline_prompt_text mismatch: {prompt_scope}")
+    if prompt_scope.get("terminal_next_commands_local_private") is not False:
+        raise SystemExit(f"prompt_scope terminal_next_commands_local_private mismatch: {prompt_scope}")
+    if prompt_scope.get("terminal_logs_local_private") is not False:
+        raise SystemExit(f"prompt_scope terminal_logs_local_private mismatch: {prompt_scope}")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        raise SystemExit(f"prompt_scope saved_artifacts_prompt_placeholders mismatch: {prompt_scope}")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        raise SystemExit(f"prompt_scope saved_artifacts_public_safe mismatch: {prompt_scope}")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not False:
+        raise SystemExit(f"prompt_scope prefer_prompt_file_or_stdin mismatch: {prompt_scope}")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        raise SystemExit(f"prompt_scope prompt_file_path_public mismatch: {prompt_scope}")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        raise SystemExit(f"prompt_scope raw_prompt_public mismatch: {prompt_scope}")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        raise SystemExit(f"prompt_scope public_artifact_safe mismatch: {prompt_scope}")
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
     if answer_scope.get("scope_state") != "no-local-answer":
         raise SystemExit(f"answer_scope state mismatch: {answer_scope}")

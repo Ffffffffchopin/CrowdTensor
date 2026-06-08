@@ -202,6 +202,48 @@ def shareable_summary() -> dict[str, Any]:
     }
 
 
+def prompt_scope_summary(report: dict[str, Any] | None = None) -> dict[str, Any]:
+    rc = report.get("release_candidate") if isinstance(report, dict) and isinstance(report.get("release_candidate"), dict) else {}
+    prompt_count = 0
+    for key in ("request_count", "prompt_count"):
+        try:
+            prompt_count = int(rc.get(key) or 0)
+        except (TypeError, ValueError):
+            prompt_count = 0
+        if prompt_count:
+            break
+    return {
+        "source": "imported-or-built-in-validation-prompts",
+        "prompt_count": prompt_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Public Swarm Alpha RC imports retained validation evidence; public artifacts "
+            "record prompt source/count only and exclude raw prompt text."
+        ),
+    }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def find_private_artifacts(root: Path) -> list[str]:
     if not root.exists():
         return []
@@ -588,6 +630,7 @@ def build_local_smoke_report(args: argparse.Namespace, *, output_dir: Path, runn
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(report))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report))
@@ -611,6 +654,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
 def render_markdown(report: dict[str, Any]) -> str:
     rc = report.get("release_candidate") if isinstance(report.get("release_candidate"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -628,6 +672,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
