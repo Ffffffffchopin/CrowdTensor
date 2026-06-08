@@ -1231,6 +1231,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Dry run: `True`", markdown)
         self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
         self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
+        self.assertLess(markdown.index("- Review next: "), markdown.index("- Status: "))
+        self.assertLess(markdown.index("- Status: "), markdown.index("- Issue: "))
+        self.assertLess(markdown.index("- Issue: "), markdown.index("- OK: "))
         self.assertIn("## What To Do Next", markdown)
         self.assertIn("- State: `preflight-partial`", markdown)
         self.assertIn("- Next step: `run_live_preflight`", markdown)
@@ -9097,6 +9100,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Mode: `existing`", markdown)
         self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
         self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
+        self.assertLess(markdown.index("- Review next: "), markdown.index("- Status: "))
+        self.assertLess(markdown.index("- Status: "), markdown.index("- Issue: "))
+        self.assertLess(markdown.index("- Issue: "), markdown.index("- OK: "))
         self.assertIn("## What To Do Next", markdown)
         self.assertIn("- State: `completed`", markdown)
         self.assertIn("- Next step: `rerun_or_review_artifacts`", markdown)
@@ -11306,6 +11312,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
         self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
+        self.assertLess(markdown.index("- Review next: "), markdown.index("- Status: "))
+        self.assertLess(markdown.index("- Status: "), markdown.index("- Issue: "))
+        self.assertLess(markdown.index("- Issue: "), markdown.index("- OK: "))
         self.assertIn(
             "- Status: `preflight-ready: Preflight passed; submit inference next. next=submit recommendation=submit inference public_artifact_safe=True`",
             markdown,
