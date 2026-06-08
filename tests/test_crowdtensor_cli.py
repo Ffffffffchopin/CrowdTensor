@@ -16003,6 +16003,53 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "remote_micro_llm_sharded_beta_v1")
 
+    def test_print_micro_llm_shard_infer_beta_outputs_user_guidance(self) -> None:
+        summary = {
+            "schema": "remote_micro_llm_sharded_beta_v1",
+            "cli_schema": "remote_micro_llm_sharded_beta_cli_v1",
+            "ok": True,
+            "mode": "remote-loopback",
+            "failure_mode": "none",
+            "decode_steps": 2,
+            "output_dir": "dist/remote-micro",
+            "diagnosis_codes": ["remote_micro_llm_sharded_ready"],
+            "user_status": {"state": "ready", "headline": "Ready.", "next_step": "review_artifacts", "proof_level": "local-loopback-remote-stand-in"},
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/remote-micro/remote_micro_llm_sharded_beta.md",
+                "recommended_label": "inspect evidence",
+                "primary_code": "remote_micro_llm_sharded_ready",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {"command_line": "sed -n 1,220p dist/remote-micro/remote_micro_llm_sharded_beta.md"},
+            "next_commands": [{"label": "inspect support bundle", "command_line": "sed -n 1,220p dist/remote-micro/support_bundle.json"}],
+            "artifact_summary": {
+                "inspect_first": "dist/remote-micro/remote_micro_llm_sharded_beta.md",
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "support_bundle": "dist/remote-micro/support_bundle.json",
+                "public_artifact_safe": True,
+            },
+            "output_request": {"include_output": False, "raw_prompt_public": False, "raw_generated_text_public": False, "generated_token_ids_public": False, "public_artifact_safe": True},
+            "prompt_scope": {"source": "fixed-micro-llm-prompt-scenario", "prompt_count": 2, "inline_prompt_text": False, "terminal_next_commands_local_private": False, "saved_artifacts_prompt_placeholders": True, "prompt_file_path_public": False, "raw_prompt_public": False, "public_artifact_safe": True},
+            "answer_scope": {"scope_state": "evidence-only", "saved_json_display": "validation-summary-only", "saved_markdown_display": "validation-summary-only", "raw_generated_text_public": False, "generated_token_ids_public": False, "public_artifact_safe": True},
+            "shareable_summary": {"saved_artifacts_public_safe": True, "raw_prompt_public": False, "raw_generated_text_public": False, "generated_token_ids_public": False, "local_output_display_only": False, "answer_scope_state": "evidence-only", "local_answer_terminal_only": False},
+        }
+        with patch("builtins.print") as mocked_print:
+            cli.print_remote_micro_llm_sharded_beta(summary)
+
+        output = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("status: ready:", output)
+        self.assertIn("proof_level=local-loopback-remote-stand-in", output)
+        self.assertIn("review: state=ready", output)
+        self.assertIn("next[1] inspect support bundle", output)
+        self.assertIn("artifacts: inspect=dist/remote-micro/remote_micro_llm_sharded_beta.md", output)
+        self.assertIn("output_request: include_output=False", output)
+        self.assertIn("prompt_scope:", output)
+        self.assertIn("answer_scope:", output)
+        self.assertIn("shareable:", output)
+
     def test_real_llm_shard_infer_beta_wraps_beta_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []
@@ -16060,6 +16107,52 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "remote_real_llm_sharded_beta_v1")
+
+    def test_print_real_llm_shard_infer_beta_outputs_user_guidance(self) -> None:
+        summary = {
+            "schema": "remote_real_llm_sharded_beta_v1",
+            "ok": True,
+            "mode": "remote-loopback",
+            "failure_mode": "none",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "output_dir": "dist/remote-real",
+            "diagnosis_codes": ["remote_real_llm_sharded_ready"],
+            "user_status": {"state": "ready", "headline": "Ready.", "next_step": "review_artifacts", "proof_level": "local-loopback-remote-stand-in"},
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/remote-real/remote_real_llm_sharded_beta.md",
+                "recommended_label": "inspect evidence",
+                "primary_code": "remote_real_llm_sharded_ready",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {"command_line": "sed -n 1,220p dist/remote-real/remote_real_llm_sharded_beta.md"},
+            "next_commands": [{"label": "inspect support bundle", "command_line": "sed -n 1,220p dist/remote-real/support_bundle.json"}],
+            "artifact_summary": {
+                "inspect_first": "dist/remote-real/remote_real_llm_sharded_beta.md",
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "support_bundle": "dist/remote-real/support_bundle.json",
+                "public_artifact_safe": True,
+            },
+            "output_request": {"include_output": False, "raw_prompt_public": False, "raw_generated_text_public": False, "generated_token_ids_public": False, "public_artifact_safe": True},
+            "prompt_scope": {"source": "operator-provided-or-default-tiny-hf-prompts", "prompt_count": 1, "inline_prompt_text": False, "terminal_next_commands_local_private": False, "saved_artifacts_prompt_placeholders": True, "prompt_file_path_public": False, "raw_prompt_public": False, "public_artifact_safe": True},
+            "answer_scope": {"scope_state": "evidence-only", "saved_json_display": "validation-summary-only", "saved_markdown_display": "validation-summary-only", "raw_generated_text_public": False, "generated_token_ids_public": False, "public_artifact_safe": True},
+            "shareable_summary": {"saved_artifacts_public_safe": True, "raw_prompt_public": False, "raw_generated_text_public": False, "generated_token_ids_public": False, "local_output_display_only": False, "answer_scope_state": "evidence-only", "local_answer_terminal_only": False},
+        }
+        with patch("builtins.print") as mocked_print:
+            cli.print_remote_real_llm_sharded_beta(summary)
+
+        output = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("status: ready:", output)
+        self.assertIn("proof_level=local-loopback-remote-stand-in", output)
+        self.assertIn("review: state=ready", output)
+        self.assertIn("next[1] inspect support bundle", output)
+        self.assertIn("artifacts: inspect=dist/remote-real/remote_real_llm_sharded_beta.md", output)
+        self.assertIn("output_request: include_output=False", output)
+        self.assertIn("prompt_scope:", output)
+        self.assertIn("answer_scope:", output)
+        self.assertIn("shareable:", output)
 
     def test_swarm_infer_beta_wraps_pack_and_redacts_tokens(self) -> None:
         output_dir = Path(self._tmp_dir())

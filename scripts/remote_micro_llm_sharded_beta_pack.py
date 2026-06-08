@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -324,13 +325,17 @@ def build_report(args: argparse.Namespace, *, runner: base.Runner = subprocess.r
     else:
         codes.discard("remote_sharded_inference_failed")
         codes.add("remote_micro_llm_sharded_failed")
+    prompt_values = [item for item in str(getattr(args, "prompt_texts", "") or "").split(",") if item]
+    prompt_hash = hashlib.sha256(json.dumps(prompt_values, sort_keys=True).encode("utf-8")).hexdigest() if prompt_values else ""
     report.update({
         "schema": SCHEMA,
         "decode_steps": args.decode_steps,
         "stage_mode": args.stage_mode,
         "require_distinct_stage_miners": bool(args.require_distinct_stage_miners),
         "micro_llm_artifact": getattr(args, "micro_llm_artifact", ""),
-        "prompt_texts": getattr(args, "prompt_texts", ""),
+        "prompt_text_count": len(prompt_values),
+        "prompt_texts_hash": f"sha256:{prompt_hash}" if prompt_hash else "",
+        "prompt_texts_redacted": True,
         "diagnosis_codes": sorted(codes),
         "safety": {
             **(report.get("safety") or {}),
@@ -349,6 +354,7 @@ def build_report(args: argparse.Namespace, *, runner: base.Runner = subprocess.r
     output_dir = Path(args.output_dir).resolve()
     json_out = Path(args.json_out).resolve() if args.json_out else output_dir / "remote_micro_llm_sharded_beta.json"
     markdown_out = Path(args.markdown_out).resolve() if args.markdown_out else output_dir / "remote_micro_llm_sharded_beta.md"
+    support_path = output_dir / "support_bundle.json"
     report["artifacts"]["remote_micro_llm_sharded_beta_json"] = base.artifact_entry(
         json_out,
         output_dir,
@@ -361,11 +367,17 @@ def build_report(args: argparse.Namespace, *, runner: base.Runner = subprocess.r
         output_dir,
         kind="remote_micro_llm_sharded_beta_markdown",
     )
-    json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    markdown_out.write_text(render_markdown(report), encoding="utf-8")
-    report["artifacts"]["remote_micro_llm_sharded_beta_json"]["present"] = True
-    report["artifacts"]["remote_micro_llm_sharded_beta_markdown"]["present"] = True
-    return report
+    return base.finalize_report_artifacts(
+        report,
+        args,
+        output_dir=output_dir,
+        json_out=json_out,
+        markdown_out=markdown_out,
+        support_path=support_path,
+        json_artifact_key="remote_micro_llm_sharded_beta_json",
+        markdown_artifact_key="remote_micro_llm_sharded_beta_markdown",
+        support_schema="remote_micro_llm_sharded_beta_support_bundle_v1",
+    )
 
 
 def render_markdown(report: dict[str, Any]) -> str:

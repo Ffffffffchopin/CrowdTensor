@@ -131,6 +131,27 @@ class RemoteMicroLlmShardedBetaPackTests(unittest.TestCase):
         self.assertIn("remote_micro_llm_sharded_loopback_ready", report["diagnosis_codes"])
         self.assertIn("stage_requeue_ready", report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["remote_micro_llm_sharded_beta_json"]["present"])
+        self.assertTrue(report["artifacts"]["remote_micro_llm_sharded_beta_markdown"]["present"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["proof_level"], "local-loopback-remote-stand-in")
+        self.assertEqual(report["review_summary"]["schema"], "remote_micro_llm_sharded_beta_review_summary_v1")
+        self.assertEqual(report["not_completed"], [])
+        self.assertEqual(report["prompt_text_count"], 2)
+        self.assertTrue(report["prompt_texts_redacted"])
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn('"prompt_texts":', encoded)
+        self.assertNotIn("arn,ten", encoded)
+        next_command_blob = json.dumps(report["next_commands"], sort_keys=True)
+        self.assertIn("<redacted-prompts>", next_command_blob)
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertTrue((output_dir / "support_bundle.json").is_file())
+        markdown = (output_dir / "remote_micro_llm_sharded_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("local-loopback-remote-stand-in", markdown)
+        self.assertNotIn("arn,ten", markdown)
         self.assertTrue(calls)
 
     def test_local_mode_wraps_micro_llm_cli(self) -> None:
@@ -157,6 +178,8 @@ class RemoteMicroLlmShardedBetaPackTests(unittest.TestCase):
         self.assertIn("local_micro_llm_sharded_inference_ready", report["diagnosis_codes"])
         self.assertIn("remote_micro_llm_sharded_ready", report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["local_micro_llm_sharded_cli_summary"]["present"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        self.assertEqual(report["user_status"]["proof_level"], "local-cpu")
 
 
 if __name__ == "__main__":

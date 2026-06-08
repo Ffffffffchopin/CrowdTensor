@@ -441,6 +441,7 @@ def build_report(args: argparse.Namespace, *, runner: base.Runner = subprocess.r
     output_dir = Path(args.output_dir).resolve()
     json_out = Path(args.json_out).resolve() if args.json_out else output_dir / "remote_real_llm_sharded_beta.json"
     markdown_out = Path(args.markdown_out).resolve() if args.markdown_out else output_dir / "remote_real_llm_sharded_beta.md"
+    support_path = output_dir / "support_bundle.json"
     report["artifacts"]["remote_real_llm_sharded_beta_json"] = base.artifact_entry(
         json_out,
         output_dir,
@@ -453,11 +454,17 @@ def build_report(args: argparse.Namespace, *, runner: base.Runner = subprocess.r
         output_dir,
         kind="remote_real_llm_sharded_beta_markdown",
     )
-    json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    markdown_out.write_text(render_markdown(report), encoding="utf-8")
-    report["artifacts"]["remote_real_llm_sharded_beta_json"]["present"] = True
-    report["artifacts"]["remote_real_llm_sharded_beta_markdown"]["present"] = True
-    return report
+    return base.finalize_report_artifacts(
+        report,
+        args,
+        output_dir=output_dir,
+        json_out=json_out,
+        markdown_out=markdown_out,
+        support_path=support_path,
+        json_artifact_key="remote_real_llm_sharded_beta_json",
+        markdown_artifact_key="remote_real_llm_sharded_beta_markdown",
+        support_schema="remote_real_llm_sharded_beta_support_bundle_v1",
+    )
 
 
 def render_markdown(report: dict[str, Any]) -> str:

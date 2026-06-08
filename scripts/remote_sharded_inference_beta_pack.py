@@ -757,6 +757,10 @@ def beta_command(args: argparse.Namespace, output_dir: Path) -> list[Any]:
         command.append("--require-distinct-stage-miners")
     if getattr(args, "micro_llm_artifact", ""):
         command.extend(["--micro-llm-artifact", str(getattr(args, "micro_llm_artifact"))])
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", "<prompt-file>"])
+    elif getattr(args, "prompt_texts", "") and report_kind() in {"micro-llm", "real-llm"}:
+        command.extend(["--prompt-texts", "<redacted-prompts>"])
     if getattr(args, "mode", "") == "remote-existing":
         if getattr(args, "coordinator_url", ""):
             command.extend(["--coordinator-url", getattr(args, "coordinator_url")])
@@ -796,6 +800,10 @@ def local_inference_command(args: argparse.Namespace, output_dir: Path) -> list[
         command.append("--require-distinct-stage-miners")
     if getattr(args, "micro_llm_artifact", ""):
         command.extend(["--micro-llm-artifact", str(getattr(args, "micro_llm_artifact"))])
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", "<prompt-file>"])
+    elif getattr(args, "prompt_texts", "") and report_kind() in {"micro-llm", "real-llm"}:
+        command.extend(["--prompt-texts", "<redacted-prompts>"])
     return command
 
 
@@ -1036,6 +1044,51 @@ def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, ou
     return report
 
 
+def finalize_report_artifacts(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    json_out: Path,
+    markdown_out: Path,
+    support_path: Path,
+    json_artifact_key: str,
+    markdown_artifact_key: str,
+    support_schema: str,
+) -> dict[str, Any]:
+    secret_values = [getattr(args, "observer_token", ""), getattr(args, "admin_token", "")]
+    json_out.parent.mkdir(parents=True, exist_ok=True)
+    markdown_out.parent.mkdir(parents=True, exist_ok=True)
+    support_path.parent.mkdir(parents=True, exist_ok=True)
+    report["artifacts"][json_artifact_key]["present"] = True
+    report["artifacts"][markdown_artifact_key]["present"] = True
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_path,
+        output_dir,
+        kind="support_bundle",
+        schema=support_schema,
+        ok=report.get("ok"),
+    )
+    report["artifacts"]["support_bundle_json"]["present"] = support_path.is_file()
+    report = attach_user_guidance(report, args, output_dir=output_dir)
+    report = support_bundle.sanitize(redact_values(report, secret_values))
+    support_path.write_text(json.dumps(support_bundle_payload(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_path,
+        output_dir,
+        kind="support_bundle",
+        schema=support_schema,
+        ok=report.get("ok"),
+    )
+    report["artifacts"]["support_bundle_json"]["present"] = True
+    report = attach_user_guidance(report, args, output_dir=output_dir)
+    report = support_bundle.sanitize(redact_values(report, secret_values))
+    markdown_out.write_text(render_markdown(report), encoding="utf-8")
+    json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    support_path.write_text(json.dumps(support_bundle_payload(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
@@ -1205,28 +1258,17 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         report = attach_user_guidance(report, args, output_dir=output_dir)
         report = support_bundle.sanitize(redact_values(report, secret_values))
 
-    json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    markdown_out.write_text(render_markdown(report), encoding="utf-8")
-    report["artifacts"][artifact_json_key]["present"] = True
-    report["artifacts"][artifact_markdown_key]["present"] = True
-    report["artifact_summary"] = artifact_summary(output_dir)
-    support_path.write_text(json.dumps(support_bundle_payload(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    report["artifacts"]["support_bundle_json"] = artifact_entry(
-        support_path,
-        output_dir,
-        kind="support_bundle",
-        schema=f"{report_slug()}_support_bundle_v1",
-        ok=report.get("ok"),
+    return finalize_report_artifacts(
+        report,
+        args,
+        output_dir=output_dir,
+        json_out=json_out,
+        markdown_out=markdown_out,
+        support_path=support_path,
+        json_artifact_key=artifact_json_key,
+        markdown_artifact_key=artifact_markdown_key,
+        support_schema=f"{report_slug()}_support_bundle_v1",
     )
-    report["artifacts"]["support_bundle_json"]["present"] = True
-    report = attach_user_guidance(report, args, output_dir=output_dir)
-    report = support_bundle.sanitize(redact_values(report, secret_values))
-    support_path.write_text(json.dumps(support_bundle_payload(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    report["artifacts"]["support_bundle_json"]["present"] = True
-    report["artifact_summary"] = artifact_summary(output_dir)
-    markdown_out.write_text(render_markdown(report), encoding="utf-8")
-    json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return report
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
