@@ -840,9 +840,12 @@ def run_product_beta(args: argparse.Namespace, *, output_dir: Path, runner: Runn
 
 def safe_batch_summary(payload: dict[str, Any]) -> dict[str, Any]:
     batch = payload.get("batch") if isinstance(payload.get("batch"), dict) else {}
+    generation = payload.get("generation") if isinstance(payload.get("generation"), dict) else {}
     if not batch:
         return {"enabled": False, "batch_generation_ready": False}
     raw_results = batch.get("results") if isinstance(batch.get("results"), list) else []
+    if not raw_results and isinstance(generation.get("results"), list):
+        raw_results = generation.get("results") or []
     safe_results: list[dict[str, Any]] = []
     for item in raw_results:
         if not isinstance(item, dict):
@@ -862,7 +865,12 @@ def safe_batch_summary(payload: dict[str, Any]) -> dict[str, Any]:
         str(item.get("request_id") or item.get("prompt_hash") or "")
         for item in safe_results
     ]
-    expected_request_count = safe_int(batch.get("expected_request_count") or batch.get("request_count"))
+    expected_request_count = safe_int(
+        batch.get("expected_request_count")
+        or batch.get("request_count")
+        or generation.get("expected_request_count")
+        or generation.get("request_count")
+    )
     batch_identity_ready = bool(
         expected_request_count > 0
         and (
@@ -1285,7 +1293,9 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
         )
         stage0_clean = stage0.poll() == 0 if stage0 else False
         stage1_clean = stage1.poll() == 0 if stage1 else False
-        if generate_ready and stage0_clean and stage1_clean:
+        miners_started = bool(stage0 is not None and stage1 is not None)
+        loop_ready = bool(generate_ready and miners_started)
+        if loop_ready:
             codes.update({
                 "serve_join_generate_loop_ready",
                 "remote_generate_session_ready",
@@ -1297,20 +1307,24 @@ def run_product_generate_loop(args: argparse.Namespace, *, output_dir: Path) -> 
                 codes.add("public_swarm_generate_stream_ready")
                 if stream.get("endpoint_ready"):
                     codes.add("public_swarm_generate_stream_endpoint_ready")
+            if not stage0_clean or not stage1_clean:
+                codes.add("stage_miner_terminated_after_generate")
         else:
             if not generate_ready:
                 codes.add("generation_timeout")
-            if not stage0_clean or not stage1_clean:
+            if not miners_started:
                 codes.add("stage_miner_missing")
         return {
-            "ok": bool(generate_ready and stage0_clean and stage1_clean),
+            "ok": loop_ready,
             "step": {
                 "name": "serve_join_generate_loop",
-                "ok": bool(generate_ready and stage0_clean and stage1_clean),
+                "ok": loop_ready,
                 "returncode": completed.returncode,
                 "duration_seconds": round(time.monotonic() - started, 3),
                 "payload_schema": generate_payload.get("schema"),
                 "payload_ok": generate_payload.get("ok"),
+                "stage0_returncode": stage0.poll() if stage0 else None,
+                "stage1_returncode": stage1.poll() if stage1 else None,
                 "stderr_tail": redact_text(completed.stderr[-1200:], secret_values) if completed.stderr else "",
             },
             "coordinator_url": coordinator_url,

@@ -704,6 +704,158 @@ class PublicSwarmInferenceBetaRcPackTests(unittest.TestCase):
             self.assertEqual(command[command.index("--max-tasks") + 1], "3")
         self.assertIn("serve_join_generate_loop_ready", report["diagnosis_codes"])
 
+    def test_local_generate_loop_accepts_completed_batch_stream_when_miners_are_terminated(self) -> None:
+        output_dir = self._tmp_dir()
+        args = pack.parse_args([
+            "local-loopback",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "3",
+            "--prompt-texts",
+            "first prompt,second prompt",
+            "--stream-generation",
+        ])
+        popen_commands: list[list[str]] = []
+
+        class LongRunningProc:
+            def __init__(self, command: list[str]) -> None:
+                self.command = command
+                self.returncode = None
+                self.stdout = None
+                self.stderr = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def wait(self, timeout: float | None = None) -> int:
+                if self.returncode is not None:
+                    return self.returncode
+                raise subprocess.TimeoutExpired(self.command, timeout)
+
+            def terminate(self) -> None:
+                self.returncode = -15
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+            def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+                self.returncode = -15 if self.returncode is None else self.returncode
+                return "", ""
+
+        def fake_popen(command: list[str], **_: object) -> LongRunningProc:
+            popen_commands.append(command)
+            return LongRunningProc(command)
+
+        generate_results = [
+            {
+                "request_id": "req-1",
+                "prompt_hash": "sha256:p1",
+                "generated_token_count": 3,
+                "max_new_tokens": 3,
+                "generated_text_hash": "sha256:g1",
+                "multi_token_generation_ready": True,
+            },
+            {
+                "request_id": "req-2",
+                "prompt_hash": "sha256:p2",
+                "generated_token_count": 3,
+                "max_new_tokens": 3,
+                "generated_text_hash": "sha256:g2",
+                "multi_token_generation_ready": True,
+            },
+        ]
+        generate_payload = {
+            "schema": pack.PRODUCT_CLI_SCHEMA,
+            "ok": True,
+            "generation": {
+                "generated_token_count": 3,
+                "max_new_tokens": 3,
+                "multi_token_generation_ready": True,
+                "batch_generation_ready": True,
+                "request_count": 2,
+                "results": generate_results,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+            },
+            "batch": {
+                "enabled": True,
+                "expected_request_count": 2,
+                "request_count": 2,
+                "batch_generation_ready": True,
+            },
+            "stream": {
+                "enabled": True,
+                "requested": True,
+                "endpoint_ready": True,
+                "stream_generation_ready": True,
+                "event_count": 6,
+                "progress": {
+                    "stream_progress_complete": True,
+                    "all_token_events_ready": True,
+                    "monotonic_progress": False,
+                    "expected_request_count": 2,
+                    "per_request_progress": [
+                        {
+                            "request_key": "req-1",
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:p1",
+                            "event_count": 3,
+                            "observed_token_counts": [1, 2, 3],
+                            "max_observed_token_count": 3,
+                            "target_token_count": 3,
+                            "monotonic_progress": True,
+                            "stream_progress_complete": True,
+                        },
+                        {
+                            "request_key": "req-2",
+                            "request_id": "req-2",
+                            "prompt_hash": "sha256:p2",
+                            "event_count": 3,
+                            "observed_token_counts": [1, 2, 3],
+                            "max_observed_token_count": 3,
+                            "target_token_count": 3,
+                            "monotonic_progress": True,
+                            "stream_progress_complete": True,
+                        },
+                    ],
+                    "per_request_progress_complete": True,
+                    "per_request_monotonic_progress": True,
+                    "observed_token_counts": [1, 1, 2, 3, 2, 3],
+                    "max_observed_token_count": 3,
+                    "max_new_tokens": 3,
+                },
+            },
+            "diagnosis_codes": [
+                "public_swarm_generate_ready",
+                "public_swarm_generate_batch_ready",
+                "public_swarm_generate_stream_ready",
+                "public_swarm_generate_stream_endpoint_ready",
+            ],
+        }
+
+        with (
+            patch.object(pack.subprocess, "Popen", side_effect=fake_popen),
+            patch.object(pack.subprocess, "run", return_value=subprocess.CompletedProcess(
+                args=["generate"],
+                returncode=0,
+                stdout=json.dumps(generate_payload) + "\n",
+                stderr="",
+            )),
+            patch.object(pack, "wait_health", return_value={"ok": True}),
+            patch.object(pack, "missing_hf_dependencies", return_value=[]),
+        ):
+            report = pack.run_product_generate_loop(args, output_dir=output_dir)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["step"]["ok"])
+        self.assertIn("serve_join_generate_loop_ready", report["diagnosis_codes"])
+        self.assertIn("stage_miner_terminated_after_generate", report["diagnosis_codes"])
+        self.assertTrue(report["generation"]["batch"]["batch_generation_ready"])
+        self.assertEqual(report["generation"]["batch"]["result_count"], 2)
+        self.assertTrue(report["generation"]["stream"]["stream_generation_ready"])
+        self.assertEqual(len([command for command in popen_commands if "join" in command]), 2)
+
     def test_prompt_batch_rejects_more_than_four_prompts(self) -> None:
         with self.assertRaises(SystemExit):
             pack.parse_args([

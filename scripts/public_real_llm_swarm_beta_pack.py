@@ -382,6 +382,9 @@ SUPERSEDED_PRODUCT_PATH_BLOCKED_CODES = {
     "public_swarm_product_beta_blocked",
     "public_swarm_product_rc_blocked",
 }
+SUPERSEDED_GPU_IMPORT_BLOCKED_CODES = {
+    "gpu_generation_evidence_import_blocked",
+}
 
 
 def drop_unproven_stream_codes(codes: set[str], *, stream_ready: bool) -> set[str]:
@@ -413,6 +416,12 @@ def drop_superseded_product_path_blockers(codes: set[str], *, product_ready: boo
     if not product_ready:
         return codes
     return set(codes) - SUPERSEDED_PRODUCT_PATH_BLOCKED_CODES
+
+
+def drop_superseded_gpu_import_blockers(codes: set[str], *, fresh_kaggle_gpu_ready: bool) -> set[str]:
+    if not fresh_kaggle_gpu_ready:
+        return codes
+    return set(codes) - SUPERSEDED_GPU_IMPORT_BLOCKED_CODES
 
 
 def batch_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -2193,7 +2202,7 @@ def artifact_summary(report: dict[str, Any]) -> dict[str, Any]:
 
 def recommended_check_command(report: dict[str, Any]) -> dict[str, Any]:
     mode = str(report.get("mode") or "")
-    if mode not in {MODE_RELEASE, MODE_LOCAL_SMOKE, MODE_LOCAL_MODEL_VARIANT}:
+    if mode not in {MODE_RELEASE, MODE_LOCAL_SMOKE, MODE_LOCAL_MODEL_VARIANT, MODE_EVIDENCE_IMPORT}:
         return {}
     output_dir = str(report.get("output_dir") or "").strip()
     if not output_dir:
@@ -2675,6 +2684,15 @@ def build_aggregate(
         stream_ready=aggregate_stream_ready,
     )
     codes = drop_superseded_product_path_blockers(codes, product_ready=product["ready"])
+    codes = drop_superseded_gpu_import_blockers(
+        codes,
+        fresh_kaggle_gpu_ready=bool(
+            gpu.get("mode") == "kaggle-auto"
+            and gpu.get("ready") is True
+            and "external_gpu_runtime_verified" in set(gpu.get("diagnosis_codes") or [])
+            and "kaggle_kernels_deleted" in set(gpu.get("diagnosis_codes") or [])
+        ),
+    )
     if product["ready"]:
         codes.update({
             "user_facing_serve_join_generate_ready",

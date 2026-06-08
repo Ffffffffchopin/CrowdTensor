@@ -297,6 +297,8 @@ class PublicSwarmProductBetaPackTests(unittest.TestCase):
         self.assertIn("serve_join_generate_loop_ready", codes)
         self.assertIn("public_swarm_generate_ready", codes)
         self.assertIn("decoded_tokens_match", codes)
+        self.assertEqual(report["not_completed"], [])
+        self.assertEqual(report["review_summary"]["not_completed_count"], 0)
         self.assertNotIn("p2p_lite_route_ready", codes)
         self.assertNotIn("p2p_lite_discovery_ready", codes)
         self.assertNotIn("p2p_lite_route_blocked", codes)

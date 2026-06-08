@@ -922,7 +922,9 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         external_path, p2p_path, usable_path, public_swarm_v2_path = write_default_sources(output_dir)
         product_path = output_dir / "sources" / "product.json"
         gpu_path = output_dir / "sources" / "fresh-gpu.json"
-        product_path.write_text(json.dumps(check.fake_product_payload()) + "\n", encoding="utf-8")
+        product_payload = check.fake_product_payload()
+        product_payload["diagnosis_codes"].append("gpu_generation_evidence_import_blocked")
+        product_path.write_text(json.dumps(product_payload) + "\n", encoding="utf-8")
         gpu_path.write_text(json.dumps(fake_fresh_kaggle_gpu_payload()) + "\n", encoding="utf-8")
 
         args = pack.parse_args([
@@ -951,6 +953,15 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
 
         report = pack.build_report(args)
 
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["beta"]["ready"])
+        self.assertNotIn("gpu_generation_evidence_import_blocked", report["diagnosis_codes"])
+        self.assertEqual(report["review_summary"]["next_step"], "run_beta_report_check")
+        self.assertEqual(report["recommended_next_command"], report["recommended_check_command"])
+        self.assertIn("crowdtensor public-real-llm-swarm-beta check", report["recommended_check_command"]["command_line"])
+        self.assertIn("--beta-report", report["recommended_check_command"]["command_line"])
+        self.assertIn("public_real_llm_swarm_beta.json", report["recommended_check_command"]["command_line"])
+        self.assertIn("--max-new-tokens 16", report["recommended_check_command"]["command_line"])
         self.assertTrue(report["runtime_provenance"]["retained_gpu_evidence_imported"])
         self.assertEqual(report["runtime_provenance"]["gpu_report_mode"], "kaggle-auto")
         self.assertTrue(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])

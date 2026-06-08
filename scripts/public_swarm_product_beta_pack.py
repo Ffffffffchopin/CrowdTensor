@@ -543,7 +543,6 @@ def not_completed_items(report: dict[str, Any]) -> list[str]:
         ("Product Beta mode ready", beta.get("mode_ready")),
         ("support bundle ready", beta.get("support_bundle_ready")),
         ("privacy ready", beta.get("privacy_ready")),
-        ("RC product path ready", rc.get("product_beta_ready")),
         ("CPU fallback ready", rc.get("cpu_fallback_ready")),
     ]
     if report.get("mode") == "local-loopback":
