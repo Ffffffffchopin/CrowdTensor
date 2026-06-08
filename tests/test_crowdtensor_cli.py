@@ -1263,6 +1263,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
             next_lines,
         )
+        start = report["next_commands"][0]
+        self.assertEqual(
+            start["requires_env"],
+            ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_MINER_TOKEN", "CROWDTENSOR_OBSERVER_TOKEN"],
+        )
         self.assertNotIn(cli.DEFAULT_PRODUCT_GENERATE_PROMPT, encoded)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -3258,6 +3263,14 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
             next_lines,
         )
+        start = next_commands[0]
+        self.assertEqual(start["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_OBSERVER_TOKEN"])
+        self.assertIn(
+            "CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} "
+            "CROWDTENSOR_OBSERVER_TOKEN=${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} "
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
+            cli.human_next_command_line(start, start["command_line"]),
+        )
         self.assertIn(
             "crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run",
             next_lines,
@@ -3324,6 +3337,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertIn("  result: status=preflight tokens=not-run outputs=0 display=hash-only-json hash=none public_artifact_safe=True", rendered)
         self.assertNotIn("tokens=0/16", rendered)
+        self.assertIn(
+            "next[1] start Coordinator: CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} "
+            "CROWDTENSOR_OBSERVER_TOKEN=${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN} "
+            "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8791 --run"
+            "  # requires CROWDTENSOR_ADMIN_TOKEN, CROWDTENSOR_OBSERVER_TOKEN",
+            rendered,
+        )
         markdown = cli.render_generate_summary_markdown(report)
         self.assertIn("- Result: `status=preflight tokens=not-run outputs=0 display=hash-only-json hash=none public_artifact_safe=True`", markdown)
         self.assertNotIn("tokens=0/16", markdown)
@@ -13163,6 +13183,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["primary_code"], "coordinator_route_missing")
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run", next_lines)
+        start = report["next_commands"][0]
+        self.assertEqual(start["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_OBSERVER_TOKEN"])
         self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run", next_lines)
         self.assertIn("crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run", next_lines)
         self.assertNotIn("CrowdTensor user prompt", json.dumps(report, sort_keys=True))
@@ -13394,6 +13416,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertEqual(report["recommended_next_command"]["label"], "start Coordinator")
         self.assertEqual(report["recommended_next_command"]["reason"], "start_coordinator")
+        self.assertEqual(
+            report["recommended_next_command"]["requires_env"],
+            ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_OBSERVER_TOKEN"],
+        )
         self.assertIn(
             "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run",
             next_lines,

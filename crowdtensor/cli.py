@@ -7207,7 +7207,11 @@ def _infer_next_commands(args: argparse.Namespace, payload: dict[str, Any], *, o
             peer_secret="",
         )
         commands.extend([
-            command_entry("start Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
+            command_entry(
+                "start Coordinator",
+                _product_cli_serve_command(serve_args, include_run=True),
+                requires_env=_product_coordinator_start_env_requirements(serve_args),
+            ),
             command_entry(
                 "start stage0 Miner",
                 _product_cli_join_command(
@@ -9977,6 +9981,14 @@ def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> lis
     return requirements
 
 
+def _product_coordinator_start_env_requirements(args: argparse.Namespace) -> list[str]:
+    requirements = _product_env_requirements(args, ["admin", "miner", "observer", "peer"])
+    for env_name in ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_OBSERVER_TOKEN"]:
+        if env_name not in requirements:
+            requirements.append(env_name)
+    return requirements
+
+
 def _product_serve_next_commands(args: argparse.Namespace, *, coordinator_url: str) -> list[dict[str, Any]]:
     backend = "cuda" if args.profile == "gpu-generation" else "cpu"
     p2p_bootstrap = args.peer_bootstrap or DEFAULT_P2P_BOOTSTRAP
@@ -9984,7 +9996,7 @@ def _product_serve_next_commands(args: argparse.Namespace, *, coordinator_url: s
         command_entry(
             "start Coordinator",
             _product_cli_serve_command(args, include_run=True),
-            requires_env=_product_env_requirements(args, ["admin", "miner", "observer", "peer"]),
+            requires_env=_product_coordinator_start_env_requirements(args),
         ),
         command_entry(
             "start stage0 Miner",
@@ -10060,12 +10072,12 @@ def _product_public_bind_next_commands(args: argparse.Namespace) -> list[dict[st
         command_entry(
             "start local-only Coordinator",
             local_command,
-            requires_env=_product_env_requirements(args, ["admin", "miner", "observer", "peer"]),
+            requires_env=_product_coordinator_start_env_requirements(args),
         ),
         command_entry(
             "start trusted public Coordinator",
             public_command,
-            requires_env=_product_env_requirements(args, ["admin", "miner", "observer", "peer"]),
+            requires_env=_product_coordinator_start_env_requirements(args),
         ),
     ]
 
@@ -11244,7 +11256,11 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
             peer_secret="",
         )
         commands.extend([
-            command_entry("start Coordinator", _product_cli_serve_command(serve_args, include_run=True)),
+            command_entry(
+                "start Coordinator",
+                _product_cli_serve_command(serve_args, include_run=True),
+                requires_env=_product_coordinator_start_env_requirements(serve_args),
+            ),
             command_entry("start stage0 Miner", _product_cli_join_command(
                 serve_args,
                 coordinator_url=suggested_coordinator_url or coordinator_url or f"http://127.0.0.1:{local_port}",
