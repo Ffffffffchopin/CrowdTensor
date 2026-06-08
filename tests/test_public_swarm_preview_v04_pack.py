@@ -58,8 +58,13 @@ class PublicSwarmPreviewV04PackTests(unittest.TestCase):
         self.assertFalse(preview["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "preview-v04" / "public_swarm_preview_v04.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("local answer", markdown)
         self.assertIn("prompt scope: `source=prompt-text count=1 inline_prompt_text=True", markdown)
+        self.assertIn("- prompt scope note:", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn("- answer scope note:", markdown)
+        self.assertIn("not a local answer transcript", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,

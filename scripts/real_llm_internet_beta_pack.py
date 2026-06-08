@@ -1485,8 +1485,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- output request note: {output_request.get('summary') or 'Public artifacts summarize inference evidence only and do not include answer text.'}",
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope.get('summary') or 'Public artifacts exclude raw prompt text.'}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no local answer transcript or raw generated text.'}",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
@@ -2313,6 +2316,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def print_human(report: dict[str, Any]) -> None:
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     print("CrowdTensor real Internet Swarm Inference Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -2325,6 +2331,12 @@ def print_human(report: dict[str, Any]) -> None:
     print(f"  kaggle auto: {runtime.get('kaggle_auto')}")
     print(f"  external runtime: {runtime.get('external_runtime_verified')}")
     print(f"  kernels deleted: {lifecycle.get('kernels_deleted')}")
+    if output_request:
+        print(f"  output_request_note: {output_request.get('summary') or 'Public artifacts summarize inference evidence only and do not include answer text.'}")
+    if prompt_scope:
+        print(f"  prompt_scope_note: {prompt_scope.get('summary') or 'Public artifacts exclude raw prompt text.'}")
+    if answer_scope:
+        print(f"  answer_scope_note: {answer_scope.get('summary') or 'Public artifacts contain no local answer transcript or raw generated text.'}")
 
 
 def main() -> None:

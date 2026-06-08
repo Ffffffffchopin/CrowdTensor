@@ -44,8 +44,13 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / f"public_swarm_gpu_inference_beta_{mode.replace('-', '_')}.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("local answer", markdown)
         self.assertIn(f"prompt scope: `source={'prompt-texts' if prompt_inline else 'none'}", markdown)
+        self.assertIn("- prompt scope note:", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn("- answer scope note:", markdown)
+        self.assertIn("not a local answer transcript", markdown)
 
     def test_local_smoke_is_ci_safe_without_gpu_claim(self) -> None:
         output_dir = self._tmp_dir()

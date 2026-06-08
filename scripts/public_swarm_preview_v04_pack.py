@@ -491,6 +491,13 @@ def output_request_text(summary: dict[str, Any]) -> str:
     )
 
 
+def output_request_note(output_request: dict[str, Any]) -> str:
+    return str(
+        output_request.get("summary")
+        or "Public artifacts summarize inference evidence only and do not include answer text."
+    )
+
+
 def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
     return (
         f"source={prompt_scope.get('source') or 'unknown'} "
@@ -512,6 +519,17 @@ def answer_scope_text(answer_scope: dict[str, Any]) -> str:
         f"saved_json={answer_scope.get('saved_json_display')} "
         f"saved_markdown={answer_scope.get('saved_markdown_display')} "
         f"public_artifact_safe={bool(answer_scope.get('public_artifact_safe'))}"
+    )
+
+
+def prompt_scope_note(prompt_scope: dict[str, Any]) -> str:
+    return str(prompt_scope.get("summary") or "Public artifacts exclude raw prompt text.")
+
+
+def answer_scope_note(answer_scope: dict[str, Any]) -> str:
+    return str(
+        answer_scope.get("summary")
+        or "Public artifacts contain no local answer transcript or raw generated text."
     )
 
 
@@ -1044,8 +1062,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- output request note: {output_request_note(output_request)}",
         f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope_note(prompt_scope)}",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope_note(answer_scope)}",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
@@ -1198,10 +1219,13 @@ def print_human(report: dict[str, Any]) -> None:
     print(f"  memory_or_vram_summary_ready: {preview.get('memory_or_vram_summary_ready')}")
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
+        print(f"  output_request_note: {output_request_note(output_request)}")
     if prompt_scope:
         print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
+        print(f"  prompt_scope_note: {prompt_scope_note(prompt_scope)}")
     if answer_scope:
         print(f"  answer_scope: {answer_scope_text(answer_scope)}")
+        print(f"  answer_scope_note: {answer_scope_note(answer_scope)}")
     if shareable:
         print(f"  shareable: {shareable_summary_text(shareable)}")
     print(f"  output: {report.get('output_dir')}")

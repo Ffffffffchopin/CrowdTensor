@@ -44,8 +44,13 @@ class GpuShardedGenerationBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / f"gpu_sharded_generation_beta_{mode.replace('-', '_')}.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("local answer", markdown)
         self.assertIn("prompt scope: `source=imported-or-built-in-validation-prompts", markdown)
+        self.assertIn("- prompt scope note:", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn("- answer scope note:", markdown)
+        self.assertIn("not a local answer transcript", markdown)
 
     def test_evidence_import_requires_multi_token_generation_ready(self) -> None:
         output_dir = self._tmp_dir()

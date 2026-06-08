@@ -151,8 +151,13 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "import" / "real_llm_internet_beta.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("answer text", markdown)
         self.assertIn("prompt scope: `source=built-in-default-prompts", markdown)
+        self.assertIn("- prompt scope note:", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn("- answer scope note:", markdown)
+        self.assertIn("not a local answer transcript", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
@@ -272,8 +277,13 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         markdown = (output_dir / "real_llm_internet_beta.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("- output request note:", markdown)
+        self.assertIn("answer text", markdown)
         self.assertIn("prompt scope: `source=built-in-default-prompts", markdown)
+        self.assertIn("- prompt scope note:", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
+        self.assertIn("- answer scope note:", markdown)
+        self.assertIn("not a local answer transcript", markdown)
 
     def test_cleanup_failure_blocks_ready_claim(self) -> None:
         output_dir = self._tmp_dir()
