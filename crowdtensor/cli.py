@@ -4970,7 +4970,9 @@ def _generate_result_from_report(report: dict[str, Any]) -> dict[str, Any]:
     output_count = display_output_count or observed_request_count or (expected_request_count if report.get("ok") and not report.get("dry_run") else 0)
     has_local_display_output = bool(local_output.get("generated_text") or outputs)
     if report.get("dry_run"):
-        status = "preflight" if report.get("ok") else "blocked"
+        status = "preflight"
+        generated_tokens = None
+        max_new_tokens = None
     elif report.get("ok"):
         status = "complete"
     elif generated_tokens > 0 or observed_request_count > 0:

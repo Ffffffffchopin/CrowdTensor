@@ -2563,17 +2563,27 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Coordinator route exists", report["user_status"]["headline"])
         self.assertEqual(report["user_status"]["next_step"], "fix_blockers")
         self.assertEqual(report["user_status"]["recommended_label"], "start Coordinator")
+        self.assertEqual(report["result"]["status"], "preflight")
+        self.assertIsNone(report["result"]["generated_token_count"])
+        self.assertIsNone(report["result"]["max_new_tokens"])
+        self.assertEqual(report["result"]["output_count"], 0)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_product_generate(report)
+        rendered = stdout.getvalue()
         self.assertIn(
             "  status: blocked: Coordinator route exists but /ready failed; start or restart the Coordinator and retry generate --dry-run. next=fix_blockers recommendation=start Coordinator public_artifact_safe=True",
-            stdout.getvalue(),
+            rendered,
         )
         self.assertIn(
             "  coordinator_ready: not_ready service=none protocol=none error=OSError",
-            stdout.getvalue(),
+            rendered,
         )
+        self.assertIn("  result: status=preflight tokens=not-run outputs=0 display=hash-only-json hash=none public_artifact_safe=True", rendered)
+        self.assertNotIn("tokens=0/16", rendered)
+        markdown = cli.render_generate_summary_markdown(report)
+        self.assertIn("- Result: `status=preflight tokens=not-run outputs=0 display=hash-only-json hash=none public_artifact_safe=True`", markdown)
+        self.assertNotIn("tokens=0/16", markdown)
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn(
             "crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8791 --run",
