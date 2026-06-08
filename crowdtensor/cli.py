@@ -1556,6 +1556,11 @@ def public_real_llm_beta_evidence_scope_text(scope: dict[str, Any]) -> str:
 def gpu_status_summary(provenance: dict[str, Any], scope: dict[str, Any] | None = None) -> dict[str, Any]:
     provenance = provenance if isinstance(provenance, dict) else {}
     scope = scope if isinstance(scope, dict) else {}
+    source_provenance = (
+        provenance.get("source_runtime_provenance")
+        if isinstance(provenance.get("source_runtime_provenance"), dict)
+        else {}
+    )
     fresh_verified = bool(provenance.get("fresh_kaggle_gpu_verified") or scope.get("fresh_kaggle_gpu_verified"))
     fresh_attempted = bool(provenance.get("fresh_kaggle_gpu_attempted") or scope.get("fresh_kaggle_gpu_attempted"))
     retained_gpu = bool(provenance.get("retained_gpu_evidence_imported") or scope.get("retained_gpu_evidence_imported"))
@@ -1571,6 +1576,15 @@ def gpu_status_summary(provenance: dict[str, Any], scope: dict[str, Any] | None 
             provenance.get("coordinator_scope") == "local-loopback"
             and provenance.get("submitted_to_coordinator")
             and str(provenance.get("backend") or "").lower() == "cpu"
+        )
+        or (
+            source_provenance.get("coordinator_scope") == "local-loopback"
+            and source_provenance.get("submitted_to_coordinator")
+            and str(source_provenance.get("backend") or "").lower() == "cpu"
+        )
+        or (
+            source_provenance.get("local_loopback_ran")
+            and str(source_provenance.get("backend") or "").lower() in {"", "cpu"}
         )
         or provenance.get("local_loopback_ran")
         or provenance.get("full_evidence_ran")
@@ -2065,6 +2079,79 @@ def artifact_summary_text(summary: dict[str, Any]) -> str:
         f"markdown={summary.get('summary_markdown') or 'none'} "
         f"present={present_count}/{artifact_count} "
         f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
+    )
+
+
+def inference_verdict_summary(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    issue_summary = report.get("issue_summary") if isinstance(report.get("issue_summary"), dict) else {}
+    result = report.get("result") if isinstance(report.get("result"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
+    gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    state = str(user_status.get("state") or issue_summary.get("state") or ("completed" if report.get("ok") else "blocked"))
+    completed = bool(state == "completed" or (report.get("ok") and not report.get("dry_run")))
+    preflight = bool(str(state).startswith("preflight") or (report.get("ok") and report.get("dry_run")))
+    blocked = bool(not completed and not preflight)
+    answer_state = str(answer_scope.get("scope_state") or "unknown")
+    answer_visible = bool(answer_scope.get("visible_in_terminal"))
+    saved_artifacts_public_safe = bool(
+        shareable.get("saved_artifacts_public_safe", True)
+        and artifact_summary.get("public_artifact_safe", True)
+    )
+    if completed and answer_visible:
+        message = f"{kind} completed; the answer is visible only in this terminal and saved artifacts are redacted."
+    elif completed:
+        message = f"{kind} completed; saved artifacts are redacted and do not include raw answer text."
+    elif preflight:
+        message = f"{kind} preflight is ready or partially ready; no generation task was submitted."
+    else:
+        message = f"{kind} is blocked; follow the recommended next command or operator action."
+    return {
+        "schema": "crowdtensor_inference_verdict_v1",
+        "kind": kind,
+        "state": state,
+        "completed": completed,
+        "preflight_only": preflight,
+        "blocked": blocked,
+        "result_status": result.get("status") or "",
+        "generated_token_count": result.get("generated_token_count"),
+        "max_new_tokens": result.get("max_new_tokens"),
+        "output_count": result.get("output_count"),
+        "answer_scope_state": answer_state,
+        "answer_visible_in_terminal": answer_visible,
+        "saved_artifacts_public_safe": saved_artifacts_public_safe,
+        "evidence_level": evidence_scope.get("level") or "",
+        "executed_where": evidence_scope.get("executed_where") or "",
+        "gpu_state": gpu_status.get("state") or "unknown",
+        "fresh_kaggle_gpu_verified": bool(gpu_status.get("fresh_kaggle_gpu_verified")),
+        "recommended_label": recommended.get("label") or user_status.get("recommended_label") or "none",
+        "recommended_reason": recommended.get("reason") or user_status.get("recommended_reason") or "none",
+        "next_step": user_status.get("next_step") or issue_summary.get("next_step") or "none",
+        "primary_code": issue_summary.get("primary_code") or "",
+        "inspect_first": artifact_summary.get("inspect_first") or "",
+        "public_artifact_safe": saved_artifacts_public_safe and bool(answer_scope.get("public_artifact_safe", True)),
+        "message": message,
+    }
+
+
+def inference_verdict_text(verdict: dict[str, Any]) -> str:
+    return (
+        f"state={verdict.get('state') or 'unknown'} "
+        f"completed={bool(verdict.get('completed'))} "
+        f"preflight_only={bool(verdict.get('preflight_only'))} "
+        f"answer={verdict.get('answer_scope_state') or 'unknown'} "
+        f"answer_visible={bool(verdict.get('answer_visible_in_terminal'))} "
+        f"artifacts_public={bool(verdict.get('saved_artifacts_public_safe'))} "
+        f"evidence={verdict.get('evidence_level') or 'unknown'} "
+        f"gpu={verdict.get('gpu_state') or 'unknown'} "
+        f"fresh_kaggle_gpu={bool(verdict.get('fresh_kaggle_gpu_verified'))} "
+        f"next={verdict.get('next_step') or 'none'} "
+        f"recommended={verdict.get('recommended_label') or 'none'} "
+        f"public_artifact_safe={bool(verdict.get('public_artifact_safe'))}"
     )
 
 
@@ -7596,6 +7683,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
     review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
+    inference_verdict = summary.get("inference_verdict") if isinstance(summary.get("inference_verdict"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     shareable_terminal = summary.get("shareable_terminal") if isinstance(summary.get("shareable_terminal"), dict) else {}
@@ -7634,6 +7722,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     ]
     lines.extend(markdown_top_inspect_first_line(review_summary, artifact_summary))
     lines.extend([
+        f"- Verdict: `{inference_verdict_text(inference_verdict)}`",
+        f"- Verdict note: {inference_verdict.get('message') or ''}",
         f"- Status: `{infer_user_status_text(user_status)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- OK: `{bool(summary.get('ok'))}`",
@@ -8247,6 +8337,7 @@ def _infer_summary_from_payload(
     summary["review_summary"] = _review_summary_from_report(summary, kind="infer")
     if source_evidence_paths:
         _prefer_source_review_for_infer(summary, source_review)
+    summary["inference_verdict"] = inference_verdict_summary(summary, kind="Inference")
     output_dir.mkdir(parents=True, exist_ok=True)
     persisted_summary = json.loads(json.dumps(summary))
     _strip_infer_local_output_text(persisted_summary)
@@ -11110,6 +11201,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     user_status = summary.get("user_status") if isinstance(summary.get("user_status"), dict) else {}
     issue_summary = summary.get("issue_summary") if isinstance(summary.get("issue_summary"), dict) else {}
     review_summary = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
+    inference_verdict = summary.get("inference_verdict") if isinstance(summary.get("inference_verdict"), dict) else {}
     trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
     shareable_summary = summary.get("shareable_summary") if isinstance(summary.get("shareable_summary"), dict) else {}
     shareable_terminal = summary.get("shareable_terminal") if isinstance(summary.get("shareable_terminal"), dict) else {}
@@ -11146,6 +11238,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     ]
     lines.extend(markdown_top_inspect_first_line(review_summary, artifact_summary))
     lines.extend([
+        f"- Verdict: `{inference_verdict_text(inference_verdict)}`",
+        f"- Verdict note: {inference_verdict.get('message') or ''}",
         f"- Status: `{infer_user_status_text(user_status)}`",
         f"- Issue: `{issue_summary_text(issue_summary)}`",
         f"- OK: `{bool(summary.get('ok'))}`",
@@ -11656,6 +11750,7 @@ def _finalize_product_generate_report(
             })
         report["artifact_summary"] = _artifact_summary_from_report(report, kind="generate")
         report["review_summary"] = _review_summary_from_report(report, kind="generate")
+        report["inference_verdict"] = inference_verdict_summary(report, kind="Generation")
         persisted_summary = copy.deepcopy(report)
         _strip_local_output_text(persisted_summary)
         safe_persisted = sanitize(redact_values(persisted_summary, [admin_token]))
@@ -11670,6 +11765,7 @@ def _finalize_product_generate_report(
     else:
         report.setdefault("artifact_summary", _artifact_summary_from_report(report, kind="generate"))
         report.setdefault("review_summary", _review_summary_from_report(report, kind="generate"))
+        report.setdefault("inference_verdict", inference_verdict_summary(report, kind="Generation"))
     return sanitize(redact_values(report, [admin_token]))
 
 
@@ -12513,6 +12609,11 @@ def print_product_generate(report: dict[str, Any]) -> None:
         attention_text = review_attention_display_text(review_summary)
         if attention_text:
             print(f"  attention: {attention_text}")
+    inference_verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
+    if inference_verdict:
+        print(f"  verdict: {inference_verdict_text(inference_verdict)}")
+        if inference_verdict.get("message"):
+            print(f"  verdict_note: {inference_verdict.get('message')}")
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     if user_status:
         print(f"  status: {infer_user_status_text(user_status)}")
@@ -12726,7 +12827,7 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
         )
     print(
         "CrowdTensor infer: final output will start with review, review_next, "
-        "inspect_first, and status/action; later lines include answer_scope, "
+        "inspect_first, verdict, and status/action; later lines include answer_scope, "
         "answer_scope_note, evidence_scope, evidence_scope_note, output_display_note, "
         "runtime_options, and redacted JSON/Markdown artifacts.",
         file=sys.stderr,
@@ -12762,7 +12863,7 @@ def print_generate_start_hint(args: argparse.Namespace) -> None:
         )
     print(
         "CrowdTensor generate: final output will start with review, review_next, "
-        "inspect_first, and status/action; later lines include answer_scope, "
+        "inspect_first, verdict, and status/action; later lines include answer_scope, "
         "answer_scope_note, evidence_scope, evidence_scope_note, output_display_note, "
         "runtime_options, and redacted JSON/Markdown artifacts.",
         file=sys.stderr,
@@ -12844,6 +12945,11 @@ def print_infer(report: dict[str, Any]) -> None:
         attention_text = review_attention_display_text(review_summary)
         if attention_text:
             print(f"  attention: {attention_text}")
+    inference_verdict = report.get("inference_verdict") if isinstance(report.get("inference_verdict"), dict) else {}
+    if inference_verdict:
+        print(f"  verdict: {inference_verdict_text(inference_verdict)}")
+        if inference_verdict.get("message"):
+            print(f"  verdict_note: {inference_verdict.get('message')}")
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     if user_status:
         print(f"  status: {infer_user_status_text(user_status)}")

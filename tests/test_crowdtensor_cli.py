@@ -1437,6 +1437,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["requires_env"], ["CROWDTENSOR_OBSERVER_TOKEN"])
         self.assertTrue(report["review_summary"]["has_recommended_command"])
         self.assertTrue(report["review_summary"]["public_artifact_safe"])
+        self.assertEqual(report["inference_verdict"]["schema"], "crowdtensor_inference_verdict_v1")
+        self.assertEqual(report["inference_verdict"]["kind"], "Generation")
+        self.assertEqual(report["inference_verdict"]["state"], "preflight-partial")
+        self.assertFalse(report["inference_verdict"]["completed"])
+        self.assertTrue(report["inference_verdict"]["preflight_only"])
+        self.assertEqual(report["inference_verdict"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(report["inference_verdict"]["evidence_level"], "existing-runtime-preflight")
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "no-gpu-evidence")
+        self.assertFalse(report["inference_verdict"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["inference_verdict"]["recommended_reason"], "confirm_live_preflight")
+        self.assertTrue(report["inference_verdict"]["public_artifact_safe"])
         self.assertIsNone(report["trace"]["session_id"])
         self.assertEqual(report["trace"]["request_count"], 1)
         self.assertEqual(report["trace"]["accepted_rows_seen"], 0)
@@ -1518,6 +1529,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["evidence_scope"], report["evidence_scope"])
         self.assertEqual(persisted["gpu_status"], report["gpu_status"])
         self.assertEqual(persisted["gpu_proof_next_step"], report["gpu_proof_next_step"])
+        self.assertEqual(persisted["inference_verdict"], report["inference_verdict"])
         self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
         self.assertEqual(persisted["user_status"]["next_step"], "run_live_preflight")
         self.assertEqual(persisted["trace"]["request_count"], 1)
@@ -1550,6 +1562,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Generate Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Dry run: `True`", markdown)
+        self.assertIn(
+            "- Verdict: `state=preflight-partial completed=False preflight_only=True answer=no-local-answer answer_visible=False artifacts_public=True evidence=existing-runtime-preflight gpu=no-gpu-evidence fresh_kaggle_gpu=False next=run_live_preflight recommended=check generation route public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn("- Verdict note: Generation preflight is ready or partially ready; no generation task was submitted.", markdown)
         self.assertIn("- Runtime provenance: `proof=coordinator-dry-run mode=generate dry_run=True submitted=False coordinator=local-loopback", markdown)
         self.assertIn("fresh_kaggle_gpu_verified=False`", markdown)
         self.assertIn(
@@ -1664,6 +1681,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
+            "  verdict: state=preflight-partial completed=False preflight_only=True answer=no-local-answer answer_visible=False artifacts_public=True evidence=existing-runtime-preflight gpu=no-gpu-evidence fresh_kaggle_gpu=False next=run_live_preflight recommended=check generation route public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn("  verdict_note: Generation preflight is ready or partially ready; no generation task was submitted.", rendered)
+        self.assertIn(
             "  attention: coordinator_preflight_skipped,stage_preflight_skipped - Coordinator live readiness was skipped; rerun the printed dry-run/live preflight before submitting; stage0/stage1 Miner readiness was skipped; rerun the printed stage preflight with an observer token.",
             rendered,
         )
@@ -1686,6 +1708,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertLess(rendered.index("  review_next: "), rendered.index("  inspect_first: "))
         self.assertLess(rendered.index("  inspect_first: "), rendered.index("  attention: "))
         self.assertLess(rendered.index("  review: "), rendered.index("  status: "))
+        self.assertLess(rendered.index("  verdict: "), rendered.index("  status: "))
         self.assertLess(rendered.index("  attention: "), rendered.index("  action: "))
         self.assertLess(rendered.index("  action: "), rendered.index("  ok: "))
         self.assertLess(rendered.index("  ok: "), rendered.index("  diagnosis: "))
@@ -2951,12 +2974,29 @@ class CrowdTensorCliTests(unittest.TestCase):
         report = cli.build_infer(args)
 
         self.assertTrue(report["ok"], report)
+        self.assertEqual(report["inference_verdict"]["schema"], "crowdtensor_inference_verdict_v1")
+        self.assertEqual(report["inference_verdict"]["kind"], "Inference")
+        self.assertEqual(report["inference_verdict"]["state"], "preflight-partial")
+        self.assertFalse(report["inference_verdict"]["completed"])
+        self.assertTrue(report["inference_verdict"]["preflight_only"])
+        self.assertEqual(report["inference_verdict"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(report["inference_verdict"]["evidence_level"], "existing-runtime-preflight")
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "no-gpu-evidence")
+        self.assertFalse(report["inference_verdict"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(report["inference_verdict"]["public_artifact_safe"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertTrue(any("--prompt-stdin" in line for line in next_lines))
         self.assertFalse(any("infer '<prompt>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn(prompt, encoded)
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["inference_verdict"], report["inference_verdict"])
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Verdict: `state=preflight-partial completed=False preflight_only=True answer=no-local-answer answer_visible=False artifacts_public=True evidence=existing-runtime-preflight gpu=no-gpu-evidence fresh_kaggle_gpu=False next=run_live_preflight recommended=check existing swarm public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn("- Verdict note: Inference preflight is ready or partially ready; no generation task was submitted.", markdown)
         self.assertIn("this command reads stdin", markdown)
         self.assertIn("- Review next: `label=check existing swarm reason=confirm_live_preflight command=printf %s '<prompt>' | crowdtensor infer", markdown)
         self.assertIn("- Copy command: `printf %s '<prompt>' | crowdtensor infer", markdown)
@@ -4915,6 +4955,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["requires_env"], ["CROWDTENSOR_ADMIN_TOKEN"])
         self.assertTrue(report["review_summary"]["has_recommended_command"])
         self.assertTrue(report["review_summary"]["public_artifact_safe"])
+        self.assertEqual(report["inference_verdict"]["schema"], "crowdtensor_inference_verdict_v1")
+        self.assertEqual(report["inference_verdict"]["kind"], "Generation")
+        self.assertEqual(report["inference_verdict"]["state"], "completed")
+        self.assertTrue(report["inference_verdict"]["completed"])
+        self.assertFalse(report["inference_verdict"]["preflight_only"])
+        self.assertEqual(report["inference_verdict"]["result_status"], "complete")
+        self.assertEqual(report["inference_verdict"]["generated_token_count"], 2)
+        self.assertEqual(report["inference_verdict"]["max_new_tokens"], 2)
+        self.assertEqual(report["inference_verdict"]["output_count"], 1)
+        self.assertEqual(report["inference_verdict"]["answer_scope_state"], "json-suppressed")
+        self.assertEqual(report["inference_verdict"]["evidence_level"], "existing-runtime-submit")
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "local-cpu-only")
+        self.assertFalse(report["inference_verdict"]["fresh_kaggle_gpu_verified"])
+        self.assertTrue(report["inference_verdict"]["public_artifact_safe"])
         self.assertNotIn("admin-secret", encoded)
         self.assertIn(("GET", "/admin/results?status=accepted&workload_type=real_llm_sharded_infer&limit=50&session_id=real-llm-session-test"), calls)
         persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
@@ -4970,6 +5024,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["review_summary"]["inspect_first"], str(output_dir / "generate_summary.md"))
         self.assertEqual(persisted["review_summary"]["attention_detail"], "")
         self.assertEqual(persisted["recommended_next_command"]["reason_detail"], "Rerun the generation request.")
+        self.assertEqual(persisted["inference_verdict"], report["inference_verdict"])
         self.assertIn("<prompt>", persisted["review_summary"]["next_command"])
         self.assertNotIn("CrowdTensor prompt", persisted["review_summary"]["next_command"])
         self.assertTrue(persisted["review_summary"]["public_artifact_safe"])
@@ -4979,6 +5034,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Status: `completed: Generation completed. next=rerun_or_review_artifacts recommendation=rerun generation public_artifact_safe=True`",
             markdown,
         )
+        self.assertIn(
+            "- Verdict: `state=completed completed=True preflight_only=False answer=json-suppressed answer_visible=False artifacts_public=True evidence=existing-runtime-submit gpu=local-cpu-only fresh_kaggle_gpu=False next=rerun_or_review_artifacts recommended=rerun generation public_artifact_safe=True`",
+            markdown,
+        )
+        self.assertIn("- Verdict note: Generation completed; saved artifacts are redacted and do not include raw answer text.", markdown)
         self.assertIn(
             f"- Review: `state=completed next=rerun_or_review_artifacts inspect={output_dir / 'generate_summary.md'} recommended=rerun generation primary=public_swarm_generate_ready attention=none public_artifact_safe=True`",
             markdown,
@@ -11134,6 +11194,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["evidence_scope"]["existing_runtime"])
         self.assertTrue(report["evidence_scope"]["submitted_to_coordinator"])
         self.assertFalse(report["evidence_scope"]["fresh_kaggle_gpu_verified"])
+        self.assertEqual(report["inference_verdict"]["schema"], "crowdtensor_inference_verdict_v1")
+        self.assertEqual(report["inference_verdict"]["kind"], "Inference")
+        self.assertEqual(report["inference_verdict"]["state"], "completed")
+        self.assertTrue(report["inference_verdict"]["completed"])
+        self.assertFalse(report["inference_verdict"]["preflight_only"])
+        self.assertEqual(report["inference_verdict"]["answer_scope_state"], "terminal-visible")
+        self.assertTrue(report["inference_verdict"]["answer_visible_in_terminal"])
+        self.assertEqual(report["inference_verdict"]["evidence_level"], "existing-runtime-submit")
+        self.assertEqual(report["inference_verdict"]["gpu_state"], "local-cpu-only")
+        self.assertFalse(report["inference_verdict"]["fresh_kaggle_gpu_verified"])
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             cli.print_infer(report)
@@ -11162,9 +11232,15 @@ class CrowdTensorCliTests(unittest.TestCase):
             f"  review: state=completed next=rerun_or_review_artifacts inspect={output_dir / 'infer_summary.md'} recommended=rerun inference primary=crowdtensor_infer_ready attention=none public_artifact_safe=True",
             stdout.getvalue(),
         )
+        self.assertIn(
+            "  verdict: state=completed completed=True preflight_only=False answer=terminal-visible answer_visible=True artifacts_public=True evidence=existing-runtime-submit gpu=local-cpu-only fresh_kaggle_gpu=False next=rerun_or_review_artifacts recommended=rerun inference public_artifact_safe=True",
+            stdout.getvalue(),
+        )
+        self.assertIn("  verdict_note: Inference completed; the answer is visible only in this terminal and saved artifacts are redacted.", stdout.getvalue())
         self.assertLess(stdout.getvalue().index("  review_next: "), stdout.getvalue().index("  inspect_first: "))
-        self.assertLess(stdout.getvalue().index("  inspect_first: "), stdout.getvalue().index("  status: "))
+        self.assertLess(stdout.getvalue().index("  inspect_first: "), stdout.getvalue().index("  verdict: "))
         self.assertLess(stdout.getvalue().index("  review: "), stdout.getvalue().index("  status: "))
+        self.assertLess(stdout.getvalue().index("  verdict: "), stdout.getvalue().index("  status: "))
         self.assertLess(stdout.getvalue().index("  status: "), stdout.getvalue().index("  ok: "))
         self.assertIn(
             "  review_next: label=rerun inference reason=rerun_inference command=CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer '<prompt>' --mode existing",
