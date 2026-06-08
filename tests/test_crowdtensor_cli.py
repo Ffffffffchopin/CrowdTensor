@@ -17601,6 +17601,49 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
             },
+            "user_status": {
+                "state": "ready",
+                "headline": "Real P2P Core RC evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Real P2P Core RC evidence",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md",
+                "recommended_label": "inspect Real P2P Core RC evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md",
+                "primary_code": "real_p2p_swarm_inference_core_rc_ready",
+                "attention": "none",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Real P2P Core RC evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect Real P2P Core RC evidence",
+                    "command_line": "sed -n 1,220p dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/real-p2p-rc/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md",
+                "summary_json": "dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.json",
+                "summary_markdown": "dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md",
+                "support_bundle": "dist/real-p2p-rc/support_bundle.json",
+                "artifact_count": 3,
+                "present_artifact_count": 3,
+                "public_artifact_safe": True,
+            },
             "diagnosis_codes": ["real_p2p_swarm_inference_core_rc_ready"],
             "artifacts": {},
         }
@@ -17610,6 +17653,26 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_real_p2p_swarm_inference_core_rc(report)
         output = stdout.getvalue()
 
+        self.assertIn(
+            "  status: ready: Real P2P Core RC evidence is ready. next=review_artifacts recommendation=inspect Real P2P Core RC evidence public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  review: state=ready next=review_artifacts inspect=dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md recommended=inspect Real P2P Core RC evidence primary=real_p2p_swarm_inference_core_rc_ready attention=none public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  recommended_next: inspect Real P2P Core RC evidence reason=review_artifacts sed -n 1,220p dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md",
+            output,
+        )
+        self.assertIn(
+            "  next[2] inspect support bundle: sed -n 1,220p dist/real-p2p-rc/support_bundle.json",
+            output,
+        )
+        self.assertIn(
+            "  artifacts: inspect=dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md json=dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.json markdown=dist/real-p2p-rc/real_p2p_swarm_inference_core_rc.md present=3/3 public_artifact_safe=True",
+            output,
+        )
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
