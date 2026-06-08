@@ -1680,6 +1680,138 @@ def recommended_check_command(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def command_entry(
+    label: str,
+    command: list[str],
+    *,
+    reason: str = "",
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if side_effectful:
+        entry["side_effectful"] = True
+    return entry
+
+
+def inspect_artifact_command(report: dict[str, Any], filename: str) -> list[str]:
+    output_dir = Path(str(report.get("output_dir") or "."))
+    return ["sed", "-n", "1,220p", str(output_dir / filename)]
+
+
+def release_command(report: dict[str, Any], mode: str) -> dict[str, Any]:
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    output_dir = str(report.get("output_dir") or DEFAULT_OUTPUT_DIR)
+    command = [
+        "crowdtensor",
+        "public-real-llm-swarm-beta",
+        mode,
+        "--output-dir",
+        output_dir,
+        "--hf-model-id",
+        str(beta.get("hf_model_id") or DEFAULT_HF_MODEL_ID),
+        "--max-new-tokens",
+        str(beta.get("max_new_tokens") or 16),
+        "--json",
+    ]
+    return command_entry(
+        "run Public Real-LLM Swarm Beta release",
+        command,
+        reason="run_full_beta_release",
+    )
+
+
+def report_ready(report: dict[str, Any]) -> bool:
+    beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
+    not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
+    return bool(report.get("ok") is True and beta.get("ready") is True and not not_completed)
+
+
+def recommended_next_command(report: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    ready = report_ready(report)
+    check_command = report.get("recommended_check_command") if isinstance(report.get("recommended_check_command"), dict) else {}
+    if ready and check_command:
+        return dict(check_command)
+    if ready:
+        return command_entry(
+            "inspect shareable summary",
+            inspect_artifact_command(report, "public_real_llm_swarm_beta.md"),
+            reason="review_artifacts",
+        )
+    if mode == MODE_PACKAGE:
+        return release_command(report, MODE_RELEASE)
+    return command_entry(
+        "inspect Not Completed section",
+        inspect_artifact_command(report, "public_real_llm_swarm_beta.md"),
+        reason="review_not_completed",
+    )
+
+
+def next_commands(report: dict[str, Any]) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            inspect_artifact_command(report, "public_real_llm_swarm_beta.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            inspect_artifact_command(report, "support_bundle.json"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    check_command = report.get("recommended_check_command") if isinstance(report.get("recommended_check_command"), dict) else {}
+    if check_command and all(item.get("command_line") != check_command.get("command_line") for item in commands):
+        commands.append(dict(check_command))
+    if str(report.get("mode") or "") == MODE_PACKAGE:
+        release = release_command(report, MODE_RELEASE)
+        if all(item.get("command_line") != release.get("command_line") for item in commands):
+            commands.append(release)
+    return commands
+
+
+def user_status(report: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    ready = report_ready(report)
+    not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    if ready and mode == MODE_LOCAL_MODEL_VARIANT:
+        state = "local-model-ready"
+        headline = "Local model variant evidence is ready; external validation is not claimed."
+        next_step = "run_beta_report_check"
+    elif ready and mode == MODE_PACKAGE:
+        state = "package-ready"
+        headline = "Public Real-LLM Swarm Beta package is ready; run release next."
+        next_step = "run_release"
+    elif ready:
+        state = "ready"
+        headline = "Public Real-LLM Swarm Beta evidence is ready."
+        next_step = "run_beta_report_check"
+    else:
+        state = "blocked"
+        headline = "Public Real-LLM Swarm Beta evidence needs attention."
+        next_step = "review_not_completed" if not_completed else "review_diagnostics"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(not_completed),
+        "public_artifact_safe": True,
+    }
+
+
 def review_summary(report: dict[str, Any]) -> dict[str, Any]:
     beta = report.get("beta") if isinstance(report.get("beta"), dict) else {}
     not_completed = [str(item) for item in (report.get("not_completed") if isinstance(report.get("not_completed"), list) else [])]
@@ -1689,6 +1821,11 @@ def review_summary(report: dict[str, Any]) -> dict[str, Any]:
         report.get("recommended_check_command")
         if isinstance(report.get("recommended_check_command"), dict)
         else recommended_check_command(report)
+    )
+    next_command = (
+        report.get("recommended_next_command")
+        if isinstance(report.get("recommended_next_command"), dict)
+        else recommended_next_command(report)
     )
     next_step = "run_beta_report_check" if ready and check_command else ("share_public_artifacts" if ready else ("review_not_completed" if not_completed else "review_diagnostics"))
     operator_action = [
@@ -1712,6 +1849,10 @@ def review_summary(report: dict[str, Any]) -> dict[str, Any]:
         "machine_readable": artifacts.get("machine_readable"),
         "support_bundle": artifacts.get("support_bundle"),
         "recommended_check_command": check_command,
+        "recommended_next_command": next_command,
+        "recommended_label": next_command.get("label") or "none",
+        "recommended_reason": next_command.get("reason") or "none",
+        "next_command": next_command.get("command_line") or "",
         "shareable_paths": artifacts.get("shareable_paths") or [],
         "not_completed_count": len(not_completed),
         "not_completed_preview": not_completed[:8],
@@ -1722,6 +1863,16 @@ def review_summary(report: dict[str, Any]) -> dict[str, Any]:
         "generated_token_ids_public": False,
         "summary": summary_text,
     }
+
+
+def attach_user_guidance(report: dict[str, Any]) -> dict[str, Any]:
+    report["artifact_summary"] = artifact_summary(report)
+    report["recommended_check_command"] = recommended_check_command(report)
+    report["recommended_next_command"] = recommended_next_command(report)
+    report["next_commands"] = next_commands(report)
+    report["user_status"] = user_status(report)
+    report["review_summary"] = review_summary(report)
+    return report
 
 
 def output_request_text(summary: dict[str, Any]) -> str:
@@ -2561,11 +2712,17 @@ def render_markdown(report: dict[str, Any]) -> str:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     shareable_paths = artifact_overview.get("shareable_paths") if isinstance(artifact_overview.get("shareable_paths"), list) else []
     recommended = (
-        review.get("recommended_check_command")
-        if isinstance(review.get("recommended_check_command"), dict)
-        else report.get("recommended_check_command") if isinstance(report.get("recommended_check_command"), dict) else {}
+        report.get("recommended_next_command")
+        if isinstance(report.get("recommended_next_command"), dict)
+        else review.get("recommended_next_command") if isinstance(review.get("recommended_next_command"), dict) else {}
+    )
+    recommended_check = (
+        report.get("recommended_check_command")
+        if isinstance(report.get("recommended_check_command"), dict)
+        else review.get("recommended_check_command") if isinstance(review.get("recommended_check_command"), dict) else {}
     )
     raw_operator_actions = report.get("operator_action")
     if isinstance(raw_operator_actions, list):
@@ -2587,16 +2744,32 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Review",
         "",
+        f"- status: `{user.get('state')}` {user.get('headline') or ''}",
         f"- state: `{review.get('state')}`",
         f"- next step: `{review.get('next_step')}`",
         f"- inspect first: `{review.get('inspect_first')}`",
         f"- support bundle: `{review.get('support_bundle')}`",
         f"- not completed count: `{review.get('not_completed_count')}`",
-        f"- recommended check: `{recommended.get('command_line') or 'none'}`",
+        f"- recommended next: `{recommended.get('command_line') or 'none'}`",
+        f"- recommended check: `{recommended_check.get('command_line') or 'none'}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
+    if next_items:
+        lines.extend(
+            f"- {item.get('label')}: `{item.get('command_line')}`"
+            for item in next_items
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend([
         "",
         "## Operator Action",
         "",
-    ]
+    ])
     lines.extend(f"- {item}" for item in operator_actions) if operator_actions else lines.append("- none")
     lines.extend([
         "",
@@ -2668,12 +2841,14 @@ def print_human_summary(report: dict[str, Any]) -> None:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     recommended = (
-        report.get("recommended_check_command")
-        if isinstance(report.get("recommended_check_command"), dict)
-        else review.get("recommended_check_command") if isinstance(review.get("recommended_check_command"), dict) else {}
+        report.get("recommended_next_command")
+        if isinstance(report.get("recommended_next_command"), dict)
+        else review.get("recommended_next_command") if isinstance(review.get("recommended_next_command"), dict) else {}
     )
+    check_command = report.get("recommended_check_command") if isinstance(report.get("recommended_check_command"), dict) else {}
     raw_operator_actions = report.get("operator_action")
     if isinstance(raw_operator_actions, list):
         operator_actions = [str(item) for item in raw_operator_actions]
@@ -2699,10 +2874,21 @@ def print_human_summary(report: dict[str, Any]) -> None:
     print(f"  stream ready: product={product_stream.get('stream_generation_ready')} p2p={beta.get('p2p_stream_ready')} v2={beta.get('public_swarm_v2_stream_ready')}")
     print(f"  kv_cache_ready: {beta.get('kv_cache_ready')}")
     print(f"  kv_cache hits: stage0={stage0.get('hit_count')} stage1={stage1.get('hit_count')}")
+    if user:
+        print(
+            "  status: "
+            f"{user.get('state')}: {user.get('headline')} next={user.get('next_step')} "
+            f"recommendation={user.get('recommended_label')} public_artifact_safe={bool(user.get('public_artifact_safe'))}"
+        )
     if review:
         print(f"  review: state={review.get('state')} next_step={review.get('next_step')} inspect_first={review.get('inspect_first')}")
     if recommended:
-        print(f"  recommended_check: {recommended.get('command_line')}")
+        print(f"  recommended_next: {recommended.get('command_line')}")
+    if check_command:
+        print(f"  recommended_check: {check_command.get('command_line')}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if isinstance(item, dict):
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
     if operator_actions:
         print("  operator_action:")
         for item in operator_actions[:4]:
@@ -2856,8 +3042,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "schema": SUPPORT_SCHEMA,
         "ok": report.get("ok"),
     })
-    report["artifact_summary"] = artifact_summary(report)
-    report["review_summary"] = review_summary(report)
+    report = attach_user_guidance(report)
     errors = validate_public_report(report)
     if errors:
         report["ok"] = False
@@ -2867,8 +3052,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
             report["beta"]["ready"] = False
         report["artifacts"]["public_real_llm_swarm_beta_json"]["ok"] = False
         report["artifacts"]["support_bundle_json"]["ok"] = False
-        report["artifact_summary"] = artifact_summary(report)
-        report["review_summary"] = review_summary(report)
+        report = attach_user_guidance(report)
     write_json(output_dir / "public_real_llm_swarm_beta.json", report)
     (output_dir / "public_real_llm_swarm_beta.md").write_text(render_markdown(report), encoding="utf-8")
     bundle = support_bundle.sanitize({
@@ -2880,6 +3064,9 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "artifact_summary": report.get("artifact_summary"),
         "review_summary": report.get("review_summary"),
         "recommended_check_command": report.get("recommended_check_command"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "user_status": report.get("user_status"),
         "operator_action": report.get("operator_action"),
         "not_completed": report.get("not_completed"),
         "release_private_artifact_cleanup": report.get("release_private_artifact_cleanup"),

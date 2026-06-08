@@ -13643,6 +13643,7 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     review_summary = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     recommended_check = (
         report.get("recommended_check_command")
@@ -13673,16 +13674,23 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {beta.get('ready')}")
     print(f"  model: {beta.get('hf_model_id')} tokens={beta.get('max_new_tokens')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
     if review_summary:
         print(f"  review: {release_review_summary_text(review_summary)}")
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")
     if recommended_next and not recommended_check:
         print(f"  recommended_next: {recommended_next.get('command_line')}")
+    elif recommended_next:
+        print(f"  recommended_next: {recommended_next.get('command_line')}")
     if review_summary.get("inspect_first"):
         print(f"  inspect_first: {review_summary.get('inspect_first')}")
     if artifact_summary:
         print(f"  artifacts: {release_artifact_summary_text(artifact_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if isinstance(item, dict):
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
     print(f"  cpu_default_ready: {beta.get('cpu_default_ready')}")
     print(f"  external_two_stage_ready: {beta.get('external_two_stage_ready')}")
     print(f"  external_stage_requeue_ready: {beta.get('external_stage_requeue_ready')}")

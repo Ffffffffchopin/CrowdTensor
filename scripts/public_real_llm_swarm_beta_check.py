@@ -953,6 +953,35 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
         errors.append("review_summary_raw_generated_text_public_mismatch")
     if review_summary.get("generated_token_ids_public") is not False:
         errors.append("review_summary_generated_token_ids_public_mismatch")
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    if user_status.get("state") not in {"ready", "blocked", "package-ready", "local-model-ready"}:
+        errors.append("user_status_state_mismatch")
+    if not user_status.get("headline"):
+        errors.append("user_status_headline_missing")
+    if not user_status.get("recommended_label"):
+        errors.append("user_status_recommended_label_missing")
+    if user_status.get("not_completed_count") != len(not_completed):
+        errors.append("user_status_not_completed_count_mismatch")
+    if user_status.get("public_artifact_safe") is not True:
+        errors.append("user_status_public_artifact_safe_mismatch")
+    recommended_next = payload.get("recommended_next_command") if isinstance(payload.get("recommended_next_command"), dict) else {}
+    if not recommended_next.get("label") or not recommended_next.get("command_line"):
+        errors.append("recommended_next_command_missing")
+    if recommended_next.get("public_artifact_safe") is not True:
+        errors.append("recommended_next_public_artifact_safe_mismatch")
+    if review_summary.get("recommended_next_command") != recommended_next:
+        errors.append("review_summary_recommended_next_mismatch")
+    if review_summary.get("next_command") != recommended_next.get("command_line"):
+        errors.append("review_summary_next_command_mismatch")
+    if user_status.get("recommended_label") != recommended_next.get("label"):
+        errors.append("user_status_recommended_label_mismatch")
+    next_commands = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    if not next_commands:
+        errors.append("next_commands_missing")
+    if not any(isinstance(item, dict) and item.get("label") == "inspect support bundle" for item in next_commands):
+        errors.append("next_commands_support_bundle_missing")
+    if recommended_next and not any(isinstance(item, dict) and item.get("command_line") == recommended_next.get("command_line") for item in next_commands):
+        errors.append("next_commands_recommended_missing")
     operator_actions = [
         str(item)
         for item in (payload.get("operator_action") if isinstance(payload.get("operator_action"), list) else [])
@@ -1029,9 +1058,18 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("markdown_support_bundle_missing")
         if "- machine readable: `public_real_llm_swarm_beta.json`" not in markdown:
             errors.append("markdown_machine_readable_missing")
+        if "## What To Do Next" not in markdown:
+            errors.append("markdown_next_commands_section_missing")
+        if "inspect support bundle" not in markdown:
+            errors.append("markdown_next_support_bundle_missing")
+        if "- status: `" not in markdown:
+            errors.append("markdown_status_missing")
         recommended_line = str((payload.get("recommended_check_command") if isinstance(payload.get("recommended_check_command"), dict) else {}).get("command_line") or "")
         if recommended_line and recommended_line not in markdown:
             errors.append("markdown_recommended_check_missing")
+        recommended_next_line = str(recommended_next.get("command_line") or "")
+        if recommended_next_line and recommended_next_line not in markdown:
+            errors.append("markdown_recommended_next_missing")
         if "- answer scope: `no-local-answer`" not in markdown:
             errors.append("markdown_answer_scope_missing")
         if "- prompt scope: `" not in markdown or "raw_prompt_public=False" not in markdown:
@@ -1077,6 +1115,12 @@ def validate_report(payload: dict[str, Any], *, mode: str, expected_tokens: int 
             errors.append("support_bundle_review_next_step_mismatch")
         if support.get("recommended_check_command") != payload.get("recommended_check_command"):
             errors.append("support_bundle_recommended_check_mismatch")
+        if support.get("recommended_next_command") != payload.get("recommended_next_command"):
+            errors.append("support_bundle_recommended_next_mismatch")
+        if support.get("next_commands") != payload.get("next_commands"):
+            errors.append("support_bundle_next_commands_mismatch")
+        if support.get("user_status") != payload.get("user_status"):
+            errors.append("support_bundle_user_status_mismatch")
         support_artifacts = support.get("artifact_summary") if isinstance(support.get("artifact_summary"), dict) else {}
         if support_artifacts.get("inspect_first") != "public_real_llm_swarm_beta.md":
             errors.append("support_bundle_inspect_first_mismatch")

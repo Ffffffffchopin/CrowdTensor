@@ -8134,6 +8134,11 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "next_step": "run_beta_report_check",
                 "inspect_first": "public_real_llm_swarm_beta.md",
                 "support_bundle": "support_bundle.json",
+                "recommended_next_command": {
+                    "label": "validate beta report",
+                    "command_line": "crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json --output-dir dist/beta-check --max-new-tokens 16 --json",
+                    "check_source": "beta-report",
+                },
                 "recommended_check_command": {
                     "label": "validate beta report",
                     "command_line": "crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json --output-dir dist/beta-check --max-new-tokens 16 --json",
@@ -8142,11 +8147,37 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "not_completed_count": 0,
                 "public_artifact_safe": True,
             },
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Real-LLM Swarm Beta evidence is ready.",
+                "next_step": "run_beta_report_check",
+                "recommended_label": "validate beta report",
+                "recommended_reason": "check_current_beta_report",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
             "recommended_check_command": {
                 "label": "validate beta report",
                 "command_line": "crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json --output-dir dist/beta-check --max-new-tokens 16 --json",
+                "reason": "check_current_beta_report",
                 "check_source": "beta-report",
             },
+            "recommended_next_command": {
+                "label": "validate beta report",
+                "command_line": "crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json --output-dir dist/beta-check --max-new-tokens 16 --json",
+                "reason": "check_current_beta_report",
+                "check_source": "beta-report",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/beta/support_bundle.json",
+                },
+                {
+                    "label": "validate beta report",
+                    "command_line": "crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json --output-dir dist/beta-check --max-new-tokens 16 --json",
+                },
+            ],
             "operator_action": [
                 "Use `crowdtensor serve`, `crowdtensor join --stage stage0`, `crowdtensor join --stage stage1`, and `crowdtensor generate` as the primary user path.",
                 "Share this top-level JSON/Markdown artifact; raw prompts, generated text, token ids, activations, and credentials are excluded.",
@@ -8165,10 +8196,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  p2p tokens: 16/16", output)
         self.assertIn("  public_swarm_v2 tokens: 16/16 accepted_rows=32/32", output)
         self.assertIn(
+            "  status: ready: Public Real-LLM Swarm Beta evidence is ready. next=run_beta_report_check recommendation=validate beta report public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
             "  review: state=ready next=run_beta_report_check inspect=public_real_llm_swarm_beta.md support=support_bundle.json recommended=validate beta report not_completed=0 public_artifact_safe=True",
             output,
         )
+        self.assertIn("  recommended_next: crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json", output)
         self.assertIn("  recommended_check: crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json", output)
+        self.assertIn("  next[1] inspect support bundle: sed -n 1,220p dist/beta/support_bundle.json", output)
+        self.assertIn("  next[2] validate beta report: crowdtensor public-real-llm-swarm-beta check --beta-report dist/beta/public_real_llm_swarm_beta.json", output)
         self.assertIn("  inspect_first: public_real_llm_swarm_beta.md", output)
         self.assertIn(
             "  artifacts: inspect=public_real_llm_swarm_beta.md json=public_real_llm_swarm_beta.json support=support_bundle.json runbook=PUBLIC_REAL_LLM_SWARM_BETA.md shareable=public_real_llm_swarm_beta.json,public_real_llm_swarm_beta.md,support_bundle.json public_artifact_safe=True",
