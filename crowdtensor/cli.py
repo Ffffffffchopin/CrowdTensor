@@ -1547,6 +1547,7 @@ def public_real_llm_beta_evidence_scope_text(scope: dict[str, Any]) -> str:
         f"retained_external={bool(scope.get('retained_external_evidence_imported'))} "
         f"local_gpu_smoke={bool(scope.get('local_gpu_smoke_ran'))} "
         f"retained_gpu={bool(scope.get('retained_gpu_evidence_imported'))} "
+        f"fresh_kaggle_gpu_attempted={bool(scope.get('fresh_kaggle_gpu_attempted'))} "
         f"fresh_kaggle_gpu={bool(scope.get('fresh_kaggle_gpu_verified'))}"
     )
 
@@ -16947,6 +16948,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Evidence scope: generated Beta reports include evidence_scope; check output mirrors\n"
             "the verified report as checked_evidence_scope. Read that line for the shortest\n"
             "answer to whether the report is local CPU, retained evidence, or fresh Kaggle GPU.\n"
+            "fresh_kaggle_gpu_attempted=True only means a source path attempted that proof;\n"
             "fresh_kaggle_gpu=True is the only fresh Kaggle GPU claim.\n\n"
             "If ok is false, start with the Not Completed section and printed not_completed lines;\n"
             "they map to missing token target, KV-cache, route hardening, batch/stream, external\n"

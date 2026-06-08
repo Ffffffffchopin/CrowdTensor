@@ -7723,6 +7723,7 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "retained_external_evidence_imported": True,
                     "local_gpu_smoke_ran": True,
                     "retained_gpu_evidence_imported": False,
+                    "fresh_kaggle_gpu_attempted": False,
                     "fresh_kaggle_gpu_verified": False,
                     "user_expectation": "This release mixes fresh local CPU checks with retained external/P2P evidence.",
                 },
@@ -7832,6 +7833,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
         self.assertIn("  artifacts: inspect=", rendered)
         self.assertIn("  checked_evidence_scope: level=release-local-cpu-with-retained-external", rendered)
+        self.assertIn("fresh_kaggle_gpu_attempted=False", rendered)
         self.assertIn("fresh_kaggle_gpu=False", rendered)
         self.assertIn("  checked_evidence_scope_note:", rendered)
         self.assertIn("  recommended_next: sed -n 1,220p", rendered)
@@ -8255,6 +8257,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("generated token ids", rendered)
         self.assertIn("Evidence scope: generated Beta reports include evidence_scope", rendered)
         self.assertIn("checked_evidence_scope", rendered)
+        self.assertIn("fresh_kaggle_gpu_attempted=True only means", rendered)
         self.assertIn("fresh_kaggle_gpu=True is the only fresh Kaggle GPU claim", rendered)
         self.assertIn("If ok is false, start with the Not Completed section", rendered)
         self.assertIn("printed not_completed lines", rendered)
@@ -8477,6 +8480,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             output,
         )
         self.assertIn("  evidence_scope: level=release-local-cpu-with-retained-external", output)
+        self.assertIn("fresh_kaggle_gpu_attempted=False", output)
         self.assertIn("fresh_kaggle_gpu=False", output)
         self.assertIn("  evidence_scope_note:", output)
         self.assertIn(

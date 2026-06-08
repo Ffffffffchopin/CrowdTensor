@@ -1786,6 +1786,7 @@ def evidence_scope_text(scope: dict[str, Any]) -> str:
         f"retained_external={bool(scope.get('retained_external_evidence_imported'))} "
         f"local_gpu_smoke={bool(scope.get('local_gpu_smoke_ran'))} "
         f"retained_gpu={bool(scope.get('retained_gpu_evidence_imported'))} "
+        f"fresh_kaggle_gpu_attempted={bool(scope.get('fresh_kaggle_gpu_attempted'))} "
         f"fresh_kaggle_gpu={bool(scope.get('fresh_kaggle_gpu_verified'))} "
         f"user_expectation={scope.get('user_expectation') or 'unknown'}"
     )
