@@ -92,6 +92,17 @@ next step into one stable line. Saved JSON/Markdown recompute
 `inference_verdict` after local answer redaction, so a shareable artifact says
 `answer_visible=False` and `answer=saved-terminal-redacted` when terminal text
 was shown locally but removed from the saved report.
+Maintainers can validate that final user-facing report contract without
+starting a Coordinator or Kaggle resource:
+
+```bash
+python scripts/user_friendly_inference_frontdoor_check.py --json
+```
+
+It emits `user_friendly_inference_frontdoor_check_v1`, builds CI-safe fake
+completed `infer` and `generate` reports through the real CLI report writers,
+and verifies saved JSON/Markdown keep raw prompts, generated text, token ids,
+credentials, and fresh Kaggle GPU claims out of shareable artifacts.
 In human mode, the terminal prints `answer_scope` so the answer display state is
 explicit: whether any answer text is visible in the terminal and whether saved
 JSON/Markdown stay hash-only. When generated text is available, the terminal

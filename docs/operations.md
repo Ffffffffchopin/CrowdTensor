@@ -161,10 +161,19 @@ Use a second private Kaggle notebook for `--stage stage1 --miner-id "kaggle-stag
 Maintainer acceptance:
 
 ```bash
+python scripts/user_friendly_inference_frontdoor_check.py --json
 crowdtensor usable-swarm local --max-new-tokens 8 --json
 python scripts/usable_swarm_inference_check.py --mode local --json
 python scripts/usable_swarm_inference_check.py --mode local --hf-model-id distilgpt2 --json
 ```
+
+`scripts/user_friendly_inference_frontdoor_check.py` is CI-safe and does not
+start a Coordinator, submit a live task, or create Kaggle resources. It builds
+fake completed `infer` and `generate` front-door reports through the real CLI
+report writers, then validates the saved `infer_summary` and `generate_summary`
+JSON/Markdown contracts: terminal answers may be visible locally, saved
+artifacts must say `saved-terminal-redacted`, raw prompts/generated text/token
+ids must stay out, and `fresh_kaggle_gpu_verified` must remain false.
 
 The `usable_swarm_inference_v1` report requires `p2pd`, `serve --p2p`, distinct `join --p2p` stage0/stage1 Miners, real small HF split generation, at least 8 generated tokens, accepted ledger rows for both stages, local stage rescue evidence, and `usable_swarm_model_match_ready`. Non-default `--hf-model-id` evidence imports must expose the same `hf_model_id` in the P2P v0.6 report; otherwise `usable_swarm_model_mismatch` blocks readiness. Public artifacts redact raw prompts, generated text, generated token ids, activations, credentials, leases, and idempotency material. The top-level JSON, Markdown, terminal output, and support bundle include `output_request`, `answer_scope.scope_state: no-local-answer`, and `shareable_summary.answer_scope_state` so operators know the aggregate is shareable evidence rather than a local answer transcript; run `crowdtensor generate --p2p` in human mode to see local generated text. This path is Coordinator-backed, read-only, tiny/small-model scoped, CPU by default, and not full Hivemind/Petals production parity, Coordinator-free execution, production NAT traversal, or large-model throughput serving.
 
