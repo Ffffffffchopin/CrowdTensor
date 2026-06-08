@@ -498,15 +498,40 @@ def human_next_command_line(item: dict[str, Any], command_line_text: str) -> str
 
 
 def terminal_prompt_scope_text(report: dict[str, Any]) -> str:
-    if not (report.get("local_prompt_text") or report.get("local_prompt_texts")):
+    shareable_terminal = report.get("shareable_terminal") if isinstance(report.get("shareable_terminal"), dict) else {}
+    if shareable_terminal.get("enabled"):
         return ""
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
-    inline_prompt_text = bool(prompt_scope.get("inline_prompt_text", True))
+    has_local_prompt_source = bool(
+        report.get("local_prompt_text")
+        or report.get("local_prompt_texts")
+        or report.get("local_prompt_file")
+        or report.get("local_prompt_texts_file")
+        or report.get("local_prompt_stdin")
+        or prompt_scope
+    )
+    if not has_local_prompt_source:
+        return ""
+    source = str(prompt_scope.get("source") or "")
+    if not source:
+        if report.get("local_prompt_texts_file"):
+            source = "prompt-texts-file"
+        elif report.get("local_prompt_file"):
+            source = "prompt-file"
+        elif report.get("local_prompt_stdin"):
+            source = "prompt-stdin"
+        elif report.get("local_prompt_texts"):
+            source = "prompt-texts"
+        else:
+            source = "prompt-text"
+    inline_prompt_text = bool(prompt_scope.get("inline_prompt_text", source in INLINE_PROMPT_SCOPE_SOURCES))
+    terminal_scope = "local-private" if inline_prompt_text else "shareable"
     prefer_safe_sources = bool(prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs", True))
     return (
-        f"terminal_next_commands=local-private inline_prompt_text={inline_prompt_text} "
+        f"terminal_next_commands={terminal_scope} inline_prompt_text={inline_prompt_text} "
         "saved_artifacts=prompt-placeholders "
-        f"prefer_prompt_file_or_stdin_for_shareable_logs={prefer_safe_sources}"
+        f"prefer_prompt_file_or_stdin_for_shareable_logs={prefer_safe_sources} "
+        f"source={source} prompt_file_path_public=False raw_prompt_public=False"
     )
 
 

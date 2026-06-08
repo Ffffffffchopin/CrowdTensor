@@ -1595,7 +1595,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("redacted JSON/Markdown artifacts", progress)
         self.assertNotIn(prompt, progress)
         self.assertIn(
-            "prompt_scope: terminal_next_commands=local-private inline_prompt_text=True saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True",
+            "prompt_scope: terminal_next_commands=local-private inline_prompt_text=True saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True source=prompt-text prompt_file_path_public=False raw_prompt_public=False",
             rendered,
         )
         self.assertLess(rendered.index("  prompt_scope: "), rendered.index("  review_next: "))
@@ -1940,7 +1940,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
         self.assertIn(f"--prompt-texts-file {prompt_file}", rendered)
-        self.assertNotIn("prompt_scope:", rendered)
+        self.assertIn(
+            "prompt_scope: terminal_next_commands=shareable inline_prompt_text=False saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True source=prompt-texts-file prompt_file_path_public=False raw_prompt_public=False",
+            rendered,
+        )
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn("--prompt-texts '<prompt-1>,<prompt-2>'", rendered)
         for prompt in prompts:
@@ -2022,6 +2025,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
         self.assertIn(f"--prompt-file {prompt_file}", rendered)
+        self.assertIn(
+            "prompt_scope: terminal_next_commands=shareable inline_prompt_text=False saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True source=prompt-file prompt_file_path_public=False raw_prompt_public=False",
+            rendered,
+        )
+        self.assertNotIn("terminal_next_commands=local-private", rendered)
         self.assertNotIn("--prompt-text '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
@@ -10291,6 +10299,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "prompt_scope: terminal_next_commands=local-private inline_prompt_text=True saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True",
             rendered,
         )
+        self.assertIn("source=prompt-text", rendered)
         self.assertLess(rendered.index("  prompt_scope: "), rendered.index("  review_next: "))
         self.assertIn(f"review_next: label=check existing swarm reason=verify_stage_miners command=crowdtensor infer '{prompt}' --mode existing", rendered)
         self.assertIn(f"recommended_next: check existing swarm reason=verify_stage_miners crowdtensor infer '{prompt}' --mode existing", rendered)
@@ -10381,7 +10390,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
         self.assertIn(f"--prompt-file {prompt_file}", rendered)
-        self.assertNotIn("prompt_scope:", rendered)
+        self.assertIn(
+            "prompt_scope: terminal_next_commands=shareable inline_prompt_text=False saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True source=prompt-file prompt_file_path_public=False raw_prompt_public=False",
+            rendered,
+        )
+        self.assertNotIn("terminal_next_commands=local-private", rendered)
         self.assertNotIn("infer '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
@@ -10694,6 +10707,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         progress = stderr.getvalue()
         self.assertIn(f"--prompt-texts-file {prompt_file}", rendered)
+        self.assertIn(
+            "prompt_scope: terminal_next_commands=shareable inline_prompt_text=False saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True source=prompt-texts-file prompt_file_path_public=False raw_prompt_public=False",
+            rendered,
+        )
+        self.assertNotIn("terminal_next_commands=local-private", rendered)
         self.assertNotIn("infer '<prompt>'", rendered)
         self.assertNotIn("--prompt-texts '<prompt-1>,<prompt-2>'", rendered)
         for prompt in prompts:
@@ -10783,6 +10801,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         progress = stderr.getvalue()
         self.assertIn("printf %s '<prompt>' | crowdtensor infer", rendered)
         self.assertIn("--prompt-stdin", rendered)
+        self.assertIn(
+            "prompt_scope: terminal_next_commands=shareable inline_prompt_text=False saved_artifacts=prompt-placeholders prefer_prompt_file_or_stdin_for_shareable_logs=True source=prompt-stdin prompt_file_path_public=False raw_prompt_public=False",
+            rendered,
+        )
+        self.assertNotIn("terminal_next_commands=local-private", rendered)
         self.assertNotIn("infer '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
