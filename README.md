@@ -94,7 +94,9 @@ prints `answer_scope=no-local-answer`. `answer_scope.scope_state` uses stable va
 `terminal-visible`, `saved-terminal-redacted`, `shareable-terminal-redacted`,
 `json-suppressed`, and `no-local-answer`; the
 Markdown `What To Do Next` and `Details` sections repeat that saved JSON and
-Markdown contain no generated text. `local_output` includes
+Markdown contain no generated text. The adjacent `answer_scope_note` and
+`output_display_note` terminal lines spell out the same answer-display and
+artifact-redaction policy in plain text. `local_output` includes
 safe output `count` and `source` fields such as
 `local-private-task-state` or `coordinator-validation`. JSON mode can still
 report completed generation through `json-suppressed` plus redacted
