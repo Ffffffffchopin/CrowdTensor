@@ -6895,6 +6895,10 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Generation: {generation_summary_markdown_text(generation)}",
         f"- Result: `{infer_result_text(result)}`",
         f"- Output display: `{output_display_text(output_display)}`",
+    ])
+    if output_display.get("summary"):
+        lines.append(f"- Output display note: {output_display.get('summary')}")
+    lines.extend([
         f"- Trace: `{infer_trace_text(trace)}`",
         f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{route.get('route_ready')}`",
@@ -10226,6 +10230,10 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Generation: {generation_summary_markdown_text(generation)}",
         f"- Result: `{infer_result_text(result)}`",
         f"- Output display: `{output_display_text(output_display)}`",
+    ])
+    if output_display.get("summary"):
+        lines.append(f"- Output display note: {output_display.get('summary')}")
+    lines.extend([
         f"- Trace: `{infer_trace_text(trace)}`",
         f"- Shareable: `{shareable_summary_text(shareable_summary)}`",
         f"- Route: source=`{route.get('route_source')}` ready=`{bool(route.get('usable_now') or route.get('coordinator_url_present'))}`",

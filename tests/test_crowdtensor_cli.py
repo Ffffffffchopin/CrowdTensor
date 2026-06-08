@@ -1411,6 +1411,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("- Safety: saved Markdown keeps prompt placeholders and redacted generated output.", markdown)
         self.assertIn(f"- Safety: saved Markdown keeps prompt placeholders and redacted generated output. {cli.SAVED_NO_ANSWER_SCOPE_TEXT}", markdown)
         self.assertIn(f"- Answer scope note: {cli.SAVED_NO_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Output display note: {cli.LOCAL_OUTPUT_DISPLAY_SCOPE_TEXT}", markdown)
         self.assertIn("- Answer scope: `state=no-local-answer ", markdown)
         self.assertNotIn("rerun without --json for local display", markdown)
         self.assertIn("## Details", markdown)
@@ -10016,6 +10017,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn(f"- Local output note: {cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
         self.assertIn(f"- Answer scope note: {cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT}", markdown)
+        self.assertIn(f"- Output display note: {cli.SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT}", markdown)
+        self.assertNotIn("- Output display note: Non-JSON human output may show local generated text", markdown)
         self.assertIn(
             "- Output display: `terminal=shareable-terminal-redacted terminal_text=False saved=hash-only json_stdout=hash-only-json",
             markdown,
