@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -144,6 +145,16 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
         self.assertTrue(report["stage_summary"]["stage_1"]["request_trace"][0]["next_token_redacted"])
         self.assertTrue(report["safety"]["generated_text_redacted"])
         self.assertTrue(report["safety"]["generated_token_ids_redacted"])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["review_summary"]["schema"], "real_llm_sharded_review_summary_v1")
+        self.assertFalse(report["not_completed"])
+        self.assertFalse(report["output_request"]["raw_prompt_public"])
+        self.assertFalse(report["output_request"]["raw_generated_text_public"])
+        self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "hash-only")
+        self.assertTrue(report["shareable_summary"]["saved_artifacts_public_safe"])
+        self.assertIn("inspect real LLM sharded evidence", report["recommended_next_command"]["label"])
+        self.assertGreaterEqual(len(report["next_commands"]), 3)
 
     def test_stage_local_partition_evidence_is_required_and_summarized(self) -> None:
         args = type("Args", (), {
@@ -194,7 +205,8 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
                     "workload_metadata": {"session_id": "real-session-stage-local", "stage_id": 0},
                     "capabilities": {
                         "real_llm_sharded_stage_role": "stage0",
-                        "real_llm_sharded_stage_capabilities": [pack.REAL_LLM_SHARDED_STAGE0_CAPABILITY],
+                        "real_llm_sharded_stage_capabilities": [pack.REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY],
+                        "real_llm_runtime": {"adapter_kind": "hf_transformers_cuda"},
                     },
                     "validation": {
                         **common_validation,
@@ -216,7 +228,8 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
                     "workload_metadata": {"session_id": "real-session-stage-local", "stage_id": 1},
                     "capabilities": {
                         "real_llm_sharded_stage_role": "stage1",
-                        "real_llm_sharded_stage_capabilities": [pack.REAL_LLM_SHARDED_STAGE1_CAPABILITY],
+                        "real_llm_sharded_stage_capabilities": [pack.REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY],
+                        "real_llm_runtime": {"adapter_kind": "hf_transformers_cuda"},
                     },
                     "validation": {
                         **common_validation,
@@ -264,6 +277,94 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
         self.assertIn("stage1_partition_loaded", report["diagnosis_codes"])
         self.assertTrue(report["safety"]["stage_local_partition"])
         self.assertEqual(report["stage_summary"]["stage_1"]["baseline_device"], "cpu")
+        self.assertFalse(report["not_completed"])
+
+    def test_render_markdown_includes_review_scope_and_next_steps(self) -> None:
+        args = type("Args", (), {
+            "base_url": "http://127.0.0.1:9880",
+            "require_distinct_stage_miners": False,
+            "stage_mode": "both",
+            "real_llm_partition_mode": "full",
+        })()
+        report = {
+            "schema": pack.SCHEMA,
+            "ok": True,
+            "workload_type": pack.WORKLOAD_TYPE,
+            "session": {
+                "session_id": "real-session-md",
+                "stage_count": 2,
+                "model_id": "sshleifer/tiny-gpt2",
+                "partition_mode": "full",
+            },
+            "artifact": {"backend": "hf_transformers_cpu", "partition_mode": "full"},
+            "generation": {"max_new_tokens": 1, "generated_token_count": 1},
+            "stage_summary": {
+                "stage_0": {"task_id": "stage0", "miner_id": "m0", "activation_count": 1},
+                "stage_1": {"task_id": "stage1", "miner_id": "m1", "baseline_match": True},
+            },
+            "stage_assignment": {"required_distinct_stage_miners": False},
+            "observability": {"requeue_summary": {"enabled": False}, "processes": []},
+            "diagnosis_codes": [
+                "real_llm_sharded_ready",
+                "stage_0_accepted",
+                "stage_1_accepted",
+                "activation_transport_ready",
+                "real_llm_artifact_ready",
+                "baseline_match",
+                "decoded_tokens_match",
+                "generation_complete",
+            ],
+            "safety": {
+                "read_only": True,
+                "redaction_ok": True,
+                "raw_activation_redacted": True,
+                "generated_text_redacted": True,
+                "generated_token_ids_redacted": True,
+                "not_production": True,
+            },
+            "limitations": [],
+        }
+        report = pack.attach_user_guidance(report, args)
+
+        markdown = pack.render_markdown(report)
+
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("## Not Completed", markdown)
+        self.assertIn("- none", markdown)
+
+    def test_support_bundle_payload_is_public_safe(self) -> None:
+        args = type("Args", (), {
+            "base_url": "http://127.0.0.1:9880",
+            "require_distinct_stage_miners": False,
+            "stage_mode": "both",
+            "real_llm_partition_mode": "full",
+        })()
+        report = {
+            "schema": pack.SCHEMA,
+            "ok": False,
+            "diagnosis_codes": ["stage_0_missing"],
+            "artifact": {},
+            "generation": {"max_new_tokens": 1, "generated_token_count": 0},
+            "stage_assignment": {"required_distinct_stage_miners": False},
+            "observability": {"requeue_summary": {"enabled": False}, "processes": []},
+            "safety": {
+                "read_only": True,
+                "redaction_ok": True,
+                "raw_activation_redacted": True,
+                "generated_text_redacted": True,
+                "generated_token_ids_redacted": True,
+                "not_production": True,
+            },
+        }
+        report = pack.attach_user_guidance(report, args)
+        bundle = pack.support_bundle_payload(report)
+        encoded = json.dumps(bundle, sort_keys=True)
+
+        self.assertEqual(bundle["schema"], "real_llm_sharded_support_bundle_v1")
+        self.assertNotIn("generated_text\":", encoded)
+        self.assertNotIn("generated_token_ids\":", encoded)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 import sharded_inference_evidence_pack as base  # noqa: E402
+import support_bundle  # noqa: E402
 from crowdtensor.protocol import (  # noqa: E402
     REAL_LLM_SHARDED_BOTH_CAPABILITY,
     REAL_LLM_SHARDED_CUDA_BOTH_CAPABILITY,
@@ -38,6 +40,152 @@ OBSERVABILITY_SCHEMA = "real_llm_sharded_observability_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 DEFAULT_ADMIN_TOKEN = "real-llm-sharded-admin"
 DEFAULT_OBSERVER_TOKEN = "real-llm-sharded-observer"
+
+
+def shell_command(parts: list[Any]) -> str:
+    return shlex.join([str(part) for part in parts])
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+        "side_effectful": bool(side_effectful),
+    }
+    if reason:
+        entry["reason"] = reason
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "", ok: bool | None = None) -> dict[str, Any]:
+    try:
+        relative = path.resolve().relative_to(output_dir.resolve()).as_posix()
+    except ValueError:
+        relative = str(path)
+    entry: dict[str, Any] = {"kind": kind, "path": relative, "present": path.is_file()}
+    if schema:
+        entry["schema"] = schema
+    if ok is not None:
+        entry["ok"] = bool(ok)
+    return entry
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "real_llm_sharded_evidence.md",
+        "summary_json": output_dir / "real_llm_sharded_evidence.json",
+        "summary_markdown": output_dir / "real_llm_sharded_evidence.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    return {
+        "schema": "real_llm_sharded_artifact_summary_v1",
+        "inspect_first": str(paths["inspect_first"]),
+        "summary_json": str(paths["summary_json"]),
+        "summary_markdown": str(paths["summary_markdown"]),
+        "support_bundle": str(paths["support_bundle"]),
+        "shareable_paths": [str(path) for path in paths.values()],
+        "artifact_count": len(paths),
+        "present_artifact_count": sum(1 for path in paths.values() if path.is_file()),
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Open inspect_first first, then support_bundle for diagnostics. "
+            "Artifacts contain model/stage readiness, hashes, and counts only."
+        ),
+    }
+
+
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Real LLM sharded evidence records tiny GPT split-inference readiness, token counts, "
+            "and hashes only; raw prompts, generated text, token ids, intermediate tensors, and raw model scores are excluded."
+        ),
+    }
+
+
+def prompt_scope_summary(args: argparse.Namespace | None = None) -> dict[str, Any]:
+    prompt_count = len(DEFAULT_PROMPTS)
+    source = "default-validation-prompts"
+    if args is not None:
+        if str(getattr(args, "prompt_texts_file", "") or ""):
+            prompt_count = len(prompt_list_from_args(args))
+            source = "local-prompt-file"
+        elif str(getattr(args, "prompt_texts", "") or ""):
+            prompt_count = len(prompt_list_from_args(args))
+            source = "local-inline-prompt-batch"
+    return {
+        "source": source,
+        "prompt_count": prompt_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": source.startswith("local-"),
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Prompt source and count are reported for operator context; raw prompt text and prompt file paths "
+            "are kept out of public JSON, Markdown, and support bundles."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "hash-only",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-count-redacted",
+        "saved_markdown_display": "hash-count-redacted",
+        "json_stdout_display": "hash-count-redacted",
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "The report proves split inference with decoded-token match and generated text hashes; "
+            "it does not save or print the raw answer text."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "hash-only",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share real_llm_sharded_evidence.json/md and support_bundle.json; they include readiness, "
+            "stage assignment, redaction status, and hashes/counts only."
+        ),
+    }
 
 
 def configure_base_module() -> None:
@@ -106,6 +254,268 @@ def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
     if prompt_texts_file:
         return read_prompt_texts_file(prompt_texts_file)
     return parse_prompt_texts_arg("", str(getattr(args, "prompt_texts", "") or ""))
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
+def real_llm_sharded_command(args: argparse.Namespace, output_dir: Path) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "real-llm-shard-infer",
+        "--output-dir",
+        str(output_dir),
+        "--port",
+        getattr(args, "port", 9880),
+        "--request-count",
+        getattr(args, "request_count", 1),
+        "--max-new-tokens",
+        getattr(args, "max_new_tokens", 1),
+        "--failure-mode",
+        getattr(args, "failure_mode", base.FAILURE_NONE),
+        "--stage-mode",
+        getattr(args, "stage_mode", "both"),
+        "--hf-model-id",
+        getattr(args, "hf_model_id", DEFAULT_MODEL_ID),
+        "--real-llm-backend",
+        getattr(args, "real_llm_backend", REAL_LLM_BACKEND_CPU),
+        "--real-llm-partition-mode",
+        getattr(args, "real_llm_partition_mode", "full"),
+        "--json",
+    ]
+    if getattr(args, "hf_cache_dir", ""):
+        command.extend(["--hf-cache-dir", getattr(args, "hf_cache_dir")])
+    if getattr(args, "prompt_texts_file", ""):
+        command.extend(["--prompt-texts-file", getattr(args, "prompt_texts_file")])
+    elif getattr(args, "prompt_texts", ""):
+        command.extend(["--prompt-texts", "<local-prompts-redacted>"])
+    if getattr(args, "require_distinct_stage_miners", False):
+        command.append("--require-distinct-stage-miners")
+    return command
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []) if code)
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    artifact = report.get("artifact") if isinstance(report.get("artifact"), dict) else {}
+    assignment = report.get("stage_assignment") if isinstance(report.get("stage_assignment"), dict) else {}
+    requeue = (
+        ((report.get("observability") if isinstance(report.get("observability"), dict) else {}).get("requeue_summary"))
+        if isinstance((report.get("observability") if isinstance(report.get("observability"), dict) else {}).get("requeue_summary"), dict)
+        else {}
+    )
+    items: list[tuple[str, Any]] = [
+        ("real LLM sharded inference ready", report.get("ok") is True and "real_llm_sharded_ready" in codes),
+        ("stage 0 accepted", "stage_0_accepted" in codes),
+        ("stage 1 accepted", "stage_1_accepted" in codes),
+        ("activation transport ready", "activation_transport_ready" in codes),
+        ("real LLM artifact ready", "real_llm_artifact_ready" in codes),
+        ("baseline match ready", "baseline_match" in codes),
+        ("decoded tokens match ready", "decoded_tokens_match" in codes),
+        ("generation complete", "generation_complete" in codes),
+        ("generated token count reached target", int(generation.get("generated_token_count") or 0) >= int(generation.get("max_new_tokens") or 1)),
+        ("raw generated text redacted", safety.get("generated_text_redacted") is True),
+        ("generated token ids redacted", safety.get("generated_token_ids_redacted") is True),
+        ("raw activation redacted", safety.get("raw_activation_redacted") is True),
+        ("read-only safety boundary present", safety.get("read_only") is True),
+        ("redaction safety present", safety.get("redaction_ok") is True),
+        ("not production boundary present", safety.get("not_production") is True),
+    ]
+    if assignment.get("required_distinct_stage_miners"):
+        items.extend([
+            ("distinct stage miners ready", assignment.get("distinct_stage_miners") is True),
+            ("stage assignment valid", assignment.get("stage_assignment_valid") is True),
+        ])
+    if artifact.get("partition_mode") == "stage_local":
+        items.extend([
+            ("stage-local partition ready", "stage_local_partition_ready" in codes),
+            ("stage 0 partition loaded", "stage0_partition_loaded" in codes),
+            ("stage 1 partition loaded", "stage1_partition_loaded" in codes),
+            ("partition parameter split valid", "partition_parameter_split_valid" in codes),
+        ])
+    if artifact.get("backend") == REAL_LLM_BACKEND_CUDA:
+        items.extend([
+            ("CUDA runtime available", "cuda_runtime_available" in codes),
+            ("HF Transformers CUDA backend ready", "hf_transformers_cuda_ready" in codes),
+        ])
+    if requeue.get("enabled"):
+        items.append(("stage requeue ready", "stage_requeue_ready" in codes))
+    for process in ((report.get("observability") or {}).get("processes") or []):
+        if isinstance(process, dict) and process.get("ok") is not True and process.get("expected_failure") is not True:
+            items.append((f"miner process {process.get('miner_id') or 'unknown'} passed", False))
+    missing: list[str] = []
+    for label, ready in items:
+        if ready is not True:
+            missing.append(label)
+    return missing
+
+
+def recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    missing: list[str],
+) -> dict[str, Any]:
+    if report.get("ok") is True:
+        return command_entry(
+            "inspect real LLM sharded evidence",
+            artifact_command(output_dir, "real_llm_sharded_evidence.md"),
+            reason="review_artifacts",
+        )
+    return command_entry(
+        "rerun real LLM sharded inference",
+        real_llm_sharded_command(args, output_dir),
+        reason="fix_real_llm_sharded_blockers" if missing else "rerun_real_llm_sharded_inference",
+        side_effectful=True,
+    )
+
+
+def next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "real_llm_sharded_evidence.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    refresh = command_entry(
+        "refresh real LLM sharded inference",
+        real_llm_sharded_command(args, output_dir),
+        reason="refresh_real_llm_sharded_inference",
+        side_effectful=True,
+    )
+    if all(item.get("command_line") != refresh.get("command_line") for item in commands):
+        commands.append(refresh)
+    return commands
+
+
+def user_status(report: dict[str, Any], *, recommended: dict[str, Any], missing: list[str]) -> dict[str, Any]:
+    artifact = report.get("artifact") if isinstance(report.get("artifact"), dict) else {}
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    if report.get("ok") is True and not missing:
+        state = "ready"
+        headline = "Real tiny-LLM sharded inference evidence is ready."
+        next_step = "review_artifacts"
+    else:
+        state = "blocked"
+        headline = "Real tiny-LLM sharded inference evidence needs attention."
+        next_step = "fix_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "backend": artifact.get("backend") or "unknown",
+        "partition_mode": artifact.get("partition_mode") or "unknown",
+        "generated_token_count": generation.get("generated_token_count"),
+        "max_new_tokens": generation.get("max_new_tokens"),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    artifacts = artifact_summary(output_dir)
+    ready = bool(report.get("ok") is True and not missing)
+    return {
+        "schema": "real_llm_sharded_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "ready": ready,
+        "next_step": "review_artifacts" if ready else "fix_real_llm_sharded_blockers",
+        "inspect_first": artifacts["inspect_first"],
+        "support_bundle": artifacts["support_bundle"],
+        "recommended_next_command": recommended,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": (report.get("diagnosis_codes") or ["none"])[0],
+        "not_completed_count": len(missing),
+        "not_completed": list(missing),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
+def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return support_bundle.sanitize({
+        "schema": "real_llm_sharded_support_bundle_v1",
+        "generated_at": base.utc_now(),
+        "ok": report.get("ok"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "not_completed": report.get("not_completed"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
+        "session": report.get("session"),
+        "artifact": report.get("artifact"),
+        "generation": report.get("generation"),
+        "stage_assignment": report.get("stage_assignment"),
+        "observability": report.get("observability"),
+        "safety": report.get("safety"),
+        "limitations": report.get("limitations"),
+    })
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path | None = None) -> dict[str, Any]:
+    if output_dir is None:
+        output_dir = Path.cwd()
+    report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(args))
+    report.setdefault("answer_scope", answer_scope_summary())
+    report.setdefault("shareable_summary", shareable_summary())
+    missing = not_completed_items(report)
+    report["not_completed"] = missing
+    recommended = recommended_next_command(report, args, output_dir=output_dir, missing=missing)
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(report, recommended=recommended, missing=missing)
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
 
 
 def redacted_token_summary(token_ids: Any) -> dict[str, Any]:
@@ -363,7 +773,7 @@ def build_report(
             codes.append("distinct_stage_miners_missing")
         if not read_only or not redaction_ok:
             codes.append("safety_failed")
-    return {
+    report = {
         "schema": SCHEMA,
         "generated_at": base.utc_now(),
         "ok": "real_llm_sharded_ready" in codes and (
@@ -483,12 +893,21 @@ def build_report(
             "Not P2P routing, NAT traversal, payments, or arbitrary public prompt serving",
         ],
     }
+    return attach_user_guidance(report, args)
 
 
 def render_markdown(report: dict[str, Any]) -> str:
     session = report.get("session") or {}
     stage = report.get("stage_summary") or {}
-    return "\n".join([
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    lines = [
         "# CrowdTensor Real Tiny-LLM Sharded Inference Evidence",
         "",
         f"Schema: `{report.get('schema')}`",
@@ -497,6 +916,53 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Workload: `{report.get('workload_type')}`",
         f"Model: `{session.get('model_id')}`",
         f"Partition mode: `{session.get('partition_mode')}`",
+        "",
+        "## Review",
+        "",
+        f"- status: `{user.get('state')}` {user.get('headline') or ''}",
+        f"- state: `{review.get('state')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- support bundle: `{review.get('support_bundle')}`",
+        f"- recommended next: `{recommended.get('command_line') or 'none'}`",
+        f"- public artifact safe: `{review.get('public_artifact_safe')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    for item in report.get("next_commands") or []:
+        if isinstance(item, dict):
+            lines.append(f"- {item.get('label')}: `{item.get('command_line')}`")
+    if not report.get("next_commands"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifacts.get('inspect_first')}`",
+        f"- summary JSON: `{artifacts.get('summary_json')}`",
+        f"- support bundle: `{artifacts.get('support_bundle')}`",
+        f"- present artifacts: `{artifacts.get('present_artifact_count')}/{artifacts.get('artifact_count')}`",
+        "",
+        "## Not Completed",
+        "",
+    ])
+    for item in report.get("not_completed") or []:
+        lines.append(f"- {item}")
+    if not report.get("not_completed"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope.get('summary') or 'Public artifacts exclude raw prompt text.'}",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no local answer transcript or raw generated text.'}",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
         "## Diagnosis",
         "",
@@ -510,6 +976,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "CPU-only tiny Hugging Face GPT two-stage pipeline; not production Swarm Inference, GPU pooling, P2P routing, or GGUF/llama.cpp serving.",
         "",
     ])
+    return "\n".join(lines)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -595,11 +1062,42 @@ def main() -> None:
     try:
         args = parse_args()
         report = run_evidence(args)
+        output_dir = Path(args.json_out).resolve().parent if args.json_out else Path.cwd()
+        report = attach_user_guidance(report, args, output_dir=output_dir)
+        report.setdefault("artifacts", {})
+        report["artifacts"]["real_llm_sharded_evidence_json"] = artifact_entry(
+            Path(args.json_out) if args.json_out else output_dir / "real_llm_sharded_evidence.json",
+            output_dir,
+            kind="real_llm_sharded_evidence",
+            schema=SCHEMA,
+            ok=report.get("ok"),
+        )
+        report["artifacts"]["real_llm_sharded_evidence_markdown"] = artifact_entry(
+            Path(args.markdown_out) if args.markdown_out else output_dir / "real_llm_sharded_evidence.md",
+            output_dir,
+            kind="real_llm_sharded_evidence_markdown",
+        )
+        report["artifacts"]["support_bundle_json"] = artifact_entry(
+            output_dir / "support_bundle.json",
+            output_dir,
+            kind="real_llm_sharded_support_bundle",
+            schema="real_llm_sharded_support_bundle_v1",
+        )
         base.write_json(report, args.json_out)
         if args.markdown_out:
             output = Path(args.markdown_out)
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(render_markdown(report), encoding="utf-8")
+        support_path = output_dir / "support_bundle.json"
+        base.write_json(support_bundle_payload(report), str(support_path))
+        if args.json_out:
+            report["artifacts"]["real_llm_sharded_evidence_json"]["present"] = Path(args.json_out).is_file()
+        if args.markdown_out:
+            report["artifacts"]["real_llm_sharded_evidence_markdown"]["present"] = Path(args.markdown_out).is_file()
+        report["artifacts"]["support_bundle_json"]["present"] = support_path.is_file()
+        report["artifact_summary"] = artifact_summary(output_dir)
+        base.write_json(support_bundle_payload(report), str(support_path))
+        base.write_json(report, args.json_out)
         print(json.dumps(report, sort_keys=True))
         raise SystemExit(0 if report.get("ok") else 1)
     except SystemExit:
