@@ -303,6 +303,67 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     return entry
 
 
+def _shell_join(parts: list[str]) -> str:
+    return " ".join(str(part) if " " not in str(part) else shlex.quote(str(part)) for part in parts if str(part))
+
+
+def command_entry(
+    label: str,
+    command: list[str],
+    *,
+    reason: str = "",
+    requires_private_credentials: bool = False,
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": _shell_join(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if requires_private_credentials:
+        entry["requires_private_credentials"] = True
+        entry["credential_note"] = (
+            "Prepare private operator/Kaggle credentials, peer secrets, admin tokens, and temporary runtime tokens "
+            "before running this command; credential values stay out of public artifacts."
+        )
+    if side_effectful:
+        entry["side_effectful"] = True
+        entry["side_effect_note"] = (
+            "This command can create temporary public Coordinator/P2P endpoints and private Kaggle kernels; "
+            "delete kernels and rotate tokens after collection."
+        )
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    inspect_first = output_dir / "p2p_swarm_inference_v06.md"
+    paths = {
+        "summary_json": output_dir / "p2p_swarm_inference_v06.json",
+        "summary_markdown": output_dir / "p2p_swarm_inference_v06.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    present = sum(1 for path in paths.values() if path.is_file())
+    return {
+        "inspect_first": str(inspect_first),
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": present,
+        "shareable_paths": [
+            str(paths["summary_json"]),
+            str(paths["summary_markdown"]),
+            str(paths["support_bundle"]),
+        ],
+        "public_artifact_safe": True,
+    }
+
+
 def output_request_summary() -> dict[str, Any]:
     return {
         "include_output": False,
@@ -412,6 +473,365 @@ def shareable_summary() -> dict[str, Any]:
             "counts, and readiness summaries, not raw prompts or answers."
         ),
     }
+
+
+def p2p_v06_command(args: argparse.Namespace, output_dir: Path, mode: str) -> list[str]:
+    command = [
+        "crowdtensor",
+        "p2p-swarm-v06",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--swarm-id",
+        str(args.swarm_id),
+        "--public-host",
+        str(args.public_host),
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--backend",
+        str(args.backend),
+        "--hf-model-id",
+        str(args.hf_model_id),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--preview-v04-report",
+        str(args.preview_v04_report),
+        "--product-mvp-report",
+        str(args.product_mvp_report),
+        "--optional-model-report",
+        str(args.optional_model_report),
+    ]
+    if args.p2p_discovery_report:
+        command.extend(["--p2p-discovery-report", str(args.p2p_discovery_report)])
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", "HF_CACHE_DIR"])
+    if args.stream_generation:
+        command.append("--stream-generation")
+    if mode == MODE_EXTERNAL_EXISTING:
+        command.extend([
+            "--peer-bootstrap",
+            str(args.peer_bootstrap or "P2P_BOOTSTRAP_URL"),
+        ])
+        if args.verify_generate:
+            command.append("--verify-generate")
+    if mode in {MODE_LOCAL_SMOKE, MODE_EXTERNAL_EXISTING, MODE_KAGGLE_AUTO}:
+        if args.require_signed:
+            command.append("--require-signed")
+    if mode == MODE_KAGGLE_AUTO:
+        command.extend([
+            "--kaggle-owner",
+            "KAGGLE_OWNER",
+            "--kaggle-stage-timeout-seconds",
+            str(args.kaggle_stage_timeout_seconds),
+        ])
+        if args.kernel_slug_prefix:
+            command.extend(["--kernel-slug-prefix", str(args.kernel_slug_prefix)])
+    return command
+
+
+def p2p_v06_not_completed_items(report: dict[str, Any]) -> list[str]:
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    inference = report.get("inference") if isinstance(report.get("inference"), dict) else {}
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    codes = set(report.get("diagnosis_codes") or [])
+    items = [
+        ("P2P Swarm Inference v0.6 prototype ready", report.get("ok") is True),
+        ("P2P discovery/routing prototype ready", "p2p_discovery_routing_prototype_ready" in codes),
+        ("Coordinator result fallback ready", "coordinator_result_fallback_ready" in codes or safety.get("coordinator_result_fallback")),
+        ("external two-stage generation ready", inference.get("external_two_stage_generation_ready")),
+        ("external stage requeue ready", inference.get("external_stage_requeue_ready")),
+        ("tiny GPT multi-token ready", inference.get("tiny_gpt2_multi_token_ready")),
+        ("distilgpt2/gpt2 attempt or resource diagnosis ready", inference.get("optional_distilgpt2_or_gpt2_attempt_ready")),
+        ("model metadata ready", p2p.get("model_id_match") is True or str(report.get("mode") or "") == MODE_PACKAGE),
+        ("read-only workload boundary recorded", safety.get("read_only_workload") == WORKLOAD_TYPE),
+    ]
+    mode = str(report.get("mode") or "")
+    if mode in {MODE_LOCAL_SMOKE, MODE_EVIDENCE_IMPORT, MODE_EXTERNAL_EXISTING, MODE_KAGGLE_AUTO}:
+        items.extend([
+            ("P2P route ready", bool((p2p.get("generate_route") or {}).get("usable_now")) if isinstance(p2p.get("generate_route"), dict) else False),
+            ("stage rescue ready", p2p.get("stage_rescue_ready") or p2p.get("real_stage_rescue_ready")),
+            ("real generate ready or runtime diagnosis recorded", p2p.get("real_generate_ready") or p2p.get("real_generate_degraded") or "hf_dependencies_missing" in codes),
+        ])
+    if mode == MODE_PACKAGE:
+        items.append(("P2P two-machine/Kaggle runbook ready", "p2p_two_machine_kaggle_runbook_ready" in codes))
+    if mode == MODE_EXTERNAL_EXISTING:
+        items.extend([
+            ("external P2P runtime verified", "external_p2p_runtime_verified" in codes),
+            ("external P2P route ready", "external_p2p_route_ready" in codes),
+        ])
+    if mode == MODE_KAGGLE_AUTO:
+        items.extend([
+            ("Kaggle auto P2P proof ready", "p2p_swarm_inference_v06_kaggle_auto_ready" in codes),
+            ("Kaggle kernels deleted", "kaggle_kernels_deleted" in codes or p2p.get("kaggle_kernels_deleted")),
+        ])
+    missing = [label for label, ready in items if ready is not True]
+    for item in report.get("not_completed") or []:
+        if isinstance(item, str) and item not in missing:
+            missing.append(item)
+    return missing
+
+
+def recommended_next_command(
+    args: argparse.Namespace,
+    output_dir: Path,
+    *,
+    ready: bool,
+    mode: str,
+    not_completed: list[str],
+) -> dict[str, Any]:
+    if ready:
+        return command_entry(
+            "inspect P2P v0.6 evidence",
+            artifact_command(output_dir, "p2p_swarm_inference_v06.md"),
+            reason="review_artifacts",
+        )
+    if mode == MODE_PACKAGE:
+        return command_entry(
+            "run local P2P v0.6 smoke",
+            p2p_v06_command(args, output_dir, MODE_LOCAL_SMOKE),
+            reason="verify_local_p2p_path",
+        )
+    if mode == MODE_EXTERNAL_EXISTING:
+        return command_entry(
+            "rerun external P2P v0.6 verification",
+            p2p_v06_command(args, output_dir, MODE_EXTERNAL_EXISTING),
+            reason="verify_external_p2p_runtime",
+            requires_private_credentials=True,
+        )
+    if mode == MODE_KAGGLE_AUTO:
+        return command_entry(
+            "rerun P2P v0.6 Kaggle auto proof",
+            p2p_v06_command(args, output_dir, MODE_KAGGLE_AUTO),
+            reason="verify_kaggle_p2p_runtime",
+            requires_private_credentials=True,
+            side_effectful=True,
+        )
+    if mode == MODE_EVIDENCE_IMPORT:
+        return command_entry(
+            "refresh retained P2P v0.6 evidence",
+            p2p_v06_command(args, output_dir, MODE_EVIDENCE_IMPORT),
+            reason="refresh_retained_evidence",
+        )
+    reason = "fix_p2p_v06_blockers" if not_completed else "rerun_local_smoke"
+    return command_entry(
+        "retry local P2P v0.6 smoke",
+        p2p_v06_command(args, output_dir, MODE_LOCAL_SMOKE),
+        reason=reason,
+    )
+
+
+def next_commands(
+    args: argparse.Namespace,
+    output_dir: Path,
+    *,
+    ready: bool,
+    mode: str,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "p2p_swarm_inference_v06.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if mode == MODE_PACKAGE:
+        commands.append(command_entry(
+            "run local P2P v0.6 smoke",
+            p2p_v06_command(args, output_dir, MODE_LOCAL_SMOKE),
+            reason="verify_local_p2p_path",
+        ))
+    elif mode == MODE_EXTERNAL_EXISTING:
+        commands.append(command_entry(
+            "rerun external P2P v0.6 verification",
+            p2p_v06_command(args, output_dir, MODE_EXTERNAL_EXISTING),
+            reason="verify_external_p2p_runtime",
+            requires_private_credentials=True,
+        ))
+    elif mode == MODE_KAGGLE_AUTO:
+        commands.append(command_entry(
+            "rerun P2P v0.6 Kaggle auto proof",
+            p2p_v06_command(args, output_dir, MODE_KAGGLE_AUTO),
+            reason="verify_kaggle_p2p_runtime",
+            requires_private_credentials=True,
+            side_effectful=True,
+        ))
+    elif mode == MODE_EVIDENCE_IMPORT:
+        commands.append(command_entry(
+            "refresh retained P2P v0.6 evidence",
+            p2p_v06_command(args, output_dir, MODE_EVIDENCE_IMPORT),
+            reason="refresh_retained_evidence",
+        ))
+    elif ready:
+        commands.append(command_entry(
+            "rerun local P2P v0.6 smoke",
+            p2p_v06_command(args, output_dir, MODE_LOCAL_SMOKE),
+            reason="refresh_local_p2p_path",
+        ))
+    else:
+        commands.append(command_entry(
+            "retry local P2P v0.6 smoke",
+            p2p_v06_command(args, output_dir, MODE_LOCAL_SMOKE),
+            reason=str(recommended.get("reason") or "fix_p2p_v06_blockers"),
+        ))
+    return commands
+
+
+def user_status(
+    *,
+    ready: bool,
+    mode: str,
+    recommended: dict[str, Any],
+    not_completed: list[str],
+) -> dict[str, Any]:
+    if ready:
+        state = "ready"
+        headline = "P2P Swarm Inference v0.6 prototype evidence is ready."
+        next_step = "review_artifacts"
+    elif mode == MODE_KAGGLE_AUTO:
+        state = "live-blocked"
+        headline = "P2P v0.6 Kaggle proof needs attention."
+        next_step = "fix_live_runtime_or_import_retained_evidence"
+    elif mode == MODE_PACKAGE:
+        state = "package-blocked"
+        headline = "P2P v0.6 package did not satisfy the package readiness gate."
+        next_step = "run_local_or_fix_package"
+    else:
+        state = "blocked"
+        headline = "P2P Swarm Inference v0.6 prototype evidence needs attention."
+        next_step = "fix_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(not_completed),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    not_completed: list[str],
+) -> dict[str, Any]:
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    ready = bool(report.get("ok"))
+    attention = "none" if ready else (not_completed[0] if not_completed else "p2p_swarm_inference_v06_blocked")
+    return {
+        "schema": "p2p_swarm_inference_v06_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "headline": (
+            "P2P Swarm Inference v0.6 prototype evidence is ready."
+            if ready
+            else "P2P Swarm Inference v0.6 prototype evidence needs attention."
+        ),
+        "next_step": "review_artifacts" if ready else "fix_blockers",
+        "inspect_first": str(output_dir / "p2p_swarm_inference_v06.md"),
+        "support_bundle": str(output_dir / "support_bundle.json"),
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": "p2p_swarm_inference_v06_ready" if ready else (codes[0] if codes else "p2p_swarm_inference_v06_blocked"),
+        "attention": attention,
+        "attention_detail": "; ".join(not_completed[:5]),
+        "not_completed_count": len(not_completed),
+        "public_artifact_safe": True,
+    }
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    missing = p2p_v06_not_completed_items(report)
+    mode = str(report.get("mode") or args.mode)
+    recommended = recommended_next_command(
+        args,
+        output_dir,
+        ready=bool(report.get("ok")),
+        mode=mode,
+        not_completed=missing,
+    )
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(
+        args,
+        output_dir,
+        ready=bool(report.get("ok")),
+        mode=mode,
+        recommended=recommended,
+    )
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        mode=mode,
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def ensure_user_guidance(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    existing_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    existing_ready = existing_status.get("state") == "ready"
+    if (
+        isinstance(report.get("recommended_next_command"), dict)
+        and isinstance(report.get("next_commands"), list)
+        and isinstance(report.get("user_status"), dict)
+        and isinstance(report.get("review_summary"), dict)
+        and existing_ready == bool(report.get("ok"))
+    ):
+        report.setdefault("artifact_summary", artifact_summary(output_dir))
+        return report
+    missing = p2p_v06_not_completed_items(report)
+    ready = bool(report.get("ok"))
+    recommended = command_entry(
+        "inspect P2P v0.6 evidence",
+        artifact_command(output_dir, "p2p_swarm_inference_v06.md"),
+        reason="review_artifacts" if ready else "review_missing_evidence",
+    )
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "p2p_swarm_inference_v06.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    report["user_status"] = user_status(
+        ready=ready,
+        mode=str(report.get("mode") or "unknown"),
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
 
 
 def request_json(base_url: str, path: str, *, timeout: float = 5.0, bearer_token: str = "") -> dict[str, Any]:
@@ -3516,6 +3936,11 @@ def build_kaggle_auto(args: argparse.Namespace, *, output_dir: Path) -> dict[str
 
 
 def render_markdown(report: dict[str, Any]) -> str:
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     lines = [
         "# CrowdTensor P2P Swarm Inference v0.6",
         "",
@@ -3532,6 +3957,33 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- external stage requeue ready: `{(report.get('inference') or {}).get('external_stage_requeue_ready')}`",
         f"- tiny-gpt2 multi-token ready: `{(report.get('inference') or {}).get('tiny_gpt2_multi_token_ready')}`",
         "",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- status: `{user.get('headline')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
+        f"- recommended command: `{recommended.get('command_line')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    if next_items:
+        lines.extend(
+            (
+                f"- {item.get('label')}: `{item.get('command_line')}`"
+                + (" (requires private credentials; see runbook)" if item.get("requires_private_credentials") else "")
+                + (" (side-effectful live run)" if item.get("side_effectful") else "")
+            )
+            for item in next_items
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend([
+        "",
         "## Output Scope",
         "",
         f"- output request: `include_output={bool((report.get('output_request') or {}).get('include_output'))} raw_prompt_public={bool((report.get('output_request') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('output_request') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('output_request') or {}).get('generated_token_ids_public'))} public_artifact_safe={bool((report.get('output_request') or {}).get('public_artifact_safe'))}`",
@@ -3543,13 +3995,22 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- shareable: `saved_artifacts={bool((report.get('shareable_summary') or {}).get('saved_artifacts_public_safe'))} raw_prompt_public={bool((report.get('shareable_summary') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('shareable_summary') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('shareable_summary') or {}).get('generated_token_ids_public'))} answer_scope_state={(report.get('shareable_summary') or {}).get('answer_scope_state')} local_answer_terminal_only={bool((report.get('shareable_summary') or {}).get('local_answer_terminal_only'))}`",
         f"- note: {(report.get('answer_scope') or {}).get('summary')}",
         "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifact_report.get('inspect_first')}`",
+        f"- summary JSON: `{artifact_report.get('summary_json')}`",
+        f"- summary Markdown: `{artifact_report.get('summary_markdown')}`",
+        f"- support bundle: `{artifact_report.get('support_bundle')}`",
+        f"- present: `{artifact_report.get('present_artifact_count')}` / `{artifact_report.get('artifact_count')}`",
+        f"- public artifact safe: `{artifact_report.get('public_artifact_safe')}`",
+        "",
         "## Diagnosis",
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
         "",
         "## Completed",
         "",
-    ]
+    ])
     lines.extend(f"- {item}" for item in report.get("completed") or [])
     lines.extend(["", "## Not Completed", ""])
     lines.extend(f"- {item}" for item in report.get("not_completed") or [])
@@ -3580,11 +4041,14 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
     )
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
+    report.setdefault("artifact_summary", artifact_summary(output_dir))
+    report = ensure_user_guidance(report, output_dir=output_dir)
     errors = validate_public_report(report)
     if errors:
         report["ok"] = False
         report["diagnosis_codes"] = sorted(set(report.get("diagnosis_codes") or []) | {"public_report_safety_failed"})
         report["safety_errors"] = errors
+        report = ensure_user_guidance(report, output_dir=output_dir)
     report = support_bundle.sanitize(redact_values(report))
     write_json(output_dir / "p2p_swarm_inference_v06.json", report)
     (output_dir / "p2p_swarm_inference_v06.md").write_text(render_markdown(report), encoding="utf-8")
@@ -3599,13 +4063,32 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
+        "user_status": report.get("user_status"),
+        "review_summary": report.get("review_summary"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "not_completed": report.get("not_completed"),
         "safety": report.get("safety"),
     })
     write_json(output_dir / "support_bundle.json", bundle)
     report["artifacts"]["p2p_swarm_inference_v06_json"] = artifact_entry(output_dir / "p2p_swarm_inference_v06.json", output_dir, kind="p2p_swarm_inference_v06", schema=SCHEMA, ok=report.get("ok"))
     report["artifacts"]["p2p_swarm_inference_v06_markdown"] = artifact_entry(output_dir / "p2p_swarm_inference_v06.md", output_dir, kind="p2p_swarm_inference_v06_markdown")
     report["artifacts"]["support_bundle_json"] = artifact_entry(output_dir / "support_bundle.json", output_dir, kind="p2p_swarm_inference_v06_support_bundle", schema=str(bundle.get("schema")), ok=bundle.get("ok"))
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
     write_json(output_dir / "p2p_swarm_inference_v06.json", report)
+    (output_dir / "p2p_swarm_inference_v06.md").write_text(render_markdown(report), encoding="utf-8")
+    bundle["artifacts"] = report.get("artifacts")
+    bundle["artifact_summary"] = report.get("artifact_summary")
+    bundle["review_summary"] = report.get("review_summary")
+    bundle["user_status"] = report.get("user_status")
+    bundle["recommended_next_command"] = report.get("recommended_next_command")
+    bundle["next_commands"] = report.get("next_commands")
+    bundle["not_completed"] = report.get("not_completed")
+    write_json(output_dir / "support_bundle.json", support_bundle.sanitize(redact_values(bundle)))
     return report
 
 
@@ -3622,6 +4105,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         report = build_external_existing(args, output_dir=output_dir)
     else:
         report = build_kaggle_auto(args, output_dir=output_dir)
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     return persist_report(report, output_dir=output_dir)
 
 

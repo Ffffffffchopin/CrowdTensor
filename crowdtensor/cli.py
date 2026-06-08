@@ -13471,6 +13471,9 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
 def print_p2p_swarm_inference_v06(report: dict[str, Any]) -> None:
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     inference = report.get("inference") if isinstance(report.get("inference"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -13486,6 +13489,18 @@ def print_p2p_swarm_inference_v06(report: dict[str, Any]) -> None:
     print(f"  stage rescue ready: {p2p.get('stage_rescue_ready')} real_stage_rescue_ready={p2p.get('real_stage_rescue_ready')}")
     print(f"  model: requested={p2p.get('hf_model_id')} observed={p2p.get('observed_hf_model_id')} match={p2p.get('model_id_match')}")
     print(f"  tokens: {inference.get('max_new_tokens')} workload={inference.get('workload_type')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -13494,6 +13509,19 @@ def print_p2p_swarm_inference_v06(report: dict[str, Any]) -> None:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = " side_effectful=True" if item.get("side_effectful") else ""
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    artifact_summary_value = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -16128,6 +16156,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p2p_v06 = subparsers.add_parser(
         "p2p-swarm-v06",
         help="Build the P2P Swarm Inference v0.6 prototype evidence artifact.",
+        description=(
+            "Build the P2P Swarm Inference v0.6 prototype evidence artifact over the current "
+            "Coordinator-backed tiny/small-model inference path.\n\n"
+            "Modes:\n"
+            "  local-smoke        Run local p2pd discovery, Coordinator announce, stage miner announce, route, generate, and rescue probes.\n"
+            "  package            Generate P2P_SWARM_INFERENCE_V06.md and package/runbook artifacts.\n"
+            "  evidence-import    Aggregate retained Preview v0.4, Product MVP, optional model, and P2P discovery reports.\n"
+            "  external-existing  Verify an already running P2P bootstrap plus external Coordinator/stage Miners.\n"
+            "  kaggle-auto        Run the side-effectful private Kaggle P2P proof and cleanup flow.\n\n"
+            "Reports print status, review, recommended_next, next[...] commands, output scope, and artifact counts. "
+            "Share only the generated JSON, Markdown, and support bundle; keep peer secrets, admin tokens, private env files, "
+            "Kaggle payloads, runtime state, credentials, leases, activations, raw prompts, generated text, and generated token ids local. "
+            "kaggle-auto is side-effectful and requires cleanup plus token rotation after collection. "
+            "This remains a P2P discovery/routing prototype with Coordinator result fallback, not production NAT traversal, "
+            "decentralized security, an economic system, or large-model throughput."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crowdtensor p2p-swarm-v06 local-smoke --output-dir dist/p2p-swarm-inference-v06\n"
+            "  crowdtensor p2p-swarm-v06 package --public-host 24.199.118.54 --output-dir dist/p2p-v06-package\n"
+            "  crowdtensor p2p-swarm-v06 evidence-import --p2p-discovery-report dist/p2p-v06-local/p2p_swarm_inference_v06.json\n"
+            "  crowdtensor p2p-swarm-v06 external-existing --peer-bootstrap http://HOST:9560 --admin-token $CROWDTENSOR_ADMIN_TOKEN"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p2p_v06.add_argument("p2p_swarm_v06_mode", choices=["local-smoke", "package", "evidence-import", "external-existing", "kaggle-auto"])
     p2p_v06.add_argument("--output-dir", default="dist/p2p-swarm-inference-v06")

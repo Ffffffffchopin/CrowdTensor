@@ -8429,6 +8429,23 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Reports print status, review, recommended_next, next[...] commands, output scope", normalized)
         self.assertIn("external live evidence is side-effectful and requires cleanup plus token rotation", normalized)
 
+    def test_p2p_swarm_v06_help_explains_modes_output_scope_and_side_effects(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(["p2p-swarm-v06", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        normalized = " ".join(rendered.split())
+        self.assertIn("local-smoke Run local p2pd discovery", normalized)
+        self.assertIn("package Generate P2P_SWARM_INFERENCE_V06.md and package/runbook artifacts", normalized)
+        self.assertIn("evidence-import Aggregate retained Preview v0.4, Product MVP, optional model, and P2P discovery reports", normalized)
+        self.assertIn("external-existing Verify an already running P2P bootstrap", normalized)
+        self.assertIn("kaggle-auto Run the side-effectful private Kaggle P2P proof and cleanup flow", normalized)
+        self.assertIn("Reports print status, review, recommended_next, next[...] commands, output scope", normalized)
+        self.assertIn("not production NAT traversal, decentralized security, an economic system, or large-model throughput", normalized)
+
     def test_usable_swarm_prints_output_scope(self) -> None:
         report = {
             "schema": "usable_swarm_inference_v1",
@@ -17064,6 +17081,56 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "workload_type": "real_llm_sharded_infer",
                 "max_new_tokens": 16,
             },
+            "user_status": {
+                "state": "ready",
+                "headline": "P2P Swarm Inference v0.6 prototype evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect P2P v0.6 evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 4,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "p2p_swarm_inference_v06_review_summary_v1",
+                "state": "ready",
+                "headline": "P2P Swarm Inference v0.6 prototype evidence is ready.",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/p2p-v06/p2p_swarm_inference_v06.md",
+                "support_bundle": "dist/p2p-v06/support_bundle.json",
+                "recommended_label": "inspect P2P v0.6 evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/p2p-v06/p2p_swarm_inference_v06.md",
+                "primary_code": "p2p_swarm_inference_v06_ready",
+                "attention": "none",
+                "attention_detail": "",
+                "not_completed_count": 4,
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect P2P v0.6 evidence",
+                "command_line": "sed -n 1,220p dist/p2p-v06/p2p_swarm_inference_v06.md",
+                "reason": "review_artifacts",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/p2p-v06/support_bundle.json",
+                    "public_artifact_safe": True,
+                },
+                {
+                    "label": "rerun P2P v0.6 Kaggle auto proof",
+                    "command_line": "crowdtensor p2p-swarm-v06 kaggle-auto --kaggle-owner KAGGLE_OWNER",
+                    "public_artifact_safe": True,
+                    "side_effectful": True,
+                },
+            ],
+            "artifact_summary": {
+                "artifact_count": 3,
+                "present_artifact_count": 3,
+                "support_bundle": "dist/p2p-v06/support_bundle.json",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_prompt_public": False,
@@ -17111,6 +17178,22 @@ class CrowdTensorCliTests(unittest.TestCase):
         output = stdout.getvalue()
 
         self.assertIn(
+            "  status: ready: P2P Swarm Inference v0.6 prototype evidence is ready. next=review_artifacts recommendation=inspect P2P v0.6 evidence public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  review: state=ready next=review_artifacts inspect=dist/p2p-v06/p2p_swarm_inference_v06.md recommended=inspect P2P v0.6 evidence primary=p2p_swarm_inference_v06_ready attention=none public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  review_next: label=inspect P2P v0.6 evidence reason=review_artifacts command=sed -n 1,220p dist/p2p-v06/p2p_swarm_inference_v06.md",
+            output,
+        )
+        self.assertIn(
+            "  recommended_next: inspect P2P v0.6 evidence reason=review_artifacts sed -n 1,220p dist/p2p-v06/p2p_swarm_inference_v06.md",
+            output,
+        )
+        self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
         )
@@ -17134,6 +17217,12 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             output,
         )
+        self.assertIn("  next[1] inspect support bundle: sed -n 1,220p dist/p2p-v06/support_bundle.json", output)
+        self.assertIn(
+            "  next[2] rerun P2P v0.6 Kaggle auto proof: crowdtensor p2p-swarm-v06 kaggle-auto --kaggle-owner KAGGLE_OWNER side_effectful=True",
+            output,
+        )
+        self.assertIn("  artifacts: present=3/3 support=dist/p2p-v06/support_bundle.json public_artifact_safe=True", output)
 
     def test_public_p2p_v1_rc_prints_output_scope(self) -> None:
         report = {
