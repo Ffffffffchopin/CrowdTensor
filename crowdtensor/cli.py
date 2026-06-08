@@ -1393,6 +1393,14 @@ SAVED_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; rerun 
 SAVED_NO_ANSWER_SCOPE_TEXT = "no local answer text was available in this run; saved JSON/Markdown contain no generated text."
 SAVED_TERMINAL_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; the answer was shown only in local human output."
 SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT = "shareable terminal output hides generated text; saved JSON/Markdown contain no generated text."
+LOCAL_OUTPUT_DISPLAY_SCOPE_TEXT = (
+    "Non-JSON human output may show local generated text; JSON stdout and saved "
+    "Markdown/JSON remain hash-only and redacted."
+)
+SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT = (
+    "Shareable terminal output hides generated text; JSON stdout and saved "
+    "Markdown/JSON remain hash-only and redacted."
+)
 LOCAL_OUTPUT_DISPLAY_MAX_CHARS = 4096
 
 
@@ -5389,10 +5397,7 @@ def _output_display_from_report(report: dict[str, Any]) -> dict[str, Any]:
         "raw_generated_text_public": False,
         "generated_token_ids_public": False,
         "public_artifact_safe": True,
-        "summary": (
-            "Non-JSON human output may show local generated text; JSON stdout and saved "
-            "Markdown/JSON remain hash-only and redacted."
-        ),
+        "summary": LOCAL_OUTPUT_DISPLAY_SCOPE_TEXT,
     }
 
 
@@ -6114,6 +6119,8 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
         output_display["raw_generated_text_public"] = False
         output_display["generated_token_ids_public"] = False
         output_display["public_artifact_safe"] = True
+        if had_terminal_text and shareable_terminal.get("enabled"):
+            output_display["summary"] = SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT
     answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
     had_terminal_answer = bool(answer_scope.get("visible_in_terminal"))
     original_scope_state = str(answer_scope.get("scope_state") or "")
@@ -6208,6 +6215,8 @@ def _strip_shareable_terminal_private_text(report: dict[str, Any]) -> dict[str, 
         output_display["raw_generated_text_public"] = False
         output_display["generated_token_ids_public"] = False
         output_display["public_artifact_safe"] = True
+        if had_terminal_text:
+            output_display["summary"] = SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT
         terminal_report["output_display"] = output_display
     answer_scope = (
         dict(terminal_report.get("answer_scope"))

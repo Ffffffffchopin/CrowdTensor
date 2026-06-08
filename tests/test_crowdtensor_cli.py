@@ -10002,6 +10002,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(persisted["local_output_note"], cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT)
         self.assertEqual(persisted["output_display"]["terminal_display"], "shareable-terminal-redacted")
         self.assertFalse(persisted["output_display"]["terminal_text_available"])
+        self.assertEqual(
+            persisted["output_display"]["summary"],
+            cli.SHAREABLE_TERMINAL_OUTPUT_DISPLAY_SCOPE_TEXT,
+        )
+        self.assertNotIn("may show local generated text", persisted["output_display"]["summary"])
         self.assertEqual(persisted["answer_scope"]["scope_state"], "shareable-terminal-redacted")
         self.assertEqual(persisted["answer_scope"]["summary"], cli.SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT)
         self.assertEqual(persisted["shareable_summary"]["answer_scope_state"], "shareable-terminal-redacted")
