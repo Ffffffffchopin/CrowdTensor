@@ -1533,6 +1533,28 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    prompt_count = len(parse_prompt_texts_arg(args.prompt_text, args.prompt_texts))
+    source = "prompt-texts" if str(getattr(args, "prompt_texts", "") or "") else "prompt-text"
+    inline_prompt_text = source in {"prompt-text", "prompt-texts"}
+    return {
+        "source": source,
+        "prompt_count": prompt_count,
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This aggregate records prompt source/count and placeholder safety only; "
+            "raw prompt text is excluded from public JSON, Markdown, and support bundles."
+        ),
+    }
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -1689,6 +1711,18 @@ def output_request_text(summary: dict[str, Any]) -> str:
     )
 
 
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def answer_scope_text(answer_scope: dict[str, Any]) -> str:
     return (
         f"state={answer_scope.get('scope_state') or 'unknown'} "
@@ -1804,6 +1838,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
         ],
         "artifacts": {"runbook": runbook},
         "safety": safety_block(),
+        "prompt_scope": prompt_scope_summary(args),
         "operator_action": [
             "Run release mode to generate fresh local product evidence and aggregate retained external evidence.",
             "Use the runbook for ordinary two-stage CPU operator trials.",
@@ -2143,6 +2178,10 @@ def build_aggregate(
             "gpu_report": str(Path(args.gpu_report).resolve()) if args.gpu_report else "",
         },
         "safety": safety_block(),
+        "prompt_scope": prompt_scope_summary(args),
+        "output_request": output_request_summary(),
+        "answer_scope": answer_scope_summary(),
+        "shareable_summary": shareable_summary(),
         "operator_action": operator_actions,
         "limitations": limitations(),
         "not_completed": [] if release_ready else [
@@ -2255,6 +2294,7 @@ def build_local_smoke(args: argparse.Namespace, *, output_dir: Path, runner: Run
             "gpu_optional_report": artifact_entry(output_dir / "gpu-smoke" / "public_swarm_gpu_inference_beta_local_smoke.json", output_dir, kind="public_swarm_gpu_inference_beta", schema=GPU_SCHEMA, ok=gpu_payload.get("ok") if gpu_payload else None),
         },
         "safety": safety_block(),
+        "prompt_scope": prompt_scope_summary(args),
         "operator_action": ["Run release or evidence-import mode to include retained external Kaggle and real-P2P evidence."],
         "limitations": limitations(),
     }
@@ -2438,6 +2478,7 @@ def build_local_model_variant(args: argparse.Namespace, *, output_dir: Path, run
             "gpu_report": str((output_dir / "gpu-smoke" / "public_swarm_gpu_inference_beta_local_smoke.json").resolve()),
         },
         "safety": safety_block(),
+        "prompt_scope": prompt_scope_summary(args),
         "operator_action": [
             f"Validate this local model variant report before sharing: {recommended_check_command({'mode': MODE_LOCAL_MODEL_VARIANT, 'output_dir': str(output_dir), 'beta': {'hf_model_id': args.hf_model_id, 'max_new_tokens': args.max_new_tokens}}).get('command_line')}",
             "Use release or evidence-import mode for retained external Kaggle and Petals-class P2P candidate claims.",
@@ -2474,6 +2515,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     artifact_overview = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     shareable_paths = artifact_overview.get("shareable_paths") if isinstance(artifact_overview.get("shareable_paths"), list) else []
@@ -2527,6 +2569,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -2576,6 +2619,7 @@ def print_human_summary(report: dict[str, Any]) -> None:
     product_batch = beta.get("batch") if isinstance(beta.get("batch"), dict) else {}
     product_stream = beta.get("stream") if isinstance(beta.get("stream"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
@@ -2621,6 +2665,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
             print(f"    - ... {len(operator_actions) - 4} more")
     if output_request:
         print(f"  output_request: {output_request_text(output_request)}")
+    if prompt_scope:
+        print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
     if answer_scope:
         print(f"  answer_scope: {answer_scope_text(answer_scope)}")
     if shareable:
@@ -2640,6 +2686,27 @@ def print_human_summary(report: dict[str, Any]) -> None:
 
 def validate_public_report(report: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    if prompt_scope.get("source") not in {"prompt-text", "prompt-texts"}:
+        errors.append("prompt_scope_source_mismatch")
+    if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 1:
+        errors.append("prompt_scope_count_mismatch")
+    if prompt_scope.get("inline_prompt_text") is not True:
+        errors.append("prompt_scope_inline_prompt_text_mismatch")
+    if prompt_scope.get("terminal_next_commands_local_private") is not True:
+        errors.append("prompt_scope_terminal_next_commands_mismatch")
+    if prompt_scope.get("terminal_logs_local_private") is not True:
+        errors.append("prompt_scope_terminal_logs_mismatch")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        errors.append("prompt_scope_saved_placeholders_mismatch")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not True:
+        errors.append("prompt_scope_shareable_log_guidance_mismatch")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append("prompt_scope_raw_prompt_public_mismatch")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        errors.append("prompt_scope_public_artifact_safe_mismatch")
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -2695,6 +2762,7 @@ def cleanup_release_private_artifacts(output_dir: Path) -> dict[str, Any]:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary(argparse.Namespace(prompt_text=DEFAULT_PROMPT, prompt_texts="")))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report["recommended_check_command"] = recommended_check_command(report)
@@ -2765,6 +2833,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "release_private_artifact_cleanup": report.get("release_private_artifact_cleanup"),
         "safety_errors": report.get("safety_errors"),
         "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),

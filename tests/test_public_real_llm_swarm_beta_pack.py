@@ -270,6 +270,15 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -325,6 +334,10 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("- machine readable: `public_real_llm_swarm_beta.json`", markdown)
         self.assertIn("- support bundle: `support_bundle.json`", markdown)
         self.assertIn("## Output Scope", markdown)
+        self.assertIn(
+            "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True raw_prompt_public=False public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
@@ -337,6 +350,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(support["operator_action"], report["operator_action"])
         self.assertEqual(support["not_completed"], report["not_completed"])
         self.assertTrue(support["release_private_artifact_cleanup"]["private_artifacts_cleaned"])
+        self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertNotIn('"generated_text":', encoded)
@@ -796,6 +810,10 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["beta"]["batch"]["batch_generation_ready"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         self.assertIn("public_real_llm_swarm_beta_batch_ready", report["diagnosis_codes"])
         self.assertIn("public_swarm_generate_batch_ready", report["diagnosis_codes"])
         self.assertNotIn("first prompt", encoded)
@@ -1824,6 +1842,11 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(result["output_request"]["raw_generated_text_public"])
         self.assertFalse(result["output_request"]["generated_token_ids_public"])
         self.assertTrue(result["output_request"]["public_artifact_safe"])
+        self.assertEqual(result["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(result["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(result["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(result["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(result["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(result["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(result["answer_scope"]["saved_json_display"], "validation-only")
         self.assertTrue(result["answer_scope"]["public_artifact_safe"])
@@ -1846,6 +1869,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertEqual(report["readiness"]["usable_p2p_kv_cache"]["stage0"]["hit_count"], 15)
         self.assertEqual(report["readiness"]["usable_p2p_kv_cache"]["stage1"]["hit_count"], 15)
         self.assertFalse(report["output_request"]["include_output"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertNotIn("markdown_section_missing:operator_action", result["errors"])
@@ -2125,6 +2149,10 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
             "  output_request: include_output=False raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False public_artifact_safe=True",
             output,
         )
+        self.assertIn(
+            "  prompt_scope: source=prompt-text count=1 inline_prompt_text=True raw_prompt_public=False public_artifact_safe=True",
+            output,
+        )
         self.assertIn("  answer_scope: state=no-local-answer saved_json=validation-only public_artifact_safe=True", output)
         self.assertIn(
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer",
@@ -2200,6 +2228,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         result["review_summary"] = check.check_review_summary(result)
         result["operator_action"] = result["review_summary"]["operator_action"]
         result["output_request"] = check.check_output_request_summary()
+        result["prompt_scope"] = check.check_prompt_scope_summary(payload)
         result["answer_scope"] = check.check_answer_scope_summary()
         result["shareable_summary"] = check.check_shareable_summary()
 
@@ -2222,6 +2251,7 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertIn("  recommended_check:", output)
         self.assertIn("--beta-report", output)
         self.assertIn("  output_request: include_output=", output)
+        self.assertIn("  prompt_scope: source=", output)
         self.assertIn("  answer_scope: state=", output)
         self.assertIn("  shareable: saved_artifacts=", output)
         self.assertIn("  errors:", output)
