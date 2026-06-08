@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import platform
+import shlex
 import subprocess
 import sys
 import time
@@ -168,6 +169,406 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     if ok is not None:
         entry["ok"] = bool(ok)
     return entry
+
+
+def shell_command(parts: list[Any]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in parts if str(part))
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    requires_private_credentials: bool = False,
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if requires_private_credentials:
+        entry["requires_private_credentials"] = True
+        entry["credential_note"] = (
+            "Use local private operator/runtime credentials when running this command; "
+            "credential values are intentionally excluded from public artifacts."
+        )
+    if side_effectful:
+        entry["side_effectful"] = True
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "cpu_inference_beta.md",
+        "summary_json": output_dir / "cpu_inference_beta.json",
+        "summary_markdown": output_dir / "cpu_inference_beta.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    present = sum(1 for path in paths.values() if path.is_file())
+    return {
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": present,
+        "shareable_paths": [
+            str(paths["summary_json"]),
+            str(paths["summary_markdown"]),
+            str(paths["support_bundle"]),
+        ],
+        "public_artifact_safe": True,
+    }
+
+
+def cpu_beta_command(args: argparse.Namespace, output_dir: Path, mode: str) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "cpu-infer",
+        "--mode",
+        mode,
+        "--workload",
+        getattr(args, "workload", "all"),
+        "--output-dir",
+        str(output_dir),
+        "--base-port",
+        str(getattr(args, "base_port", 8970)),
+        "--request-count",
+        str(getattr(args, "request_count", 4)),
+        "--external-llm-request-count",
+        str(getattr(args, "external_llm_request_count", 3)),
+        "--scenario-id",
+        getattr(args, "scenario_id", "route-baseline"),
+        "--timeout-seconds",
+        str(getattr(args, "timeout_seconds", 240)),
+        "--remote-timeout-seconds",
+        str(getattr(args, "remote_timeout_seconds", 60.0)),
+    ]
+    if mode == "remote-existing":
+        command.extend([
+            "--coordinator-url",
+            "https://YOUR_COORDINATOR_HOST",
+            "--miner-id",
+            getattr(args, "miner_id", "remote-linux-1"),
+            "--observer-token",
+            "OBSERVER_TOKEN",
+            "--admin-token",
+            "ADMIN_TOKEN",
+        ])
+        if getattr(args, "mock", False):
+            command.append("--mock")
+        elif getattr(args, "llm_runtime_cmd", ""):
+            command.extend(["--llm-runtime-cmd", "LLM_RUNTIME_CMD"])
+        elif getattr(args, "llm_runtime_url", ""):
+            command.extend(["--llm-runtime-url", "LLM_RUNTIME_URL"])
+        if getattr(args, "llm_runtime_api_key", ""):
+            command.extend(["--llm-runtime-api-key", "LLM_RUNTIME_API_KEY"])
+        if getattr(args, "llm_runtime_model_id", ""):
+            command.extend(["--llm-runtime-model-id", getattr(args, "llm_runtime_model_id")])
+    return command
+
+
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generation_public": False,
+        "raw_external_llm_output_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "CPU Inference Beta artifacts summarize local/remote read-only inference "
+            "readiness, step status, counts, routes, redaction state, and diagnostics "
+            "only. They do not include raw prompt text, model outputs, or external LLM output text."
+        ),
+    }
+
+
+def prompt_scope_summary(report: dict[str, Any]) -> dict[str, Any]:
+    request_count = int(report.get("request_count") or 0)
+    external_count = int(report.get("external_llm_request_count") or 0)
+    return {
+        "source": "built-in-fixed-scenarios",
+        "prompt_count": request_count + external_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "CPU Inference Beta uses fixed built-in scenarios and mock/fixed external LLM prompts; "
+            "public artifacts record counts/source only and exclude raw prompt text."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-or-counts-only",
+        "saved_markdown_display": "hash-or-counts-only",
+        "json_stdout_display": "summary-only-json",
+        "raw_prompt_public": False,
+        "raw_generation_public": False,
+        "raw_external_llm_output_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This CPU Beta report is shareable operator evidence, not an answer transcript; "
+            "raw inference payloads, external LLM output text, credentials, leases, and idempotency keys are excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generation_public": False,
+        "raw_external_llm_output_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share cpu_inference_beta.json/md and support_bundle.json; they contain "
+            "readiness evidence and diagnostics, not raw prompts, outputs, or credentials."
+        ),
+    }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    mode = str(report.get("mode") or "")
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    existing = [str(item) for item in (report.get("not_completed") or []) if str(item)]
+    items: list[tuple[str, Any]] = [
+        ("CPU Inference Beta ready", report.get("ok") is True),
+        ("CPU-only default boundary present", safety.get("cpu_only_default") is True),
+        ("read-only workload boundary present", bool(safety.get("read_only_workloads"))),
+        ("raw inference payloads excluded", safety.get("summary_excludes_raw_inference_payloads") is True),
+        ("external LLM outputs excluded", safety.get("summary_excludes_raw_external_llm_outputs") is True),
+    ]
+    steps = report.get("steps") if isinstance(report.get("steps"), list) else []
+    if mode == "local":
+        items.extend([
+            ("local home inference ready", any(isinstance(step, dict) and step.get("name") == "home_infer" and step.get("ok") is True for step in steps)),
+            ("local external LLM mock inference ready", any(isinstance(step, dict) and step.get("name") == "llm_infer_mock" and step.get("ok") is True for step in steps)),
+        ])
+    elif mode == "remote-loopback":
+        items.append(("remote loopback workload checks ready", all(isinstance(step, dict) and step.get("ok") is True for step in steps)))
+    elif mode == "remote-existing":
+        items.append(("remote existing doctor/verify/collect checks ready", all(isinstance(step, dict) and step.get("ok") is True for step in steps)))
+    for step in steps:
+        if isinstance(step, dict) and step.get("ok") is not True:
+            items.append((f"step {step.get('name') or 'step'} passed", False))
+    missing = list(existing)
+    seen = set(missing)
+    for label, ready in items:
+        if ready is True or label in seen:
+            continue
+        missing.append(label)
+        seen.add(label)
+    return missing
+
+
+def recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    missing: list[str],
+) -> dict[str, Any]:
+    mode = str(report.get("mode") or args.mode)
+    if report.get("ok"):
+        return command_entry(
+            "inspect CPU Inference Beta evidence",
+            artifact_command(output_dir, "cpu_inference_beta.md"),
+            reason="review_artifacts",
+        )
+    return command_entry(
+        f"rerun CPU Inference Beta {mode}",
+        cpu_beta_command(args, output_dir, mode),
+        reason="fix_cpu_inference_beta_blockers" if missing else "rerun_cpu_inference_beta",
+        requires_private_credentials=mode == "remote-existing",
+        side_effectful=True,
+    )
+
+
+def next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    mode = str(report.get("mode") or args.mode)
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "cpu_inference_beta.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if report.get("ok"):
+        commands.append(command_entry(
+            f"refresh {mode} proof",
+            cpu_beta_command(args, output_dir, mode),
+            reason="refresh_cpu_inference_beta",
+            requires_private_credentials=mode == "remote-existing",
+            side_effectful=True,
+        ))
+    else:
+        commands.append(dict(recommended))
+    if mode != "local":
+        commands.append(command_entry(
+            "run local CPU proof",
+            cpu_beta_command(args, output_dir, "local"),
+            reason="verify_local_cpu_fallback",
+            side_effectful=True,
+        ))
+    if mode != "remote-loopback":
+        commands.append(command_entry(
+            "run remote loopback proof",
+            cpu_beta_command(args, output_dir, "remote-loopback"),
+            reason="verify_remote_loopback",
+            side_effectful=True,
+        ))
+    return commands
+
+
+def user_status(*, ready: bool, mode: str, recommended: dict[str, Any], missing: list[str]) -> dict[str, Any]:
+    if ready:
+        state = "ready"
+        headline = "CPU Inference Beta evidence is ready."
+        next_step = "review_artifacts"
+    elif mode == "remote-existing":
+        state = "remote-existing-blocked"
+        headline = "CPU Inference Beta remote-existing proof needs attention."
+        next_step = "fix_remote_existing_blockers"
+    elif mode == "remote-loopback":
+        state = "remote-loopback-blocked"
+        headline = "CPU Inference Beta remote-loopback proof needs attention."
+        next_step = "fix_remote_loopback_blockers"
+    else:
+        state = "local-blocked"
+        headline = "CPU Inference Beta local proof needs attention."
+        next_step = "fix_local_cpu_inference_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    ready = bool(report.get("ok"))
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    return {
+        "schema": "cpu_inference_beta_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "headline": "CPU Inference Beta evidence is ready." if ready else "CPU Inference Beta evidence needs attention.",
+        "mode": report.get("mode"),
+        "next_step": "review_artifacts" if ready else "fix_blockers",
+        "inspect_first": str(output_dir / "cpu_inference_beta.md"),
+        "support_bundle": str(output_dir / "support_bundle.json"),
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": "cpu_inference_beta_ready" if ready else (codes[0] if codes else "cpu_inference_beta_failed"),
+        "attention": "none" if ready else (missing[0] if missing else "cpu_inference_beta_failed"),
+        "attention_detail": "; ".join(missing[:6]),
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    missing = not_completed_items(report)
+    recommended = recommended_next_command(report, args, output_dir=output_dir, missing=missing)
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or args.mode),
+        recommended=recommended,
+        missing=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "cpu_inference_beta_support_bundle_v1",
+        "ok": report.get("ok"),
+        "mode": report.get("mode"),
+        "output_dir": report.get("output_dir"),
+        "workload": report.get("workload"),
+        "coordinator_url": report.get("coordinator_url"),
+        "miner_id": report.get("miner_id"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "steps": report.get("steps"),
+        "payload_summaries": report.get("payload_summaries"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "not_completed": report.get("not_completed"),
+        "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
+        "safety": report.get("safety"),
+        "limitations": report.get("limitations"),
+        "public_artifact_safe": True,
+    }
 
 
 def payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -494,6 +895,15 @@ def build_remote_existing(args: argparse.Namespace, *, runner: Runner) -> dict[s
 
 
 def render_markdown(report: dict[str, Any]) -> str:
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     lines = [
         "# CrowdTensor CPU Inference Beta",
         "",
@@ -502,9 +912,57 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- mode: `{report.get('mode')}`",
         f"- output_dir: `{report.get('output_dir')}`",
         "",
-        "## Steps",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- status: `{user.get('headline')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
+        f"- recommended command: `{recommended.get('command_line')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
+        "",
+        "## What To Do Next",
         "",
     ]
+    if next_items:
+        lines.extend(
+            (
+                f"- {item.get('label')}: `{item.get('command_line')}`"
+                + (" (requires private credentials; see runbook)" if item.get("requires_private_credentials") else "")
+                + (" side_effectful=`True`" if item.get("side_effectful") else "")
+            )
+            for item in next_items
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- output request note: {output_request.get('summary') or 'Public artifacts summarize CPU inference evidence only and do not include answer text.'}",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope.get('summary') or 'Public artifacts record prompt source/count only.'}",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no local answer transcript.'}",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generation_public={shareable.get('raw_generation_public')} raw_external_llm_output_public={shareable.get('raw_external_llm_output_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifact_report.get('inspect_first')}`",
+        f"- summary JSON: `{artifact_report.get('summary_json')}`",
+        f"- summary Markdown: `{artifact_report.get('summary_markdown')}`",
+        f"- support bundle: `{artifact_report.get('support_bundle')}`",
+        f"- present: `{artifact_report.get('present_artifact_count')}` / `{artifact_report.get('artifact_count')}`",
+        f"- public artifact safe: `{artifact_report.get('public_artifact_safe')}`",
+        "",
+        "## Steps",
+        "",
+    ])
     for step in report.get("steps") or []:
         lines.append(f"- `{step.get('name')}`: `{step.get('ok')}` schema=`{step.get('payload_schema')}`")
     lines.extend([
@@ -512,6 +970,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Diagnosis",
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
+        "",
+        "## Not Completed",
+        "",
+    ])
+    not_completed = report.get("not_completed") or []
+    lines.extend(f"- {item}" for item in not_completed) if not_completed else lines.append("- none")
+    lines.extend([
         "",
         "## Boundaries",
         "",
@@ -566,12 +1031,12 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
             "Fixed scenarios and fixed prompt runtime evidence; not arbitrary public prompt serving",
             "Does not provide GPU pooling, WebGPU model shards, P2P routing, NAT traversal, payments, or incentives",
         ],
-        "recommended_next_commands": [
-            "crowdtensor cpu-infer --mode local --json",
-            "crowdtensor remote-demo prepare --coordinator-url https://YOUR_COORDINATOR_HOST --miner-id remote-linux-1 --json",
-            "crowdtensor remote-demo doctor --coordinator-url https://YOUR_COORDINATOR_HOST --miner-id remote-linux-1 --observer-token \"$CROWDTENSOR_OBSERVER_TOKEN\" --admin-token \"$CROWDTENSOR_ADMIN_TOKEN\" --json",
-        ],
     }
+    report["output_request"] = output_request_summary()
+    report["prompt_scope"] = prompt_scope_summary(report)
+    report["answer_scope"] = answer_scope_summary()
+    report["shareable_summary"] = shareable_summary()
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     report = support_bundle.sanitize(redact_values(report, [
         getattr(args, "observer_token", ""),
         getattr(args, "admin_token", ""),
@@ -597,10 +1062,9 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
 
     json_out = Path(args.json_out).resolve() if args.json_out else output_dir / "cpu_inference_beta.json"
     markdown_out = Path(args.markdown_out).resolve() if args.markdown_out else output_dir / "cpu_inference_beta.md"
+    support_out = output_dir / "support_bundle.json"
     json_out.parent.mkdir(parents=True, exist_ok=True)
-    json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     markdown_out.parent.mkdir(parents=True, exist_ok=True)
-    markdown_out.write_text(render_markdown(report), encoding="utf-8")
     report["artifacts"]["cpu_inference_beta_json"] = artifact_entry(
         json_out,
         output_dir,
@@ -613,7 +1077,30 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         output_dir,
         kind="cpu_inference_beta_markdown",
     )
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_out,
+        output_dir,
+        kind="cpu_inference_beta_support_bundle",
+        schema="cpu_inference_beta_support_bundle_v1",
+        ok=report.get("ok"),
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
     json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    markdown_out.write_text(render_markdown(report), encoding="utf-8")
+    support_out.write_text(json.dumps(support_bundle_payload(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report["artifacts"]["cpu_inference_beta_json"]["present"] = json_out.is_file()
+    report["artifacts"]["cpu_inference_beta_markdown"]["present"] = markdown_out.is_file()
+    report["artifacts"]["support_bundle_json"]["present"] = support_out.is_file()
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
+    json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    markdown_out.write_text(render_markdown(report), encoding="utf-8")
+    support_out.write_text(json.dumps(support_bundle_payload(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
 
 
@@ -670,12 +1157,88 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def print_human(report: dict[str, Any]) -> None:
+    user_status_report = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor CPU inference Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  output: {report.get('output_dir')}")
+    if user_status_report:
+        print(
+            "  status: "
+            f"{user_status_report.get('state')} "
+            f"next={user_status_report.get('next_step')} "
+            f"recommended={user_status_report.get('recommended_label')}"
+        )
+    if review:
+        print(
+            "  review: "
+            f"state={review.get('state')} next={review.get('next_step')} "
+            f"inspect={review.get('inspect_first')} attention={review.get('attention')}"
+        )
+        print(f"  review_next: {review.get('next_command') or 'none'}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
+    if prompt_scope:
+        print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
+        if prompt_scope.get("summary"):
+            print(f"  prompt_scope_note: {prompt_scope.get('summary')}")
+    if output_request:
+        print(
+            "  output_request: "
+            f"include_output={bool(output_request.get('include_output'))} "
+            f"raw_generation_public={bool(output_request.get('raw_generation_public'))} "
+            f"raw_external_llm_output_public={bool(output_request.get('raw_external_llm_output_public'))} "
+            f"public_artifact_safe={bool(output_request.get('public_artifact_safe'))}"
+        )
+    if answer_scope:
+        print(
+            "  answer_scope: "
+            f"state={answer_scope.get('scope_state')} "
+            f"json={answer_scope.get('saved_json_display')} "
+            f"markdown={answer_scope.get('saved_markdown_display')} "
+            f"raw_generation_public={bool(answer_scope.get('raw_generation_public'))} "
+            f"raw_external_llm_output_public={bool(answer_scope.get('raw_external_llm_output_public'))} "
+            f"public_artifact_safe={bool(answer_scope.get('public_artifact_safe'))}"
+        )
+        if answer_scope.get("summary"):
+            print(f"  answer_scope_note: {answer_scope.get('summary')}")
+    if shareable:
+        print(
+            "  shareable: "
+            f"saved_artifacts={bool(shareable.get('saved_artifacts_public_safe'))} "
+            f"raw_prompt_public={bool(shareable.get('raw_prompt_public'))} "
+            f"raw_generation_public={bool(shareable.get('raw_generation_public'))} "
+            f"raw_external_llm_output_public={bool(shareable.get('raw_external_llm_output_public'))} "
+            f"answer_scope_state={shareable.get('answer_scope_state')}"
+        )
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = ""
+        if item.get("requires_private_credentials"):
+            suffix += " (requires private credentials)"
+        if item.get("side_effectful"):
+            suffix += " side_effectful=True"
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    if artifact_report:
+        print(
+            "  artifacts: "
+            f"present={artifact_report.get('present_artifact_count')}/{artifact_report.get('artifact_count')} "
+            f"support={artifact_report.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_report.get('public_artifact_safe'))}"
+        )
     for step in report.get("steps") or []:
         print(f"  step {step.get('name')}: {step.get('ok')} schema={step.get('payload_schema')}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):

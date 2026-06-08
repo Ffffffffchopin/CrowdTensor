@@ -14797,6 +14797,104 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "cpu_inference_beta_v1")
 
+    def test_print_cpu_infer_outputs_guidance_summary(self) -> None:
+        report = {
+            "schema": "cpu_inference_beta_v1",
+            "ok": True,
+            "mode": "local",
+            "output_dir": str(Path(self._tmp_dir())),
+            "user_status": {
+                "state": "ready",
+                "headline": "CPU Inference Beta evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect CPU Inference Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "cpu_inference_beta_review_summary_v1",
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "/tmp/cpu-infer/cpu_inference_beta.md",
+                "support_bundle": "/tmp/cpu-infer/support_bundle.json",
+                "recommended_label": "inspect CPU Inference Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p /tmp/cpu-infer/cpu_inference_beta.md",
+                "attention": "none",
+                "primary_code": "cpu_inference_beta_ready",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect CPU Inference Beta evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p /tmp/cpu-infer/cpu_inference_beta.md",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p /tmp/cpu-infer/cpu_inference_beta.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p /tmp/cpu-infer/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "present_artifact_count": 4,
+                "artifact_count": 4,
+                "support_bundle": "/tmp/cpu-infer/support_bundle.json",
+                "public_artifact_safe": True,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_generation_public": False,
+                "raw_external_llm_output_public": False,
+                "public_artifact_safe": True,
+            },
+            "prompt_scope": {
+                "source": "built-in-fixed-scenarios",
+                "prompt_count": 4,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "saved_json_display": "hash-or-counts-only",
+                "saved_markdown_display": "hash-or-counts-only",
+                "raw_generation_public": False,
+                "raw_external_llm_output_public": False,
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generation_public": False,
+                "raw_external_llm_output_public": False,
+                "answer_scope_state": "no-local-answer",
+            },
+            "diagnosis_codes": ["cpu_inference_beta_ready"],
+            "steps": [{"name": "home_infer", "ok": True, "payload_schema": "home_inference_cli_v1"}],
+            "artifacts": {},
+        }
+        with patch("builtins.print") as mocked_print:
+            cli.print_cpu_inference_beta(report)
+
+        rendered = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("status: ready", rendered)
+        self.assertIn("review: state=ready", rendered)
+        self.assertIn("recommended_next: inspect CPU Inference Beta evidence", rendered)
+        self.assertIn("next[1] inspect shareable summary", rendered)
+        self.assertIn("artifacts: present=4/4", rendered)
+        self.assertIn("prompt_scope: source=built-in-fixed-scenarios", rendered)
+        self.assertIn("output_request: include_output=False", rendered)
+        self.assertIn("raw_generated_text_public=False", rendered)
+        self.assertIn("answer_scope: state=no-local-answer", rendered)
+        self.assertIn("shareable: saved_artifacts=True", rendered)
+
     def test_shard_infer_wraps_evidence_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []

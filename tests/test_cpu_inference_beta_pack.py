@@ -24,6 +24,24 @@ class CpuInferenceBetaPackTests(unittest.TestCase):
     def _tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="crowdtensor_cpu_infer_beta_test_"))
 
+    def _assert_ready_guidance(self, report: dict, output_dir: Path) -> None:
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["next_step"], "review_artifacts")
+        self.assertEqual(report["review_summary"]["schema"], "cpu_inference_beta_review_summary_v1")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertEqual(report["recommended_next_command"]["label"], "inspect CPU Inference Beta evidence")
+        self.assertIn("cpu_inference_beta.md", report["recommended_next_command"]["command_line"])
+        self.assertFalse(report["not_completed"])
+        self.assertGreaterEqual(len(report["next_commands"]), 3)
+        self.assertEqual(report["artifact_summary"]["present_artifact_count"], report["artifact_summary"]["artifact_count"])
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["schema"], "cpu_inference_beta_support_bundle_v1")
+        self.assertEqual(support["review_summary"]["state"], "ready")
+        self.assertEqual(support["recommended_next_command"]["label"], "inspect CPU Inference Beta evidence")
+        self.assertTrue(support["public_artifact_safe"])
+
     def test_local_mode_aggregates_home_and_llm_proofs(self) -> None:
         output_dir = self._tmp_dir()
         calls: list[list[str]] = []
@@ -75,6 +93,19 @@ class CpuInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("external_llm_evidence_ready", report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["cpu_inference_beta_json"]["present"])
         self.assertTrue(report["artifacts"]["home_inference_cli_summary"]["present"])
+        self._assert_ready_guidance(report, output_dir)
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["output_request"]["raw_external_llm_output_public"])
+        self.assertEqual(report["prompt_scope"]["source"], "built-in-fixed-scenarios")
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
+        self.assertFalse(report["shareable_summary"]["raw_external_llm_output_public"])
+        markdown = (output_dir / "cpu_inference_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("## Output Scope", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("## Not Completed", markdown)
         self.assertTrue(any("home-infer" in command for command in calls))
         self.assertTrue(any("llm-infer" in command for command in calls))
 
@@ -111,6 +142,7 @@ class CpuInferenceBetaPackTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["workload"], "external-llm")
         self.assertIn("remote_external_llm_ready", report["diagnosis_codes"])
+        self._assert_ready_guidance(report, output_dir)
         self.assertTrue(calls)
 
     def test_remote_existing_redacts_tokens_and_runtime_url(self) -> None:
@@ -157,6 +189,14 @@ class CpuInferenceBetaPackTests(unittest.TestCase):
         self.assertNotIn("admin-secret", encoded)
         self.assertNotIn("runtime-secret", encoded)
         self.assertNotIn("http://127.0.0.1:11434", encoded)
+        self._assert_ready_guidance(report, output_dir)
+        command_blob = json.dumps(report["next_commands"], sort_keys=True)
+        self.assertIn("OBSERVER_TOKEN", command_blob)
+        self.assertIn("ADMIN_TOKEN", command_blob)
+        self.assertIn("LLM_RUNTIME_URL", command_blob)
+        self.assertIn("LLM_RUNTIME_API_KEY", command_blob)
+        self.assertNotIn("observer-secret", command_blob)
+        self.assertNotIn("runtime-secret", command_blob)
 
     def test_remote_existing_requires_tokens(self) -> None:
         with self.assertRaises(SystemExit):
