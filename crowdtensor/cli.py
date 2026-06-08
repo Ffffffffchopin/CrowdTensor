@@ -15541,6 +15541,7 @@ def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
     review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
     user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
@@ -15557,6 +15558,8 @@ def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
         print(f"  status: {infer_user_status_text(user_status)}")
     if review:
         print(f"  review: {review_summary_text(review)}")
+    if runtime_provenance:
+        print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
     if recommended:
         print(f"  recommended_next: {recommended.get('command_line')}")
     for index, item in enumerate((report.get("next_commands") or []), start=1):

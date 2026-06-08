@@ -19951,6 +19951,19 @@ class CrowdTensorCliTests(unittest.TestCase):
             "mode": "local-smoke",
             "output_dir": "dist/public-swarm-gpu-beta",
             "beta": {"ready": True, "backend": "hf_transformers_cuda"},
+            "runtime_provenance": {
+                "schema": "public_swarm_product_beta_runtime_provenance_v1",
+                "proof_level": "local-gpu-smoke",
+                "local_loopback_product_path_ran": False,
+                "local_loopback_product_path_ready": False,
+                "package_only": False,
+                "kaggle_package_generated": False,
+                "external_existing_attempted": False,
+                "external_existing_verified": False,
+                "fresh_kaggle_gpu_attempted": False,
+                "fresh_kaggle_gpu_verified": False,
+                "retained_gpu_evidence_imported": False,
+            },
             "review_summary": {
                 "state": "ready",
                 "ready": True,
@@ -20043,6 +20056,10 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertIn("  status: smoke-ready", output)
         self.assertIn("  review: state=ready next=review_artifacts", output)
+        self.assertIn(
+            "  runtime_provenance: proof=local-gpu-smoke local_loopback_ran=False local_loopback_ready=False package_only=False kaggle_package=False external_existing_attempted=False external_existing_verified=False fresh_kaggle_gpu_attempted=False fresh_kaggle_gpu_verified=False retained_gpu_import=False",
+            output,
+        )
         self.assertIn("  recommended_next: sed -n 1,220p", output)
         self.assertIn("  next[1] inspect GPU Beta evidence:", output)
         self.assertIn("  next[2] inspect support bundle:", output)
