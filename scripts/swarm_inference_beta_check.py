@@ -35,6 +35,9 @@ SECRET_FRAGMENTS = [
     "logits",
     "activation_results",
     "real_llm_sharded_result",
+    '"generated_text":',
+    '"generated_token_ids":',
+    '"prompt_text":',
 ]
 
 
@@ -255,6 +258,35 @@ def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
         errors.append(f"{label}:output_request_local_output_display_only_mismatch")
     if output_request.get("public_artifact_safe") is not True:
         errors.append(f"{label}:output_request_public_artifact_safe_mismatch")
+    prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
+    expected_prompt_source = "prompt-texts" if label == "verify" else "none"
+    expected_inline = label == "verify"
+    if prompt_scope.get("source") != expected_prompt_source:
+        errors.append(f"{label}:prompt_scope_source_mismatch")
+    prompt_count = prompt_scope.get("prompt_count")
+    if expected_inline:
+        if not isinstance(prompt_count, int) or prompt_count < 1:
+            errors.append(f"{label}:prompt_scope_count_mismatch")
+    elif prompt_count != 0:
+        errors.append(f"{label}:prompt_scope_count_mismatch")
+    if prompt_scope.get("inline_prompt_text") is not expected_inline:
+        errors.append(f"{label}:prompt_scope_inline_prompt_text_mismatch")
+    if prompt_scope.get("terminal_next_commands_local_private") is not expected_inline:
+        errors.append(f"{label}:prompt_scope_terminal_next_commands_local_private_mismatch")
+    if prompt_scope.get("terminal_logs_local_private") is not expected_inline:
+        errors.append(f"{label}:prompt_scope_terminal_logs_local_private_mismatch")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        errors.append(f"{label}:prompt_scope_saved_artifacts_prompt_placeholders_mismatch")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        errors.append(f"{label}:prompt_scope_saved_artifacts_public_safe_mismatch")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not expected_inline:
+        errors.append(f"{label}:prompt_scope_prefer_prompt_file_or_stdin_mismatch")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append(f"{label}:prompt_scope_prompt_file_path_public_mismatch")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append(f"{label}:prompt_scope_raw_prompt_public_mismatch")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        errors.append(f"{label}:prompt_scope_public_artifact_safe_mismatch")
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
     if answer_scope.get("scope_state") != "no-local-answer":
         errors.append(f"{label}:answer_scope_state_mismatch")

@@ -92,6 +92,9 @@ SECRET_FRAGMENTS = (
     "logits",
     "real_llm_sharded_result",
     "Bearer ",
+    '"generated_text":',
+    '"generated_token_ids":',
+    '"prompt_text":',
 )
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -205,6 +208,42 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def parse_prompt_texts(value: str) -> list[str]:
+    prompts = [item.strip() for item in str(value or "").split(",") if item.strip()]
+    return prompts or list(DEFAULT_PROMPTS)
+
+
+def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    action = getattr(args, "action", "")
+    prompts = parse_prompt_texts(getattr(args, "prompt_texts", "")) if action == "verify" else []
+    inline_prompt_text = bool(prompts)
+    source = "prompt-texts" if inline_prompt_text else "none"
+    return {
+        "source": source,
+        "prompt_count": len(prompts),
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Swarm Inference Beta artifacts record prompt source/count and placeholder "
+            "safety only; raw prompt text is excluded from public JSON, Markdown, "
+            "support bundles, and runbooks."
+        ),
+    }
+
+
+def prompt_secret_values(args: argparse.Namespace) -> list[str]:
+    if getattr(args, "action", "") != "verify":
+        return []
+    return parse_prompt_texts(getattr(args, "prompt_texts", ""))
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -242,6 +281,19 @@ def shareable_summary() -> dict[str, Any]:
             "diagnostics, not raw prompts or answers."
         ),
     }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
 
 
 def _safe_relative_path(output_dir: Path, relative_path: str) -> Path:
@@ -694,8 +746,22 @@ def finish_report(
     json_name: str,
     markdown_name: str,
     secret_values: list[str] | None = None,
+    prompt_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope or {
+        "source": "none",
+        "prompt_count": 0,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+    })
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report, secret_values))
@@ -842,6 +908,7 @@ def build_prepare(args: argparse.Namespace) -> dict[str, Any]:
         json_name="swarm_inference_beta_prepare.json",
         markdown_name="swarm_inference_beta_prepare.md",
         secret_values=secret_values_for(output_dir),
+        prompt_scope=prompt_scope_summary(args),
     )
 
 
@@ -869,6 +936,7 @@ def command_report(args: argparse.Namespace, *, action: str, command: list[str])
         json_name=f"swarm_inference_beta_{action}.json",
         markdown_name=f"swarm_inference_beta_{action}.md",
         secret_values=secret_values_for(output_dir),
+        prompt_scope=prompt_scope_summary(args),
     )
 
 
@@ -974,6 +1042,7 @@ def build_process_action(args: argparse.Namespace, *, action: str) -> dict[str, 
         json_name=f"swarm_inference_beta_{action}.json",
         markdown_name=f"swarm_inference_beta_{action}.md",
         secret_values=secret_values_for(output_dir),
+        prompt_scope=prompt_scope_summary(args),
     )
 
 
@@ -983,7 +1052,7 @@ def build_verify(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
     env = root_operator_env(output_dir)
     observer = args.observer_token or env.get("CROWDTENSOR_OBSERVER_TOKEN", "")
     admin = args.admin_token or env.get("CROWDTENSOR_ADMIN_TOKEN", "")
-    secret_values = secret_values_for(output_dir, observer, admin)
+    secret_values = secret_values_for(output_dir, observer, admin, *prompt_secret_values(args))
     if not observer or not admin:
         report = {
             "schema": SCHEMA,
@@ -995,7 +1064,14 @@ def build_verify(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
             "operator_action": ["Run prepare, source operator.private.env, or pass --observer-token and --admin-token."],
             "limitations": limitations(),
         }
-        return finish_report(report, output_dir=output_dir, json_name="swarm_inference_beta_verify.json", markdown_name="swarm_inference_beta_verify.md")
+        return finish_report(
+            report,
+            output_dir=output_dir,
+            json_name="swarm_inference_beta_verify.json",
+            markdown_name="swarm_inference_beta_verify.md",
+            secret_values=secret_values,
+            prompt_scope=prompt_scope_summary(args),
+        )
 
     verify_dir = output_dir / "verify"
     command = [
@@ -1092,6 +1168,7 @@ def build_verify(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         json_name="swarm_inference_beta_verify.json",
         markdown_name="swarm_inference_beta_verify.md",
         secret_values=secret_values,
+        prompt_scope=prompt_scope_summary(args),
     )
 
 
@@ -1151,7 +1228,14 @@ def build_collect(args: argparse.Namespace, *, runner: Runner = subprocess.run) 
             "diagnosis_codes": ["operator_tokens_missing"],
             "limitations": limitations(),
         }
-        return finish_report(report, output_dir=output_dir, json_name="swarm_inference_beta_collect.json", markdown_name="swarm_inference_beta_collect.md")
+        return finish_report(
+            report,
+            output_dir=output_dir,
+            json_name="swarm_inference_beta_collect.json",
+            markdown_name="swarm_inference_beta_collect.md",
+            secret_values=secret_values,
+            prompt_scope=prompt_scope_summary(args),
+        )
     collect_dir = output_dir / "collect"
     command = [
         sys.executable,
@@ -1242,6 +1326,7 @@ def build_collect(args: argparse.Namespace, *, runner: Runner = subprocess.run) 
         json_name="swarm_inference_beta_collect.json",
         markdown_name="swarm_inference_beta_collect.md",
         secret_values=secret_values,
+        prompt_scope=prompt_scope_summary(args),
     )
 
 
@@ -1513,6 +1598,7 @@ def build_live(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> 
         output_dir=output_dir,
         json_name="swarm_inference_beta_live.json",
         markdown_name="swarm_inference_beta_live.md",
+        prompt_scope=prompt_scope_summary(args),
     )
 
 
@@ -1618,6 +1704,7 @@ def build_clean(args: argparse.Namespace) -> dict[str, Any]:
         output_dir=output_dir,
         json_name="swarm_inference_beta_clean.json",
         markdown_name="swarm_inference_beta_clean.md",
+        prompt_scope=prompt_scope_summary(args),
     )
 
 
@@ -1631,6 +1718,7 @@ def limitations() -> list[str]:
 
 def render_markdown(report: dict[str, Any]) -> str:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -1644,6 +1732,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -1820,6 +1909,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
 
 
 def print_human(report: dict[str, Any]) -> None:
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     print("CrowdTensor Swarm Inference Beta")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
@@ -1828,6 +1918,8 @@ def print_human(report: dict[str, Any]) -> None:
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     if report.get("command_text"):
         print(f"  command: {report.get('command_text')}")
+    if prompt_scope:
+        print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 

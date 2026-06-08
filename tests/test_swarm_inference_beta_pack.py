@@ -81,6 +81,14 @@ class SwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("two_machine_swarm_inference_ready", report["diagnosis_codes"])
         self.assertIn("external_beta_evidence_imported", report["diagnosis_codes"])
         self.assertIn("decoded_tokens_match", report["diagnosis_codes"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertTrue(report["remote_real_llm_sharded_beta_summary"]["stage_assignment"]["distinct_stage_miners"])
         self.assertNotIn("operator-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
@@ -204,6 +212,12 @@ class SwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "none")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 0)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -221,6 +235,7 @@ class SwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "swarm_inference_beta_live.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("prompt scope: `source=none count=0 inline_prompt_text=False", markdown)
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
@@ -268,6 +283,48 @@ class SwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("swarm_inference_beta_live_ready", report["diagnosis_codes"])
         self.assertFalse(report["sensitive_leaks"])
         self.assertEqual(report["scope_errors"], [])
+
+    def test_verify_redacts_prompt_texts_from_failure_tails_and_artifacts(self) -> None:
+        output_dir = self._tmp_dir()
+        pack.build_report(pack.parse_args([
+            "prepare",
+            "--output-dir",
+            str(output_dir),
+            "--observer-token",
+            "operator-secret",
+            "--admin-token",
+            "admin-secret",
+        ]))
+        prompts = "private beta prompt one,private beta prompt two"
+        args = pack.parse_args([
+            "verify",
+            "--output-dir",
+            str(output_dir),
+            "--observer-token",
+            "operator-secret",
+            "--admin-token",
+            "admin-secret",
+            "--prompt-texts",
+            prompts,
+        ])
+
+        def failing_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            del command
+            return subprocess.CompletedProcess(
+                args=["cmd"],
+                returncode=1,
+                stdout="private beta prompt one failed\n",
+                stderr="private beta prompt two failed\n",
+            )
+
+        report = pack.build_report(args, runner=failing_runner)
+        markdown = (output_dir / "swarm_inference_beta_verify.md").read_text(encoding="utf-8")
+        encoded = json.dumps({"report": report, "markdown": markdown}, sort_keys=True)
+        self.assertNotIn("private beta prompt one", encoded)
+        self.assertNotIn("private beta prompt two", encoded)
+        self.assertIn("<redacted>", encoded)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
 
 
 if __name__ == "__main__":
