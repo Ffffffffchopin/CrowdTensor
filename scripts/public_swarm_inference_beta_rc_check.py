@@ -81,6 +81,12 @@ def output_scope_errors(payload: dict[str, Any]) -> list[str]:
     prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
     shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
+    if "answer" not in str(output_request.get("summary") or ""):
+        errors.append("output_request_summary_missing")
+    if "raw prompt" not in str(prompt_scope.get("summary") or ""):
+        errors.append("prompt_scope_summary_missing")
+    if "answer transcript" not in str(answer_scope.get("summary") or ""):
+        errors.append("answer_scope_summary_missing")
     if output_request.get("include_output") is not False:
         errors.append("output_request_include_output_mismatch")
     if output_request.get("raw_prompt_public") is not False:

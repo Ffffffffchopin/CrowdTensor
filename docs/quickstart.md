@@ -99,7 +99,11 @@ and `no-local-answer`; the
 Markdown `What To Do Next` and `Details` sections repeat that saved JSON and
 Markdown contain no generated text. The adjacent `answer_scope_note` and
 `output_display_note` terminal lines spell out the same answer-display and
-artifact-redaction policy in plain text. `local_output`
+artifact-redaction policy in plain text. Public inference evidence Markdown
+also includes `output request note`, `prompt scope note`, and
+`answer scope note` lines in `Output Scope`, so shared reports explain why
+artifacts contain evidence, hashes, counts, and diagnostics instead of raw
+prompts or answer transcripts. `local_output`
 adds safe output `count` and `source` fields such as
 `local-private-task-state` or `coordinator-validation`. JSON mode can still
 report completed generation through `json-suppressed` plus redacted

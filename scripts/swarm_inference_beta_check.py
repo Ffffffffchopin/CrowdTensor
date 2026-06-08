@@ -246,6 +246,8 @@ def write_external_beta(path: Path) -> None:
 def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    if "answer" not in str(output_request.get("summary") or ""):
+        errors.append(f"{label}:output_request_summary_mismatch")
     if output_request.get("include_output") is not False:
         errors.append(f"{label}:output_request_include_output_mismatch")
     if output_request.get("raw_prompt_public") is not False:
@@ -287,7 +289,11 @@ def output_scope_errors(label: str, payload: dict[str, Any]) -> list[str]:
         errors.append(f"{label}:prompt_scope_raw_prompt_public_mismatch")
     if prompt_scope.get("public_artifact_safe") is not True:
         errors.append(f"{label}:prompt_scope_public_artifact_safe_mismatch")
+    if "raw prompt" not in str(prompt_scope.get("summary") or ""):
+        errors.append(f"{label}:prompt_scope_summary_mismatch")
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
+    if "answer transcript" not in str(answer_scope.get("summary") or ""):
+        errors.append(f"{label}:answer_scope_summary_mismatch")
     if answer_scope.get("scope_state") != "no-local-answer":
         errors.append(f"{label}:answer_scope_state_mismatch")
     if answer_scope.get("visible_in_terminal") is not False:
