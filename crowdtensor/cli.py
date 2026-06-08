@@ -4843,7 +4843,7 @@ def _infer_request_trace_from_payload(
     local_output: dict[str, Any],
 ) -> list[dict[str, Any]]:
     trace: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    trace_by_key: dict[tuple[str, str], dict[str, Any]] = {}
 
     def add_item(source: str, item: dict[str, Any]) -> None:
         request_id = item.get("request_id")
@@ -4851,10 +4851,19 @@ def _infer_request_trace_from_payload(
         if request_id is None and prompt_hash is None:
             return
         key = (str(request_id or ""), str(prompt_hash or ""))
-        if key in seen:
+        current = trace_by_key.get(key)
+        if current is not None:
+            current_tokens = _safe_int(current.get("generated_token_count"))
+            next_tokens = _safe_int(item.get("generated_token_count"))
+            if next_tokens >= current_tokens:
+                current["source"] = source
+                current["generated_token_count"] = item.get("generated_token_count")
+                if item.get("max_new_tokens") is not None:
+                    current["max_new_tokens"] = item.get("max_new_tokens")
+                if item.get("generated_text_hash"):
+                    current["generated_text_hash"] = item.get("generated_text_hash")
             return
-        seen.add(key)
-        trace.append({
+        row = {
             "source": source,
             "request_id": request_id,
             "prompt_hash": prompt_hash,
@@ -4865,7 +4874,9 @@ def _infer_request_trace_from_payload(
             "raw_generated_text_public": False,
             "generated_token_ids_public": False,
             "public_artifact_safe": True,
-        })
+        }
+        trace_by_key[key] = row
+        trace.append(row)
 
     for event in stream_events:
         if isinstance(event, dict):

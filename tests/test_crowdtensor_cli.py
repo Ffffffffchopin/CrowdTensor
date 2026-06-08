@@ -8467,12 +8467,25 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "events": [
                         {
                             "schema": "session_stream_event_v1",
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:p1",
                             "generated_token_count": 1,
                             "max_new_tokens": 3,
                             "generation_step": 0,
                             "generated_text_hash": "sha256:step0",
                             "generated_text": "must not leak",
                             "generated_token_ids": [1],
+                        },
+                        {
+                            "schema": "session_stream_event_v1",
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:p1",
+                            "generated_token_count": 3,
+                            "max_new_tokens": 3,
+                            "generation_step": 2,
+                            "generated_text_hash": "sha256:step2",
+                            "generated_text": "must not leak final",
+                            "generated_token_ids": [1, 2, 3],
                         },
                     ],
                 },
@@ -8487,13 +8500,19 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["stream"]["ready"])
         self.assertEqual(report["stream"]["progress"]["observed_token_counts"], [1, 2, 3])
         self.assertEqual(report["stream"]["events"][0]["generated_text_hash"], "sha256:step0")
+        self.assertEqual(report["trace"]["request_trace"][0]["generated_token_count"], 3)
+        self.assertEqual(report["trace"]["request_trace"][0]["generated_text_hash"], "sha256:step2")
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("must not leak", encoded)
+        self.assertNotIn("must not leak final", encoded)
         self.assertNotIn('"generated_token_ids": [1]', encoded)
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         persisted_encoded = json.dumps(persisted, sort_keys=True)
         self.assertEqual(persisted["stream"]["progress"]["observed_token_counts"], [1, 2, 3])
+        self.assertEqual(persisted["trace"]["request_trace"][0]["generated_token_count"], 3)
+        self.assertEqual(persisted["trace"]["request_trace"][0]["generated_text_hash"], "sha256:step2")
         self.assertNotIn("must not leak", persisted_encoded)
+        self.assertNotIn("must not leak final", persisted_encoded)
         self.assertNotIn('"generated_token_ids": [1]', persisted_encoded)
 
     def test_infer_local_can_display_private_generated_text_without_persisting_it(self) -> None:
