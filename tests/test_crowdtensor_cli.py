@@ -2084,8 +2084,11 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertEqual(report["session_request"]["prompt_chars"], len(prompt))
-        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
-        self.assertIn("prompt_hash", json.dumps(report, sort_keys=True))
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(prompt, encoded)
+        self.assertNotIn(str(prompt_file), encoded)
+        self.assertIn("prompt_hash", encoded)
+        self.assertEqual(report["prompt_file"], cli.INFER_PROMPT_FILE_PLACEHOLDER)
 
     def test_generate_accepts_prompt_stdin_without_persisting_prompt_text(self) -> None:
         prompt = "Prompt stdin product request"
@@ -2155,12 +2158,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["batch"]["request_count"], 2)
         self.assertEqual(report["session_request"]["prompt_char_counts"], [len(prompt) for prompt in prompts])
         next_lines = [item["command_line"] for item in report["next_commands"]]
-        self.assertTrue(any(f"--prompt-texts-file {prompt_file}" in line for line in next_lines))
+        self.assertTrue(any(f"--prompt-texts-file {cli.INFER_PROMPT_TEXTS_FILE_PLACEHOLDER}" in line for line in next_lines))
         self.assertFalse(any("--prompt-texts '<prompt-1>,<prompt-2>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
+        self.assertNotIn(str(prompt_file), encoded)
         self.assertIn("prompt_hashes", encoded)
+        self.assertEqual(report["prompt_texts_file"], cli.INFER_PROMPT_TEXTS_FILE_PLACEHOLDER)
 
     def test_generate_prompt_file_next_commands_keep_file_source_without_prompt_text(self) -> None:
         prompt = "Generate file prompt stays private"
@@ -2181,11 +2186,12 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         next_lines = [item["command_line"] for item in report["next_commands"]]
-        self.assertTrue(any(f"--prompt-file {prompt_file}" in line for line in next_lines))
+        self.assertTrue(any(f"--prompt-file {cli.INFER_PROMPT_FILE_PLACEHOLDER}" in line for line in next_lines))
         self.assertFalse(any("'<prompt>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn(prompt, encoded)
-        self.assertIn(str(prompt_file), encoded)
+        self.assertNotIn(str(prompt_file), encoded)
+        self.assertEqual(report["prompt_file"], cli.INFER_PROMPT_FILE_PLACEHOLDER)
 
     def test_generate_prompt_stdin_next_commands_keep_stdin_source_without_prompt_text(self) -> None:
         prompt = "Generate stdin prompt stays private"
@@ -2373,11 +2379,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["prompt"]["raw_prompt_public"])
         self.assertEqual(report["prompt"]["prompt_count"], 2)
         next_lines = [item["command_line"] for item in report["next_commands"]]
-        self.assertTrue(any(f"--prompt-texts-file {prompt_file}" in line for line in next_lines))
+        self.assertTrue(any(f"--prompt-texts-file {cli.INFER_PROMPT_TEXTS_FILE_PLACEHOLDER}" in line for line in next_lines))
         self.assertFalse(any("--prompt-texts '<prompt-1>,<prompt-2>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
+        self.assertNotIn(str(prompt_file), encoded)
 
     def test_infer_prompt_file_next_commands_keep_file_source_without_prompt_text(self) -> None:
         prompt = "Infer file prompt stays private"
@@ -2400,11 +2407,11 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         next_lines = [item["command_line"] for item in report["next_commands"]]
-        self.assertTrue(any(f"--prompt-file {prompt_file}" in line for line in next_lines))
+        self.assertTrue(any(f"--prompt-file {cli.INFER_PROMPT_FILE_PLACEHOLDER}" in line for line in next_lines))
         self.assertFalse(any("infer '<prompt>'" in line for line in next_lines))
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn(prompt, encoded)
-        self.assertIn(str(prompt_file), encoded)
+        self.assertNotIn(str(prompt_file), encoded)
 
     def test_infer_prompt_stdin_next_commands_keep_stdin_source_without_prompt_text(self) -> None:
         prompt = "Infer stdin prompt stays private"
