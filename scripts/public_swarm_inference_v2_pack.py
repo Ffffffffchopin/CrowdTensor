@@ -27,7 +27,7 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 import support_bundle  # noqa: E402
-from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
+from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_file, read_prompt_texts_file  # noqa: E402
 from crowdtensor.real_p2p import DISCOVERY_BACKENDS  # noqa: E402
 from crowdtensor.session_protocol import public_leak_paths, safe_generation_summary  # noqa: E402
 
@@ -761,12 +761,28 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
+    prompt_list = getattr(args, "prompt_texts_list", None)
+    if isinstance(prompt_list, list) and prompt_list:
+        return [str(prompt) for prompt in prompt_list]
+    prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
+    if prompt_texts_file:
+        return read_prompt_texts_file(prompt_texts_file)
+    prompt_file = str(getattr(args, "prompt_file", "") or "")
+    if prompt_file:
+        return [read_prompt_file(prompt_file)]
+    return parse_prompt_texts_arg(str(getattr(args, "prompt_text", "") or ""), str(getattr(args, "prompt_texts", "") or ""))
+
+
 def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    prompt_file = str(getattr(args, "prompt_file", "") or "")
     prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
     prompt_texts = str(getattr(args, "prompt_texts", "") or "")
-    prompt_count = len(getattr(args, "prompt_texts_list", []) or parse_prompt_texts_arg(args.prompt_text, prompt_texts))
+    prompt_count = len(prompt_list_from_args(args))
     if prompt_texts_file:
         source = "prompt-texts-file"
+    elif prompt_file:
+        source = "prompt-file"
     elif prompt_texts:
         source = "prompt-texts"
     else:
@@ -780,7 +796,7 @@ def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
         "terminal_logs_local_private": inline_prompt_text,
         "saved_artifacts_prompt_placeholders": True,
         "saved_artifacts_public_safe": True,
-        "prefer_prompt_file_or_stdin_for_shareable_logs": source in {"prompt-text", "prompt-texts", "prompt-texts-file"},
+        "prefer_prompt_file_or_stdin_for_shareable_logs": source in {"prompt-text", "prompt-file", "prompt-texts", "prompt-texts-file"},
         "prompt_file_path_public": False,
         "raw_prompt_public": False,
         "public_artifact_safe": True,
@@ -874,6 +890,8 @@ def _shell_join(parts: list[str]) -> str:
 def _safe_prompt_args(args: argparse.Namespace) -> list[str]:
     if str(getattr(args, "prompt_texts_file", "") or ""):
         return ["--prompt-texts-file", "prompts.txt"]
+    if str(getattr(args, "prompt_file", "") or ""):
+        return ["--prompt-file", "prompt.txt"]
     if str(getattr(args, "prompt_texts", "") or ""):
         return ["--prompt-texts", BATCH_PROMPTS_PLACEHOLDER]
     return ["--prompt-text", PROMPT_PLACEHOLDER]
@@ -1173,7 +1191,7 @@ def build_common_report(
     fresh_attempt = fresh_external_attempt_summary(args.fresh_external_attempt_report)
     performance = performance_summary(preview_payload, local, gpu)
     runbook = write_runbook(args, output_dir)
-    batch_requested = len(getattr(args, "prompt_texts_list", []) or parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)) > 1
+    batch_requested = len(prompt_list_from_args(args)) > 1
     ready = bool(
         local["ready"]
         and local["generated_token_count"] >= args.max_new_tokens
@@ -1431,6 +1449,8 @@ def run_usable_local(args: argparse.Namespace, *, output_dir: Path, runner: Runn
     ]
     if getattr(args, "prompt_texts_file", ""):
         command.extend(["--prompt-texts-file", args.prompt_texts_file])
+    elif getattr(args, "prompt_file", ""):
+        command.extend(["--prompt-file", args.prompt_file])
     elif args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
     else:
@@ -1644,7 +1664,7 @@ def render_markdown(report: dict[str, Any]) -> str:
 def validate_public_report(report: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
-    if prompt_scope.get("source") not in {"prompt-text", "prompt-texts", "prompt-texts-file"}:
+    if prompt_scope.get("source") not in {"prompt-text", "prompt-file", "prompt-texts", "prompt-texts-file"}:
         errors.append("prompt_scope_source_mismatch")
     if not isinstance(prompt_scope.get("prompt_count"), int) or prompt_scope.get("prompt_count") < 1:
         errors.append("prompt_scope_count_mismatch")
@@ -1659,7 +1679,7 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("prompt_scope_saved_placeholders_mismatch")
     if prompt_scope.get("saved_artifacts_public_safe") is not True:
         errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
-    prefer_safe_source = prompt_scope.get("source") in {"prompt-text", "prompt-texts", "prompt-texts-file"}
+    prefer_safe_source = prompt_scope.get("source") in {"prompt-text", "prompt-file", "prompt-texts", "prompt-texts-file"}
     if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not prefer_safe_source:
         errors.append("prompt_scope_shareable_log_guidance_mismatch")
     if prompt_scope.get("prompt_file_path_public") is not False:
@@ -1763,6 +1783,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-model-id", default=DEFAULT_HF_MODEL_ID)
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--prompt-text", default=DEFAULT_PROMPT)
+    parser.add_argument("--prompt-file", default="")
     parser.add_argument("--prompt-texts", default="")
     parser.add_argument("--prompt-texts-file", default="")
     parser.add_argument("--stream-generation", action="store_true")
@@ -1774,11 +1795,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.max_new_tokens < 8 or args.max_new_tokens > 32:
         raise SystemExit("--max-new-tokens must be between 8 and 32")
-    if args.prompt_texts and args.prompt_texts_file:
-        raise SystemExit("public_swarm_inference_v2 accepts either --prompt-texts or --prompt-texts-file, not both")
+    raw_argv = list(argv if argv is not None else sys.argv[1:])
+    prompt_text_explicit = "--prompt-text" in raw_argv or any(item.startswith("--prompt-text=") for item in raw_argv)
+    prompt_sources = [
+        ("--prompt-text", prompt_text_explicit),
+        ("--prompt-file", bool(args.prompt_file)),
+        ("--prompt-texts", bool(args.prompt_texts)),
+        ("--prompt-texts-file", bool(args.prompt_texts_file)),
+    ]
+    if sum(1 for _, present in prompt_sources if present) > 1:
+        raise SystemExit(
+            "public_swarm_inference_v2 accepts one prompt source: --prompt-text, --prompt-file, "
+            "--prompt-texts, or --prompt-texts-file"
+        )
     try:
         if args.prompt_texts_file:
             args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)
+        elif args.prompt_file:
+            args.prompt_texts_list = [read_prompt_file(args.prompt_file)]
         else:
             args.prompt_texts_list = parse_prompt_texts_arg(args.prompt_text, args.prompt_texts)
     except ValueError as exc:

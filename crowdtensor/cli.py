@@ -7286,6 +7286,8 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         ]
         if getattr(args, "prompt_texts_file", ""):
             command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
+        elif getattr(args, "prompt_file", ""):
+            command.extend(["--prompt-file", str(args.prompt_file)])
         elif args.prompt_texts:
             command.extend(["--prompt-texts", args.prompt_texts])
         else:
@@ -7404,6 +7406,8 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
     ]
     if getattr(args, "prompt_texts_file", ""):
         command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
+    elif getattr(args, "prompt_file", ""):
+        command.extend(["--prompt-file", str(args.prompt_file)])
     elif args.prompt_texts:
         command.extend(["--prompt-texts", args.prompt_texts])
     else:

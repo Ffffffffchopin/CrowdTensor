@@ -8640,6 +8640,69 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertNotIn(prompt, encoded)
         self.assertTrue(calls)
 
+    def test_infer_local_prompt_file_forwards_prompt_file_to_product_loopback(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        private_prompt = "single private prompt from file"
+        prompt_file = output_dir / "prompt.txt"
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text(private_prompt + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "infer",
+            "--prompt-file",
+            str(prompt_file),
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "8",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("product_swarm_mvp_check.py", command[1])
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn(private_prompt, command)
+            self.assertIn("--prompt-file", command)
+            self.assertEqual(command[command.index("--prompt-file") + 1], str(prompt_file))
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "generation": {
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "generated_text_hash": "sha256:generated",
+                    "decoded_tokens_match": True,
+                    "request_count": 1,
+                },
+                "batch": {
+                    "enabled": False,
+                    "request_count": 1,
+                    "observed_request_count": 1,
+                    "batch_generation_ready": False,
+                },
+                "stage_assignment": {"distinct_stage_miners": True},
+                "ledger": {"accepted_rows": 16},
+                "diagnosis_codes": ["product_swarm_mvp_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt"]["prompt_count"], 1)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-file")
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(private_prompt, encoded)
+        self.assertTrue(calls)
+
     def test_infer_local_failure_redacts_prompt_from_step_output(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompt = "CrowdTensor private prompt"
@@ -9028,6 +9091,69 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["prompt"]["prompt_count"], 2)
         for prompt in prompts:
             self.assertNotIn(prompt, encoded)
+        self.assertTrue(calls)
+
+    def test_infer_full_evidence_prompt_file_forwards_prompt_file(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt_file = output_dir / "prompt.txt"
+        private_prompt = "single private full evidence prompt"
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text(private_prompt + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "infer",
+            "--prompt-file",
+            str(prompt_file),
+            "--full-evidence",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "16",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn(private_prompt, command)
+            self.assertIn("--prompt-file", command)
+            self.assertEqual(command[command.index("--prompt-file") + 1], str(prompt_file))
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "readiness": {
+                    "local_p2p_generate": {
+                        "route_ready": True,
+                        "distinct_stage_miners": True,
+                        "generation": {
+                            "generated_token_count": 16,
+                            "max_new_tokens": 16,
+                            "generated_text_hash": "sha256:generated",
+                            "request_count": 1,
+                        },
+                        "batch": {
+                            "enabled": False,
+                            "request_count": 1,
+                            "observed_request_count": 1,
+                            "batch_generation_ready": False,
+                        },
+                    }
+                },
+                "diagnosis_codes": ["public_swarm_inference_v2_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt"]["prompt_count"], 1)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-file")
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertNotIn(private_prompt, encoded)
         self.assertTrue(calls)
 
     def test_infer_local_preserves_safe_stream_progress(self) -> None:

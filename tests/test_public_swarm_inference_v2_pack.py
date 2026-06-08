@@ -501,6 +501,53 @@ class PublicSwarmInferenceV2PackTests(unittest.TestCase):
         for prompt in prompts:
             self.assertNotIn(prompt, runbook)
 
+    def test_local_mode_forwards_prompt_file_to_usable_path(self) -> None:
+        output_dir = self._tmp_dir()
+        sources = self._write_sources(output_dir, external_tokens=16)
+        prompt_file = output_dir / "prompt.txt"
+        private_prompt = "single private v2 prompt from file"
+        prompt_file.write_text(private_prompt + "\n", encoding="utf-8")
+        calls: list[list[str]] = []
+
+        report = pack.build_report(pack.parse_args([
+            "local",
+            "--output-dir",
+            str(output_dir / "v2-local-prompt-file"),
+            "--preview-report",
+            str(sources["preview"]),
+            "--real-p2p-report",
+            str(sources["real_p2p"]),
+            "--gpu-report",
+            str(sources["gpu"]),
+            "--prompt-file",
+            str(prompt_file),
+            "--fresh-external-report",
+            "--max-new-tokens",
+            "16",
+        ]), runner=self._local_runner(calls))
+
+        self.assertTrue(report["ok"], report)
+        usable_command = next(command for command in calls if "usable_swarm_inference_pack.py" in " ".join(command))
+        self.assertIn("--prompt-file", usable_command)
+        self.assertEqual(usable_command[usable_command.index("--prompt-file") + 1], str(prompt_file))
+        self.assertNotIn("--prompt-text", usable_command)
+        self.assertNotIn(private_prompt, usable_command)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-file")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(str(prompt_file), encoded)
+        self.assertNotIn(private_prompt, encoded)
+        runbook = (output_dir / "v2-local-prompt-file" / "PUBLIC_SWARM_INFERENCE_V2.md").read_text(encoding="utf-8")
+        self.assertIn('--prompt "<prompt>"', runbook)
+        self.assertNotIn(str(prompt_file), runbook)
+        self.assertNotIn(private_prompt, runbook)
+
     def test_runbook_and_recommended_command_do_not_leak_single_prompt_text(self) -> None:
         output_dir = self._tmp_dir()
         sources = self._write_sources(output_dir, external_tokens=16)

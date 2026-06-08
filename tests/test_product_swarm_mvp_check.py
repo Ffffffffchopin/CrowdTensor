@@ -614,6 +614,31 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
             self.assertFalse(prompt_scope["prompt_file_path_public"])
             self.assertFalse(prompt_scope["raw_prompt_public"])
 
+    def test_parse_args_accepts_prompt_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = Path(tmp) / "prompt.txt"
+            private_prompt = "single private prompt from file"
+            prompt_file.write_text(private_prompt + "\n", encoding="utf-8")
+
+            args = product_check.parse_args([
+                "--prompt-file",
+                str(prompt_file),
+            ])
+
+            self.assertEqual(args.prompt_file, str(prompt_file))
+            self.assertEqual(args.prompt_texts_list, [private_prompt])
+            self.assertEqual(product_check.prompt_list_from_args(args), [private_prompt])
+            prompt_scope = product_check.prompt_scope_summary(args)
+            self.assertEqual(prompt_scope["source"], "prompt-file")
+            self.assertEqual(prompt_scope["prompt_count"], 1)
+            self.assertFalse(prompt_scope["inline_prompt_text"])
+            self.assertFalse(prompt_scope["terminal_next_commands_local_private"])
+            self.assertFalse(prompt_scope["terminal_logs_local_private"])
+            self.assertTrue(prompt_scope["prefer_prompt_file_or_stdin_for_shareable_logs"])
+            self.assertFalse(prompt_scope["prompt_file_path_public"])
+            self.assertFalse(prompt_scope["raw_prompt_public"])
+            self.assertNotIn(private_prompt, json.dumps(prompt_scope, sort_keys=True))
+
     def test_parse_args_rejects_prompt_texts_file_over_batch_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             prompt_file = Path(tmp) / "too-many-prompts.txt"
@@ -637,7 +662,7 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
         self.assertEqual(error, "prompt_texts_file line 2 must be at most 256 characters")
         self.assertNotIn(private_prompt, error)
 
-    def test_parse_args_rejects_prompt_texts_and_file_together(self) -> None:
+    def test_parse_args_rejects_mixed_prompt_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             prompt_file = Path(tmp) / "prompts.txt"
             prompt_file.write_text("one prompt\n", encoding="utf-8")
@@ -649,7 +674,26 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
                     str(prompt_file),
                 ])
 
-        self.assertEqual(str(raised.exception), "product_swarm_mvp accepts either --prompt-texts or --prompt-texts-file, not both")
+        self.assertEqual(
+            str(raised.exception),
+            "product_swarm_mvp accepts one prompt source: --prompt-text, --prompt-file, --prompt-texts, or --prompt-texts-file",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = Path(tmp) / "prompt.txt"
+            prompt_file.write_text("one prompt\n", encoding="utf-8")
+            with self.assertRaises(SystemExit) as raised:
+                product_check.parse_args([
+                    "--prompt-text",
+                    "inline prompt",
+                    "--prompt-file",
+                    str(prompt_file),
+                ])
+
+        self.assertEqual(
+            str(raised.exception),
+            "product_swarm_mvp accepts one prompt source: --prompt-text, --prompt-file, --prompt-texts, or --prompt-texts-file",
+        )
 
 
 if __name__ == "__main__":
