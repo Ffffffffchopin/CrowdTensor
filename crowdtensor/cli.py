@@ -360,6 +360,74 @@ def prompt_list_from_args(args: argparse.Namespace) -> list[str]:
     return parse_prompt_texts_arg(str(getattr(args, "prompt_text", "") or ""), str(getattr(args, "prompt_texts", "") or ""))
 
 
+INLINE_PROMPT_SCOPE_SOURCES = {"prompt-text", "prompt-texts"}
+
+
+def _prompt_scope(
+    *,
+    source: str,
+    prompt_count: int,
+) -> dict[str, Any]:
+    safe_source = source if source else "prompt-text"
+    safe_count = prompt_count if prompt_count > 0 else 1
+    inline_prompt_text = safe_source in INLINE_PROMPT_SCOPE_SOURCES
+    return {
+        "source": safe_source,
+        "prompt_count": safe_count,
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+    }
+
+
+def prompt_scope_from_args(args: argparse.Namespace, *, prompt_count: int) -> dict[str, Any]:
+    if str(getattr(args, "prompt_texts_file", "") or ""):
+        source = "prompt-texts-file"
+    elif str(getattr(args, "prompt_file", "") or ""):
+        source = "prompt-file"
+    elif bool(getattr(args, "prompt_stdin", False)):
+        source = "prompt-stdin"
+    elif str(getattr(args, "prompt_texts", "") or ""):
+        source = "prompt-texts"
+    else:
+        source = "prompt-text"
+    return _prompt_scope(source=source, prompt_count=prompt_count)
+
+
+def prompt_scope_from_report(report: dict[str, Any]) -> dict[str, Any]:
+    session_request = report.get("session_request") if isinstance(report.get("session_request"), dict) else {}
+    batch = report.get("batch") if isinstance(report.get("batch"), dict) else {}
+    session_batch = session_request.get("batch") if isinstance(session_request.get("batch"), dict) else {}
+    prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
+    try:
+        prompt_count = int(
+            batch.get("request_count")
+            or batch.get("expected_request_count")
+            or session_batch.get("request_count")
+            or session_request.get("request_count")
+            or prompt.get("prompt_count")
+            or 1
+        )
+    except (TypeError, ValueError):
+        prompt_count = 1
+    if str(report.get("prompt_texts_file") or session_request.get("prompt_texts_file") or ""):
+        source = "prompt-texts-file"
+    elif str(report.get("prompt_file") or session_request.get("prompt_file") or ""):
+        source = "prompt-file"
+    elif bool(report.get("prompt_stdin") or session_request.get("prompt_stdin")):
+        source = "prompt-stdin"
+    elif prompt_count > 1:
+        source = "prompt-texts"
+    else:
+        source = "prompt-text"
+    return _prompt_scope(source=source, prompt_count=prompt_count)
+
+
 def redacted_command(command: list[str], sensitive_flags: set[str]) -> list[str]:
     result: list[str] = []
     redact_next = False
@@ -422,10 +490,13 @@ def human_next_command_line(item: dict[str, Any], command_line_text: str) -> str
 def terminal_prompt_scope_text(report: dict[str, Any]) -> str:
     if not (report.get("local_prompt_text") or report.get("local_prompt_texts")):
         return ""
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    inline_prompt_text = bool(prompt_scope.get("inline_prompt_text", True))
+    prefer_safe_sources = bool(prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs", True))
     return (
-        "terminal_next_commands=local-private inline_prompt_text=True "
+        f"terminal_next_commands=local-private inline_prompt_text={inline_prompt_text} "
         "saved_artifacts=prompt-placeholders "
-        "prefer_prompt_file_or_stdin_for_shareable_logs=True"
+        f"prefer_prompt_file_or_stdin_for_shareable_logs={prefer_safe_sources}"
     )
 
 
@@ -1253,6 +1324,18 @@ def prompt_summary_text(prompt: dict[str, Any]) -> str:
         f"count={prompt.get('prompt_count')} "
         f"hash={prompt.get('prompt_hash')} "
         f"raw_public={bool(prompt.get('raw_prompt_public'))}"
+    )
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
     )
 
 
@@ -6356,6 +6439,7 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
     output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
+    prompt_scope = summary.get("prompt_scope") if isinstance(summary.get("prompt_scope"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
     source_report = summary.get("source_report") if isinstance(summary.get("source_report"), dict) else {}
     ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
@@ -6435,6 +6519,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Answer scope: `{answer_scope_text(answer_scope)}`")
         if answer_scope.get("summary"):
             lines.append(f"- Answer scope note: {answer_scope.get('summary')}")
+    if prompt_scope:
+        lines.append(f"- Prompt scope: `{prompt_scope_text(prompt_scope)}`")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if stream.get("issue_summary"):
@@ -6742,6 +6828,7 @@ def _infer_summary_from_payload(
             "prompt_count": expected_request_count,
             "raw_prompt_public": False,
         },
+        "prompt_scope": prompt_scope_from_args(args, prompt_count=expected_request_count),
         "model": {
             "hf_model_id": _infer_model_from_report(payload, str(getattr(args, "hf_model_id", "") or "sshleifer/tiny-gpt2")),
             "backend": str(getattr(args, "backend", "cpu") or "cpu"),
@@ -9630,6 +9717,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     output_display = summary.get("output_display") if isinstance(summary.get("output_display"), dict) else {}
     local_output = summary.get("local_output") if isinstance(summary.get("local_output"), dict) else {}
     answer_scope = summary.get("answer_scope") if isinstance(summary.get("answer_scope"), dict) else {}
+    prompt_scope = summary.get("prompt_scope") if isinstance(summary.get("prompt_scope"), dict) else {}
     saved_summary = summary.get("saved_summary") if isinstance(summary.get("saved_summary"), dict) else {}
     ready_to_submit = summary.get("ready_to_submit") if isinstance(summary.get("ready_to_submit"), dict) else {}
     coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
@@ -9697,6 +9785,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Answer scope: `{answer_scope_text(answer_scope)}`")
         if answer_scope.get("summary"):
             lines.append(f"- Answer scope note: {answer_scope.get('summary')}")
+    if prompt_scope:
+        lines.append(f"- Prompt scope: `{prompt_scope_text(prompt_scope)}`")
     if summary.get("local_output_note"):
         lines.append(f"- Local output note: {summary.get('local_output_note')}")
     if recommended:
@@ -10066,6 +10156,7 @@ def _finalize_product_generate_report(
     _fill_hidden_generate_local_output(report)
     report.setdefault("output_display", _output_display_from_report(report))
     report.setdefault("answer_scope", _answer_scope_from_report(report))
+    report.setdefault("prompt_scope", prompt_scope_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
     report["safety"] = _product_generate_safety_summary(report)
