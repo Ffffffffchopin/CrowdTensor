@@ -15892,6 +15892,50 @@ class CrowdTensorCliTests(unittest.TestCase):
             "mode": "local-loopback",
             "rc": {"ready": True},
             "output_dir": "/tmp/public-swarm-beta-rc",
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Swarm Inference Beta RC evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Beta RC evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "/tmp/public-swarm-beta-rc/public_swarm_inference_beta_rc.md",
+                "recommended_label": "inspect Beta RC evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p /tmp/public-swarm-beta-rc/public_swarm_inference_beta_rc.md",
+                "primary_code": "public_swarm_inference_beta_rc_ready",
+                "attention": "none",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Beta RC evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p /tmp/public-swarm-beta-rc/public_swarm_inference_beta_rc.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "reason": "review_artifacts",
+                    "command_line": "sed -n 1,220p /tmp/public-swarm-beta-rc/public_swarm_inference_beta_rc.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "reason": "inspect_diagnostics",
+                    "command_line": "sed -n 1,220p /tmp/public-swarm-beta-rc/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "support_bundle": "/tmp/public-swarm-beta-rc/support_bundle.json",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_prompt_public": False,
@@ -15926,12 +15970,24 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_swarm_inference_beta_rc(report)
 
         output = stream.getvalue()
+        self.assertIn("status: ready: Public Swarm Inference Beta RC evidence is ready.", output)
+        self.assertIn("review: state=ready next=review_artifacts", output)
+        self.assertIn(
+            "review_next: label=inspect Beta RC evidence reason=review_artifacts command=sed -n 1,220p /tmp/public-swarm-beta-rc/public_swarm_inference_beta_rc.md",
+            output,
+        )
+        self.assertIn(
+            "recommended_next: inspect Beta RC evidence reason=review_artifacts sed -n 1,220p /tmp/public-swarm-beta-rc/public_swarm_inference_beta_rc.md",
+            output,
+        )
         self.assertIn("output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True", output)
         self.assertIn("answer_scope: state=no-local-answer", output)
         self.assertIn("answer_scope_note: This Public Swarm Inference Beta RC report is shareable evidence.", output)
         self.assertIn("saved_json=hash-only", output)
         self.assertIn("shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False", output)
         self.assertIn("generated_token_ids_public=False", output)
+        self.assertIn("next[2] inspect support bundle: sed -n 1,220p /tmp/public-swarm-beta-rc/support_bundle.json", output)
+        self.assertIn("artifacts: present=4/4 support=/tmp/public-swarm-beta-rc/support_bundle.json public_artifact_safe=True", output)
 
     def test_public_swarm_product_beta_wraps_product_pack_and_redacts_tokens(self) -> None:
         output_dir = Path(self._tmp_dir())

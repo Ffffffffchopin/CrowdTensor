@@ -340,6 +340,30 @@ def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[
     rc = payload.get("rc") if isinstance(payload.get("rc"), dict) else {}
     if rc.get("ready") is not True:
         errors.append("rc_summary_not_ready")
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    recommended = payload.get("recommended_next_command") if isinstance(payload.get("recommended_next_command"), dict) else {}
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    next_commands = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    not_completed = payload.get("not_completed") if isinstance(payload.get("not_completed"), list) else None
+    if review.get("state") != "ready":
+        errors.append("review_summary_not_ready")
+    if review.get("next_step") != "review_artifacts":
+        errors.append("review_next_step_mismatch")
+    if review.get("not_completed_count") != 0:
+        errors.append("review_not_completed_count_mismatch")
+    if user_status.get("state") != "ready":
+        errors.append("user_status_not_ready")
+    if recommended.get("label") != "inspect Beta RC evidence":
+        errors.append("recommended_next_missing")
+    if not isinstance(not_completed, list) or not_completed:
+        errors.append("not_completed_not_empty")
+    if artifact_summary.get("public_artifact_safe") is not True:
+        errors.append("artifact_summary_not_safe")
+    if artifact_summary.get("present_artifact_count", 0) < 3:
+        errors.append("artifact_summary_missing_artifacts")
+    if not next_commands:
+        errors.append("next_commands_missing")
     safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
     for key in ["coordinator_backed_task_execution", "p2p_lite_discovery_only", "not_libp2p", "not_dht", "not_nat_traversal"]:
         if safety.get(key) is not True:
