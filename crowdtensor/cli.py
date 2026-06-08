@@ -111,6 +111,7 @@ PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
+PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_generate_runtime_provenance_v1"
 INFER_CLI_SCHEMA = "crowdtensor_infer_cli_v1"
 P2P_LITE_CLI_SCHEMA = "p2p_lite_cli_v1"
 P2PD_CLI_SCHEMA = "p2pd_cli_v1"
@@ -1414,6 +1415,22 @@ def output_request_text(output_request: dict[str, Any]) -> str:
 
 
 def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    if provenance.get("schema") == PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA:
+        return (
+            f"proof={provenance.get('proof_level') or 'unknown'} "
+            f"mode={provenance.get('mode') or 'unknown'} "
+            f"dry_run={bool(provenance.get('dry_run'))} "
+            f"submitted={bool(provenance.get('submitted_to_coordinator'))} "
+            f"coordinator={provenance.get('coordinator_scope') or 'unknown'} "
+            f"route={provenance.get('route_source') or 'unknown'} "
+            f"backend={provenance.get('backend') or 'unknown'} "
+            f"p2p={bool(provenance.get('p2p_enabled'))} "
+            f"live_preflight={bool(provenance.get('live_preflight_checked'))} "
+            f"stage_preflight={bool(provenance.get('stage_preflight_checked'))} "
+            f"kaggle_runtime_attempted={bool(provenance.get('kaggle_runtime_attempted'))} "
+            f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+            f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))}"
+        )
     if provenance.get("schema") == "public_swarm_product_beta_runtime_provenance_v1":
         return (
             f"proof={provenance.get('proof_level') or 'unknown'} "
@@ -10475,6 +10492,65 @@ def _generate_runtime_options(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _generate_runtime_provenance(report: dict[str, Any]) -> dict[str, Any]:
+    route = report.get("route") if isinstance(report.get("route"), dict) else {}
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    session_request = report.get("session_request") if isinstance(report.get("session_request"), dict) else {}
+    session = report.get("session") if isinstance(report.get("session"), dict) else {}
+    coordinator_ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
+    stage_preflight = report.get("stage_preflight") if isinstance(report.get("stage_preflight"), dict) else {}
+    ready_to_submit = report.get("ready_to_submit") if isinstance(report.get("ready_to_submit"), dict) else {}
+    dry_run = bool(report.get("dry_run"))
+    p2p_enabled = bool(p2p.get("enabled"))
+    coordinator_url = str(route.get("coordinator_url") or "")
+    if p2p_enabled:
+        proof_level = "p2p-route-dry-run" if dry_run else "p2p-route-submit"
+    elif dry_run:
+        proof_level = "coordinator-dry-run"
+    else:
+        proof_level = "coordinator-submit"
+    route_ready = bool(route.get("usable_now") or route.get("coordinator_url_present"))
+    if coordinator_url:
+        coordinator_scope = "local-loopback" if is_loopback_coordinator_url(coordinator_url) else "external-existing"
+    elif p2p_enabled and route_ready:
+        coordinator_scope = "p2p-discovered"
+    else:
+        coordinator_scope = "missing"
+    return {
+        "schema": PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA,
+        "proof_level": proof_level,
+        "mode": str(report.get("mode") or "generate"),
+        "dry_run": dry_run,
+        "submitted_to_coordinator": bool(not dry_run and session.get("session_id")),
+        "completed_generation": bool(report.get("ok") and not dry_run),
+        "coordinator_scope": coordinator_scope,
+        "coordinator_url_present": bool(coordinator_url),
+        "route_source": route.get("route_source") or session_request.get("route_source") or ("p2p-discovery" if p2p_enabled else "coordinator-url"),
+        "route_ready": route_ready,
+        "p2p_enabled": p2p_enabled,
+        "p2p_backend": p2p.get("backend") or "",
+        "p2p_peer_count": _safe_int(p2p.get("peer_count")),
+        "live_preflight_checked": bool(coordinator_ready.get("checked", bool(coordinator_ready))),
+        "live_preflight_ready": coordinator_ready.get("ok") if coordinator_ready else None,
+        "stage_preflight_checked": bool(stage_preflight.get("checked")),
+        "stage_preflight_ready": stage_preflight.get("ok") if stage_preflight else None,
+        "ready_to_submit_label": ready_to_submit.get("readiness_label") or "",
+        "backend": session_request.get("backend") or session.get("backend") or "",
+        "hf_model_id": session_request.get("hf_model_id") or session.get("hf_model_id") or "",
+        "workload_type": session.get("workload_type") or "real_llm_sharded_infer",
+        "kaggle_runtime_attempted": False,
+        "fresh_kaggle_gpu_attempted": False,
+        "fresh_kaggle_gpu_verified": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "crowdtensor generate targets an existing Coordinator or P2P-discovered route. "
+            "Dry-run reports validate request shape and optional live preflight; submit reports "
+            "record whether a Coordinator session was created and completed. This front-door "
+            "command does not launch Kaggle GPU proof."
+        ),
+    }
+
+
 def _fill_hidden_generate_local_output(report: dict[str, Any]) -> None:
     if not bool(report.get("json_mode")):
         return
@@ -10522,6 +10598,7 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
     coordinator_ready = summary.get("coordinator_ready") if isinstance(summary.get("coordinator_ready"), dict) else {}
     stage_preflight = summary.get("stage_preflight") if isinstance(summary.get("stage_preflight"), dict) else {}
     wait_progress = summary.get("wait_progress") if isinstance(summary.get("wait_progress"), dict) else {}
+    runtime_provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
     recommended = summary.get("recommended_next_command") if isinstance(summary.get("recommended_next_command"), dict) else {}
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
     lines = [
@@ -10541,6 +10618,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Result: `{infer_result_text(result)}`",
         f"- Output display: `{output_display_text(output_display)}`",
     ])
+    if runtime_provenance:
+        lines.append(f"- Runtime provenance: `{runtime_provenance_text(runtime_provenance)}`")
     if output_display.get("summary"):
         lines.append(f"- Output display note: {output_display.get('summary')}")
     lines.extend([
@@ -10564,6 +10643,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
             f"fully_verified=`{bool(ready_to_submit.get('fully_verified'))}` "
             f"status=`{ready_to_submit_status_text(ready_to_submit)}`"
         )
+    if runtime_provenance:
+        lines.append(f"- Runtime provenance summary: {runtime_provenance.get('summary') or ''}")
     if coordinator_ready:
         lines.append(f"- Coordinator: `{coordinator_ready_text(coordinator_ready)}`")
     if stage_preflight:
@@ -10982,6 +11063,7 @@ def _finalize_product_generate_report(
     report.setdefault("prompt_scope", prompt_scope_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
+    report["runtime_provenance"] = _generate_runtime_provenance(report)
     report["safety"] = _product_generate_safety_summary(report)
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -11875,6 +11957,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  action: {report.get('operator_action')}")
     print(f"  ok: {report.get('ok')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    if runtime_provenance:
+        print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
         print(

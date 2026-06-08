@@ -1280,6 +1280,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["runtime_provenance"]["schema"], cli.PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "coordinator-dry-run")
+        self.assertTrue(report["runtime_provenance"]["dry_run"])
+        self.assertFalse(report["runtime_provenance"]["submitted_to_coordinator"])
+        self.assertEqual(report["runtime_provenance"]["coordinator_scope"], "local-loopback")
+        self.assertEqual(report["runtime_provenance"]["route_source"], "coordinator-url")
+        self.assertEqual(report["runtime_provenance"]["backend"], "cuda")
+        self.assertFalse(report["runtime_provenance"]["p2p_enabled"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         self.assertEqual(report["saved_summary"]["path"], str(output_dir / "generate_summary.json"))
         self.assertEqual(report["saved_summary"]["markdown_path"], str(output_dir / "generate_summary.md"))
         self.assertTrue(report["artifacts"]["generate_summary"]["present"])
@@ -1381,6 +1391,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertFalse(persisted["output_request"]["generated_token_ids_public"])
         self.assertTrue(persisted["output_request"]["public_artifact_safe"])
+        self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(persisted["user_status"]["state"], "preflight-partial")
         self.assertEqual(persisted["user_status"]["next_step"], "run_live_preflight")
         self.assertEqual(persisted["trace"]["request_count"], 1)
@@ -1413,6 +1424,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("# CrowdTensor Generate Summary", markdown)
         self.assertIn("- OK: `True`", markdown)
         self.assertIn("- Dry run: `True`", markdown)
+        self.assertIn("- Runtime provenance: `proof=coordinator-dry-run mode=generate dry_run=True submitted=False coordinator=local-loopback", markdown)
+        self.assertIn("fresh_kaggle_gpu_verified=False`", markdown)
         self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
         self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
         self.assertIn(f"- Inspect first: `{output_dir / 'generate_summary.md'}`", markdown)
@@ -1518,6 +1531,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("  action: Generation request shape is valid, but live readiness was skipped", rendered)
+        self.assertIn(
+            "  runtime_provenance: proof=coordinator-dry-run mode=generate dry_run=True submitted=False coordinator=local-loopback",
+            rendered,
+        )
+        self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
         self.assertIn(f"  inspect_first: {output_dir / 'generate_summary.md'}", rendered)
         self.assertLess(rendered.index("  review_next: "), rendered.index("  inspect_first: "))
@@ -3609,6 +3627,9 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertFalse(report["ok"], report)
         self.assertEqual(report["p2p"]["backend"], "real")
+        self.assertEqual(report["runtime_provenance"]["coordinator_scope"], "missing")
+        self.assertFalse(report["runtime_provenance"]["route_ready"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
         self.assertIn("p2p_discovery_unreachable", report["diagnosis_codes"])
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertIn("crowdtensor p2p-daemon --port 8899 --run", next_lines)
@@ -4056,6 +4077,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["route"]["route_source"], "real-p2p-discovery")
         self.assertEqual(report["p2p"]["backend"], "real")
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "p2p-route-dry-run")
+        self.assertTrue(report["runtime_provenance"]["dry_run"])
+        self.assertTrue(report["runtime_provenance"]["p2p_enabled"])
+        self.assertEqual(report["runtime_provenance"]["p2p_backend"], "real")
+        self.assertEqual(report["runtime_provenance"]["route_source"], "real-p2p-discovery")
+        self.assertFalse(report["runtime_provenance"]["submitted_to_coordinator"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
         self.assertIn("real_p2p_generate_route_ready", report["diagnosis_codes"])
 
     def test_product_generate_real_p2p_route_lookup_uses_compatible_coordinator(self) -> None:
@@ -4245,6 +4273,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertTrue(base_urls)
         self.assertTrue(all(url == "http://route.example:8787" for url in base_urls), base_urls)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "p2p-route-submit")
+        self.assertFalse(report["runtime_provenance"]["dry_run"])
+        self.assertTrue(report["runtime_provenance"]["p2p_enabled"])
+        self.assertEqual(report["runtime_provenance"]["p2p_backend"], "real")
+        self.assertTrue(report["runtime_provenance"]["submitted_to_coordinator"])
+        self.assertTrue(report["runtime_provenance"]["completed_generation"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         self.assertEqual(report["route"]["coordinator_url"], "http://route.example:8787")
 
     def test_product_generate_p2p_non_dry_run_blocks_when_route_unusable(self) -> None:
@@ -4601,6 +4636,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["runtime_provenance"]["schema"], cli.PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "coordinator-submit")
+        self.assertFalse(report["runtime_provenance"]["dry_run"])
+        self.assertTrue(report["runtime_provenance"]["submitted_to_coordinator"])
+        self.assertTrue(report["runtime_provenance"]["completed_generation"])
+        self.assertEqual(report["runtime_provenance"]["coordinator_scope"], "local-loopback")
+        self.assertEqual(report["runtime_provenance"]["backend"], "cpu")
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
         self.assertFalse(report["trace"]["raw_prompt_public"])
         self.assertFalse(report["trace"]["raw_generated_text_public"])
         self.assertFalse(report["trace"]["generated_token_ids_public"])
@@ -4685,6 +4729,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(persisted["output_request"]["raw_generated_text_public"])
         self.assertFalse(persisted["output_request"]["generated_token_ids_public"])
         self.assertTrue(persisted["output_request"]["public_artifact_safe"])
+        self.assertEqual(persisted["runtime_provenance"], report["runtime_provenance"])
         self.assertTrue(persisted["trace"]["request_trace"][0]["prompt_hash"])
         self.assertEqual(persisted["prompt_scope"]["source"], "prompt-text")
         self.assertTrue(persisted["prompt_scope"]["inline_prompt_text"])
@@ -4752,6 +4797,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("requires=`CROWDTENSOR_ADMIN_TOKEN`", markdown)
         self.assertIn("- Generation: `2/2` hash=`sha256:generated`", markdown)
         self.assertIn("- Result: `status=complete tokens=2/2 outputs=1 display=hash-only-json hash=sha256:generated public_artifact_safe=True`", markdown)
+        self.assertIn("- Runtime provenance: `proof=coordinator-submit mode=generate dry_run=False submitted=True coordinator=local-loopback", markdown)
+        self.assertIn("fresh_kaggle_gpu_verified=False`", markdown)
         self.assertIn(
             "- Trace: `session=real-llm-session-test requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True`",
             markdown,
@@ -4811,6 +4858,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  result: status=complete tokens=2/2 outputs=1 display=hash-only-json hash=sha256:generated public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(
+            "  runtime_provenance: proof=coordinator-submit mode=generate dry_run=False submitted=True coordinator=local-loopback",
+            rendered,
+        )
+        self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertIn(
             "  local_output: available=False display_only=False public_artifact_safe=True saved_redacted=True count=1 source=none",
             rendered,
