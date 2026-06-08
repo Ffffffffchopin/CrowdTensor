@@ -12246,6 +12246,7 @@ def print_product_generate(report: dict[str, Any]) -> None:
     evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
     if evidence_scope:
         print(f"  evidence_scope: {generate_evidence_scope_text(evidence_scope)}")
+        print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
         print(
@@ -12437,8 +12438,8 @@ def print_infer_start_hint(args: argparse.Namespace) -> None:
     print(
         "CrowdTensor infer: final output will start with review, review_next, "
         "inspect_first, and status/action; later lines include answer_scope, "
-        "answer_scope_note, output_display_note, runtime_options, and redacted "
-        "JSON/Markdown artifacts.",
+        "answer_scope_note, evidence_scope, evidence_scope_note, output_display_note, "
+        "runtime_options, and redacted JSON/Markdown artifacts.",
         file=sys.stderr,
         flush=True,
     )
@@ -12473,8 +12474,8 @@ def print_generate_start_hint(args: argparse.Namespace) -> None:
     print(
         "CrowdTensor generate: final output will start with review, review_next, "
         "inspect_first, and status/action; later lines include answer_scope, "
-        "answer_scope_note, output_display_note, runtime_options, and redacted "
-        "JSON/Markdown artifacts.",
+        "answer_scope_note, evidence_scope, evidence_scope_note, output_display_note, "
+        "runtime_options, and redacted JSON/Markdown artifacts.",
         file=sys.stderr,
         flush=True,
     )
@@ -12570,6 +12571,7 @@ def print_infer(report: dict[str, Any]) -> None:
     evidence_scope = report.get("evidence_scope") if isinstance(report.get("evidence_scope"), dict) else {}
     if evidence_scope:
         print(f"  evidence_scope: {infer_evidence_scope_text(evidence_scope)}")
+        print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}

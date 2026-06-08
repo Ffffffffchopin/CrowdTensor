@@ -3032,6 +3032,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  status: preflight-ready: Preflight passed; submit generation next. next=submit recommendation=submit generation public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(
+            "  evidence_scope: level=existing-runtime-preflight executed=request-shape-preflight",
+            rendered,
+        )
+        self.assertIn("  evidence_scope_note: This was a preflight; no generation task was submitted.", rendered)
         self.assertIn("  route: source=coordinator-url coordinator=True catalog_missing=not_used", rendered)
         self.assertIn("  coordinator_ready: ready service=crowdtensord protocol=runtime_contract_v1", rendered)
         self.assertIn("  stage_preflight: checked=True ok=True matched_miners=2 missing=none", rendered)
@@ -3194,6 +3199,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         progress = stderr.getvalue()
         self.assertIn("checking request shape only", progress)
         self.assertIn("live Coordinator and stage readiness are skipped", progress)
+        self.assertIn("evidence_scope_note", progress)
         self.assertNotIn("checking route and stage readiness before submitting work", progress)
         self.assertIn(
             "warnings=coordinator_preflight_skipped,stage_preflight_skipped",
@@ -9230,6 +9236,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("  evidence_scope: level=local-cpu-loopback executed=local-cpu source=product_swarm_mvp_check_v1", rendered)
+        self.assertIn("  evidence_scope_note: This infer run executed the fast local CPU loopback proof.", rendered)
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertIn("recommended_next: optional broader local evidence reason=collect_broader_evidence", rendered)
         self.assertIn("next[1] rerun local inference", rendered)
@@ -13812,6 +13819,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         progress = stderr.getvalue()
         self.assertIn("checking request shape only", progress)
         self.assertIn("live Coordinator and stage readiness are skipped", progress)
+        self.assertIn("evidence_scope_note", progress)
         self.assertNotIn("checking the existing route before submitting work", progress)
 
     def test_infer_batch_file_dry_run_preflight_recommended_before_timeout_retry(self) -> None:
