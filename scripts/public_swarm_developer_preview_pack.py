@@ -145,6 +145,356 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     return entry
 
 
+def _shell_join(parts: list[str]) -> str:
+    return " ".join(str(part) if " " not in str(part) else json.dumps(str(part)) for part in parts if str(part))
+
+
+def command_entry(
+    label: str,
+    command: list[str],
+    *,
+    reason: str = "",
+    requires_private_credentials: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": _shell_join(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if requires_private_credentials:
+        entry["requires_private_credentials"] = True
+        entry["credential_note"] = (
+            "Prepare private Coordinator/operator credentials from the runbook before running this command; "
+            "credential variable names and values are kept out of public artifacts."
+        )
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "public_swarm_developer_preview.md",
+        "summary_json": output_dir / "public_swarm_developer_preview.json",
+        "summary_markdown": output_dir / "public_swarm_developer_preview.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    present = sum(1 for path in paths.values() if path.is_file())
+    return {
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": present,
+        "shareable_paths": [
+            str(paths["summary_json"]),
+            str(paths["summary_markdown"]),
+            str(paths["support_bundle"]),
+        ],
+        "public_artifact_safe": True,
+    }
+
+
+def preview_command(args: argparse.Namespace, output_dir: Path, mode: str) -> list[str]:
+    command = [
+        "crowdtensor",
+        "preview",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--http-timeout",
+        str(args.http_timeout),
+    ]
+    if mode != "evidence-import":
+        command.extend([
+            "--target",
+            str(args.target),
+            "--public-host",
+            str(args.public_host),
+            "--bind-host",
+            str(args.bind_host),
+            "--base-port",
+            str(args.base_port),
+            "--port",
+            str(args.port),
+        ])
+    if mode == "external-existing":
+        command.extend([
+            "--coordinator-url",
+            "<coordinator-url>",
+            "--observer-token",
+            "<observer-token>",
+            "--admin-token",
+            "<admin-token>",
+        ])
+    if mode == "evidence-import":
+        command.extend([
+            "--product-beta-report",
+            str(args.product_beta_report),
+            "--gpu-report",
+            str(args.gpu_report),
+        ])
+    if args.hf_model_id != "sshleifer/tiny-gpt2":
+        command.extend(["--hf-model-id", args.hf_model_id])
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", "<hf-cache-dir>"])
+    command.extend(["--prompt-text", "<prompt>"])
+    return command
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    preview = report.get("developer_preview") if isinstance(report.get("developer_preview"), dict) else {}
+    product = (report.get("payload_summaries") or {}).get("public_swarm_product_beta")
+    if not isinstance(product, dict):
+        product = {}
+    gpu = (report.get("payload_summaries") or {}).get("gpu_generation_evidence")
+    if not isinstance(gpu, dict):
+        gpu = {}
+    items = [
+        ("developer preview mode ready", preview.get("mode_ready")),
+        ("Product Beta aggregate ready", preview.get("product_beta_ready")),
+        ("Product Beta support bundle ready", product.get("support_bundle_ready")),
+        ("CPU fallback ready", preview.get("cpu_fallback_ready")),
+        ("optional GPU generation evidence ready", preview.get("gpu_generation_evidence_ready") or gpu.get("ok")),
+    ]
+    return [label for label, ready in items if ready is not True]
+
+
+def recommended_next_command(
+    args: argparse.Namespace,
+    output_dir: Path,
+    *,
+    ready: bool,
+    mode: str,
+    not_completed: list[str],
+) -> dict[str, Any]:
+    if ready:
+        return command_entry(
+            "inspect Developer Preview evidence",
+            artifact_command(output_dir, "public_swarm_developer_preview.md"),
+            reason="review_artifacts",
+        )
+    if mode == "package":
+        return command_entry(
+            "run local Developer Preview proof",
+            preview_command(args, output_dir, "local"),
+            reason="execute_local_preview_path",
+        )
+    if mode == "external-existing":
+        return command_entry(
+            "rerun external Developer Preview verification",
+            preview_command(args, output_dir, "external-existing"),
+            reason="verify_external_preview_runtime",
+            requires_private_credentials=True,
+        )
+    if mode == "evidence-import":
+        return command_entry(
+            "rerun retained evidence import",
+            preview_command(args, output_dir, "evidence-import"),
+            reason="refresh_retained_evidence",
+        )
+    label = "retry local Developer Preview"
+    reason = "fix_preview_blockers" if not_completed else "rerun_local_preview"
+    return command_entry(label, preview_command(args, output_dir, "local"), reason=reason)
+
+
+def next_commands(
+    args: argparse.Namespace,
+    output_dir: Path,
+    *,
+    ready: bool,
+    mode: str,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "public_swarm_developer_preview.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if mode == "package":
+        commands.append(command_entry(
+            "run local Developer Preview proof",
+            preview_command(args, output_dir, "local"),
+            reason="execute_local_preview_path",
+        ))
+    elif mode == "external-existing":
+        commands.append(command_entry(
+            "rerun external Developer Preview verification",
+            preview_command(args, output_dir, "external-existing"),
+            reason="verify_external_preview_runtime",
+            requires_private_credentials=True,
+        ))
+    elif mode == "evidence-import":
+        commands.append(command_entry(
+            "rerun retained evidence import",
+            preview_command(args, output_dir, "evidence-import"),
+            reason="refresh_retained_evidence",
+        ))
+    elif ready:
+        commands.append(command_entry(
+            "rerun local Developer Preview proof",
+            preview_command(args, output_dir, "local"),
+            reason="refresh_local_preview_path",
+        ))
+    else:
+        commands.append(command_entry(
+            "retry local Developer Preview",
+            preview_command(args, output_dir, "local"),
+            reason=str(recommended.get("reason") or "fix_preview_blockers"),
+        ))
+    return commands
+
+
+def user_status(
+    *,
+    ready: bool,
+    mode: str,
+    recommended: dict[str, Any],
+    not_completed: list[str],
+) -> dict[str, Any]:
+    if ready:
+        state = "ready"
+        headline = "Public Swarm Developer Preview evidence is ready."
+        next_step = "review_artifacts"
+    elif mode == "package":
+        state = "package-blocked"
+        headline = "Developer Preview package did not satisfy the preview readiness gate."
+        next_step = "run_local_or_fix_package"
+    else:
+        state = "blocked"
+        headline = "Public Swarm Developer Preview evidence needs attention."
+        next_step = "fix_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(not_completed),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    not_completed: list[str],
+) -> dict[str, Any]:
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    ready = bool(report.get("ok"))
+    attention = "none" if ready else (not_completed[0] if not_completed else "developer_preview_blocked")
+    return {
+        "schema": "public_swarm_developer_preview_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "headline": "Public Swarm Developer Preview evidence is ready." if ready else "Public Swarm Developer Preview evidence needs attention.",
+        "next_step": "review_artifacts" if ready else "fix_blockers",
+        "inspect_first": str(output_dir / "public_swarm_developer_preview.md"),
+        "support_bundle": str(output_dir / "support_bundle.json"),
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": "public_swarm_developer_preview_ready" if ready else (codes[0] if codes else "developer_preview_blocked"),
+        "attention": attention,
+        "attention_detail": "; ".join(not_completed[:5]),
+        "not_completed_count": len(not_completed),
+        "public_artifact_safe": True,
+    }
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    missing = not_completed_items(report)
+    recommended = recommended_next_command(
+        args,
+        output_dir,
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or args.mode),
+        not_completed=missing,
+    )
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(
+        args,
+        output_dir,
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or args.mode),
+        recommended=recommended,
+    )
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or args.mode),
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def ensure_user_guidance(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
+    if (
+        isinstance(report.get("recommended_next_command"), dict)
+        and isinstance(report.get("next_commands"), list)
+        and isinstance(report.get("user_status"), dict)
+        and isinstance(report.get("review_summary"), dict)
+    ):
+        report.setdefault("artifact_summary", artifact_summary(output_dir))
+        return report
+    missing = not_completed_items(report)
+    ready = bool(report.get("ok"))
+    recommended = command_entry(
+        "inspect Developer Preview evidence",
+        artifact_command(output_dir, "public_swarm_developer_preview.md"),
+        reason="review_artifacts" if ready else "review_missing_evidence",
+    )
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "public_swarm_developer_preview.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    report["user_status"] = user_status(
+        ready=ready,
+        mode=str(report.get("mode") or "unknown"),
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        not_completed=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
 def run_json_step(
     name: str,
     command: list[str],
@@ -491,6 +841,12 @@ def support_bundle_artifact(output_dir: Path, report: dict[str, Any], *, secret_
         "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
+        "user_status": report.get("user_status"),
+        "review_summary": report.get("review_summary"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "not_completed": report.get("not_completed"),
         "safety": report.get("safety") or {},
         "limitations": report.get("limitations") or [],
     }, secret_values))
@@ -625,6 +981,7 @@ def build_runtime_report(args: argparse.Namespace, *, runner: Runner = subproces
     report["prompt_scope"] = inherited_prompt_scope(args, product_payload)
     report["answer_scope"] = answer_scope_summary()
     report["shareable_summary"] = shareable_summary()
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     report["artifacts"]["support_bundle_json"] = support_bundle_artifact(output_dir, report, secret_values=secret_values)
     return persist_report(report, output_dir=output_dir, secret_values=secret_values)
 
@@ -706,6 +1063,7 @@ def build_evidence_import(args: argparse.Namespace) -> dict[str, Any]:
     report["prompt_scope"] = inherited_prompt_scope(args, product_payload)
     report["answer_scope"] = answer_scope_summary()
     report["shareable_summary"] = shareable_summary()
+    report = attach_user_guidance(report, args, output_dir=output_dir)
     report["artifacts"]["support_bundle_json"] = support_bundle_artifact(output_dir, report)
     return persist_report(report, output_dir=output_dir)
 
@@ -745,6 +1103,11 @@ def limitations() -> list[str]:
 
 def render_markdown(report: dict[str, Any]) -> str:
     preview = report.get("developer_preview") if isinstance(report.get("developer_preview"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -759,6 +1122,32 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- ready: `{preview.get('ready')}`",
         f"- workload_type: `{preview.get('workload_type')}`",
         "",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- status: `{user.get('headline')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
+        f"- recommended command: `{recommended.get('command_line')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    if next_items:
+        lines.extend(
+            (
+                f"- {item.get('label')}: `{item.get('command_line')}`"
+                + (" (requires private credentials; see runbook)" if item.get("requires_private_credentials") else "")
+            )
+            for item in next_items
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend([
+        "",
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
@@ -771,11 +1160,25 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
         f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
         "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifact_report.get('inspect_first')}`",
+        f"- summary JSON: `{artifact_report.get('summary_json')}`",
+        f"- summary Markdown: `{artifact_report.get('summary_markdown')}`",
+        f"- support bundle: `{artifact_report.get('support_bundle')}`",
+        f"- present: `{artifact_report.get('present_artifact_count')}` / `{artifact_report.get('artifact_count')}`",
+        f"- public artifact safe: `{artifact_report.get('public_artifact_safe')}`",
+        "",
         "## Diagnosis",
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
         "",
-    ]
+        "## Not Completed",
+        "",
+    ])
+    not_completed = report.get("not_completed") or []
+    lines.extend(f"- {item}" for item in not_completed) if not_completed else lines.append("- none")
+    lines.append("")
     if report.get("steps"):
         lines.extend(["## Steps", ""])
         for step in report.get("steps") or []:
@@ -795,6 +1198,8 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
     report.setdefault("prompt_scope", prompt_scope_summary(argparse.Namespace(prompt_text="CrowdTensor developer preview")))
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
+    report.setdefault("artifact_summary", artifact_summary(output_dir))
+    report = ensure_user_guidance(report, output_dir=output_dir)
     report = support_bundle.sanitize(redact_values(report, secret_values))
     encoded = json.dumps(report, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in encoded]
@@ -817,11 +1222,30 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
         output_dir,
         kind="public_swarm_developer_preview_markdown",
     )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
     write_json(json_path, report)
     markdown_path.write_text(render_markdown(report), encoding="utf-8")
     report["artifacts"]["public_swarm_developer_preview_json"]["present"] = True
     report["artifacts"]["public_swarm_developer_preview_markdown"]["present"] = True
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
     write_json(json_path, report)
+    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    support_path = output_dir / "support_bundle.json"
+    if support_path.is_file():
+        support_payload = load_json(support_path)
+        support_payload["artifact_summary"] = report.get("artifact_summary")
+        support_payload["review_summary"] = report.get("review_summary")
+        support_payload["user_status"] = report.get("user_status")
+        support_payload["recommended_next_command"] = report.get("recommended_next_command")
+        support_payload["next_commands"] = report.get("next_commands")
+        support_payload["not_completed"] = report.get("not_completed")
+        write_json(support_path, support_bundle.sanitize(redact_values(support_payload, secret_values)))
     return report
 
 
@@ -905,7 +1329,17 @@ def main() -> None:
         prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
         answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
         shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+        user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+        review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+        recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+        artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
         print(f"Public Swarm Developer Preview ready: {report.get('ok')}")
+        if user:
+            print(f"  status: {user.get('state')}: {user.get('headline')} next={user.get('next_step')} recommendation={user.get('recommended_label')} public_artifact_safe={bool(user.get('public_artifact_safe'))}")
+        if review:
+            print(f"  review: state={review.get('state')} next={review.get('next_step')} inspect={review.get('inspect_first')} recommended={review.get('recommended_label')} primary={review.get('primary_code')} attention={review.get('attention') or 'none'} public_artifact_safe={bool(review.get('public_artifact_safe'))}")
+        if recommended:
+            print(f"  recommended_next: {recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}")
         if output_request:
             print(f"  output_request: {output_request_text(output_request)}")
             print(f"  output_request_note: {output_request_note(output_request)}")
@@ -918,6 +1352,16 @@ def main() -> None:
             print(f"  answer_scope_note: {answer_scope_note(answer_scope)}")
         if shareable:
             print(f"  shareable: {shareable_summary_text(shareable)}")
+        for index, item in enumerate((report.get("next_commands") or []), start=1):
+            if isinstance(item, dict):
+                print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
+        if artifact_report:
+            print(
+                "  artifacts: "
+                f"present={artifact_report.get('present_artifact_count')}/{artifact_report.get('artifact_count')} "
+                f"support={artifact_report.get('support_bundle')} "
+                f"public_artifact_safe={bool(artifact_report.get('public_artifact_safe'))}"
+            )
         print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     raise SystemExit(0 if report.get("ok") else 1)
 

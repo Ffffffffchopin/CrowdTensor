@@ -171,6 +171,35 @@ def validate_payload(payload: dict[str, Any], *, mode: str, required_codes: set[
         errors.append("shareable_local_answer_terminal_only_mismatch")
     if shareable.get("public_artifact_safe") is not True:
         errors.append("shareable_public_artifact_safe_mismatch")
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    if not user_status.get("state") or not user_status.get("headline") or not user_status.get("next_step"):
+        errors.append("user_status_incomplete")
+    if user_status.get("public_artifact_safe") is not True:
+        errors.append("user_status_public_artifact_safe_mismatch")
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    if not review.get("state") or not review.get("next_step") or not review.get("inspect_first"):
+        errors.append("review_summary_incomplete")
+    if review.get("public_artifact_safe") is not True:
+        errors.append("review_summary_public_artifact_safe_mismatch")
+    recommended = payload.get("recommended_next_command") if isinstance(payload.get("recommended_next_command"), dict) else {}
+    if not recommended.get("label") or not recommended.get("command_line"):
+        errors.append("recommended_next_command_missing")
+    if recommended.get("public_artifact_safe") is not True:
+        errors.append("recommended_next_command_public_artifact_safe_mismatch")
+    next_items = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    if not next_items:
+        errors.append("next_commands_missing")
+    for item in next_items:
+        if not isinstance(item, dict) or not item.get("label") or not item.get("command_line"):
+            errors.append("next_command_incomplete")
+            continue
+        if item.get("public_artifact_safe") is not True:
+            errors.append("next_command_public_artifact_safe_mismatch")
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    if not artifact_summary.get("inspect_first") or not artifact_summary.get("summary_json") or not artifact_summary.get("support_bundle"):
+        errors.append("artifact_summary_incomplete")
+    if artifact_summary.get("public_artifact_safe") is not True:
+        errors.append("artifact_summary_public_artifact_safe_mismatch")
     artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
     for name in ["public_swarm_developer_preview_json", "support_bundle_json", "public_swarm_product_beta_json"]:
         artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}

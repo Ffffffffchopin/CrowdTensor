@@ -54,7 +54,18 @@ class PublicSwarmDeveloperPreviewPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertIn("public_swarm_developer_preview.md", report["review_summary"]["inspect_first"])
+        self.assertEqual(report["recommended_next_command"]["reason"], "review_artifacts")
+        self.assertTrue(report["next_commands"])
+        self.assertEqual(report["artifact_summary"]["present_artifact_count"], 4)
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
         markdown = (Path(result["output_dir"]) / "preview" / "public_swarm_developer_preview.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("- state: `ready`", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("inspect shareable summary", markdown)
         self.assertIn("## Output Scope", markdown)
         self.assertIn("- output request note:", markdown)
         self.assertIn("local answer", markdown)
@@ -73,10 +84,15 @@ class PublicSwarmDeveloperPreviewPackTests(unittest.TestCase):
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("- public artifact safe: `True`", markdown)
         support = json.loads((Path(result["output_dir"]) / "preview" / "support_bundle.json").read_text(encoding="utf-8"))
         self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(support["review_summary"]["state"], "ready")
+        self.assertTrue(support["next_commands"])
+        self.assertEqual(support["artifact_summary"]["present_artifact_count"], 4)
 
     def test_check_builds_ready_kaggle_package_preview(self) -> None:
         result = check.run_check(check.parse_args([
@@ -144,6 +160,9 @@ class PublicSwarmDeveloperPreviewPackTests(unittest.TestCase):
         self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertIn("recommended_next_command", report)
+        self.assertIn("review_summary", report)
+        self.assertIn("artifact_summary", report)
 
 
 if __name__ == "__main__":

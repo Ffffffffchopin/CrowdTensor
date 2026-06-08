@@ -13894,6 +13894,9 @@ def print_public_swarm_inference_v2(report: dict[str, Any]) -> None:
 
 def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
     preview = report.get("developer_preview") if isinstance(report.get("developer_preview"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -13904,6 +13907,18 @@ def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {preview.get('ready')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -13912,6 +13927,18 @@ def print_public_swarm_developer_preview(report: dict[str, Any]) -> None:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary.get('present_artifact_count')}/{artifact_summary.get('artifact_count')} "
+            f"support={artifact_summary.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
+        )
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -15524,6 +15551,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     preview = subparsers.add_parser(
         "preview",
         help="Build the Public Swarm Developer Preview artifact.",
+        description=(
+            "Build the Public Swarm Developer Preview artifact over the current product surface. "
+            "local runs a localhost Product Beta serve/join/generate proof; package writes join material and runbook artifacts "
+            "without proving live readiness; external-existing verifies an already running controlled Coordinator plus stage Miners; "
+            "evidence-import aggregates retained Product Beta and optional GPU generation evidence."
+        ),
+        epilog=(
+            "Artifacts are shareable preview evidence, not answer transcripts: raw prompts, generated text, token ids, "
+            "activations, credentials, leases, and idempotency material stay out of JSON/Markdown/support bundles. "
+            "Use crowdtensor generate in human mode to see a local answer. Boundary: Coordinator-backed, read-only, "
+            "not production Swarm Inference, not libp2p/DHT/NAT traversal, not GPU pooling marketplace, and not large-model serving."
+        ),
     )
     preview.add_argument("preview_mode", choices=["local", "package", "external-existing", "evidence-import"])
     preview.add_argument("--output-dir", default="dist/public-swarm-developer-preview")

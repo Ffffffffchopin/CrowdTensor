@@ -8333,6 +8333,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("evidence-import validates retained usable, real-P2P, preview, and optional GPU evidence", normalized)
         self.assertIn("Artifacts are shareable readiness evidence, not answer transcripts", normalized)
 
+    def test_preview_help_explains_modes_and_output_scope(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(["preview", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        normalized = " ".join(rendered.split())
+        self.assertIn("local runs a localhost Product Beta serve/join/generate proof", normalized)
+        self.assertIn("package writes join material and runbook artifacts without proving live readiness", normalized)
+        self.assertIn("external-existing verifies an already running controlled Coordinator plus stage Miners", normalized)
+        self.assertIn("evidence-import aggregates retained Product Beta and optional GPU generation evidence", normalized)
+        self.assertIn("Artifacts are shareable preview evidence, not answer transcripts", normalized)
+
     def test_usable_swarm_prints_output_scope(self) -> None:
         report = {
             "schema": "usable_swarm_inference_v1",
@@ -16102,6 +16117,33 @@ class CrowdTensorCliTests(unittest.TestCase):
             "mode": "local",
             "output_dir": "dist/preview",
             "developer_preview": {"ready": True},
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Swarm Developer Preview evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Developer Preview evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/preview/public_swarm_developer_preview.md",
+                "recommended_label": "inspect Developer Preview evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/preview/public_swarm_developer_preview.md",
+                "primary_code": "public_swarm_developer_preview_ready",
+                "attention": "none",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Developer Preview evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p dist/preview/public_swarm_developer_preview.md",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_generated_text_public": False,
@@ -16124,6 +16166,25 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "local_output_display_only": False,
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p dist/preview/public_swarm_developer_preview.md",
+                    "public_artifact_safe": True,
+                },
+                {
+                    "label": "run local Developer Preview proof",
+                    "command_line": "crowdtensor preview local --output-dir dist/preview --max-new-tokens 2 --prompt-text '<prompt>'",
+                    "public_artifact_safe": True,
+                },
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/preview/public_swarm_developer_preview.md",
+                "support_bundle": "dist/preview/support_bundle.json",
+                "present_artifact_count": 4,
+                "artifact_count": 4,
+                "public_artifact_safe": True,
             },
             "diagnosis_codes": ["public_swarm_developer_preview_ready"],
             "artifacts": {},
@@ -16150,6 +16211,18 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             output,
         )
+        self.assertIn(
+            "  status: ready: Public Swarm Developer Preview evidence is ready. next=review_artifacts recommendation=inspect Developer Preview evidence public_artifact_safe=True",
+            output,
+        )
+        self.assertIn(
+            "  review: state=ready next=review_artifacts inspect=dist/preview/public_swarm_developer_preview.md recommended=inspect Developer Preview evidence primary=public_swarm_developer_preview_ready attention=none public_artifact_safe=True",
+            output,
+        )
+        self.assertIn("  recommended_next: inspect Developer Preview evidence reason=review_artifacts sed -n 1,220p dist/preview/public_swarm_developer_preview.md", output)
+        self.assertIn("  next[1] inspect shareable summary: sed -n 1,220p dist/preview/public_swarm_developer_preview.md", output)
+        self.assertIn("  next[2] run local Developer Preview proof: crowdtensor preview local --output-dir dist/preview --max-new-tokens 2 --prompt-text '<prompt>'", output)
+        self.assertIn("  artifacts: present=4/4 support=dist/preview/support_bundle.json public_artifact_safe=True", output)
 
     def test_live_preview_wraps_rc_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
