@@ -1248,13 +1248,19 @@ def count_pair_text(observed: Any, expected: Any, *, empty: str = "not-run") -> 
 
 
 def infer_result_text(result: dict[str, Any]) -> str:
+    display = str(result.get("display") or "none")
+    safety = (
+        "terminal_private=True saved_public_artifact_safe=True"
+        if display == "local-private"
+        else f"public_artifact_safe={bool(result.get('public_artifact_safe', True))}"
+    )
     return (
         f"status={result.get('status') or 'not-run'} "
         f"tokens={count_pair_text(result.get('generated_token_count'), result.get('max_new_tokens'))} "
         f"outputs={result.get('output_count') if result.get('output_count') is not None else 0} "
-        f"display={result.get('display') or 'none'} "
+        f"display={display} "
         f"hash={result.get('generated_text_hash') or 'none'} "
-        f"public_artifact_safe={bool(result.get('public_artifact_safe', True))}"
+        f"{safety}"
     )
 
 

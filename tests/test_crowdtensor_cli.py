@@ -55,6 +55,22 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         self.assertNotIn("must not leak", cli.wait_progress_text(with_error))
 
+    def test_infer_result_text_distinguishes_terminal_private_from_saved_artifacts(self) -> None:
+        rendered = cli.infer_result_text({
+            "status": "complete",
+            "generated_token_count": 2,
+            "max_new_tokens": 2,
+            "output_count": 1,
+            "display": "local-private",
+            "generated_text_hash": "sha256:answer",
+            "public_artifact_safe": False,
+        })
+
+        self.assertIn("display=local-private", rendered)
+        self.assertIn("terminal_private=True", rendered)
+        self.assertIn("saved_public_artifact_safe=True", rendered)
+        self.assertNotIn("public_artifact_safe=False", rendered)
+
     def test_stream_progress_lines_renders_single_and_batch_progress(self) -> None:
         single = {
             "observed_token_counts": [1, 2],
@@ -9002,7 +9018,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  prompt: count=1 hash=", stdout.getvalue())
         self.assertIn("raw_public=False", stdout.getvalue())
         self.assertIn(
-            "  result: status=complete tokens=16/16 outputs=1 display=local-private hash=sha256:generated public_artifact_safe=False",
+            "  result: status=complete tokens=16/16 outputs=1 display=local-private hash=sha256:generated terminal_private=True saved_public_artifact_safe=True",
             stdout.getvalue(),
         )
         self.assertIn(
