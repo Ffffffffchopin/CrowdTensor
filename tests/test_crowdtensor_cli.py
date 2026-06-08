@@ -11483,6 +11483,51 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Only 0/2 batch results appeared", markdown)
         self.assertEqual(markdown.count("- Action: Only 0/2 batch results appeared"), 1)
 
+    def test_infer_markdown_hides_missing_stream_progress_when_stream_disabled(self) -> None:
+        markdown = cli.render_infer_summary_markdown({
+            "ok": True,
+            "mode": "local",
+            "diagnosis_codes": ["crowdtensor_infer_ready"],
+            "generation": {"generated_token_count": 2, "max_new_tokens": 2},
+            "prompt": {"prompt_count": 1, "prompt_hash": "sha256:p", "raw_prompt_public": False},
+            "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+            "result": {"status": "complete", "generated_token_count": 2, "max_new_tokens": 2, "output_count": 1},
+            "stream": {
+                "enabled": False,
+                "requested": False,
+                "event_count": 0,
+                "source": "disabled",
+                "progress": {
+                    "expected_request_count": 1,
+                    "target_token_count": 2,
+                    "per_request_progress": [],
+                    "stream_progress_complete": False,
+                },
+            },
+            "trace": {
+                "session_id": "session",
+                "request_count": 1,
+                "accepted_rows_seen": 4,
+                "stream_event_count": 0,
+                "source": "product_swarm_mvp_check_v1",
+                "public_artifact_safe": True,
+                "request_trace": [
+                    {
+                        "request_id": "req-1",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:g",
+                        "source": "generation-results",
+                    }
+                ],
+            },
+        })
+
+        self.assertIn("- Stream: enabled=`False`", markdown)
+        self.assertIn("- Trace request[1]: request=req-1 tokens=2/2 hash=sha256:g source=generation-results", markdown)
+        self.assertNotIn("- Stream progress: request=missing", markdown)
+        self.assertNotIn("- Stream request[1]: request=missing", markdown)
+
     def test_infer_existing_batch_stream_progress_is_human_readable_and_safe(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([

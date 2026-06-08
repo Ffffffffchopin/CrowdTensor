@@ -6961,12 +6961,19 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Step: `{step_status_text(step)}`")
     for line in infer_trace_request_lines(trace, prefix="- Trace request"):
         lines.append(line)
-    for line in stream_progress_lines(
-        stream.get("progress") if isinstance(stream.get("progress"), dict) else {},
-        prefix="- Stream request",
-        single_prefix="- Stream progress",
-    ):
-        lines.append(line)
+    show_stream_progress = bool(
+        stream.get("enabled")
+        or stream.get("requested")
+        or stream.get("event_count")
+        or stream.get("issue_summary")
+    )
+    if show_stream_progress:
+        for line in stream_progress_lines(
+            stream.get("progress") if isinstance(stream.get("progress"), dict) else {},
+            prefix="- Stream request",
+            single_prefix="- Stream progress",
+        ):
+            lines.append(line)
     if local_output:
         lines.append(
             "- Local output: "
