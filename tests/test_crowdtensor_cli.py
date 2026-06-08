@@ -101,6 +101,34 @@ class CrowdTensorCliTests(unittest.TestCase):
             "missing_requests=1/3 request[2]=req-2:1/2 request[3]=missing",
         )
         self.assertEqual(
+            cli.infer_trace_request_lines(
+                {
+                    "request_trace": [
+                        {
+                            "request_id": "req-1",
+                            "prompt_hash": "sha256:p1",
+                            "generated_token_count": 2,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": "sha256:g1",
+                            "source": "generation-results",
+                        },
+                        {
+                            "request_id": "",
+                            "prompt_hash": "sha256:abcdef1234567890zz",
+                            "generated_token_count": 1,
+                            "max_new_tokens": 2,
+                            "generated_text_hash": None,
+                            "source": "stream-progress",
+                        },
+                    ]
+                }
+            ),
+            [
+                "  trace_request[1]: request=req-1 tokens=2/2 hash=sha256:g1 source=generation-results",
+                "  trace_request[2]: request=sha256:abcdef1234567890z tokens=1/2 hash=none source=stream-progress",
+            ],
+        )
+        self.assertEqual(
             cli.stream_request_label({"prompt_hash": "sha256:abcdef1234567890zz"}),
             "sha256:abcdef1234567890z",
         )
@@ -9660,6 +9688,22 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "decoded_tokens_match": True,
                 "request_count": 2,
                 "batch_generation_ready": True,
+                "results": [
+                    {
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:g1",
+                    },
+                    {
+                        "request_id": "req-2",
+                        "prompt_hash": "sha256:p2",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:g2",
+                    },
+                ],
             },
             "batch": {"enabled": True, "request_count": 2, "batch_generation_ready": True},
             "wait_progress": {
@@ -9697,6 +9741,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("  batch: requests=2 observed=2 ready=True", rendered)
         self.assertIn("  wait: polls=2 accepted_rows=1 tokens=2/2 requests=2/2 batch_ready=True ledger=True stream=False", rendered)
+        self.assertIn(
+            "  trace_request[1]: request=req-1 tokens=2/2 hash=sha256:g1 source=generation-results",
+            rendered,
+        )
+        self.assertIn(
+            "  trace_request[2]: request=req-2 tokens=2/2 hash=sha256:g2 source=generation-results",
+            rendered,
+        )
         self.assertNotIn("  answer:  first output", rendered)
         self.assertIn("  answer[1]:  first output", rendered)
         self.assertIn("  answer[2]:  second output", rendered)
@@ -9709,14 +9761,29 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual([row["generated_text"] for row in persisted["local_output"]["outputs"]], ["", ""])
         self.assertEqual(persisted["trace"]["request_count"], 2)
         self.assertEqual(
-            [(row["request_id"], row["prompt_hash"]) for row in persisted["trace"]["request_trace"]],
-            [("req-1", "sha256:p1"), ("req-2", "sha256:p2")],
+            [
+                (row["request_id"], row["prompt_hash"], row["generated_text_hash"], row["source"])
+                for row in persisted["trace"]["request_trace"]
+            ],
+            [
+                ("req-1", "sha256:p1", "sha256:g1", "generation-results"),
+                ("req-2", "sha256:p2", "sha256:g2", "generation-results"),
+            ],
         )
         self.assertTrue(persisted["trace"]["public_artifact_safe"])
         self.assertFalse(persisted["local_output"]["available"])
         self.assertFalse(persisted["local_output"]["display_only"])
         self.assertNotIn("first output", json.dumps(persisted, sort_keys=True))
         self.assertNotIn("second output", json.dumps(persisted, sort_keys=True))
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- Trace request[1]: request=req-1 tokens=2/2 hash=sha256:g1 source=generation-results",
+            markdown,
+        )
+        self.assertIn(
+            "- Trace request[2]: request=req-2 tokens=2/2 hash=sha256:g2 source=generation-results",
+            markdown,
+        )
 
     def test_infer_existing_does_not_infer_batch_observed_without_batch_ready(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -10139,6 +10206,38 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True saved_json=hash-only saved_markdown=hash-only public_artifact_safe=True",
             rendered,
         )
+
+    def test_infer_trace_keeps_generation_hash_source_when_local_output_lacks_hash(self) -> None:
+        trace = cli._infer_request_trace_from_payload(
+            {},
+            generation={
+                "results": [
+                    {
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 2,
+                        "max_new_tokens": 2,
+                        "generated_text_hash": "sha256:g1",
+                    }
+                ]
+            },
+            stream_events=[],
+            stream_progress={},
+            local_output={
+                "outputs": [
+                    {
+                        "request_id": "req-1",
+                        "prompt_hash": "sha256:p1",
+                        "generated_token_count": 2,
+                        "generated_text": "local only",
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(len(trace), 1)
+        self.assertEqual(trace[0]["source"], "generation-results")
+        self.assertEqual(trace[0]["generated_text_hash"], "sha256:g1")
 
     def test_print_generate_no_local_answer_shows_answer_scope(self) -> None:
         report = {

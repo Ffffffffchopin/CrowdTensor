@@ -1263,6 +1263,22 @@ def infer_trace_text(trace: dict[str, Any]) -> str:
     )
 
 
+def infer_trace_request_lines(trace: dict[str, Any], *, prefix: str = "  trace_request") -> list[str]:
+    rows = trace.get("request_trace") if isinstance(trace.get("request_trace"), list) else []
+    lines: list[str] = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"{prefix}[{index}]: "
+            f"request={stream_request_label(row)} "
+            f"tokens={count_pair_text(row.get('generated_token_count'), row.get('max_new_tokens'))} "
+            f"hash={row.get('generated_text_hash') or 'none'} "
+            f"source={row.get('source') or 'unknown'}"
+        )
+    return lines
+
+
 def shareable_summary_text(summary: dict[str, Any]) -> str:
     raw_generation_public = summary.get("raw_generated_text_public")
     if raw_generation_public is None:
@@ -4862,17 +4878,28 @@ def _infer_request_trace_from_payload(
         if current is not None:
             if next_token_value is None and next_max_tokens is None and not next_hash:
                 return
+            if next_max_tokens is not None and current.get("max_new_tokens") is None:
+                current["max_new_tokens"] = next_max_tokens
             current_tokens = _safe_int(current.get("generated_token_count"))
             next_tokens = _safe_int(next_token_value)
-            if next_tokens >= current_tokens:
+            if next_hash and (next_token_value is None or next_tokens >= current_tokens):
+                current["source"] = source
+                if next_token_value is not None:
+                    current["generated_token_count"] = next_token_value
+                if next_max_tokens is not None:
+                    current["max_new_tokens"] = next_max_tokens
+                current["generated_text_hash"] = next_hash
+            elif next_token_value is not None and next_tokens > current_tokens:
                 current["source"] = source
                 current["generated_token_count"] = next_token_value
                 if next_max_tokens is not None:
                     current["max_new_tokens"] = next_max_tokens
-                if next_hash:
-                    current["generated_text_hash"] = next_hash
-                elif next_tokens > current_tokens:
-                    current["generated_text_hash"] = None
+                current["generated_text_hash"] = None
+            elif next_token_value is not None and next_tokens == current_tokens and not current.get("generated_text_hash"):
+                current["source"] = source
+                current["generated_token_count"] = next_token_value
+                if next_max_tokens is not None:
+                    current["max_new_tokens"] = next_max_tokens
             return
         row = {
             "source": source,
@@ -6336,6 +6363,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Wait: `{wait_progress_text(wait_progress)}`")
     if step:
         lines.append(f"- Step: `{step_status_text(step)}`")
+    for line in infer_trace_request_lines(trace, prefix="- Trace request"):
+        lines.append(line)
     if local_output:
         lines.append(
             "- Local output: "
@@ -11148,6 +11177,8 @@ def print_infer(report: dict[str, Any]) -> None:
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
+        for line in infer_trace_request_lines(trace):
+            print(line)
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
