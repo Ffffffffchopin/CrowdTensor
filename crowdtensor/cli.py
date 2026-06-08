@@ -1332,7 +1332,7 @@ def issue_summary_text(summary: dict[str, Any]) -> str:
         f"state={summary.get('state') or 'unknown'} "
         f"primary={summary.get('primary_code') or 'none'} "
         f"next={summary.get('next_step') or 'none'} "
-        f"progress=`{summary.get('progress') or 'none'}` "
+        f"progress={summary.get('progress') or 'none'} "
         f"safe_detail={bool(summary.get('safe_detail_present'))}"
     )
 

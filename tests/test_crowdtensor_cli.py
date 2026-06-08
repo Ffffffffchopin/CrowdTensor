@@ -4197,7 +4197,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Issue: `state=completed primary=public_swarm_generate_ready next=rerun_or_review_artifacts progress=`",
+            "- Issue: `state=completed primary=public_swarm_generate_ready next=rerun_or_review_artifacts progress=",
             markdown,
         )
         self.assertIn(
@@ -4260,7 +4260,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn(
-            "  issue: state=completed primary=public_swarm_generate_ready next=rerun_or_review_artifacts progress=`polls=",
+            "  issue: state=completed primary=public_swarm_generate_ready next=rerun_or_review_artifacts progress=polls=",
             rendered,
         )
         self.assertIn(
@@ -4671,7 +4671,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_product_generate(report)
         rendered = stdout.getvalue()
         self.assertIn(
-            "  issue: state=blocked primary=generation_timeout next=fix_blockers progress=`polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=False last_error=HTTPError` safe_detail=True",
+            "  issue: state=blocked primary=generation_timeout next=fix_blockers progress=polls=1 accepted_rows=1 tokens=1/4 ledger=True stream=False last_error=HTTPError safe_detail=True",
             rendered,
         )
         self.assertIn("  stream_events: 1 source=admin-results-ledger-fallback complete=False", rendered)
@@ -9074,7 +9074,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stdout.getvalue(),
         )
         self.assertIn(
-            "  issue: state=completed primary=crowdtensor_infer_ready next=rerun_or_review_artifacts progress=`polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False` safe_detail=False",
+            "  issue: state=completed primary=crowdtensor_infer_ready next=rerun_or_review_artifacts progress=polls=2 accepted_rows=1 tokens=16/16 ledger=True stream=False safe_detail=False",
             stdout.getvalue(),
         )
         self.assertIn(
@@ -9290,7 +9290,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn(
-            "- Issue: `state=completed primary=crowdtensor_infer_ready next=rerun_or_review_artifacts progress=`",
+            "- Issue: `state=completed primary=crowdtensor_infer_ready next=rerun_or_review_artifacts progress=",
             markdown,
         )
         self.assertIn("- Model: `sshleifer/tiny-gpt2` backend=`cpu`", markdown)
