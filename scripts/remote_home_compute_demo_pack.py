@@ -258,6 +258,21 @@ def redact_values(value: Any, secret_values: list[str] | None = None) -> Any:
     return value
 
 
+def sensitive_values_for_args(args: argparse.Namespace, *extra_values: str) -> list[str]:
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    values = [
+        str(getattr(args, "observer_token", "") or ""),
+        str(getattr(args, "admin_token", "") or ""),
+        str(getattr(args, "miner_token", "") or ""),
+        str(getattr(args, "llm_runtime_url", "") or ""),
+        str(getattr(args, "llm_runtime_api_key", "") or ""),
+        prompt_texts,
+    ]
+    values.extend(item.strip() for item in prompt_texts.split(",") if item.strip())
+    values.extend(str(value or "") for value in extra_values)
+    return [value for value in values if value]
+
+
 def run_json_step(
     name: str,
     command: list[str],
@@ -977,7 +992,7 @@ def remote_demo_doctor_summary(args: argparse.Namespace, output_dir: Path) -> di
             "Preflight and connectivity diagnosis only; does not start production services",
             "Controlled two-machine CPU demo; not P2P routing, GPU pooling, or public prompt serving",
         ],
-    }, [args.observer_token, args.admin_token]))
+    }, sensitive_values_for_args(args)))
     return report
 
 
@@ -1002,6 +1017,626 @@ def load_json(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def command_line(command: list[Any] | str) -> str:
+    if isinstance(command, str):
+        return command
+    return " ".join(str(part) for part in command)
+
+
+def command_entry(
+    label: str,
+    command: list[Any] | str,
+    *,
+    reason: str,
+    side_effectful: bool = False,
+    public_artifact_safe: bool = True,
+) -> dict[str, Any]:
+    return {
+        "label": label,
+        "command_line": command_line(command),
+        "reason": reason,
+        "side_effectful": side_effectful,
+        "public_artifact_safe": public_artifact_safe,
+    }
+
+
+def report_slug_for_schema(schema: str) -> str:
+    mapping = {
+        SCHEMA: "remote_home_compute_demo",
+        COLLECT_SCHEMA: "remote_home_compute_collect",
+        "remote_sharded_inference_beta_v1": "remote_sharded_inference_beta",
+        "remote_micro_llm_sharded_beta_v1": "remote_micro_llm_sharded_beta",
+        "remote_real_llm_sharded_beta_v1": "remote_real_llm_sharded_beta",
+    }
+    return mapping.get(schema, "remote_home_compute_demo")
+
+
+def report_title_for_schema(schema: str) -> str:
+    mapping = {
+        SCHEMA: "remote home-compute demo",
+        COLLECT_SCHEMA: "remote demo collection",
+        "remote_sharded_inference_beta_v1": "remote sharded inference Beta collection",
+        "remote_micro_llm_sharded_beta_v1": "remote micro-LLM sharded Beta collection",
+        "remote_real_llm_sharded_beta_v1": "remote real tiny-LLM sharded Beta collection",
+    }
+    return mapping.get(schema, "remote home-compute demo")
+
+
+def sharded_beta_slug(workload_kind: str) -> str:
+    if workload_kind == REAL_LLM_SHARDED_KIND:
+        return "remote_real_llm_sharded_beta"
+    if workload_kind == MICRO_LLM_SHARDED_KIND:
+        return "remote_micro_llm_sharded_beta"
+    return "remote_sharded_inference_beta"
+
+
+def load_child_beta_report(output_dir: Path, workload_kind: str) -> dict[str, Any]:
+    if workload_kind not in {SHARDED_KIND, MICRO_LLM_SHARDED_KIND, REAL_LLM_SHARDED_KIND}:
+        return {}
+    return load_json(output_dir / f"{sharded_beta_slug(workload_kind)}.json")
+
+
+def safe_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def safe_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def guidance_output_paths(report: dict[str, Any], output_dir: Path) -> dict[str, Path]:
+    slug = report_slug_for_schema(str(report.get("schema") or ""))
+    return {
+        "summary_json": output_dir / f"{slug}.json",
+        "summary_markdown": output_dir / f"{slug}.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+
+
+def guidance_artifact_summary(
+    report: dict[str, Any],
+    output_dir: Path,
+    *,
+    child_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    paths = guidance_output_paths(report, output_dir)
+    child = safe_dict(child_report)
+    child_artifacts = safe_dict(child.get("artifact_summary"))
+    shareable_paths = [
+        str(paths["summary_markdown"]),
+        str(paths["summary_json"]),
+        str(paths["support_bundle"]),
+    ]
+    child_inspect = child_artifacts.get("inspect_first") or safe_dict(child.get("review_summary")).get("inspect_first")
+    child_support = child_artifacts.get("support_bundle") or safe_dict(child.get("review_summary")).get("support_bundle")
+    if child_inspect:
+        shareable_paths.append(str(child_inspect))
+    if child_support:
+        shareable_paths.append(str(child_support))
+    present_paths = [Path(path) for path in shareable_paths if path]
+    artifact_map = safe_dict(report.get("artifacts"))
+    present_artifact_count = sum(1 for path in present_paths if path.is_file())
+    if artifact_map:
+        present_artifact_count = max(
+            present_artifact_count,
+            sum(1 for artifact in artifact_map.values() if isinstance(artifact, dict) and artifact.get("present") is True),
+        )
+    summary = (
+        "Open inspect_first first, then the child detailed evidence and support bundle when present. "
+        "Shareable artifacts contain readiness, routing, hashes, redaction status, and diagnostics only."
+    )
+    return {
+        "schema": f"{report_slug_for_schema(str(report.get('schema') or ''))}_artifact_summary_v1",
+        "inspect_first": str(paths["summary_markdown"]),
+        "summary_json": str(paths["summary_json"]),
+        "summary_markdown": str(paths["summary_markdown"]),
+        "support_bundle": str(paths["support_bundle"]),
+        "child_inspect_first": str(child_inspect or ""),
+        "child_support_bundle": str(child_support or ""),
+        "shareable_paths": shareable_paths,
+        "artifact_count": len(shareable_paths),
+        "present_artifact_count": present_artifact_count,
+        "raw_prompt_public": False,
+        "raw_result_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": summary,
+    }
+
+
+def guidance_output_request_summary(report: dict[str, Any], *, child_report: dict[str, Any] | None = None) -> dict[str, Any]:
+    child_output = safe_dict(safe_dict(child_report).get("output_request"))
+    if child_output:
+        inherited = dict(child_output)
+        inherited["inherited_from_child_report"] = safe_dict(child_report).get("schema")
+        inherited.setdefault("include_output", False)
+        inherited.setdefault("public_artifact_safe", True)
+        return inherited
+    workload = str(report.get("workload_kind") or safe_dict(report.get("demo")).get("workload_kind") or "")
+    if workload == EXTERNAL_LLM_KIND:
+        summary = (
+            "Remote-demo external LLM evidence records fixed-prompt counts, adapter kind, throughput, "
+            "and redaction status only; raw prompts and completions are excluded."
+        )
+    elif workload in {SHARDED_KIND, MICRO_LLM_SHARDED_KIND, REAL_LLM_SHARDED_KIND} or str(report.get("schema") or "").endswith("_beta_v1"):
+        summary = (
+            "Remote-demo sharded evidence records stage routing, activation/generation validation summaries, "
+            "hashes, and diagnostics only; raw prompts, raw outputs, token ids, and tensors are excluded."
+        )
+    else:
+        summary = (
+            "Remote-demo model-bundle evidence records fixed-scenario validation summaries only; raw request "
+            "payloads and outputs are excluded."
+        )
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_result_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": summary,
+    }
+
+
+def guidance_prompt_scope_summary(report: dict[str, Any], *, child_report: dict[str, Any] | None = None) -> dict[str, Any]:
+    child_prompt = safe_dict(safe_dict(child_report).get("prompt_scope"))
+    if child_prompt:
+        inherited = dict(child_prompt)
+        inherited["inherited_from_child_report"] = safe_dict(child_report).get("schema")
+        inherited.setdefault("raw_prompt_public", False)
+        inherited.setdefault("public_artifact_safe", True)
+        return inherited
+    session = safe_dict(report.get("session_request"))
+    demo = safe_dict(report.get("demo"))
+    try:
+        prompt_count = int(session.get("request_count") or report.get("request_count") or demo.get("request_count") or 0)
+    except (TypeError, ValueError):
+        prompt_count = 0
+    workload = str(report.get("workload_kind") or demo.get("workload_kind") or "")
+    source = "fixed-model-bundle-scenario"
+    if workload == EXTERNAL_LLM_KIND:
+        source = "fixed-operator-owned-external-llm-scenario"
+    elif workload == MICRO_LLM_SHARDED_KIND or report.get("schema") == "remote_micro_llm_sharded_beta_v1":
+        source = "fixed-micro-llm-prompt-scenario"
+    elif workload == REAL_LLM_SHARDED_KIND or report.get("schema") == "remote_real_llm_sharded_beta_v1":
+        source = "operator-provided-or-default-tiny-hf-prompts"
+    elif workload == SHARDED_KIND or report.get("schema") == "remote_sharded_inference_beta_v1":
+        source = "fixed-sharded-model-bundle-scenario"
+    return {
+        "source": source,
+        "prompt_count": prompt_count,
+        "scenario_id": demo.get("scenario_id") or report.get("scenario_id"),
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": "Public artifacts identify prompt source, scenario, and counts only; raw prompt text is not included.",
+    }
+
+
+def guidance_prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"scenario_id={prompt_scope.get('scenario_id') or 'none'} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
+def guidance_answer_scope_summary(report: dict[str, Any], *, child_report: dict[str, Any] | None = None) -> dict[str, Any]:
+    child_answer = safe_dict(safe_dict(child_report).get("answer_scope"))
+    if child_answer:
+        inherited = dict(child_answer)
+        inherited["inherited_from_child_report"] = safe_dict(child_report).get("schema")
+        inherited.setdefault("public_artifact_safe", True)
+        return inherited
+    return {
+        "scope_state": "evidence-only",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "validation-summary-only",
+        "saved_markdown_display": "validation-summary-only",
+        "json_stdout_display": "validation-summary-only",
+        "raw_result_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": "The report proves routing and validation; it does not save or print raw model outputs.",
+    }
+
+
+def guidance_shareable_summary(
+    report: dict[str, Any],
+    output_dir: Path,
+    *,
+    child_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    child_shareable = safe_dict(safe_dict(child_report).get("shareable_summary"))
+    paths = guidance_output_paths(report, output_dir)
+    if child_shareable:
+        inherited = dict(child_shareable)
+        inherited["inherited_from_child_report"] = safe_dict(child_report).get("schema")
+        inherited.setdefault("public_artifact_safe", True)
+        inherited.setdefault("top_level_summary_json", str(paths["summary_json"]))
+        inherited.setdefault("top_level_summary_markdown", str(paths["summary_markdown"]))
+        return inherited
+    slug = report_slug_for_schema(str(report.get("schema") or ""))
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_result_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "evidence-only",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": f"Share {slug}.json, {slug}.md, and support_bundle.json; they contain readiness and diagnostics only.",
+    }
+
+
+def guidance_remote_demo_command(args: argparse.Namespace, output_dir: Path, action: str) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "remote-demo",
+        action,
+        "--workload",
+        getattr(args, "workload", MODEL_BUNDLE_KIND),
+        "--coordinator-url",
+        getattr(args, "coordinator_url", "") or "https://YOUR_COORDINATOR_HOST",
+        "--miner-id",
+        getattr(args, "miner_id", "") or "remote-linux-1",
+        "--output-dir",
+        str(output_dir),
+    ]
+    if action in {"verify", "collect", "doctor"}:
+        command.extend(["--observer-token", "<observer-token>", "--admin-token", "<admin-token>"])
+    if hasattr(args, "request_count") and action in {"prepare", "verify", "collect"}:
+        command.extend(["--request-count", getattr(args, "request_count")])
+    if hasattr(args, "scenario_id") and getattr(args, "workload", "") in {MODEL_BUNDLE_KIND, SHARDED_KIND}:
+        command.extend(["--scenario-id", getattr(args, "scenario_id")])
+    if hasattr(args, "decode_steps") and getattr(args, "workload", "") == MICRO_LLM_SHARDED_KIND:
+        command.extend(["--decode-steps", getattr(args, "decode_steps")])
+    if getattr(args, "stage_mode", "") and action in {"verify", "collect"} and getattr(args, "workload", "") in {SHARDED_KIND, MICRO_LLM_SHARDED_KIND, REAL_LLM_SHARDED_KIND}:
+        command.extend(["--stage-mode", getattr(args, "stage_mode")])
+    if getattr(args, "require_distinct_stage_miners", False) and action in {"verify", "collect"}:
+        command.append("--require-distinct-stage-miners")
+    if getattr(args, "micro_llm_artifact", "") and getattr(args, "workload", "") == MICRO_LLM_SHARDED_KIND:
+        command.extend(["--micro-llm-artifact", getattr(args, "micro_llm_artifact")])
+    if getattr(args, "hf_model_id", "") and getattr(args, "workload", "") == REAL_LLM_SHARDED_KIND:
+        command.extend(["--hf-model-id", getattr(args, "hf_model_id")])
+    if getattr(args, "prompt_texts", "") and getattr(args, "workload", "") in {MICRO_LLM_SHARDED_KIND, REAL_LLM_SHARDED_KIND}:
+        command.extend(["--prompt-texts", "<redacted-prompts>"])
+    if getattr(args, "mock", False) and getattr(args, "workload", "") == EXTERNAL_LLM_KIND:
+        command.append("--mock")
+    if action == "verify":
+        command.append("--create-session")
+    if action == "collect" and getattr(args, "task_id", ""):
+        command.extend(["--task-id", getattr(args, "task_id")])
+    command.append("--json")
+    return command
+
+
+def guidance_not_completed(
+    report: dict[str, Any],
+    output_dir: Path,
+    *,
+    child_report: dict[str, Any] | None = None,
+) -> list[str]:
+    schema = str(report.get("schema") or "")
+    mode = str(report.get("mode") or "")
+    codes = set(str(code) for code in safe_list(report.get("diagnosis_codes")) if code)
+    artifacts = safe_dict(report.get("artifacts"))
+    child = safe_dict(child_report)
+    checks: list[tuple[str, bool]] = []
+    if schema == COLLECT_SCHEMA:
+        evidence = safe_dict(report.get("evidence_summary"))
+        support = safe_dict(report.get("support_bundle_summary"))
+        checks.extend([
+            ("remote demo collection ready", report.get("ok") is True and "remote_home_compute_collect_ready" in codes),
+            ("runtime evidence ready", evidence.get("ok") is True),
+            ("support bundle ready", support.get("ok") is True),
+        ])
+    elif schema.endswith("_beta_v1"):
+        checks.extend([
+            (f"{report_title_for_schema(schema)} ready", report.get("ok") is True),
+            ("runtime evidence ready", any(str(code).endswith("_existing_ready") or str(code).endswith("_ready") for code in codes)),
+            ("CPU-only/read-only boundary present", safe_dict(report.get("safety")).get("read_only_workload") is not None),
+            ("activation/raw output redaction boundary present", safe_dict(report.get("safety")).get("raw_activation_payloads_in_report") is False or safe_dict(report.get("safety")).get("activation_payloads_redacted") is True),
+        ])
+    elif mode == "prepare":
+        runbook = safe_dict(report.get("runbook_summary"))
+        checks.extend([
+            ("remote-demo package ready", report.get("ok") is True and any(code.endswith("_prepare_ready") for code in codes)),
+            ("runbook generated", runbook.get("ok") is True or runbook.get("schema") is not None),
+            ("miner join pack ready", runbook.get("miner_join_pack_ready") is True),
+            ("private env files kept local", safe_dict(report.get("safety")).get("summary_excludes_plaintext_tokens") is True),
+        ])
+    else:
+        acceptance = safe_dict(report.get("acceptance_summary"))
+        checks.extend([
+            ("remote-demo verification ready", report.get("ok") is True and "remote_home_compute_ready" in codes),
+            ("session created", acceptance.get("session_created") is True),
+            ("acceptance evidence ready", acceptance.get("evidence_ok") is True),
+            ("support bundle artifact present", (output_dir / "support_bundle.json").is_file() or safe_dict(artifacts.get("support_bundle_json")).get("present") is True),
+        ])
+        if safe_dict(report.get("demo")).get("workload_kind") in {SHARDED_KIND, MICRO_LLM_SHARDED_KIND, REAL_LLM_SHARDED_KIND}:
+            checks.append(("child sharded beta report present", bool(child)))
+    paths = guidance_output_paths(report, output_dir)
+    checks.extend([
+        ("summary JSON artifact present", paths["summary_json"].is_file() or safe_dict(artifacts.get(f"{report_slug_for_schema(schema)}_json")).get("present") is True),
+        ("summary Markdown artifact present", paths["summary_markdown"].is_file() or safe_dict(artifacts.get(f"{report_slug_for_schema(schema)}_markdown")).get("present") is True),
+        ("public artifact redaction boundary present", safe_dict(report.get("safety")).get("public_artifact_redacted") is True or safe_dict(report.get("safety")).get("redacted") is True),
+    ])
+    missing = [label for label, ready in checks if ready is not True]
+    for item in safe_list(child.get("not_completed")):
+        if item:
+            missing.append(f"child beta: {item}")
+    return missing
+
+
+def guidance_recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    output_dir: Path,
+    *,
+    missing: list[str],
+) -> dict[str, Any]:
+    schema = str(report.get("schema") or "")
+    paths = guidance_output_paths(report, output_dir)
+    if report.get("ok") is True and not missing:
+        if str(report.get("mode") or "") == "prepare":
+            return command_entry(
+                "run remote-demo verify",
+                guidance_remote_demo_command(args, output_dir, "verify"),
+                reason="verify_prepared_remote_demo",
+                side_effectful=True,
+            )
+        return command_entry(
+            f"inspect {report_title_for_schema(schema)} evidence",
+            ["sed", "-n", "1,220p", str(paths["summary_markdown"])],
+            reason="review_artifacts",
+        )
+    if schema == COLLECT_SCHEMA:
+        return command_entry(
+            "rerun remote-demo collect",
+            guidance_remote_demo_command(args, output_dir, "collect"),
+            reason="fix_collect_blockers",
+            side_effectful=True,
+        )
+    if schema.endswith("_beta_v1"):
+        return command_entry(
+            "rerun remote-demo collect",
+            guidance_remote_demo_command(args, output_dir, "collect"),
+            reason="fix_collected_beta_blockers",
+            side_effectful=True,
+        )
+    action = "prepare" if str(report.get("mode") or "") == "prepare" else "verify"
+    return command_entry(
+        f"rerun remote-demo {action}",
+        guidance_remote_demo_command(args, output_dir, action),
+        reason="fix_remote_demo_blockers",
+        side_effectful=True,
+    )
+
+
+def guidance_next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    output_dir: Path,
+    *,
+    recommended: dict[str, Any],
+    child_report: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    paths = guidance_output_paths(report, output_dir)
+    child = safe_dict(child_report)
+    child_artifacts = safe_dict(child.get("artifact_summary"))
+    child_inspect = child_artifacts.get("inspect_first") or safe_dict(child.get("review_summary")).get("inspect_first")
+    commands = [
+        command_entry("inspect top-level summary", ["sed", "-n", "1,220p", str(paths["summary_markdown"])], reason="review_artifacts"),
+        command_entry("inspect support bundle", ["sed", "-n", "1,220p", str(paths["support_bundle"])], reason="inspect_diagnostics"),
+    ]
+    if child_inspect:
+        commands.append(command_entry("inspect child beta evidence", ["sed", "-n", "1,220p", child_inspect], reason="review_child_beta"))
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    mode = str(report.get("mode") or "")
+    schema = str(report.get("schema") or "")
+    if schema == SCHEMA and mode == "verify":
+        collect = command_entry(
+            "collect support evidence later",
+            guidance_remote_demo_command(args, output_dir, "collect"),
+            reason="collect_existing_runtime_evidence",
+            side_effectful=True,
+        )
+        if all(item.get("command_line") != collect.get("command_line") for item in commands):
+            commands.append(collect)
+    if schema.endswith("_beta_v1") and mode == "remote-existing-collect":
+        refresh_collect = command_entry(
+            "refresh collected beta evidence",
+            guidance_remote_demo_command(args, output_dir, "collect"),
+            reason="refresh_collected_beta_evidence",
+            side_effectful=True,
+        )
+        if all(item.get("command_line") != refresh_collect.get("command_line") for item in commands):
+            commands.append(refresh_collect)
+    return commands
+
+
+def guidance_user_status(report: dict[str, Any], *, recommended: dict[str, Any], missing: list[str], child_report: dict[str, Any] | None = None) -> dict[str, Any]:
+    mode = str(report.get("mode") or "unknown")
+    child_status = safe_dict(safe_dict(child_report).get("user_status"))
+    ready = bool(report.get("ok") is True and not missing)
+    state = "ready" if ready else "blocked"
+    next_step = "review_artifacts" if ready else "fix_blockers"
+    if mode == "prepare" and ready:
+        next_step = "run_verify"
+    proof_level = child_status.get("proof_level")
+    if not proof_level:
+        if mode == "prepare":
+            proof_level = "prepare-package-only"
+        elif mode == "remote-existing-collect":
+            proof_level = "external-existing-runtime-collect"
+        elif str(report.get("schema") or "") == COLLECT_SCHEMA:
+            proof_level = "external-existing-runtime-collect"
+        else:
+            proof_level = "external-existing-runtime"
+    headline = f"{report_title_for_schema(str(report.get('schema') or ''))} evidence is ready." if ready else f"{report_title_for_schema(str(report.get('schema') or ''))} needs attention."
+    if mode == "prepare" and ready:
+        headline = "remote-demo package is ready; run verify against the prepared Coordinator and Miner."
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "mode": mode,
+        "proof_level": proof_level,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def guidance_review_summary(
+    report: dict[str, Any],
+    output_dir: Path,
+    *,
+    recommended: dict[str, Any],
+    missing: list[str],
+    child_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    artifacts = guidance_artifact_summary(report, output_dir, child_report=child_report)
+    ready = bool(report.get("ok") is True and not missing)
+    child_review = safe_dict(safe_dict(child_report).get("review_summary"))
+    return {
+        "schema": f"{report_slug_for_schema(str(report.get('schema') or ''))}_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "ready": ready,
+        "next_step": "review_artifacts" if ready else "fix_remote_demo_blockers",
+        "inspect_first": artifacts["inspect_first"],
+        "child_inspect_first": artifacts.get("child_inspect_first") or child_review.get("inspect_first") or "",
+        "support_bundle": artifacts["support_bundle"],
+        "recommended_next_command": recommended,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": (safe_list(report.get("diagnosis_codes")) or ["none"])[0],
+        "not_completed_count": len(missing),
+        "not_completed": list(missing),
+        "mode": report.get("mode"),
+        "proof_level": safe_dict(report.get("user_status")).get("proof_level"),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_result_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
+def attach_remote_demo_guidance(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    child_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    child = safe_dict(child_report)
+    if child_report is None:
+        child = load_child_beta_report(output_dir, str(getattr(args, "workload", "")))
+    report["output_request"] = guidance_output_request_summary(report, child_report=child)
+    report["prompt_scope"] = guidance_prompt_scope_summary(report, child_report=child)
+    report["answer_scope"] = guidance_answer_scope_summary(report, child_report=child)
+    report["shareable_summary"] = guidance_shareable_summary(report, output_dir, child_report=child)
+    report["artifact_summary"] = guidance_artifact_summary(report, output_dir, child_report=child)
+    missing = guidance_not_completed(report, output_dir, child_report=child)
+    report["not_completed"] = missing
+    recommended = guidance_recommended_next_command(report, args, output_dir, missing=missing)
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = guidance_next_commands(report, args, output_dir, recommended=recommended, child_report=child)
+    report["user_status"] = guidance_user_status(report, recommended=recommended, missing=missing, child_report=child)
+    report["review_summary"] = guidance_review_summary(
+        report,
+        output_dir,
+        recommended=recommended,
+        missing=missing,
+        child_report=child,
+    )
+    return report
+
+
+def append_guidance_markdown(lines: list[str], payload: dict[str, Any]) -> None:
+    review = safe_dict(payload.get("review_summary"))
+    user = safe_dict(payload.get("user_status"))
+    artifacts = safe_dict(payload.get("artifact_summary"))
+    recommended = safe_dict(payload.get("recommended_next_command"))
+    output_request = safe_dict(payload.get("output_request"))
+    prompt_scope = safe_dict(payload.get("prompt_scope"))
+    answer_scope = safe_dict(payload.get("answer_scope"))
+    shareable = safe_dict(payload.get("shareable_summary"))
+    lines.extend([
+        "",
+        "## Review",
+        "",
+        f"- Status: `{user.get('state')}` {user.get('headline') or ''}",
+        f"- Next step: `{review.get('next_step')}`",
+        f"- Proof level: `{user.get('proof_level')}`",
+        f"- Inspect first: `{review.get('inspect_first')}`",
+        f"- Child evidence: `{review.get('child_inspect_first') or 'none'}`",
+        f"- Support bundle: `{review.get('support_bundle')}`",
+        f"- Recommended next: `{recommended.get('command_line') or 'none'}`",
+        f"- Public artifact safe: `{review.get('public_artifact_safe')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ])
+    for item in safe_list(payload.get("next_commands")):
+        if isinstance(item, dict):
+            lines.append(f"- {item.get('label')}: `{item.get('command_line')}`")
+    if not payload.get("next_commands"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Artifact Summary",
+        "",
+        f"- Inspect first: `{artifacts.get('inspect_first')}`",
+        f"- Summary JSON: `{artifacts.get('summary_json')}`",
+        f"- Support bundle: `{artifacts.get('support_bundle')}`",
+        f"- Child evidence: `{artifacts.get('child_inspect_first') or 'none'}`",
+        f"- Present artifacts: `{artifacts.get('present_artifact_count')}/{artifacts.get('artifact_count')}`",
+        "",
+        "## Not Completed",
+        "",
+    ])
+    for item in safe_list(payload.get("not_completed")):
+        lines.append(f"- {item}")
+    if not payload.get("not_completed"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Output Scope",
+        "",
+        f"- Include output: `{output_request.get('include_output')}`",
+        f"- Prompt scope: `{guidance_prompt_scope_text(prompt_scope)}`",
+        f"- Prompt scope note: {prompt_scope.get('summary') or 'Public artifacts exclude raw prompt text.'}",
+        f"- Answer scope: `{answer_scope.get('scope_state')}`",
+        f"- Answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no raw result.'}",
+        f"- Saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- Saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- Shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
+    ])
 
 
 def operator_actions_for_diagnosis(codes: list[str]) -> list[str]:
@@ -1329,10 +1964,9 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Task ID: `{acceptance.get('task_id')}`",
         f"- Evidence OK: `{acceptance.get('evidence_ok')}`",
         f"- Diagnosis codes: `{', '.join(payload.get('diagnosis_codes') or [])}`",
-        "",
-        "## Artifacts",
-        "",
     ]
+    append_guidance_markdown(lines, payload)
+    lines.extend(["", "## Artifacts", ""])
     for name, artifact in sorted((payload.get("artifacts") or {}).items()):
         lines.append(f"- `{name}`: `{artifact.get('path')}` present=`{artifact.get('present')}`")
     lines.extend(["", "## Limitations", ""])
@@ -1408,10 +2042,9 @@ def render_collect_markdown(payload: dict[str, Any]) -> str:
         "",
         f"- Schema: `{support.get('schema')}`",
         f"- OK: `{support.get('ok')}`",
-        "",
-        "## Artifacts",
-        "",
     ]
+    append_guidance_markdown(lines, payload)
+    lines.extend(["", "## Artifacts", ""])
     for name, artifact in sorted((payload.get("artifacts") or {}).items()):
         lines.append(f"- `{name}`: `{artifact.get('path')}` present=`{artifact.get('present')}`")
     lines.extend(["", "## Limitations", ""])
@@ -1554,7 +2187,7 @@ def build_verify(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         command,
         runner=runner,
         timeout_seconds=args.timeout_seconds,
-        secret_values=[args.observer_token, args.admin_token],
+        secret_values=sensitive_values_for_args(args),
     )
     step["ok"] = bool(step.get("ok") and acceptance.get("ok"))
     runbook = load_json(output_dir / "remote_demo_runbook.json")
@@ -1565,7 +2198,7 @@ def build_verify(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         runbook=runbook,
         acceptance=acceptance,
         output_dir=output_dir,
-        secret_values=[args.observer_token, args.admin_token],
+        secret_values=sensitive_values_for_args(args),
         write_outputs=True,
     )
 
@@ -2887,6 +3520,7 @@ def collect_sharded_artifacts(args: argparse.Namespace, output_dir: Path, *, sec
         "workload_type": workload_type,
         "request_count": args.request_count,
         "scenario_id": args.scenario_id,
+        "failure_mode": "none",
         "decode_steps": getattr(args, "decode_steps", None) if args.workload == MICRO_LLM_SHARDED_KIND else None,
         "hf_model_id": getattr(args, "hf_model_id", "") if args.workload == REAL_LLM_SHARDED_KIND else "",
         "stage_mode": getattr(args, "stage_mode", "both"),
@@ -2927,9 +3561,18 @@ def collect_sharded_artifacts(args: argparse.Namespace, output_dir: Path, *, sec
                 output_dir,
                 kind=f"{beta_kind}_markdown",
             ),
+            "support_bundle_json": artifact_entry(
+                support_json,
+                output_dir,
+                kind="support_bundle",
+                schema="support_bundle_v1",
+            ),
         },
         "safety": {
             "redacted": True,
+            "cpu_only_default": True,
+            "activation_payloads_redacted": True,
+            "captured_output_redacted": True,
             "raw_activation_payloads_in_report": False,
             "raw_state_dump_in_report": False,
             "read_only_workload": workload_type,
@@ -2941,6 +3584,32 @@ def collect_sharded_artifacts(args: argparse.Namespace, output_dir: Path, *, sec
             "No P2P discovery, NAT traversal, GPU pooling, WebGPU shards, training, or incentives are claimed",
         ],
     }, secret_values)
+    beta_args = argparse.Namespace(
+        mode="remote-existing",
+        workload=args.workload,
+        output_dir=str(output_dir),
+        base_port=9830,
+        request_count=args.request_count,
+        scenario_id=args.scenario_id,
+        failure_mode="none",
+        stage_mode=getattr(args, "stage_mode", "both"),
+        require_distinct_stage_miners=bool(getattr(args, "require_distinct_stage_miners", False)),
+        coordinator_url=args.coordinator_url,
+        miner_id=args.miner_id,
+        observer_token=args.observer_token,
+        admin_token=args.admin_token,
+        task_id=getattr(args, "task_id", ""),
+        decode_steps=getattr(args, "decode_steps", None),
+        max_new_tokens=getattr(args, "max_new_tokens", 1),
+        hf_model_id=getattr(args, "hf_model_id", ""),
+        real_llm_backend=getattr(args, "real_llm_backend", ""),
+        real_llm_partition_mode=getattr(args, "real_llm_partition_mode", ""),
+        micro_llm_artifact=getattr(args, "micro_llm_artifact", ""),
+        prompt_texts="<redacted-prompts>" if args.workload in {MICRO_LLM_SHARDED_KIND, REAL_LLM_SHARDED_KIND} else "",
+        prompt_texts_file="",
+    )
+    beta_report = attach_remote_demo_guidance(beta_report, beta_args, output_dir=output_dir, child_report={})
+    beta_report = support_bundle.sanitize(redact_values(beta_report, secret_values))
     beta_json.write_text(json.dumps(beta_report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     beta_md.write_text(render_collect_beta_markdown(beta_report, title=beta_title), encoding="utf-8")
     for artifact_name in (f"{beta_kind}_json", f"{beta_kind}_markdown"):
@@ -2965,6 +3634,17 @@ def collect_sharded_artifacts(args: argparse.Namespace, output_dir: Path, *, sec
         timeout=args.artifact_timeout,
         secret_values=secret_values,
     )
+    beta_report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_json,
+        output_dir,
+        kind="support_bundle",
+        schema="support_bundle_v1",
+        ok=(support_result.get("payload") or {}).get("ok"),
+    )
+    beta_report = attach_remote_demo_guidance(beta_report, beta_args, output_dir=output_dir, child_report={})
+    beta_report = support_bundle.sanitize(redact_values(beta_report, secret_values))
+    beta_md.write_text(render_collect_beta_markdown(beta_report, title=beta_title), encoding="utf-8")
+    beta_json.write_text(json.dumps(beta_report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "evidence": {
             "ok": bool(beta_report.get("ok")),
@@ -2995,6 +3675,9 @@ def render_collect_beta_markdown(payload: dict[str, Any], *, title: str) -> str:
         f"- mode: `{payload.get('mode')}`",
         f"- workload_type: `{payload.get('workload_type')}`",
         f"- output_dir: `{payload.get('output_dir')}`",
+    ]
+    append_guidance_markdown(lines, payload)
+    lines.extend([
         "",
         "## Diagnosis",
         "",
@@ -3002,7 +3685,7 @@ def render_collect_beta_markdown(payload: dict[str, Any], *, title: str) -> str:
         "",
         "## Boundaries",
         "",
-    ]
+    ])
     for item in payload.get("limitations") or []:
         lines.append(f"- {item}")
     return "\n".join(lines) + "\n"
@@ -3309,7 +3992,7 @@ def _unused_collect_sharded_artifacts_old(args: argparse.Namespace, output_dir: 
 def build_collect(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    secret_values = [args.observer_token, args.admin_token, args.llm_runtime_url, args.llm_runtime_api_key]
+    secret_values = sensitive_values_for_args(args)
     status = collect_status_for_workload(args)
     if args.workload == EXTERNAL_LLM_KIND:
         artifacts = collect_external_llm_artifacts(args, output_dir, secret_values=secret_values)
@@ -3368,12 +4051,18 @@ def build_collect(args: argparse.Namespace) -> dict[str, Any]:
             "No P2P/NAT traversal, GPU pooling, WebGPU shards, training, or incentives are claimed",
         ],
     }, secret_values))
+    child_report = load_child_beta_report(output_dir, args.workload)
+    report = attach_remote_demo_guidance(report, args, output_dir=output_dir, child_report=child_report)
+    report = support_bundle.sanitize(redact_values(report, secret_values))
     json_path = output_dir / "remote_home_compute_collect.json"
     md_path = output_dir / "remote_home_compute_collect.md"
     write_json(report, str(json_path))
     md_path.write_text(render_collect_markdown(report), encoding="utf-8")
     report["artifacts"]["remote_home_compute_collect_json"] = artifact_entry(json_path, output_dir, kind="remote_home_compute_collect", schema=COLLECT_SCHEMA, ok=report.get("ok"))
     report["artifacts"]["remote_home_compute_collect_markdown"] = artifact_entry(md_path, output_dir, kind="remote_home_compute_collect_markdown")
+    report = attach_remote_demo_guidance(report, args, output_dir=output_dir, child_report=child_report)
+    report = support_bundle.sanitize(redact_values(report, secret_values))
+    md_path.write_text(render_collect_markdown(report), encoding="utf-8")
     write_json(report, str(json_path))
     return report
 
@@ -3660,7 +4349,7 @@ def render_external_llm_acceptance_markdown(payload: dict[str, Any]) -> str:
 
 
 def build_external_llm_verify(args: argparse.Namespace, *, output_dir: Path, runner: Runner = subprocess.run) -> dict[str, Any]:
-    secret_values = [args.observer_token, args.admin_token, args.llm_runtime_url, args.llm_runtime_api_key]
+    secret_values = sensitive_values_for_args(args)
     wait = wait_for_external_llm_result(args)
     artifacts = collect_external_llm_artifacts(args, output_dir, secret_values=secret_values) if wait.get("ok") else None
     acceptance = build_external_llm_acceptance_report(args=args, wait=wait, artifacts=artifacts, output_dir=output_dir)
@@ -3684,7 +4373,7 @@ def build_external_llm_verify(args: argparse.Namespace, *, output_dir: Path, run
 
 
 def build_sharded_verify(args: argparse.Namespace, *, output_dir: Path, runner: Runner = subprocess.run) -> dict[str, Any]:
-    secret_values = [args.observer_token, args.admin_token]
+    secret_values = sensitive_values_for_args(args)
     if args.workload == REAL_LLM_SHARDED_KIND:
         beta_json = output_dir / "remote_real_llm_sharded_beta.json"
         beta_md = output_dir / "remote_real_llm_sharded_beta.md"
@@ -4159,6 +4848,8 @@ def build_report(
             f"crowdtensor remote-demo verify --workload {workload_kind} --coordinator-url https://YOUR_COORDINATOR_HOST --miner-id remote-linux-1 --observer-token \"$CROWDTENSOR_OBSERVER_TOKEN\" --admin-token \"$CROWDTENSOR_ADMIN_TOKEN\" --json",
         ],
     }
+    child_report = load_child_beta_report(output_dir, workload_kind)
+    report = attach_remote_demo_guidance(report, args, output_dir=output_dir, child_report=child_report)
     report = support_bundle.sanitize(redact_values(report, secret_values))
     encoded = json.dumps(report, sort_keys=True)
     allowed_fragments = {
@@ -4177,6 +4868,9 @@ def build_report(
         write_markdown(report, str(summary_md))
         report["artifacts"]["remote_home_compute_demo_json"] = artifact_entry(summary_json, output_dir, kind="remote_home_compute_demo", schema=SCHEMA, ok=report.get("ok"))
         report["artifacts"]["remote_home_compute_demo_markdown"] = artifact_entry(summary_md, output_dir, kind="remote_home_compute_demo_markdown")
+        report = attach_remote_demo_guidance(report, args, output_dir=output_dir, child_report=child_report)
+        report = support_bundle.sanitize(redact_values(report, secret_values))
+        write_markdown(report, str(summary_md))
         write_json(report, str(summary_json))
     return report
 

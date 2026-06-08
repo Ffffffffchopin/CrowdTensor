@@ -20,6 +20,80 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
     def _tmp_dir(self) -> str:
         return tempfile.mkdtemp(prefix="crowdtensor_remote_home_pack_test_")
 
+    def _add_beta_guidance(self, payload: dict, output_dir: Path, stem: str) -> dict:
+        payload.update({
+            "user_status": {
+                "state": "ready",
+                "headline": "child beta evidence is ready",
+                "next_step": "review_artifacts",
+                "proof_level": "external-existing-runtime",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": f"{stem}_review_summary_v1",
+                "state": "ready",
+                "ready": True,
+                "next_step": "review_artifacts",
+                "inspect_first": str(output_dir / f"{stem}.md"),
+                "support_bundle": str(output_dir / "support_bundle.json"),
+                "not_completed_count": 0,
+                "not_completed": [],
+                "public_artifact_safe": True,
+            },
+            "artifact_summary": {
+                "schema": f"{stem}_artifact_summary_v1",
+                "inspect_first": str(output_dir / f"{stem}.md"),
+                "summary_json": str(output_dir / f"{stem}.json"),
+                "summary_markdown": str(output_dir / f"{stem}.md"),
+                "support_bundle": str(output_dir / "support_bundle.json"),
+                "shareable_paths": [
+                    str(output_dir / f"{stem}.json"),
+                    str(output_dir / f"{stem}.md"),
+                    str(output_dir / "support_bundle.json"),
+                ],
+                "artifact_count": 3,
+                "present_artifact_count": 3,
+                "public_artifact_safe": True,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_result_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "prompt_scope": {
+                "source": "operator-provided-or-default-tiny-hf-prompts",
+                "prompt_count": payload.get("request_count", 1),
+                "inline_prompt_text": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "evidence-only",
+                "saved_json_display": "validation-summary-only",
+                "saved_markdown_display": "validation-summary-only",
+                "raw_result_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_result_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "answer_scope_state": "evidence-only",
+                "local_answer_terminal_only": False,
+                "public_artifact_safe": True,
+            },
+            "not_completed": [],
+        })
+        return payload
+
     def test_prepare_wraps_runbook_and_writes_summary(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []
@@ -462,12 +536,14 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
             self.assertEqual(command[command.index("--micro-llm-artifact") + 1], "dist/micro-llm-artifact")
             self.assertIn("--prompt-texts", command)
             self.assertEqual(command[command.index("--prompt-texts") + 1], "arn,ten")
-            (output_dir / "remote_micro_llm_sharded_beta.json").write_text("{}", encoding="utf-8")
             (output_dir / "remote_micro_llm_sharded_beta.md").write_text("# Beta\n", encoding="utf-8")
-            return completed({
+            (output_dir / "support_bundle.json").write_text("{}", encoding="utf-8")
+            payload = self._add_beta_guidance({
                 "schema": "remote_micro_llm_sharded_beta_v1",
                 "ok": True,
                 "mode": "remote-existing",
+                "output_dir": str(output_dir),
+                "request_count": 2,
                 "decode_steps": 3,
                 "diagnosis_codes": [
                     "remote_micro_llm_sharded_ready",
@@ -499,7 +575,9 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
                         "safety": {"redaction_ok": True, "read_only": True},
                     }
                 },
-            })
+            }, output_dir, "remote_micro_llm_sharded_beta")
+            (output_dir / "remote_micro_llm_sharded_beta.json").write_text(json.dumps(payload), encoding="utf-8")
+            return completed(payload)
 
         with patch.object(pack, "run_json_command", return_value={"ok": True, "payload": {"schema": "support_bundle_v1", "ok": True}}):
             report = pack.build_verify(args, runner=fake_runner)
@@ -514,8 +592,22 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
         self.assertIn("remote_micro_llm_sharded_ready", report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["remote_micro_llm_sharded_acceptance_json"]["present"])
         self.assertTrue(report["artifacts"]["remote_micro_llm_sharded_beta_json"]["present"])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["proof_level"], "external-existing-runtime")
+        self.assertTrue(report["review_summary"]["ready"])
+        self.assertIn("remote_micro_llm_sharded_beta.md", report["review_summary"]["child_inspect_first"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertFalse(report["answer_scope"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["not_completed"], [])
+        markdown = (output_dir / "remote_home_compute_demo.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## Output Scope", markdown)
         self.assertNotIn("observer-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
+        self.assertNotIn("arn,ten", serialized)
+        self.assertNotIn("arn,ten", markdown)
         self.assertTrue(calls)
 
     def test_real_llm_sharded_prepare_writes_runbook_and_stage_launcher(self) -> None:
@@ -616,12 +708,14 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
             self.assertEqual(command[command.index("--hf-model-id") + 1], "sshleifer/tiny-gpt2")
             self.assertIn("--prompt-texts", command)
             self.assertIn("--require-distinct-stage-miners", command)
-            (output_dir / "remote_real_llm_sharded_beta.json").write_text("{}", encoding="utf-8")
             (output_dir / "remote_real_llm_sharded_beta.md").write_text("# Beta\n", encoding="utf-8")
-            return completed({
+            (output_dir / "support_bundle.json").write_text("{}", encoding="utf-8")
+            payload = self._add_beta_guidance({
                 "schema": "remote_real_llm_sharded_beta_v1",
                 "ok": True,
                 "mode": "remote-existing",
+                "output_dir": str(output_dir),
+                "request_count": 1,
                 "diagnosis_codes": [
                     "remote_real_llm_sharded_ready",
                     "baseline_match",
@@ -656,7 +750,9 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
                         "safety": {"redaction_ok": True, "read_only": True},
                     }
                 },
-            })
+            }, output_dir, "remote_real_llm_sharded_beta")
+            (output_dir / "remote_real_llm_sharded_beta.json").write_text(json.dumps(payload), encoding="utf-8")
+            return completed(payload)
 
         with patch.object(pack, "run_json_command", return_value={"ok": True, "payload": {"schema": "support_bundle_v1", "ok": True}}):
             report = pack.build_verify(args, runner=fake_runner)
@@ -672,9 +768,22 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
         self.assertIn("remote_two_machine_real_llm_sharded_ready", report["diagnosis_codes"])
         self.assertTrue(report["artifacts"]["remote_real_llm_sharded_acceptance_json"]["present"])
         self.assertTrue(report["artifacts"]["remote_real_llm_sharded_beta_json"]["present"])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["proof_level"], "external-existing-runtime")
+        self.assertTrue(report["review_summary"]["ready"])
+        self.assertIn("remote_real_llm_sharded_beta.md", report["review_summary"]["child_inspect_first"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertFalse(report["answer_scope"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(report["not_completed"], [])
+        markdown = (output_dir / "remote_home_compute_demo.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## Output Scope", markdown)
         self.assertNotIn("observer-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
         self.assertNotIn("private prompt should stay out", serialized)
+        self.assertNotIn("private prompt should stay out", markdown)
         self.assertTrue(calls)
 
     def test_real_llm_sharded_verify_preserves_hf_dependency_diagnosis(self) -> None:
@@ -746,6 +855,69 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
         self.assertIn("hf_dependencies_missing", report["diagnosis_codes"])
         self.assertIn("session_create_failed", report["diagnosis_codes"])
         self.assertIn("hf_dependencies_missing", report["acceptance_summary"]["diagnosis_codes"])
+
+    def test_real_llm_sharded_verify_failure_redacts_prompt_texts(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        raw_prompt = "first private prompt,second private prompt"
+        leaked_prompt_fragment = "second private prompt"
+        args = pack.parse_args([
+            "verify",
+            "--workload",
+            "real-llm-sharded",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "remote-linux-1",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--request-count",
+            "1",
+            "--stage-mode",
+            "split",
+            "--require-distinct-stage-miners",
+            "--prompt-texts",
+            raw_prompt,
+        ])
+        (output_dir / "remote_real_llm_sharded_runbook.json").write_text(json.dumps({
+            "schema": "remote_real_llm_sharded_runbook_v1",
+            "ok": True,
+            "demo": {
+                "coordinator_url": "https://coord.example",
+                "workload_type": "real_llm_sharded_infer",
+                "route": "remote_python_real_llm_sharded_infer",
+                "request_count": 1,
+                "scenario_schema": "real_llm_sharded_session_v1",
+                "scenario_id": "route-baseline",
+            },
+            "target_environment": {"name": "generic", "remote_environment": "generic"},
+            "safety": {"registry_hashed": True, "public_artifact_redacted": True},
+            "miner_join_pack": {"schema": "miner_join_pack_v1", "ready": True},
+        }), encoding="utf-8")
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=1,
+                stdout=json.dumps({"ok": False, "diagnosis_codes": ["session_create_failed"]}) + "\n",
+                stderr=f"remote runtime rejected prompt {leaked_prompt_fragment} with admin-secret",
+            )
+
+        report = pack.build_verify(args, runner=fake_runner)
+        serialized = json.dumps(report, sort_keys=True)
+        markdown = (output_dir / "remote_home_compute_demo.md").read_text(encoding="utf-8")
+
+        self.assertFalse(report["ok"])
+        self.assertIn("session_create_failed", report["diagnosis_codes"])
+        self.assertIn("<redacted>", serialized)
+        self.assertNotIn(raw_prompt, serialized)
+        self.assertNotIn(leaked_prompt_fragment, serialized)
+        self.assertNotIn(raw_prompt, markdown)
+        self.assertNotIn(leaked_prompt_fragment, markdown)
+        self.assertNotIn("admin-secret", serialized)
 
     def test_doctor_reports_ready_from_files_and_connectivity(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -993,6 +1165,31 @@ class RemoteHomeComputeDemoPackTests(unittest.TestCase):
             beta["payload_summaries"]["remote_existing_real_llm_sharded_inference"]["schema"],
             "real_llm_sharded_evidence_v1",
         )
+        self.assertEqual(beta["user_status"]["state"], "ready")
+        self.assertEqual(beta["user_status"]["proof_level"], "external-existing-runtime-collect")
+        self.assertTrue(beta["review_summary"]["ready"])
+        self.assertFalse(beta["output_request"]["include_output"])
+        self.assertFalse(beta["prompt_scope"]["raw_prompt_public"])
+        self.assertFalse(beta["answer_scope"]["raw_generated_text_public"])
+        self.assertFalse(beta["shareable_summary"]["generated_token_ids_public"])
+        self.assertEqual(beta["not_completed"], [])
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["user_status"]["proof_level"], "external-existing-runtime-collect")
+        self.assertTrue(report["review_summary"]["ready"])
+        self.assertIn("remote_real_llm_sharded_beta.md", report["review_summary"]["child_inspect_first"])
+        self.assertFalse(report["output_request"]["include_output"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertFalse(report["answer_scope"]["raw_generated_text_public"])
+        self.assertFalse(report["shareable_summary"]["generated_token_ids_public"])
+        beta_next_command_blob = json.dumps(beta.get("next_commands") or [], sort_keys=True)
+        self.assertIn("--workload real-llm-sharded", beta_next_command_blob)
+        self.assertIn("--task-id task-1", beta_next_command_blob)
+        beta_markdown = (output_dir / "remote_real_llm_sharded_beta.md").read_text(encoding="utf-8")
+        collect_markdown = (output_dir / "remote_home_compute_collect.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", beta_markdown)
+        self.assertIn("## Output Scope", beta_markdown)
+        self.assertIn("## Review", collect_markdown)
+        self.assertIn("## Output Scope", collect_markdown)
         self.assertTrue(report["artifacts"]["remote_real_llm_sharded_beta_json"]["present"])
         self.assertTrue(report["artifacts"]["real_llm_sharded_evidence_json"]["present"])
         self.assertNotIn("observer-secret", serialized)
