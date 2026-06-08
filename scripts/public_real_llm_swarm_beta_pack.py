@@ -1792,6 +1792,47 @@ def evidence_scope_text(scope: dict[str, Any]) -> str:
     )
 
 
+def gpu_status_text(provenance: dict[str, Any], scope: dict[str, Any] | None = None) -> str:
+    scope = scope if isinstance(scope, dict) else {}
+    fresh_verified = bool(provenance.get("fresh_kaggle_gpu_verified") or scope.get("fresh_kaggle_gpu_verified"))
+    fresh_attempted = bool(provenance.get("fresh_kaggle_gpu_attempted") or scope.get("fresh_kaggle_gpu_attempted"))
+    retained_gpu = bool(provenance.get("retained_gpu_evidence_imported") or scope.get("retained_gpu_evidence_imported"))
+    local_gpu_smoke = bool(provenance.get("local_gpu_smoke_ran") or scope.get("local_gpu_smoke_ran"))
+    local_cpu = bool(
+        scope.get("local_cpu")
+        or provenance.get("local_cpu_product_path_ready")
+        or provenance.get("local_public_swarm_v2_ready")
+        or provenance.get("local_kv_cache_ready")
+    )
+    if fresh_verified:
+        state = "fresh-kaggle-gpu-verified"
+        note = "this report verified a fresh Kaggle GPU proof"
+    elif fresh_attempted:
+        state = "fresh-kaggle-gpu-attempted-unverified"
+        note = "a Kaggle GPU path was attempted but not verified"
+    elif retained_gpu:
+        state = "retained-gpu-evidence"
+        note = "GPU evidence is imported or retained, not fresh from this command"
+    elif local_gpu_smoke:
+        state = "local-gpu-smoke-only"
+        note = "only a local or CI GPU smoke path is represented"
+    elif local_cpu:
+        state = "local-cpu-only"
+        note = "this report proves local CPU inference and does not claim GPU execution"
+    else:
+        state = "no-gpu-evidence"
+        note = "no GPU execution evidence is claimed by this report"
+    return (
+        f"state={state} "
+        f"local_cpu={local_cpu} "
+        f"local_gpu_smoke={local_gpu_smoke} "
+        f"retained_gpu={retained_gpu} "
+        f"fresh_kaggle_gpu_attempted={fresh_attempted} "
+        f"fresh_kaggle_gpu_verified={fresh_verified} "
+        f"note={note}"
+    )
+
+
 def artifact_path_summary(report: dict[str, Any], name: str, fallback: str) -> str:
     artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
     artifact = artifacts.get(name) if isinstance(artifacts.get(name), dict) else {}
@@ -2963,6 +3004,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- retained GPU evidence imported: `{provenance.get('retained_gpu_evidence_imported')}`",
         f"- fresh Kaggle GPU attempted: `{provenance.get('fresh_kaggle_gpu_attempted')}`",
         f"- fresh Kaggle GPU verified: `{provenance.get('fresh_kaggle_gpu_verified')}`",
+        f"- GPU status: `{gpu_status_text(provenance, evidence_scope)}`",
         f"- note: {provenance.get('summary') or ''}",
         "",
         "## Evidence Scope",
@@ -3090,6 +3132,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
     if evidence_scope:
         print(f"  evidence_scope: {evidence_scope_text(evidence_scope)}")
         print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
+    if provenance or evidence_scope:
+        print(f"  gpu_status: {gpu_status_text(provenance, evidence_scope)}")
     if user:
         print(
             "  status: "

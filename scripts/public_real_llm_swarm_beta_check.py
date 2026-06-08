@@ -1716,6 +1716,8 @@ def print_human_summary(result: dict[str, Any]) -> None:
     if checked_evidence_scope:
         print(f"  checked_evidence_scope: {pack.evidence_scope_text(checked_evidence_scope)}")
         print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")
+    if checked_runtime_provenance or checked_evidence_scope:
+        print(f"  checked_gpu_status: {pack.gpu_status_text(checked_runtime_provenance, checked_evidence_scope)}")
     if recommended:
         print(f"  recommended_check: {recommended.get('command_line')}")
     if recommended_next:

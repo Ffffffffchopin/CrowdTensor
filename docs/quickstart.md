@@ -145,6 +145,11 @@ attempted GPU path did not verify.
 The adjacent `evidence_scope_note` terminal line and Markdown note spell out the
 same scope in plain text, for example that a `generate --dry-run` was only a
 preflight and submitted no generation task.
+The `gpu_status` terminal/Markdown line is the fastest direct answer to the GPU
+question: `local-cpu-only` means local CPU inference, `local-gpu-smoke-only`
+means only local/CI GPU smoke evidence, `retained-gpu-evidence` means imported
+historical GPU evidence, and only `fresh-kaggle-gpu-verified` means a fresh
+Kaggle GPU proof was verified.
 The current default quick-start inference path is local CPU / local loopback,
 not a fresh Kaggle GPU run.
 
@@ -262,7 +267,8 @@ Read `evidence_scope` in `public_real_llm_swarm_beta.json` and
 shortest answer to what was verified: local CPU, retained evidence, or fresh
 Kaggle GPU. The check terminal output also prints `checked_runtime_provenance`;
 read that line when you need the detailed source/proof summary behind the
-checked scope. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
+checked scope, and read `checked_gpu_status` for the direct local CPU /
+retained GPU / fresh Kaggle GPU verdict. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
 `fresh_kaggle_gpu_attempted=True` without that verified flag is not a completed
 GPU proof. Retained external/GPU evidence is not a new Kaggle run.
 When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`

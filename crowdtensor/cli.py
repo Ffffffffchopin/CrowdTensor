@@ -1552,6 +1552,59 @@ def public_real_llm_beta_evidence_scope_text(scope: dict[str, Any]) -> str:
     )
 
 
+def gpu_status_text(provenance: dict[str, Any], scope: dict[str, Any] | None = None) -> str:
+    scope = scope if isinstance(scope, dict) else {}
+    fresh_verified = bool(provenance.get("fresh_kaggle_gpu_verified") or scope.get("fresh_kaggle_gpu_verified"))
+    fresh_attempted = bool(provenance.get("fresh_kaggle_gpu_attempted") or scope.get("fresh_kaggle_gpu_attempted"))
+    retained_gpu = bool(provenance.get("retained_gpu_evidence_imported") or scope.get("retained_gpu_evidence_imported"))
+    local_gpu_smoke = bool(provenance.get("local_gpu_smoke_ran") or scope.get("local_gpu_smoke_ran"))
+    local_cpu = bool(
+        scope.get("local_cpu")
+        or (
+            scope.get("local_loopback_coordinator")
+            and not scope.get("dry_run")
+            and str(provenance.get("backend") or "").lower() == "cpu"
+        )
+        or (
+            provenance.get("coordinator_scope") == "local-loopback"
+            and provenance.get("submitted_to_coordinator")
+            and str(provenance.get("backend") or "").lower() == "cpu"
+        )
+        or provenance.get("local_loopback_ran")
+        or provenance.get("full_evidence_ran")
+        or provenance.get("local_cpu_product_path_ready")
+        or provenance.get("local_public_swarm_v2_ready")
+        or provenance.get("local_kv_cache_ready")
+    )
+    if fresh_verified:
+        state = "fresh-kaggle-gpu-verified"
+        note = "this report verified a fresh Kaggle GPU proof"
+    elif fresh_attempted:
+        state = "fresh-kaggle-gpu-attempted-unverified"
+        note = "a Kaggle GPU path was attempted but not verified"
+    elif retained_gpu:
+        state = "retained-gpu-evidence"
+        note = "GPU evidence is imported or retained, not fresh from this command"
+    elif local_gpu_smoke:
+        state = "local-gpu-smoke-only"
+        note = "only a local or CI GPU smoke path is represented"
+    elif local_cpu:
+        state = "local-cpu-only"
+        note = "this report proves local CPU inference and does not claim GPU execution"
+    else:
+        state = "no-gpu-evidence"
+        note = "no GPU execution evidence is claimed by this report"
+    return (
+        f"state={state} "
+        f"local_cpu={local_cpu} "
+        f"local_gpu_smoke={local_gpu_smoke} "
+        f"retained_gpu={retained_gpu} "
+        f"fresh_kaggle_gpu_attempted={fresh_attempted} "
+        f"fresh_kaggle_gpu_verified={fresh_verified} "
+        f"note={note}"
+    )
+
+
 def _infer_evidence_scope(summary: dict[str, Any]) -> dict[str, Any]:
     provenance = summary.get("runtime_provenance") if isinstance(summary.get("runtime_provenance"), dict) else {}
     dry_run = bool(summary.get("dry_run") or provenance.get("dry_run"))
@@ -7432,6 +7485,8 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Runtime provenance: `{runtime_provenance_text(runtime_provenance)}`")
     if evidence_scope:
         lines.append(f"- Evidence scope: `{infer_evidence_scope_text(evidence_scope)}`")
+    if runtime_provenance or evidence_scope:
+        lines.append(f"- GPU status: `{gpu_status_text(runtime_provenance, evidence_scope)}`")
     if output_display.get("summary"):
         lines.append(f"- Output display note: {output_display.get('summary')}")
     lines.extend([
@@ -10915,6 +10970,8 @@ def render_generate_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- Runtime provenance: `{runtime_provenance_text(runtime_provenance)}`")
     if evidence_scope:
         lines.append(f"- Evidence scope: `{generate_evidence_scope_text(evidence_scope)}`")
+    if runtime_provenance or evidence_scope:
+        lines.append(f"- GPU status: `{gpu_status_text(runtime_provenance, evidence_scope)}`")
     if output_display.get("summary"):
         lines.append(f"- Output display note: {output_display.get('summary')}")
     lines.extend([
@@ -12266,6 +12323,8 @@ def print_product_generate(report: dict[str, Any]) -> None:
     if evidence_scope:
         print(f"  evidence_scope: {generate_evidence_scope_text(evidence_scope)}")
         print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
+    if runtime_provenance or evidence_scope:
+        print(f"  gpu_status: {gpu_status_text(runtime_provenance, evidence_scope)}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
         print(
@@ -12591,6 +12650,8 @@ def print_infer(report: dict[str, Any]) -> None:
     if evidence_scope:
         print(f"  evidence_scope: {infer_evidence_scope_text(evidence_scope)}")
         print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
+    if runtime_provenance or evidence_scope:
+        print(f"  gpu_status: {gpu_status_text(runtime_provenance, evidence_scope)}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
@@ -14998,6 +15059,8 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
     if evidence_scope:
         print(f"  evidence_scope: {public_real_llm_beta_evidence_scope_text(evidence_scope)}")
         print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
+    if runtime_provenance or evidence_scope:
+        print(f"  gpu_status: {gpu_status_text(runtime_provenance, evidence_scope)}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -15085,6 +15148,8 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     if checked_evidence_scope:
         print(f"  checked_evidence_scope: {public_real_llm_beta_evidence_scope_text(checked_evidence_scope)}")
         print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")
+    if checked_runtime_provenance or checked_evidence_scope:
+        print(f"  checked_gpu_status: {gpu_status_text(checked_runtime_provenance, checked_evidence_scope)}")
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")
     if recommended_next:

@@ -1057,12 +1057,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         for rendered in [readme, quickstart, operations]:
             self.assertIn("checked_evidence_scope", rendered)
             self.assertIn("checked_runtime_provenance", rendered)
+            self.assertIn("checked_gpu_status", rendered)
+            self.assertIn("fresh-kaggle-gpu-verified", rendered)
             self.assertIn("fresh Kaggle GPU", rendered)
         self.assertIn("Read `evidence_scope`", operations)
         self.assertIn("`evidence_scope_note`", operations)
+        self.assertIn("read `gpu_status` for the direct CPU/GPU verdict", operations)
         self.assertIn("plain-language explanation", operations)
         self.assertIn("checked_runtime_provenance", operations)
         self.assertIn("checked_evidence_scope", operations)
+        self.assertIn("checked_gpu_status", operations)
         self.assertIn("`fresh_kaggle_gpu=True` is the only claim", operations)
         self.assertIn("`fresh_kaggle_gpu_attempted=True` without that verified flag", operations)
         self.assertIn("retained import is not a fresh Kaggle GPU attempt", operations)
@@ -1071,6 +1075,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("only an attempted GPU path", memory)
         self.assertIn("fresh_kaggle_gpu_verified: true", memory)
         self.assertIn("terminal/Markdown `evidence_scope_note`", memory)
+        self.assertIn("`gpu_status` as the direct verdict", memory)
+        self.assertIn("`checked_gpu_status`", memory)
         self.assertIn("default quick-start `infer` path is local CPU / local loopback", memory)
         self.assertIn("official user-facing validation entry", readme)
         self.assertIn("official user-facing validation entry", quickstart)
@@ -1500,6 +1506,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Evidence scope: `level=existing-runtime-preflight executed=request-shape-preflight source=public_swarm_product_cli_v1 coordinator=local-loopback route=coordinator-url p2p=False dry_run=True submitted=False fresh_kaggle_gpu=False",
             markdown,
         )
+        self.assertIn("- GPU status: `state=no-gpu-evidence", markdown)
+        self.assertIn("note=no GPU execution evidence is claimed by this report`", markdown)
         self.assertIn("- Evidence scope note: This was a preflight; no generation task was submitted.", markdown)
         self.assertLess(markdown.index("- Review: "), markdown.index("- OK: "))
         self.assertLess(markdown.index("- Review: "), markdown.index("- Status: "))
@@ -1615,6 +1623,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
+        self.assertIn("  gpu_status: state=no-gpu-evidence", rendered)
+        self.assertIn("note=no GPU execution evidence is claimed by this report", rendered)
         self.assertEqual(rendered.count("  action: "), 1)
         self.assertIn(f"  inspect_first: {output_dir / 'generate_summary.md'}", rendered)
         self.assertLess(rendered.index("  review_next: "), rendered.index("  inspect_first: "))
@@ -4934,6 +4944,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "- Evidence scope: `level=existing-runtime-submit executed=existing-coordinator source=public_swarm_product_cli_v1 coordinator=local-loopback route=coordinator-url p2p=False dry_run=False submitted=True fresh_kaggle_gpu=False",
             markdown,
         )
+        self.assertIn("- GPU status: `state=local-cpu-only", markdown)
         self.assertIn("- Evidence scope note: This submitted a generation request to an existing Coordinator route.", markdown)
         self.assertIn(
             "- Trace: `session=real-llm-session-test requests=1 ledger_rows=1 stream_events=0 source=public_swarm_product_cli_v1 public_artifact_safe=True`",
@@ -5003,6 +5014,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
+        self.assertIn("  gpu_status: state=local-cpu-only", rendered)
         self.assertIn(
             "  local_output: available=False display_only=False public_artifact_safe=True saved_redacted=True count=1 source=none",
             rendered,
@@ -7871,6 +7883,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("fresh_kaggle_gpu_attempted=False", rendered)
         self.assertIn("fresh_kaggle_gpu=False", rendered)
         self.assertIn("  checked_evidence_scope_note:", rendered)
+        self.assertIn("  checked_gpu_status: state=local-gpu-smoke-only", rendered)
+        self.assertIn("note=only a local or CI GPU smoke path is represented", rendered)
         self.assertIn("  recommended_next: sed -n 1,220p", rendered)
         self.assertIn("  next[1] inspect checked Beta summary:", rendered)
         self.assertIn("  prompt_scope: source=prompt-text count=1 inline_prompt_text=True", rendered)
@@ -8519,6 +8533,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("fresh_kaggle_gpu_attempted=False", output)
         self.assertIn("fresh_kaggle_gpu=False", output)
         self.assertIn("  evidence_scope_note:", output)
+        self.assertIn("  gpu_status: state=local-gpu-smoke-only", output)
+        self.assertIn("note=only a local or CI GPU smoke path is represented", output)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
@@ -9276,6 +9292,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("fresh_kaggle_gpu_verified=False retained_gpu_import=False gpu_runtime_ready=False`", markdown)
         self.assertIn("- Evidence scope: `level=local-cpu-loopback executed=local-cpu source=product_swarm_mvp_check_v1", markdown)
         self.assertIn("fresh_kaggle_gpu_attempted=False retained_gpu=False fresh_kaggle_gpu=False", markdown)
+        self.assertIn("- GPU status: `state=local-cpu-only", markdown)
         self.assertIn("fresh_kaggle_gpu=False user_expectation=This infer run executed the fast local CPU loopback proof.`", markdown)
         self.assertIn("- Answer scope: `state=json-suppressed ", markdown)
         self.assertIn(f"- Answer scope note: {cli.SAVED_ANSWER_SCOPE_TEXT}", markdown)
@@ -9295,6 +9312,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  evidence_scope: level=local-cpu-loopback executed=local-cpu source=product_swarm_mvp_check_v1", rendered)
         self.assertIn("fresh_kaggle_gpu_attempted=False retained_gpu=False fresh_kaggle_gpu=False", rendered)
         self.assertIn("  evidence_scope_note: This infer run executed the fast local CPU loopback proof.", rendered)
+        self.assertIn("  gpu_status: state=local-cpu-only", rendered)
         self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertIn("recommended_next: optional broader local evidence reason=collect_broader_evidence", rendered)
         self.assertIn("next[1] rerun local inference", rendered)
@@ -10109,6 +10127,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             markdown,
         )
         self.assertIn("fresh_kaggle_gpu_attempted=False retained_gpu=True fresh_kaggle_gpu=False", markdown)
+        self.assertIn("- GPU status: `state=retained-gpu-evidence", markdown)
         self.assertIn("retained_gpu=True fresh_kaggle_gpu=False", markdown)
         self.assertIn(f"- Inspect first: `{child_markdown}`", markdown)
         self.assertIn(f"- Source evidence summary: json=`{output_dir / 'public-swarm-v2' / 'public_swarm_inference_v2.json'}` markdown=`{child_markdown}`", markdown)
@@ -10118,6 +10137,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn(f"  inspect_first: {child_markdown}", rendered)
         self.assertIn(f"  recommended_next: review v2 evidence reason=v2_ready less {child_markdown}", rendered)
+        self.assertIn("  gpu_status: state=retained-gpu-evidence", rendered)
 
     def test_infer_full_evidence_blocked_keeps_full_evidence_next_step(self) -> None:
         output_dir = Path(self._tmp_dir())
