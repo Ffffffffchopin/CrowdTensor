@@ -32,6 +32,7 @@ from crowdtensor.session_protocol import public_leak_paths  # noqa: E402
 
 SCHEMA = "usable_swarm_inference_v1"
 SUPPORT_SCHEMA = "usable_swarm_inference_support_bundle_v1"
+RUNTIME_PROVENANCE_SCHEMA = "usable_swarm_inference_runtime_provenance_v1"
 P2P_V06_SCHEMA = "p2p_swarm_inference_v06_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 
@@ -887,6 +888,7 @@ def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, ou
     mode = str(report.get("mode") or getattr(args, "mode", MODE_LOCAL))
     report_commands = next_commands(args, output_dir, mode=mode, ready=ready)
     recommended = recommended_next(report_commands, mode=mode, ready=ready)
+    report["runtime_provenance"] = runtime_provenance_summary(report)
     report["next_commands"] = report_commands
     report["recommended_next_command"] = recommended
     report["user_status"] = user_status(
@@ -960,6 +962,75 @@ def shareable_summary() -> dict[str, Any]:
         "public_artifact_safe": True,
         "summary": "Share usable_swarm_inference.json/md and support_bundle.json; they contain hashes/counts, not raw prompts or answers.",
     }
+
+
+def runtime_provenance_summary(report: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
+    p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
+    steps = report.get("steps") if isinstance(report.get("steps"), list) else []
+    step_names = [
+        str(step.get("name"))
+        for step in steps
+        if isinstance(step, dict) and step.get("name")
+    ]
+    local_p2p_ran = "p2p_swarm_inference_v06_local_smoke" in step_names
+    retained_p2p_imported = mode == MODE_EVIDENCE_IMPORT
+    package_only = mode == MODE_PACKAGE
+    if mode == MODE_LOCAL:
+        proof_level = "local-p2p-cpu"
+    elif mode == MODE_EVIDENCE_IMPORT:
+        proof_level = "retained-p2p-evidence-import"
+    elif mode == MODE_PACKAGE:
+        proof_level = "package-only"
+    else:
+        proof_level = mode or "unknown"
+    p2p_ready = p2p.get("ready") is True
+    return {
+        "schema": RUNTIME_PROVENANCE_SCHEMA,
+        "proof_level": proof_level,
+        "mode": mode,
+        "local_p2p_generate_ran": local_p2p_ran,
+        "local_p2p_generate_ready": bool(local_p2p_ran and p2p_ready),
+        "retained_p2p_evidence_imported": retained_p2p_imported,
+        "retained_p2p_evidence_ready": bool(retained_p2p_imported and p2p_ready),
+        "package_only": package_only,
+        "p2p_product_path_ready": p2p_ready,
+        "p2p_route_ready": p2p.get("route_ready") is True,
+        "real_generate_ready": p2p.get("real_generate_ready") is True,
+        "kv_cache_ready": p2p.get("kv_cache_ready") is True,
+        "stage_requeue_rescue_ready": bool(p2p.get("stage_rescue_ready") and p2p.get("real_stage_rescue_ready")),
+        "distinct_stage_miners": p2p.get("distinct_stage_miners") is True,
+        "generated_token_count": p2p.get("generated_token_count"),
+        "max_new_tokens": p2p.get("max_new_tokens"),
+        "fresh_external_attempted": False,
+        "fresh_external_verified": False,
+        "fresh_kaggle_gpu_attempted": False,
+        "fresh_kaggle_gpu_verified": False,
+        "retained_gpu_evidence_imported": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Usable Swarm v1 distinguishes fresh local CPU/P2P execution, package-only "
+            "artifacts, and retained P2P evidence import. This pack does not launch "
+            "Kaggle or GPU proof by itself; fresh external/GPU fields remain false here."
+        ),
+    }
+
+
+def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    return (
+        f"proof={provenance.get('proof_level') or 'unknown'} "
+        f"local_p2p_ran={bool(provenance.get('local_p2p_generate_ran'))} "
+        f"local_p2p_ready={bool(provenance.get('local_p2p_generate_ready'))} "
+        f"retained_p2p_import={bool(provenance.get('retained_p2p_evidence_imported'))} "
+        f"retained_p2p_ready={bool(provenance.get('retained_p2p_evidence_ready'))} "
+        f"package_only={bool(provenance.get('package_only'))} "
+        f"fresh_external_attempted={bool(provenance.get('fresh_external_attempted'))} "
+        f"fresh_external_verified={bool(provenance.get('fresh_external_verified'))} "
+        f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+        f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))} "
+        f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))}"
+    )
 
 
 def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
@@ -1300,6 +1371,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     lines = [
         "# CrowdTensor Usable Swarm Inference v1",
@@ -1315,6 +1387,21 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- model: `{usable.get('hf_model_id')}`",
         f"- max_new_tokens: `{usable.get('max_new_tokens')}`",
         f"- output_dir: `{report.get('output_dir')}`",
+        "",
+        "## Runtime Provenance",
+        "",
+        f"- proof: `{provenance.get('proof_level') or 'unknown'}`",
+        f"- summary: {provenance.get('summary') or ''}",
+        f"- local P2P CPU ran: `{provenance.get('local_p2p_generate_ran')}`",
+        f"- local P2P CPU ready: `{provenance.get('local_p2p_generate_ready')}`",
+        f"- retained P2P evidence imported: `{provenance.get('retained_p2p_evidence_imported')}`",
+        f"- retained P2P evidence ready: `{provenance.get('retained_p2p_evidence_ready')}`",
+        f"- package only: `{provenance.get('package_only')}`",
+        f"- fresh external attempted: `{provenance.get('fresh_external_attempted')}`",
+        f"- fresh external verified: `{provenance.get('fresh_external_verified')}`",
+        f"- fresh Kaggle GPU attempted: `{provenance.get('fresh_kaggle_gpu_attempted')}`",
+        f"- fresh Kaggle GPU verified: `{provenance.get('fresh_kaggle_gpu_verified')}`",
+        f"- retained GPU evidence imported: `{provenance.get('retained_gpu_evidence_imported')}`",
         "",
         "## User Path",
         "",
@@ -1413,6 +1500,7 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
     user_status_report = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
     recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     if not review.get("state") or not review.get("next_step") or not review.get("inspect_first"):
         errors.append("review_summary_incomplete")
@@ -1438,6 +1526,12 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("artifact_summary_incomplete")
     if artifact_report.get("public_artifact_safe") is not True:
         errors.append("artifact_summary_public_artifact_safe_mismatch")
+    if provenance.get("schema") != RUNTIME_PROVENANCE_SCHEMA:
+        errors.append("runtime_provenance_schema_mismatch")
+    if not provenance.get("proof_level"):
+        errors.append("runtime_provenance_proof_level_missing")
+    if provenance.get("public_artifact_safe") is not True:
+        errors.append("runtime_provenance_public_artifact_safe_mismatch")
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -1488,6 +1582,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
+        "runtime_provenance": report.get("runtime_provenance"),
         "user_status": report.get("user_status"),
         "review_summary": report.get("review_summary"),
         "recommended_next_command": report.get("recommended_next_command"),

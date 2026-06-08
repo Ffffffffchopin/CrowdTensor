@@ -1414,6 +1414,23 @@ def output_request_text(output_request: dict[str, Any]) -> str:
 
 
 def runtime_provenance_text(provenance: dict[str, Any]) -> str:
+    if (
+        provenance.get("schema") == "usable_swarm_inference_runtime_provenance_v1"
+        or "retained_p2p_evidence_imported" in provenance
+    ):
+        return (
+            f"proof={provenance.get('proof_level') or 'unknown'} "
+            f"local_p2p_ran={bool(provenance.get('local_p2p_generate_ran'))} "
+            f"local_p2p_ready={bool(provenance.get('local_p2p_generate_ready'))} "
+            f"retained_p2p_import={bool(provenance.get('retained_p2p_evidence_imported'))} "
+            f"retained_p2p_ready={bool(provenance.get('retained_p2p_evidence_ready'))} "
+            f"package_only={bool(provenance.get('package_only'))} "
+            f"fresh_external_attempted={bool(provenance.get('fresh_external_attempted'))} "
+            f"fresh_external_verified={bool(provenance.get('fresh_external_verified'))} "
+            f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+            f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))} "
+            f"retained_gpu_import={bool(provenance.get('retained_gpu_evidence_imported'))}"
+        )
     if "local_p2p_generate_ran" in provenance or "fresh_external_verified" in provenance:
         return (
             f"proof={provenance.get('proof_level') or 'unknown'} "
@@ -14704,6 +14721,7 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    runtime_provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
     print("CrowdTensor Usable Swarm Inference v1")
     if review:
         print(f"  review: {review_summary_text(review)}")
@@ -14729,6 +14747,8 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     print(f"  generated tokens: {p2p.get('generated_token_count')}/{p2p.get('max_new_tokens')}")
     print(f"  distinct stage miners: {p2p.get('distinct_stage_miners')}")
     print(f"  stage rescue ready: {p2p.get('stage_rescue_ready') and p2p.get('real_stage_rescue_ready')}")
+    if runtime_provenance:
+        print(f"  runtime_provenance: {runtime_provenance_text(runtime_provenance)}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:

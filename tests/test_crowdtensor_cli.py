@@ -8563,6 +8563,22 @@ class CrowdTensorCliTests(unittest.TestCase):
                     "real_stage_rescue_ready": True,
                 }
             },
+            "runtime_provenance": {
+                "schema": "usable_swarm_inference_runtime_provenance_v1",
+                "proof_level": "local-p2p-cpu",
+                "mode": "local",
+                "local_p2p_generate_ran": True,
+                "local_p2p_generate_ready": True,
+                "retained_p2p_evidence_imported": False,
+                "retained_p2p_evidence_ready": False,
+                "package_only": False,
+                "fresh_external_attempted": False,
+                "fresh_external_verified": False,
+                "fresh_kaggle_gpu_attempted": False,
+                "fresh_kaggle_gpu_verified": False,
+                "retained_gpu_evidence_imported": False,
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_generated_text_public": False,
@@ -8657,6 +8673,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             rendered,
         )
+        self.assertIn(
+            "  runtime_provenance: proof=local-p2p-cpu local_p2p_ran=True local_p2p_ready=True retained_p2p_import=False",
+            rendered,
+        )
+        self.assertIn("fresh_kaggle_gpu_verified=False", rendered)
         self.assertIn(
             "  prompt_scope: source=prompt-file count=1 inline_prompt_text=False",
             rendered,

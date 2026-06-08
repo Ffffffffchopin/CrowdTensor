@@ -88,6 +88,16 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertEqual(report["review_summary"]["next_step"], "review_artifacts")
         self.assertEqual(report["recommended_next_command"]["label"], "inspect shareable summary")
         self.assertTrue(report["recommended_next_command"]["public_artifact_safe"])
+        self.assertEqual(report["runtime_provenance"]["schema"], pack.RUNTIME_PROVENANCE_SCHEMA)
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "local-p2p-cpu")
+        self.assertTrue(report["runtime_provenance"]["local_p2p_generate_ran"])
+        self.assertTrue(report["runtime_provenance"]["local_p2p_generate_ready"])
+        self.assertFalse(report["runtime_provenance"]["retained_p2p_evidence_imported"])
+        self.assertFalse(report["runtime_provenance"]["fresh_external_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_external_verified"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self.assertFalse(report["runtime_provenance"]["retained_gpu_evidence_imported"])
         self.assertEqual(report["artifact_summary"]["present_artifact_count"], 5)
         next_lines = [item["command_line"] for item in report["next_commands"]]
         self.assertTrue(any("usable_swarm_inference.md" in line for line in next_lines))
@@ -105,6 +115,9 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertIn("## Next Commands", markdown)
         self.assertIn("crowdtensor usable-swarm local", markdown)
         self.assertIn("## Artifacts", markdown)
+        self.assertIn("## Runtime Provenance", markdown)
+        self.assertIn("- proof: `local-p2p-cpu`", markdown)
+        self.assertIn("- fresh Kaggle GPU attempted: `False`", markdown)
         self.assertIn("## Output Scope", markdown)
         self.assertIn("- output request note:", markdown)
         self.assertIn("local answer", markdown)
@@ -123,6 +136,7 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
             markdown,
         )
         support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["runtime_provenance"], report["runtime_provenance"])
         self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
@@ -496,6 +510,14 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertFalse(p2p["stream"]["stream_generation_ready"])
         self.assertEqual(p2p["stream"]["event_count"], 0)
         self.assertEqual(p2p["stream"]["progress"]["source"], "disabled")
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "retained-p2p-evidence-import")
+        self.assertFalse(report["runtime_provenance"]["local_p2p_generate_ran"])
+        self.assertTrue(report["runtime_provenance"]["retained_p2p_evidence_imported"])
+        self.assertTrue(report["runtime_provenance"]["retained_p2p_evidence_ready"])
+        self.assertFalse(report["runtime_provenance"]["fresh_external_attempted"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        support = json.loads((output_dir / "usable" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["runtime_provenance"], report["runtime_provenance"])
 
     def test_evidence_import_rejects_two_token_p2p_report_for_eight_token_goal(self) -> None:
         output_dir = self._tmp_dir()
@@ -643,6 +665,10 @@ class UsableSwarmInferencePackTests(unittest.TestCase):
         self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "package-only")
+        self.assertFalse(report["runtime_provenance"]["local_p2p_generate_ran"])
+        self.assertTrue(report["runtime_provenance"]["package_only"])
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
 
     def test_check_script_validates_local_contract(self) -> None:
         result = check.run_check(check.parse_args([

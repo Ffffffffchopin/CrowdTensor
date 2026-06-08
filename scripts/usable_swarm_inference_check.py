@@ -336,6 +336,46 @@ def validate_report(
         errors.append("shareable_local_answer_terminal_only_mismatch")
     if shareable.get("public_artifact_safe") is not True:
         errors.append("shareable_public_artifact_safe_mismatch")
+    provenance = payload.get("runtime_provenance") if isinstance(payload.get("runtime_provenance"), dict) else {}
+    if provenance.get("schema") != pack.RUNTIME_PROVENANCE_SCHEMA:
+        errors.append("runtime_provenance_schema_mismatch")
+    if provenance.get("mode") != mode:
+        errors.append("runtime_provenance_mode_mismatch")
+    if not provenance.get("proof_level"):
+        errors.append("runtime_provenance_proof_level_missing")
+    if provenance.get("public_artifact_safe") is not True:
+        errors.append("runtime_provenance_public_artifact_safe_mismatch")
+    if provenance.get("fresh_external_attempted") is not False or provenance.get("fresh_external_verified") is not False:
+        errors.append("runtime_provenance_fresh_external_claim_mismatch")
+    if provenance.get("fresh_kaggle_gpu_attempted") is not False or provenance.get("fresh_kaggle_gpu_verified") is not False:
+        errors.append("runtime_provenance_fresh_kaggle_gpu_claim_mismatch")
+    if mode == pack.MODE_LOCAL:
+        if provenance.get("proof_level") != "local-p2p-cpu":
+            errors.append("runtime_provenance_local_proof_level_mismatch")
+        if provenance.get("local_p2p_generate_ran") is not True:
+            errors.append("runtime_provenance_local_p2p_ran_missing")
+        if provenance.get("local_p2p_generate_ready") is not True:
+            errors.append("runtime_provenance_local_p2p_ready_missing")
+        if provenance.get("retained_p2p_evidence_imported") is not False:
+            errors.append("runtime_provenance_local_retained_p2p_claim_mismatch")
+    elif mode == pack.MODE_EVIDENCE_IMPORT:
+        if provenance.get("proof_level") != "retained-p2p-evidence-import":
+            errors.append("runtime_provenance_import_proof_level_mismatch")
+        if provenance.get("local_p2p_generate_ran") is not False:
+            errors.append("runtime_provenance_import_local_p2p_ran_mismatch")
+        if provenance.get("retained_p2p_evidence_imported") is not True:
+            errors.append("runtime_provenance_retained_p2p_import_missing")
+        if provenance.get("retained_p2p_evidence_ready") is not True:
+            errors.append("runtime_provenance_retained_p2p_ready_missing")
+    elif mode == pack.MODE_PACKAGE:
+        if provenance.get("proof_level") != "package-only":
+            errors.append("runtime_provenance_package_proof_level_mismatch")
+        if provenance.get("package_only") is not True:
+            errors.append("runtime_provenance_package_only_missing")
+        if provenance.get("local_p2p_generate_ran") is not False:
+            errors.append("runtime_provenance_package_local_p2p_ran_mismatch")
+        if provenance.get("retained_p2p_evidence_imported") is not False:
+            errors.append("runtime_provenance_package_retained_p2p_claim_mismatch")
     encoded = json.dumps(payload, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment in encoded:
