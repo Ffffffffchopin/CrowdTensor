@@ -152,6 +152,10 @@ logs from those runs as local-private. Saved JSON/Markdown keep prompt
 placeholders; `prompt_scope` records that distinction without storing raw text.
 Use `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when you need
 shareable terminal logs.
+If you still want human-readable terminal output while keeping terminal logs
+shareable, add `--shareable-terminal`; it keeps status, diagnostics, hashes,
+artifact paths, and safe next commands, but hides inline prompts, local prompt
+file paths, and local answer text from stdout.
 The `result` line and JSON/Markdown `result` object summarize completion state,
 token count, output count, generated-text hash, and display safety:
 `local-private` for terminal-only generated text, `hash-only` for redacted

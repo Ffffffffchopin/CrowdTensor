@@ -368,6 +368,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("inline prompt terminal next commands are local-private", rendered)
         self.assertIn("treat terminal logs as private", rendered)
         self.assertIn("prefer prompt files or stdin for shareable logs", rendered)
+        self.assertIn("pass --shareable-terminal to keep human output", rendered)
+        self.assertIn("hide inline prompts, local prompt paths, and local answer text", rendered)
         self.assertIn("saved artifacts", rendered)
         self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("prompt_scope records that distinction without raw text", rendered)
@@ -482,6 +484,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("inline prompt terminal next commands are local-private", rendered)
         self.assertIn("treat terminal logs as private", rendered)
         self.assertIn("prefer prompt files or stdin for shareable logs", rendered)
+        self.assertIn("pass --shareable-terminal to keep human output", rendered)
+        self.assertIn("hide inline prompts, local prompt paths, and local answer text", rendered)
         self.assertIn("saved artifacts", rendered)
         self.assertIn("keep prompt placeholders", rendered)
         self.assertIn("prompt_scope records that distinction without raw text", rendered)
@@ -1601,6 +1605,113 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(cli.INFER_PROMPT_PLACEHOLDER, rendered)
         self.assertLess(rendered.index("  status: "), rendered.index("  answer_scope: "))
         self.assertLess(rendered.index("  answer_scope: "), rendered.index("  runtime_options: "))
+
+    def test_generate_shareable_terminal_hides_inline_prompt_and_answer(self) -> None:
+        prompt = "CrowdTensor prompt"
+        answer = "local generated answer"
+
+        def fake_build_product_generate(args: object) -> dict[str, object]:
+            self.assertTrue(getattr(args, "shareable_terminal"))
+            return {
+                "schema": "public_swarm_product_cli_v1",
+                "ok": True,
+                "mode": "generate",
+                "json_mode": False,
+                "diagnosis_codes": ["public_swarm_generate_ready"],
+                "route": {"route_source": "coordinator-url", "coordinator_url_present": True, "missing_capabilities": []},
+                "generation": {"generated_token_count": 2, "max_new_tokens": 2, "generated_text_hash": "sha256:generated"},
+                "result": {
+                    "status": "complete",
+                    "generated_token_count": 2,
+                    "max_new_tokens": 2,
+                    "output_count": 1,
+                    "display": "local-private",
+                    "generated_text_hash": "sha256:generated",
+                    "public_artifact_safe": False,
+                },
+                "output_display": {
+                    "terminal_display": "local-private",
+                    "terminal_text_available": True,
+                    "saved_artifact_display": "hash-only",
+                    "json_stdout_display": "hash-only-json",
+                    "raw_generated_text_public": False,
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "terminal-visible",
+                    "terminal_only": True,
+                    "visible_in_terminal": True,
+                    "saved_json_display": "hash-only",
+                    "saved_markdown_display": "hash-only",
+                    "public_artifact_safe": True,
+                },
+                "local_output": {
+                    "available": True,
+                    "generated_text": answer,
+                    "outputs": [{"generated_text": answer, "generated_token_count": 2}],
+                    "output_count": 1,
+                    "source": "coordinator-validation",
+                    "display_only": True,
+                    "public_artifact_safe": False,
+                },
+                "shareable_summary": {
+                    "saved_artifacts_public_safe": True,
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "local_output_display_only": True,
+                    "answer_scope_state": "terminal-visible",
+                    "local_answer_terminal_only": True,
+                },
+                "next_commands": [
+                    cli.command_entry(
+                        "rerun generation",
+                        ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER],
+                    )
+                ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "rerun generation",
+                        ["crowdtensor", "generate", "--prompt-text", cli.INFER_PROMPT_PLACEHOLDER],
+                    ),
+                    "reason": "rerun_generation",
+                },
+                "review_summary": {
+                    "state": "completed",
+                    "next_step": "rerun_or_review_artifacts",
+                    "recommended_label": "rerun generation",
+                    "recommended_reason": "rerun_generation",
+                    "next_command": "crowdtensor generate --prompt-text '<prompt>'",
+                    "public_artifact_safe": True,
+                },
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_product_generate", side_effect=fake_build_product_generate):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "generate",
+                    "--prompt-text",
+                    prompt,
+                    "--shareable-terminal",
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        self.assertNotIn(prompt, rendered)
+        self.assertNotIn(answer, rendered)
+        self.assertNotIn("  answer:", rendered)
+        self.assertNotIn("prompt_scope:", rendered)
+        self.assertIn("command=crowdtensor generate --prompt-text '<prompt>'", rendered)
+        self.assertIn("next[1] rerun generation: crowdtensor generate --prompt-text '<prompt>'", rendered)
+        self.assertIn(
+            "  shareable_terminal: enabled=True prompt_sources_redacted=True answer_text_redacted=True public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn("answer_scope: state=shareable-terminal-redacted", rendered)
+        self.assertIn("local_output: available=False display_only=False public_artifact_safe=True", rendered)
+        self.assertNotIn(prompt, stderr.getvalue())
 
     def test_generate_main_prints_copyable_batch_prompt_without_single_prompt_placeholder(self) -> None:
         prompts = "first private prompt,second private prompt"
@@ -10155,6 +10266,130 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("infer '<prompt>'", rendered)
         self.assertNotIn(prompt, rendered)
         self.assertNotIn(prompt, progress)
+
+    def test_infer_shareable_terminal_hides_inline_prompt_and_answer(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "CrowdTensor private infer prompt"
+        answer = "local infer answer"
+
+        def fake_build_infer(args: object) -> dict[str, object]:
+            self.assertTrue(getattr(args, "shareable_terminal"))
+            return {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": True,
+                "mode": "existing",
+                "model": {"hf_model_id": "sshleifer/tiny-gpt2", "backend": "cpu"},
+                "prompt": {"prompt_count": 1, "prompt_hash": "sha256:prompt", "raw_prompt_public": False},
+                "generation": {"generated_token_count": 2, "max_new_tokens": 2, "generated_text_hash": "sha256:generated"},
+                "result": {
+                    "status": "complete",
+                    "generated_token_count": 2,
+                    "max_new_tokens": 2,
+                    "output_count": 1,
+                    "display": "local-private",
+                    "generated_text_hash": "sha256:generated",
+                    "public_artifact_safe": False,
+                },
+                "output_display": {
+                    "terminal_display": "local-private",
+                    "terminal_text_available": True,
+                    "saved_artifact_display": "hash-only",
+                    "json_stdout_display": "hash-only-json",
+                    "raw_generated_text_public": False,
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "terminal-visible",
+                    "terminal_only": True,
+                    "visible_in_terminal": True,
+                    "saved_json_display": "hash-only",
+                    "saved_markdown_display": "hash-only",
+                    "public_artifact_safe": True,
+                },
+                "local_output": {
+                    "available": True,
+                    "generated_text": answer,
+                    "output_count": 1,
+                    "source": "local-private-task-state",
+                    "display_only": True,
+                    "public_artifact_safe": False,
+                },
+                "trace": {"request_count": 1, "public_artifact_safe": True},
+                "shareable_summary": {
+                    "saved_artifacts_public_safe": True,
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "local_output_display_only": True,
+                    "answer_scope_state": "terminal-visible",
+                    "local_answer_terminal_only": True,
+                },
+                "route": {"route_source": "coordinator-url", "route_ready": True, "distinct_stage_miners": True},
+                "stream": {},
+                "output_dir": str(output_dir),
+                "next_commands": [
+                    cli.command_entry(
+                        "rerun inference",
+                        ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing"],
+                    )
+                ],
+                "recommended_next_command": {
+                    **cli.command_entry(
+                        "rerun inference",
+                        ["crowdtensor", "infer", cli.INFER_PROMPT_PLACEHOLDER, "--mode", "existing"],
+                    ),
+                    "reason": "rerun_inference",
+                },
+                "review_summary": {
+                    "state": "completed",
+                    "next_step": "rerun_or_review_artifacts",
+                    "recommended_label": "rerun inference",
+                    "recommended_reason": "rerun_inference",
+                    "next_command": "crowdtensor infer '<prompt>' --mode existing",
+                    "public_artifact_safe": True,
+                },
+                "diagnosis_codes": ["crowdtensor_infer_ready"],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(cli, "build_infer", side_effect=fake_build_infer):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                cli.main([
+                    "infer",
+                    prompt,
+                    "--mode",
+                    "existing",
+                    "--coordinator-url",
+                    "http://127.0.0.1:8787",
+                    "--admin-token",
+                    "admin-secret",
+                    "--output-dir",
+                    str(output_dir),
+                    "--shareable-terminal",
+                ])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        progress = stderr.getvalue()
+        self.assertNotIn(prompt, rendered)
+        self.assertNotIn(answer, rendered)
+        self.assertNotIn("admin-secret", rendered)
+        self.assertNotIn("  answer:", rendered)
+        self.assertNotIn("prompt_scope:", rendered)
+        self.assertIn("command=crowdtensor infer '<prompt>' --mode existing", rendered)
+        self.assertIn("next[1] rerun inference: crowdtensor infer '<prompt>' --mode existing", rendered)
+        self.assertIn(
+            "  shareable_terminal: enabled=True prompt_sources_redacted=True answer_text_redacted=True public_artifact_safe=True",
+            rendered,
+        )
+        self.assertIn("answer_scope: state=shareable-terminal-redacted", rendered)
+        self.assertIn("output_display: terminal=shareable-terminal-redacted", rendered)
+        self.assertIn("result: status=complete tokens=2/2 outputs=1 display=hash-only hash=sha256:generated public_artifact_safe=True", rendered)
+        self.assertIn("local_output: available=False display_only=False public_artifact_safe=True saved_redacted=True", rendered)
+        self.assertNotIn(prompt, progress)
+        self.assertNotIn(answer, progress)
+        self.assertNotIn("admin-secret", progress)
 
     def test_infer_prompt_file_does_not_pollute_startup_commands(self) -> None:
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"

@@ -1329,6 +1329,7 @@ LOCAL_ANSWER_SCOPE_TEXT = "terminal-only; saved JSON/Markdown keep hashes/redact
 SAVED_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; rerun without --json for local display."
 SAVED_NO_ANSWER_SCOPE_TEXT = "no local answer text was available in this run; saved JSON/Markdown contain no generated text."
 SAVED_TERMINAL_ANSWER_SCOPE_TEXT = "saved JSON/Markdown contain no generated text; the answer was shown only in local human output."
+SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT = "shareable terminal output hides generated text; saved JSON/Markdown contain no generated text."
 LOCAL_OUTPUT_DISPLAY_MAX_CHARS = 4096
 
 
@@ -1732,6 +1733,15 @@ def answer_scope_text(answer_scope: dict[str, Any]) -> str:
         f"saved_json={answer_scope.get('saved_json_display')} "
         f"saved_markdown={answer_scope.get('saved_markdown_display')} "
         f"public_artifact_safe={bool(answer_scope.get('public_artifact_safe'))}"
+    )
+
+
+def shareable_terminal_text(summary: dict[str, Any]) -> str:
+    return (
+        f"enabled={bool(summary.get('enabled'))} "
+        f"prompt_sources_redacted={bool(summary.get('prompt_sources_redacted'))} "
+        f"answer_text_redacted={bool(summary.get('answer_text_redacted'))} "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))}"
     )
 
 
@@ -6035,6 +6045,108 @@ def _strip_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
 
 def _strip_infer_local_output_text(summary: dict[str, Any]) -> dict[str, Any]:
     return _strip_local_output_text(summary)
+
+
+def _strip_shareable_terminal_private_text(report: dict[str, Any]) -> dict[str, Any]:
+    terminal_report = dict(report)
+    for key in [
+        "local_prompt_text",
+        "local_prompt_texts",
+        "local_prompt_file",
+        "local_prompt_texts_file",
+        "local_prompt_stdin",
+    ]:
+        terminal_report.pop(key, None)
+    local_output = (
+        dict(terminal_report.get("local_output"))
+        if isinstance(terminal_report.get("local_output"), dict)
+        else {}
+    )
+    had_terminal_text = bool(
+        local_output.get("generated_text")
+        or any(
+            isinstance(output, dict) and output.get("generated_text")
+            for output in (local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else [])
+        )
+    )
+    if local_output:
+        local_output["available"] = False
+        local_output["generated_text"] = ""
+        local_output["display_only"] = False
+        local_output["public_artifact_safe"] = True
+        local_output["shareable_terminal_redacted"] = bool(had_terminal_text)
+        local_output["note"] = (
+            SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT
+            if had_terminal_text
+            else str(local_output.get("note") or "")
+        )
+        outputs = local_output.get("outputs")
+        if isinstance(outputs, list):
+            redacted_outputs: list[dict[str, Any]] = []
+            for output in outputs:
+                if isinstance(output, dict):
+                    redacted = dict(output)
+                    redacted["generated_text"] = ""
+                    redacted_outputs.append(redacted)
+            local_output["outputs"] = redacted_outputs
+        terminal_report["local_output"] = local_output
+    if terminal_report.get("local_output_note") and had_terminal_text:
+        terminal_report["local_output_note"] = SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT
+    result = (
+        dict(terminal_report.get("result"))
+        if isinstance(terminal_report.get("result"), dict)
+        else {}
+    )
+    if result:
+        if result.get("display") == "local-private":
+            result["display"] = "hash-only"
+        result["public_artifact_safe"] = True
+        terminal_report["result"] = result
+    output_display = (
+        dict(terminal_report.get("output_display"))
+        if isinstance(terminal_report.get("output_display"), dict)
+        else {}
+    )
+    if output_display:
+        if had_terminal_text:
+            output_display["terminal_display"] = "shareable-terminal-redacted"
+        output_display["terminal_text_available"] = False
+        output_display["raw_generated_text_public"] = False
+        output_display["generated_token_ids_public"] = False
+        output_display["public_artifact_safe"] = True
+        terminal_report["output_display"] = output_display
+    answer_scope = (
+        dict(terminal_report.get("answer_scope"))
+        if isinstance(terminal_report.get("answer_scope"), dict)
+        else {}
+    )
+    if answer_scope:
+        answer_scope["scope_state"] = "shareable-terminal-redacted" if had_terminal_text else answer_scope.get("scope_state", "no-local-answer")
+        answer_scope["terminal_only"] = False
+        answer_scope["visible_in_terminal"] = False
+        answer_scope["raw_generated_text_public"] = False
+        answer_scope["generated_token_ids_public"] = False
+        answer_scope["public_artifact_safe"] = True
+        if had_terminal_text:
+            answer_scope["summary"] = SHAREABLE_TERMINAL_ANSWER_SCOPE_TEXT
+        terminal_report["answer_scope"] = answer_scope
+    shareable_summary = (
+        dict(terminal_report.get("shareable_summary"))
+        if isinstance(terminal_report.get("shareable_summary"), dict)
+        else {}
+    )
+    if shareable_summary:
+        shareable_summary["local_answer_terminal_only"] = False
+        if had_terminal_text:
+            shareable_summary["answer_scope_state"] = "shareable-terminal-redacted"
+        terminal_report["shareable_summary"] = shareable_summary
+    terminal_report["shareable_terminal"] = {
+        "enabled": True,
+        "prompt_sources_redacted": True,
+        "answer_text_redacted": bool(had_terminal_text),
+        "public_artifact_safe": True,
+    }
+    return terminal_report
 
 
 def _local_output_truncation_summary(local_output: dict[str, Any], outputs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -11332,6 +11444,9 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  output_display: {output_display_text(output_display)}")
     answer_scope_printed = print_local_output_block(report)
     print_answer_scope_line(report, already_printed=answer_scope_printed)
+    shareable_terminal = report.get("shareable_terminal") if isinstance(report.get("shareable_terminal"), dict) else {}
+    if shareable_terminal:
+        print(f"  shareable_terminal: {shareable_terminal_text(shareable_terminal)}")
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
@@ -11625,6 +11740,9 @@ def print_infer(report: dict[str, Any]) -> None:
         print(f"  output_display: {output_display_text(output_display)}")
     answer_scope_printed = print_local_output_block(report)
     print_answer_scope_line(report, already_printed=answer_scope_printed)
+    shareable_terminal = report.get("shareable_terminal") if isinstance(report.get("shareable_terminal"), dict) else {}
+    if shareable_terminal:
+        print(f"  shareable_terminal: {shareable_terminal_text(shareable_terminal)}")
     trace = report.get("trace") if isinstance(report.get("trace"), dict) else {}
     if trace:
         print(f"  trace: {infer_trace_text(trace)}")
@@ -13693,6 +13811,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The review_next line keeps the safe recommended command next to that first-screen summary;\n"
             "human terminal output renders local prompt sources for copying, using a pipe placeholder for --prompt-stdin;\n"
             "inline prompt terminal next commands are local-private, so treat terminal logs as private and prefer prompt files or stdin for shareable logs;\n"
+            "pass --shareable-terminal to keep human output but hide inline prompts, local prompt paths, and local answer text from terminal logs;\n"
             "saved artifacts keep prompt placeholders, and prompt_scope records that distinction without raw text. The status/user_status line then\n"
             "spells out completed, preflight-ready, preflight-partial, or blocked state.\n"
             "Reports include action, recommended_next, and next[...] lines with copyable\n"
@@ -13776,6 +13895,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--hf-cache-dir", default="")
     infer.add_argument("--stream", action="store_true", help="request safe stream-progress evidence")
     infer.add_argument("--include-output", action="store_true", help="request local human display of generated text; JSON and saved artifacts still suppress it")
+    infer.add_argument("--shareable-terminal", action="store_true", help="human output mode: hide inline prompts, local prompt file paths, and local answer text from terminal logs")
     infer.add_argument("--dry-run", action="store_true", help="existing mode only: check route/session readiness without submitting an inference task")
     infer.add_argument("--skip-live-preflight", action="store_true", help="existing dry-run only: skip Coordinator /ready and /state checks for CI-safe request-shape checks")
     infer.add_argument("--full-evidence", action="store_true", help="use the full local Public Swarm v2 gate instead of the faster product loopback path")
@@ -13914,6 +14034,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "The review_next line keeps the safe recommended command next to that first-screen summary;\n"
             "human terminal output renders local prompt sources for copying, using a pipe placeholder for --prompt-stdin;\n"
             "inline prompt terminal next commands are local-private, so treat terminal logs as private and prefer prompt files or stdin for shareable logs;\n"
+            "pass --shareable-terminal to keep human output but hide inline prompts, local prompt paths, and local answer text from terminal logs;\n"
             "saved artifacts keep prompt placeholders, and prompt_scope records that distinction without raw text. The status/user_status line then\n"
             "spells out completed, preflight-ready, preflight-partial, or blocked state.\n"
             "ready_to_submit labels mean: verified is ready after route,\n"
@@ -14005,6 +14126,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     generate.add_argument("--dry-run", action="store_true", help="check route/session readiness without submitting a generation task")
     generate.add_argument("--skip-live-preflight", action="store_true", help="dry-run only: skip Coordinator /ready and /state checks for CI-safe protocol/package checks")
     generate.add_argument("--include-output", action="store_true", help="request local human display of generated text; JSON/public reports expose hashes only")
+    generate.add_argument("--shareable-terminal", action="store_true", help="human output mode: hide inline prompts, local prompt file paths, and local answer text from terminal logs")
     generate.add_argument("--stream", action="store_true", help="emit safe per-token progress while waiting for the final result")
     generate.add_argument("--json", action="store_true")
 
@@ -16855,16 +16977,19 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             local_report = dict(report)
-            if bool(getattr(args, "prompt_stdin", False)):
-                local_report["local_prompt_stdin"] = True
-            elif str(getattr(args, "prompt_file", "") or ""):
-                local_report["local_prompt_file"] = str(getattr(args, "prompt_file", "") or "")
-            elif str(getattr(args, "prompt_texts_file", "") or ""):
-                local_report["local_prompt_texts_file"] = str(getattr(args, "prompt_texts_file", "") or "")
+            if not bool(getattr(args, "shareable_terminal", False)):
+                if bool(getattr(args, "prompt_stdin", False)):
+                    local_report["local_prompt_stdin"] = True
+                elif str(getattr(args, "prompt_file", "") or ""):
+                    local_report["local_prompt_file"] = str(getattr(args, "prompt_file", "") or "")
+                elif str(getattr(args, "prompt_texts_file", "") or ""):
+                    local_report["local_prompt_texts_file"] = str(getattr(args, "prompt_texts_file", "") or "")
+                else:
+                    local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
+                if not str(getattr(args, "prompt_texts_file", "") or ""):
+                    local_report["local_prompt_texts"] = str(getattr(args, "prompt_texts", "") or "")
             else:
-                local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
-            if not str(getattr(args, "prompt_texts_file", "") or ""):
-                local_report["local_prompt_texts"] = str(getattr(args, "prompt_texts", "") or "")
+                local_report = _strip_shareable_terminal_private_text(local_report)
             print_infer(local_report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "serve":
@@ -16889,16 +17014,19 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             local_report = dict(report)
-            if bool(getattr(args, "prompt_stdin", False)):
-                local_report["local_prompt_stdin"] = True
-            elif str(getattr(args, "prompt_file", "") or ""):
-                local_report["local_prompt_file"] = str(getattr(args, "prompt_file", "") or "")
-            elif str(getattr(args, "prompt_texts_file", "") or ""):
-                local_report["local_prompt_texts_file"] = str(getattr(args, "prompt_texts_file", "") or "")
+            if not bool(getattr(args, "shareable_terminal", False)):
+                if bool(getattr(args, "prompt_stdin", False)):
+                    local_report["local_prompt_stdin"] = True
+                elif str(getattr(args, "prompt_file", "") or ""):
+                    local_report["local_prompt_file"] = str(getattr(args, "prompt_file", "") or "")
+                elif str(getattr(args, "prompt_texts_file", "") or ""):
+                    local_report["local_prompt_texts_file"] = str(getattr(args, "prompt_texts_file", "") or "")
+                else:
+                    local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
+                if not str(getattr(args, "prompt_texts_file", "") or ""):
+                    local_report["local_prompt_texts"] = str(getattr(args, "prompt_texts", "") or "")
             else:
-                local_report["local_prompt_text"] = str(getattr(args, "prompt_text", "") or "")
-            if not str(getattr(args, "prompt_texts_file", "") or ""):
-                local_report["local_prompt_texts"] = str(getattr(args, "prompt_texts", "") or "")
+                local_report = _strip_shareable_terminal_private_text(local_report)
             print_product_generate(local_report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "p2pd":
