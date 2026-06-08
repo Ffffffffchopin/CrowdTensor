@@ -13417,6 +13417,9 @@ def print_public_swarm_inference_beta_rc(report: dict[str, Any]) -> None:
 
 def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
     beta = report.get("product_beta") if isinstance(report.get("product_beta"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -13427,6 +13430,18 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
     print(f"  cli_schema: {report.get('cli_schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  ready: {beta.get('ready')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -13435,6 +13450,18 @@ def print_public_swarm_product_beta(report: dict[str, Any]) -> None:
         print_answer_scope_block(answer_scope)
     if shareable_summary:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary:
+        print(
+            "  artifacts: "
+            f"present={artifact_summary.get('present_artifact_count')}/{artifact_summary.get('artifact_count')} "
+            f"support={artifact_summary.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
+        )
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
@@ -15303,6 +15330,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     public_swarm_product_beta = subparsers.add_parser(
         "public-swarm-product-beta",
         help="Build the user-facing Public Swarm Product Beta artifact.",
+        description=(
+            "Build the user-facing Public Swarm Product Beta evidence for the controlled\n"
+            "serve/join/generate inference path.\n\n"
+            "Modes:\n"
+            "  local-loopback     run the localhost Product Beta serve/join/generate proof\n"
+            "  package            generate two-machine or Kaggle stage join material and runbook artifacts\n"
+            "  external-existing  verify an already running controlled Coordinator plus stage Miners\n\n"
+            "The report prints status, review, recommended_next, next[...] commands, output scope,\n"
+            "and artifact counts. Open public_swarm_product_beta.md first, then support_bundle.json\n"
+            "for diagnostics. Share only public_swarm_product_beta.json, public_swarm_product_beta.md,\n"
+            "and support_bundle.json.\n\n"
+            "Public artifacts contain hashes/counts/readiness evidence only. Keep private env files,\n"
+            "registries, runtime state, credentials, leases, activations, raw prompts, generated text,\n"
+            "and generated token ids local. This is Coordinator-backed, CPU/read-only by default,\n"
+            "not production Swarm Inference, not libp2p/DHT/NAT traversal, and not large-model serving."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crowdtensor public-swarm-product-beta local-loopback --output-dir dist/product-beta\n"
+            "  crowdtensor public-swarm-product-beta package --target kaggle --output-dir dist/product-beta-package\n"
+            "  crowdtensor public-swarm-product-beta external-existing --coordinator-url http://host:9320 "
+            "--observer-token OBSERVER_TOKEN_PLACEHOLDER --admin-token ADMIN_TOKEN_PLACEHOLDER\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     public_swarm_product_beta.add_argument("public_swarm_product_beta_mode", choices=["local-loopback", "package", "external-existing"])
     public_swarm_product_beta.add_argument("--output-dir", default="dist/public-swarm-product-beta")

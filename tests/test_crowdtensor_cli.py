@@ -8348,6 +8348,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("evidence-import aggregates retained Product Beta and optional GPU generation evidence", normalized)
         self.assertIn("Artifacts are shareable preview evidence, not answer transcripts", normalized)
 
+    def test_public_swarm_product_beta_help_explains_modes_and_output_scope(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(["public-swarm-product-beta", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        normalized = " ".join(rendered.split())
+        self.assertIn("local-loopback run the localhost Product Beta serve/join/generate proof", normalized)
+        self.assertIn("package generate two-machine or Kaggle stage join material and runbook artifacts", normalized)
+        self.assertIn("external-existing verify an already running controlled Coordinator plus stage Miners", normalized)
+        self.assertIn("The report prints status, review, recommended_next, next[...] commands, output scope", normalized)
+        self.assertIn("Public artifacts contain hashes/counts/readiness evidence only", normalized)
+
     def test_usable_swarm_prints_output_scope(self) -> None:
         report = {
             "schema": "usable_swarm_inference_v1",
@@ -15918,6 +15933,45 @@ class CrowdTensorCliTests(unittest.TestCase):
             "mode": "local-loopback",
             "output_dir": "dist/product-beta",
             "product_beta": {"ready": True},
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Swarm Product Beta evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Product Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "public_swarm_product_beta_review_summary_v1",
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/product-beta/public_swarm_product_beta.md",
+                "support_bundle": "dist/product-beta/support_bundle.json",
+                "recommended_label": "inspect Product Beta evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/product-beta/public_swarm_product_beta.md",
+                "primary_code": "public_swarm_product_beta_ready",
+                "attention": "none",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Product Beta evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p dist/product-beta/public_swarm_product_beta.md",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/product-beta/support_bundle.json",
+                }
+            ],
+            "artifact_summary": {
+                "artifact_count": 4,
+                "present_artifact_count": 4,
+                "support_bundle": "dist/product-beta/support_bundle.json",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_generated_text_public": False,
@@ -15962,6 +16016,16 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_swarm_product_beta(report)
         output = stdout.getvalue()
 
+        self.assertIn("  status: ready: Public Swarm Product Beta evidence is ready.", output)
+        self.assertIn("  review: state=ready next=review_artifacts", output)
+        self.assertIn(
+            "  review_next: label=inspect Product Beta evidence reason=review_artifacts command=sed -n 1,220p dist/product-beta/public_swarm_product_beta.md",
+            output,
+        )
+        self.assertIn(
+            "  recommended_next: inspect Product Beta evidence reason=review_artifacts sed -n 1,220p dist/product-beta/public_swarm_product_beta.md",
+            output,
+        )
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,
@@ -15986,6 +16050,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False",
             output,
         )
+        self.assertIn("  next[1] inspect support bundle: sed -n 1,220p dist/product-beta/support_bundle.json", output)
+        self.assertIn("  artifacts: present=4/4 support=dist/product-beta/support_bundle.json public_artifact_safe=True", output)
 
     def test_public_swarm_product_rc_prints_output_scope(self) -> None:
         report = {
