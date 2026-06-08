@@ -139,7 +139,9 @@ checked or used an already running Coordinator or P2P-discovered route. For
 without submitting work, `existing-runtime-submit` submitted to an existing
 Coordinator, and `p2p-runtime-*` came through discovery. `retained_gpu=True`
 means imported historical GPU evidence was referenced; only
-`fresh_kaggle_gpu=True` means this run verified a fresh Kaggle GPU proof.
+`fresh_kaggle_gpu=True` means this run verified a fresh Kaggle GPU proof;
+`fresh_kaggle_gpu_attempted=True` without `fresh_kaggle_gpu=True` means an
+attempted GPU path did not verify.
 The adjacent `evidence_scope_note` terminal line and Markdown note spell out the
 same scope in plain text, for example that a `generate --dry-run` was only a
 preflight and submitted no generation task.
@@ -259,7 +261,8 @@ Read `evidence_scope` in `public_real_llm_swarm_beta.json` and
 `checked_evidence_scope` in `public_real_llm_swarm_beta_check.json` for the
 shortest answer to what was verified: local CPU, retained evidence, or fresh
 Kaggle GPU. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
-retained external/GPU evidence is not a new Kaggle run.
+`fresh_kaggle_gpu_attempted=True` without that verified flag is not a completed
+GPU proof. Retained external/GPU evidence is not a new Kaggle run.
 When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`
 first, then `dist/public-real-llm-swarm-beta/support_bundle.json` if you need
 diagnostics. The terminal also prints the final inference status: model and
