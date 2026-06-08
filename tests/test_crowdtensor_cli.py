@@ -9338,6 +9338,53 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(persisted["runtime_options"]["coordinator_port_explicit"])
         self.assertTrue(calls)
 
+    def test_infer_local_allows_one_token_smoke(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        args = cli.parse_args([
+            "infer",
+            "CrowdTensor user prompt",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "1",
+            "--json",
+        ])
+        calls: list[list[str]] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            self.assertIn("product_swarm_mvp_check.py", command[1])
+            self.assertEqual(command[command.index("--max-new-tokens") + 1], "1")
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "generation": {
+                    "generated_token_count": 1,
+                    "max_new_tokens": 1,
+                    "generated_text_hash": "sha256:generated",
+                    "decoded_tokens_match": True,
+                },
+                "stage_assignment": {"distinct_stage_miners": True},
+                "ledger": {"accepted_rows": 2},
+                "diagnosis_codes": ["product_swarm_mvp_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["generation"]["max_new_tokens"], 1)
+        self.assertEqual(report["result"]["max_new_tokens"], 1)
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            f"crowdtensor infer '{cli.INFER_PROMPT_PLACEHOLDER}' --mode local --output-dir {output_dir} --max-new-tokens 1",
+            next_lines,
+        )
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["generation"]["max_new_tokens"], 1)
+        self.assertTrue(calls)
+
     def test_infer_main_prints_safe_start_hint_before_human_output(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompt = "CrowdTensor user prompt"
@@ -14483,8 +14530,8 @@ class CrowdTensorCliTests(unittest.TestCase):
     def test_infer_token_limits_match_mode(self) -> None:
         with self.assertRaises(SystemExit):
             cli.parse_args(["infer", "prompt", "--max-new-tokens", "16"])
-        args = cli.parse_args(["infer", "prompt", "--max-new-tokens", "2"])
-        self.assertEqual(args.max_new_tokens, 2)
+        args = cli.parse_args(["infer", "prompt", "--max-new-tokens", "1"])
+        self.assertEqual(args.max_new_tokens, 1)
         full_args = cli.parse_args(["infer", "prompt", "--full-evidence", "--max-new-tokens", "16"])
         self.assertEqual(full_args.max_new_tokens, 16)
         args = cli.parse_args([

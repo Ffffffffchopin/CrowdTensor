@@ -649,6 +649,15 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
 
         self.assertEqual(str(raised.exception), "prompt_texts_file must contain at most 4 prompts")
 
+    def test_parse_args_allows_one_token_smoke(self) -> None:
+        args = product_check.parse_args(["--max-new-tokens", "1"])
+        self.assertEqual(args.max_new_tokens, 1)
+
+        with self.assertRaises(SystemExit) as raised:
+            product_check.parse_args(["--max-new-tokens", "0"])
+
+        self.assertEqual(str(raised.exception), "--max-new-tokens must be between 1 and 8 for this smoke")
+
     def test_parse_args_rejects_prompt_texts_file_long_line_with_line_number(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             prompt_file = Path(tmp) / "long-prompts.txt"

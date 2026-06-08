@@ -1187,8 +1187,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.port < 1:
         raise SystemExit("--port must be positive")
-    if args.max_new_tokens < 2 or args.max_new_tokens > 8:
-        raise SystemExit("--max-new-tokens must be between 2 and 8 for this smoke")
+    if args.max_new_tokens < 1 or args.max_new_tokens > 8:
+        raise SystemExit("--max-new-tokens must be between 1 and 8 for this smoke")
     raw_argv = list(argv if argv is not None else sys.argv[1:])
     prompt_text_explicit = "--prompt-text" in raw_argv or any(item.startswith("--prompt-text=") for item in raw_argv)
     prompt_sources = [

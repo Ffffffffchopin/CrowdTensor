@@ -7017,7 +7017,7 @@ def _infer_command_args(
     if resolved_mode == "local" and use_full_evidence:
         max_new_tokens = min(max(max_new_tokens, 8), 32)
     elif resolved_mode == "local":
-        max_new_tokens = min(max(max_new_tokens, 2), 8)
+        max_new_tokens = min(max(max_new_tokens, 1), 8)
     elif resolved_mode == "existing":
         max_new_tokens = min(max(max_new_tokens, 2), 32)
     command.extend(["--max-new-tokens", str(max_new_tokens)])
@@ -18156,8 +18156,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit(str(exc)) from exc
         if args.infer_mode == "local" and args.full_evidence and (args.max_new_tokens < 8 or args.max_new_tokens > 32):
             raise SystemExit("infer --mode local --full-evidence requires --max-new-tokens between 8 and 32")
-        if args.infer_mode == "local" and not args.full_evidence and (args.max_new_tokens < 2 or args.max_new_tokens > 8):
-            raise SystemExit("infer --mode local requires --max-new-tokens between 2 and 8, or use --full-evidence for 8..32")
+        if args.infer_mode == "local" and not args.full_evidence and (args.max_new_tokens < 1 or args.max_new_tokens > 8):
+            raise SystemExit("infer --mode local requires --max-new-tokens between 1 and 8, or use --full-evidence for 8..32")
         if args.infer_mode == "existing" and (args.max_new_tokens < 2 or args.max_new_tokens > 32):
             raise SystemExit("infer --mode existing requires --max-new-tokens between 2 and 32")
         if args.p2p_port < 1 or args.coordinator_port < 1 or args.real_p2p_port < 1 or args.real_p2p_coordinator_port < 1:
