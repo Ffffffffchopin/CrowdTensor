@@ -117,8 +117,9 @@ guessing. Reports expose
 Reports also include `prompt_scope`: a machine-readable summary of the prompt
 source (`prompt-text`, `prompt-file`, `prompt-stdin`, `prompt-texts`, or
 `prompt-texts-file`), prompt count, whether terminal next commands are
-local-private, and whether saved artifacts use placeholders. `prompt_scope`
-does not contain raw prompt text.
+local-private, whether terminal next commands contain local prompt file paths,
+and whether saved artifacts use placeholders. `prompt_scope` does not contain
+raw prompt text.
 
 ```bash
 crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8
@@ -174,7 +175,11 @@ placeholders.
 With `--shareable-terminal` and `--prompt-stdin`, terminal output keeps a
 copyable `printf` pipe placeholder without expanding the real stdin prompt; use
 it for reruns.
-`prompt_scope` records that distinction without storing raw text; prefer
+`prompt_scope` records that distinction without storing raw text. `--prompt-file`
+and `--prompt-texts-file` keep raw prompt text out of terminal commands, but
+ordinary terminal output still shows local file paths for copying and marks
+`terminal_local_paths=True`; use `--prompt-stdin`, or add
+`--shareable-terminal`, when terminal logs need to be shareable. Prefer
 `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when rerunning saved
 commands. Then use the `status` line or
 `user_status` for detail: `completed` means the request finished,

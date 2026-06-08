@@ -114,8 +114,9 @@ guessing. Reports expose
 Reports also include `prompt_scope`: a machine-readable summary of the prompt
 source (`prompt-text`, `prompt-file`, `prompt-stdin`, `prompt-texts`, or
 `prompt-texts-file`), prompt count, whether terminal next commands are
-local-private, and whether saved artifacts use placeholders. `prompt_scope`
-does not contain raw prompt text.
+local-private, whether terminal next commands contain local prompt file paths,
+and whether saved artifacts use placeholders. `prompt_scope` does not contain
+raw prompt text.
 
 ```bash
 crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8
@@ -150,8 +151,10 @@ human terminal `review_next`, `recommended_next`, and `next[...]` commands may
 render those prompt values so the command is directly copyable. Treat terminal
 logs from those runs as local-private. Saved JSON/Markdown keep prompt
 placeholders; `prompt_scope` records that distinction without storing raw text.
-Use `--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when you need
-shareable terminal logs.
+Use `--prompt-file` or `--prompt-texts-file` to keep raw prompt text out of
+terminal commands, but ordinary terminal output still shows the local file path
+for copying and marks `terminal_local_paths=True`. Use `--prompt-stdin`, or add
+`--shareable-terminal`, when the terminal log itself needs to be shareable.
 If you still want human-readable terminal output while keeping terminal logs
 shareable, add `--shareable-terminal`; it keeps status, diagnostics, hashes,
 artifact paths, and safe next commands, but hides inline prompts, local prompt
@@ -163,7 +166,8 @@ temporary `.private` prompt files that are cleaned after the child command
 returns, so child process arguments do not carry raw prompt text or local prompt
 paths. If your environment treats process lists as shareable too, start the top
 level command with `--prompt-file` or `--prompt-stdin` instead of an inline
-positional prompt.
+positional prompt, and add `--shareable-terminal` when local prompt file paths
+should stay out of terminal logs.
 The `result` line and JSON/Markdown `result` object summarize completion state,
 token count, output count, generated-text hash, and display safety:
 `local-private` for terminal-only generated text, `hash-only` for redacted
