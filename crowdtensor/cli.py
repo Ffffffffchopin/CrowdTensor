@@ -12532,10 +12532,10 @@ def print_product_generate(report: dict[str, Any]) -> None:
         print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
     if runtime_provenance or evidence_scope:
         gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
-        print(f"  gpu_status: {gpu_status_text(gpu_status or gpu_status_summary(runtime_provenance, evidence_scope))}")
-    gpu_proof_next_step = report.get("gpu_proof_next_step") if isinstance(report.get("gpu_proof_next_step"), dict) else {}
-    if gpu_proof_next_step:
-        print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step)}")
+        effective_gpu_status = gpu_status or gpu_status_summary(runtime_provenance, evidence_scope)
+        gpu_proof_next_step = report.get("gpu_proof_next_step") if isinstance(report.get("gpu_proof_next_step"), dict) else {}
+        print(f"  gpu_status: {gpu_status_text(effective_gpu_status)}")
+        print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step or gpu_proof_next_step_summary(effective_gpu_status))}")
     session = report.get("session") if isinstance(report.get("session"), dict) else {}
     if session:
         print(
@@ -12863,10 +12863,10 @@ def print_infer(report: dict[str, Any]) -> None:
         print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
     if runtime_provenance or evidence_scope:
         gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
-        print(f"  gpu_status: {gpu_status_text(gpu_status or gpu_status_summary(runtime_provenance, evidence_scope))}")
-    gpu_proof_next_step = report.get("gpu_proof_next_step") if isinstance(report.get("gpu_proof_next_step"), dict) else {}
-    if gpu_proof_next_step:
-        print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step)}")
+        effective_gpu_status = gpu_status or gpu_status_summary(runtime_provenance, evidence_scope)
+        gpu_proof_next_step = report.get("gpu_proof_next_step") if isinstance(report.get("gpu_proof_next_step"), dict) else {}
+        print(f"  gpu_status: {gpu_status_text(effective_gpu_status)}")
+        print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step or gpu_proof_next_step_summary(effective_gpu_status))}")
     model = report.get("model") if isinstance(report.get("model"), dict) else {}
     print(f"  model: {model.get('hf_model_id')} backend={model.get('backend')}")
     prompt = report.get("prompt") if isinstance(report.get("prompt"), dict) else {}
@@ -15276,7 +15276,10 @@ def print_public_real_llm_swarm_beta(report: dict[str, Any]) -> None:
         print(f"  evidence_scope_note: {evidence_scope.get('user_expectation') or ''}")
     if runtime_provenance or evidence_scope:
         gpu_status = report.get("gpu_status") if isinstance(report.get("gpu_status"), dict) else {}
-        print(f"  gpu_status: {gpu_status_text(gpu_status or gpu_status_summary(runtime_provenance, evidence_scope))}")
+        effective_gpu_status = gpu_status or gpu_status_summary(runtime_provenance, evidence_scope)
+        gpu_proof_next_step = report.get("gpu_proof_next_step") if isinstance(report.get("gpu_proof_next_step"), dict) else {}
+        print(f"  gpu_status: {gpu_status_text(effective_gpu_status)}")
+        print(f"  gpu_proof_next: {gpu_proof_next_step_text(gpu_proof_next_step or gpu_proof_next_step_summary(effective_gpu_status))}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:
@@ -15366,9 +15369,19 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
         print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")
     if checked_runtime_provenance or checked_evidence_scope:
         checked_gpu_status = report.get("checked_gpu_status") if isinstance(report.get("checked_gpu_status"), dict) else {}
+        effective_checked_gpu_status = checked_gpu_status or gpu_status_summary(checked_runtime_provenance, checked_evidence_scope)
+        checked_gpu_proof_next_step = (
+            report.get("checked_gpu_proof_next_step")
+            if isinstance(report.get("checked_gpu_proof_next_step"), dict)
+            else {}
+        )
         print(
             "  checked_gpu_status: "
-            f"{gpu_status_text(checked_gpu_status or gpu_status_summary(checked_runtime_provenance, checked_evidence_scope))}"
+            f"{gpu_status_text(effective_checked_gpu_status)}"
+        )
+        print(
+            "  checked_gpu_proof_next: "
+            f"{gpu_proof_next_step_text(checked_gpu_proof_next_step or gpu_proof_next_step_summary(effective_checked_gpu_status))}"
         )
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")

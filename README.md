@@ -329,7 +329,10 @@ shortest answer to what was verified: local CPU, retained evidence, or fresh
 Kaggle GPU. The check terminal output also prints `checked_runtime_provenance`;
 read that line when you need the detailed source/proof summary behind the
 checked scope, and read `checked_gpu_status` for the direct local CPU /
-retained GPU / fresh Kaggle GPU verdict. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
+retained GPU / fresh Kaggle GPU verdict. Beta reports also include
+`gpu_proof_next_step`, and check reports mirror it as
+`checked_gpu_proof_next_step`, so the optional fresh Kaggle GPU proof remains an
+explicit side-effectful action. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
 `fresh_kaggle_gpu_attempted=True` without that verified flag is not a completed
 GPU proof. Retained external/GPU evidence is not a new Kaggle run.
 When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`

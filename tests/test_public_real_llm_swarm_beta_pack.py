@@ -534,6 +534,25 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(persisted["gpu_status"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(persisted["gpu_status"]["fresh_kaggle_gpu_verified"])
         self.assertTrue(persisted["gpu_status"]["public_artifact_safe"])
+        self.assertEqual(persisted["gpu_proof_next_step"]["schema"], "crowdtensor_gpu_proof_next_step_v1")
+        self.assertEqual(persisted["gpu_proof_next_step"]["state"], "fresh-kaggle-gpu-not-verified")
+        self.assertEqual(persisted["gpu_proof_next_step"]["recommended_reason"], "verify_fresh_kaggle_gpu")
+        self.assertTrue(persisted["gpu_proof_next_step"]["requires_kaggle"])
+        self.assertTrue(persisted["gpu_proof_next_step"]["side_effectful"])
+        self.assertTrue(persisted["gpu_proof_next_step"]["cleanup_required"])
+        self.assertTrue(persisted["gpu_proof_next_step"]["token_rotation_required"])
+        self.assertTrue(
+            any(
+                isinstance(item, dict)
+                and item.get("reason") == "verify_fresh_kaggle_gpu"
+                and "public-swarm-gpu-beta kaggle-auto" in str(item.get("command_line") or "")
+                for item in persisted["gpu_proof_next_step"]["commands"]
+            )
+        )
+        markdown = (output_dir / "public_real_llm_swarm_beta.md").read_text(encoding="utf-8")
+        self.assertIn("## GPU Proof Next", markdown)
+        self.assertIn("GPU proof command", markdown)
+        self.assertIn("public-swarm-gpu-beta kaggle-auto", markdown)
         self.assertTrue(persisted["release_private_artifact_cleanup"]["private_artifacts_cleaned"])
         self.assertEqual(persisted["release_private_artifact_cleanup"]["removed_private_artifact_count"], 4)
         self.assertFalse((output_dir / "child" / "state").exists())
@@ -561,6 +580,21 @@ class PublicRealLlmSwarmBetaPackTests(unittest.TestCase):
         self.assertFalse(result["checked_gpu_status"]["fresh_kaggle_gpu_attempted"])
         self.assertFalse(result["checked_gpu_status"]["fresh_kaggle_gpu_verified"])
         self.assertTrue(result["checked_gpu_status"]["public_artifact_safe"])
+        self.assertEqual(result["checked_gpu_proof_next_step"]["schema"], "crowdtensor_gpu_proof_next_step_v1")
+        self.assertEqual(result["checked_gpu_proof_next_step"]["state"], "fresh-kaggle-gpu-not-verified")
+        self.assertEqual(result["checked_gpu_proof_next_step"]["current_gpu_status_state"], "local-gpu-smoke-only")
+        self.assertEqual(result["checked_gpu_proof_next_step"]["recommended_reason"], "verify_fresh_kaggle_gpu")
+        self.assertTrue(result["checked_gpu_proof_next_step"]["requires_kaggle"])
+        self.assertTrue(result["checked_gpu_proof_next_step"]["cleanup_required"])
+        self.assertTrue(result["checked_gpu_proof_next_step"]["token_rotation_required"])
+        self.assertTrue(
+            any(
+                isinstance(item, dict)
+                and item.get("reason") == "verify_fresh_kaggle_gpu"
+                and "public-swarm-gpu-beta kaggle-auto" in str(item.get("command_line") or "")
+                for item in result["checked_gpu_proof_next_step"]["commands"]
+            )
+        )
 
     def test_release_prefers_fresh_usable_report_written_by_public_swarm_v2(self) -> None:
         output_dir = self._tmp_dir()
