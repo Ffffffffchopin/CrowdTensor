@@ -70,6 +70,7 @@ SECRET_FRAGMENTS = (
     '"generated_token_ids":',
     '"prompt_text":',
 )
+SHAREABLE_GENERATE_TERMINAL_SCHEMA = "product_swarm_mvp_shareable_generate_terminal_v1"
 
 
 def utc_now() -> str:
@@ -250,18 +251,34 @@ def wait_health(base_url: str, proc: subprocess.Popen[str], timeout: float) -> t
     return False, f"coordinator did not become healthy: {last_error}"
 
 
-def popen_command(command: list[str], *, cwd: Path = ROOT) -> subprocess.Popen[str]:
+def popen_command(
+    command: list[str],
+    *,
+    cwd: Path = ROOT,
+    stdin_text: str | None = None,
+) -> subprocess.Popen[str]:
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         command,
         cwd=str(cwd),
         env=env,
         text=True,
+        stdin=subprocess.PIPE if stdin_text is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    if stdin_text is not None and proc.stdin is not None:
+        try:
+            proc.stdin.write(stdin_text)
+            if not stdin_text.endswith("\n"):
+                proc.stdin.write("\n")
+            proc.stdin.close()
+            proc.stdin = None  # type: ignore[assignment]
+        except BrokenPipeError:
+            pass
+    return proc
 
 
 def stop_process(proc: subprocess.Popen[str] | None) -> dict[str, Any]:
@@ -318,7 +335,22 @@ def parse_json_payload(stdout: str) -> dict[str, Any]:
     return {}
 
 
-def finish_process_step(name: str, proc: subprocess.Popen[str], *, timeout: float) -> tuple[dict[str, Any], dict[str, Any]]:
+def read_json_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def finish_process_step_with_output(
+    name: str,
+    proc: subprocess.Popen[str],
+    *,
+    timeout: float,
+    payload_path: Path | None = None,
+    parse_stdout: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any], str, str]:
     started = time.monotonic()
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -330,20 +362,27 @@ def finish_process_step(name: str, proc: subprocess.Popen[str], *, timeout: floa
             "returncode": proc.returncode,
             "duration_seconds": round(time.monotonic() - started, 3),
             "error": "timeout",
-        }, {}
+        }, {}, "", ""
     step = {
         "name": name,
         "ok": proc.returncode == 0,
         "returncode": proc.returncode,
         "duration_seconds": round(time.monotonic() - started, 3),
     }
-    payload = parse_json_payload(stdout or "")
+    payload = parse_json_payload(stdout or "") if parse_stdout else {}
+    if not payload and payload_path is not None:
+        payload = read_json_payload(payload_path)
     if not payload:
         step["ok"] = False
         step["error"] = "json_payload_missing"
     if not step["ok"]:
         step["stdout_tail"] = (stdout or "")[-1000:]
         step["stderr_tail"] = (stderr or "")[-1000:]
+    return step, payload, stdout or "", stderr or ""
+
+
+def finish_process_step(name: str, proc: subprocess.Popen[str], *, timeout: float) -> tuple[dict[str, Any], dict[str, Any]]:
+    step, payload, _, _ = finish_process_step_with_output(name, proc, timeout=timeout)
     return step, payload
 
 
@@ -795,6 +834,25 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
     if shareable.get("public_artifact_safe") is not True:
         errors.append("shareable_public_artifact_safe_mismatch")
 
+    terminal = report.get("shareable_generate_terminal") if isinstance(report.get("shareable_generate_terminal"), dict) else {}
+    if terminal.get("enabled"):
+        if terminal.get("terminal_output_persisted") is not False:
+            errors.append("shareable_generate_terminal_output_persisted")
+        if terminal.get("raw_prompt_public") is not False:
+            errors.append("shareable_generate_terminal_raw_prompt_public_mismatch")
+        if terminal.get("raw_generated_text_public") is not False:
+            errors.append("shareable_generate_terminal_raw_generated_text_public_mismatch")
+        if terminal.get("generated_token_ids_public") is not False:
+            errors.append("shareable_generate_terminal_generated_token_ids_public_mismatch")
+        if terminal.get("fresh_kaggle_gpu_verified") is not False:
+            errors.append("shareable_generate_terminal_fresh_kaggle_gpu_mismatch")
+        if terminal.get("terminal_answer_text_hidden") is not True:
+            errors.append("shareable_generate_terminal_answer_hidden_mismatch")
+        if terminal.get("saved_artifacts_public_safe") is not True:
+            errors.append("shareable_generate_terminal_saved_artifacts_mismatch")
+        if terminal.get("ok") is not True:
+            errors.append("shareable_generate_terminal_not_ready")
+
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -804,6 +862,202 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
             continue
         errors.append(f"public_leak:{path}")
     return sorted(set(errors))
+
+
+def _dict_value(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _terminal_contains_answer_line(stdout: str) -> bool:
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("answer:") or stripped.startswith("answer["):
+            return True
+    return False
+
+
+def _contains_private_fragment(text: str, private_values: list[str]) -> bool:
+    return any(value and value in text for value in private_values)
+
+
+def validate_shareable_generate_terminal(
+    args: argparse.Namespace,
+    output_dir: Path,
+    payload: dict[str, Any],
+    *,
+    stdout: str,
+    stderr: str,
+) -> dict[str, Any]:
+    """Validate the real human generate path without persisting terminal text."""
+
+    errors: list[str] = []
+    verdict = _dict_value(payload, "inference_verdict")
+    output_display = _dict_value(payload, "output_display")
+    answer_scope = _dict_value(payload, "answer_scope")
+    shareable_terminal = _dict_value(payload, "shareable_terminal")
+    shareable = _dict_value(payload, "shareable_summary")
+    prompt_scope = _dict_value(payload, "prompt_scope")
+    gpu_status = _dict_value(payload, "gpu_status")
+    evidence_scope = _dict_value(payload, "evidence_scope")
+    local_output = _dict_value(payload, "local_output")
+    output_request = _dict_value(payload, "output_request")
+    stdout_text = str(stdout or "")
+    stderr_text = str(stderr or "")
+    terminal_text = f"{stdout_text}\n{stderr_text}"
+    encoded = json.dumps(payload, sort_keys=True)
+    prompts = prompt_list_from_args(args)
+    private_values = [ADMIN_TOKEN, MINER_TOKEN, OBSERVER_TOKEN, *prompts]
+    secret_markers = [
+        "lease_token",
+        "idempotency_key",
+        "hidden_state",
+        '"input_ids":',
+        '"logits":',
+        '"activation_result":',
+        '"activation_results":',
+        '"generated_token_ids":',
+        '"prompt_text":',
+    ]
+
+    if payload.get("schema") != "public_swarm_product_cli_v1":
+        errors.append("generate_summary_schema_mismatch")
+    if payload.get("ok") is not True:
+        errors.append("generate_summary_not_ok")
+    if not (output_dir / "generate" / "generate_summary.json").is_file():
+        errors.append("generate_summary_json_missing")
+    if not (output_dir / "generate" / "generate_summary.md").is_file():
+        errors.append("generate_summary_markdown_missing")
+
+    if verdict.get("state") != "completed":
+        errors.append("terminal_verdict_state_mismatch")
+    if verdict.get("answer_scope_state") != "shareable-terminal-redacted":
+        errors.append("terminal_verdict_answer_scope_mismatch")
+    if verdict.get("answer_visible_in_terminal") is not False:
+        errors.append("terminal_verdict_answer_visibility_mismatch")
+    if verdict.get("gpu_state") != "local-cpu-only":
+        errors.append("terminal_verdict_gpu_state_mismatch")
+    if verdict.get("fresh_kaggle_gpu_verified") is not False:
+        errors.append("terminal_verdict_fresh_kaggle_gpu_mismatch")
+    if verdict.get("evidence_level") != "existing-runtime-submit":
+        errors.append("terminal_verdict_evidence_level_mismatch")
+
+    if gpu_status.get("state") != "local-cpu-only":
+        errors.append("gpu_status_state_mismatch")
+    if gpu_status.get("fresh_kaggle_gpu_verified") is not False:
+        errors.append("gpu_status_fresh_kaggle_gpu_mismatch")
+    if evidence_scope.get("level") != "existing-runtime-submit":
+        errors.append("evidence_scope_level_mismatch")
+    if evidence_scope.get("executed_where") != "existing-coordinator":
+        errors.append("evidence_scope_executed_where_mismatch")
+
+    if output_display.get("terminal_display") != "shareable-terminal-redacted":
+        errors.append("output_display_terminal_mismatch")
+    if output_display.get("terminal_text_available") is not False:
+        errors.append("output_display_terminal_text_mismatch")
+    if output_display.get("saved_artifact_display") != "hash-only":
+        errors.append("output_display_saved_display_mismatch")
+    if output_display.get("raw_generated_text_public") is not False:
+        errors.append("output_display_raw_generated_text_public_mismatch")
+    if output_display.get("generated_token_ids_public") is not False:
+        errors.append("output_display_generated_token_ids_public_mismatch")
+
+    if answer_scope.get("scope_state") != "shareable-terminal-redacted":
+        errors.append("answer_scope_state_mismatch")
+    if answer_scope.get("visible_in_terminal") is not False:
+        errors.append("answer_scope_visible_mismatch")
+    if answer_scope.get("terminal_only") is not False:
+        errors.append("answer_scope_terminal_only_mismatch")
+    if answer_scope.get("saved_json_display") != "hash-only":
+        errors.append("answer_scope_saved_json_mismatch")
+
+    if shareable_terminal.get("enabled") is not True:
+        errors.append("shareable_terminal_enabled_mismatch")
+    if shareable_terminal.get("prompt_sources_redacted") is not True:
+        errors.append("shareable_terminal_prompt_redaction_mismatch")
+    if shareable_terminal.get("answer_text_redacted") is not True:
+        errors.append("shareable_terminal_answer_redaction_mismatch")
+    if shareable_terminal.get("public_artifact_safe") is not True:
+        errors.append("shareable_terminal_public_safety_mismatch")
+
+    if shareable.get("answer_scope_state") != "shareable-terminal-redacted":
+        errors.append("shareable_answer_scope_mismatch")
+    if shareable.get("local_answer_terminal_only") is not False:
+        errors.append("shareable_local_answer_terminal_only_mismatch")
+    for key in ["raw_prompt_public", "raw_generated_text_public", "generated_token_ids_public"]:
+        if shareable.get(key) is not False:
+            errors.append(f"shareable_{key}_mismatch")
+
+    if prompt_scope.get("source") != "prompt-stdin":
+        errors.append("prompt_scope_source_mismatch")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append("prompt_scope_raw_prompt_public_mismatch")
+    if output_request.get("raw_prompt_public") is not False:
+        errors.append("output_request_raw_prompt_public_mismatch")
+    if output_request.get("raw_generated_text_public") is not False:
+        errors.append("output_request_raw_generated_text_public_mismatch")
+
+    if local_output.get("generated_text"):
+        errors.append("local_output_generated_text_present")
+    outputs = local_output.get("outputs") if isinstance(local_output.get("outputs"), list) else []
+    if any(isinstance(item, dict) and item.get("generated_text") for item in outputs):
+        errors.append("local_output_item_generated_text_present")
+    if local_output.get("shareable_terminal_redacted") is not True:
+        errors.append("local_output_shareable_redaction_mismatch")
+
+    if "CrowdTensor generate" not in stdout_text:
+        errors.append("terminal_header_missing")
+    if "verdict: state=completed" not in stdout_text:
+        errors.append("terminal_verdict_line_missing")
+    if "answer=shareable-terminal-redacted" not in stdout_text:
+        errors.append("terminal_answer_scope_line_missing")
+    if "gpu=local-cpu-only" not in stdout_text:
+        errors.append("terminal_gpu_state_line_missing")
+    if "fresh_kaggle_gpu=False" not in stdout_text:
+        errors.append("terminal_fresh_kaggle_line_missing")
+    if "shareable_terminal: enabled=True" not in stdout_text:
+        errors.append("terminal_shareable_line_missing")
+    if _terminal_contains_answer_line(stdout_text):
+        errors.append("terminal_answer_text_line_present")
+    if "terminal_text=True" in stdout_text or "display=local-private" in stdout_text:
+        errors.append("terminal_local_answer_display_present")
+    if _contains_private_fragment(terminal_text, private_values):
+        errors.append("terminal_private_fragment_present")
+    if _contains_private_fragment(encoded, private_values):
+        errors.append("summary_private_fragment_present")
+    for marker in secret_markers:
+        if marker in terminal_text:
+            errors.append("terminal_secret_marker_present")
+        if marker in encoded:
+            errors.append("summary_secret_marker_present")
+
+    errors = sorted(set(errors))
+    return {
+        "schema": SHAREABLE_GENERATE_TERMINAL_SCHEMA,
+        "enabled": True,
+        "ok": not errors,
+        "terminal_stdout_captured": bool(stdout_text),
+        "terminal_stderr_captured": bool(stderr_text),
+        "terminal_output_persisted": False,
+        "generate_summary_json_present": (output_dir / "generate" / "generate_summary.json").is_file(),
+        "generate_summary_markdown_present": (output_dir / "generate" / "generate_summary.md").is_file(),
+        "verdict_ready": not any(error.startswith("terminal_verdict") for error in errors),
+        "answer_scope_state": verdict.get("answer_scope_state") or "",
+        "gpu_state": verdict.get("gpu_state") or gpu_status.get("state") or "",
+        "fresh_kaggle_gpu_verified": bool(verdict.get("fresh_kaggle_gpu_verified")),
+        "evidence_level": verdict.get("evidence_level") or evidence_scope.get("level") or "",
+        "terminal_answer_text_hidden": not _terminal_contains_answer_line(stdout_text),
+        "saved_artifacts_public_safe": bool(
+            verdict.get("public_artifact_safe", False)
+            and shareable.get("public_artifact_safe", False)
+            and output_display.get("public_artifact_safe", False)
+        ),
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "diagnosis_codes": ["shareable_generate_terminal_ready"] if not errors else ["shareable_generate_terminal_failed"],
+        "errors": errors,
+    }
 
 
 def attach_serve_process(report: dict[str, Any], serve_process: dict[str, Any]) -> dict[str, Any]:
@@ -853,6 +1107,7 @@ def degraded_report(args: argparse.Namespace, missing: list[str], output_dir: Pa
 def run_local_loopback(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     base_url = f"http://127.0.0.1:{args.port}"
     state_dir = output_dir / "state"
+    generate_output_dir = output_dir / "generate"
     state_dir.mkdir(parents=True, exist_ok=True)
     serve_cmd = [
         sys.executable,
@@ -924,19 +1179,26 @@ def run_local_loopback(args: argparse.Namespace, output_dir: Path) -> dict[str, 
             str(args.max_new_tokens),
             "--timeout-seconds",
             str(args.generate_timeout),
-            "--json",
+            "--output-dir",
+            str(generate_output_dir),
         ]
-        if args.prompt_texts_file:
-            generate_cmd.extend(["--prompt-texts-file", args.prompt_texts_file])
-        elif args.prompt_file:
-            generate_cmd.extend(["--prompt-file", args.prompt_file])
-        elif args.prompt_texts:
-            generate_cmd.extend(["--prompt-texts", args.prompt_texts])
+        generate_stdin: str | None = None
+        if args.shareable_generate_terminal:
+            generate_cmd.extend(["--prompt-stdin", "--shareable-terminal"])
+            generate_stdin = prompt_list_from_args(args)[0]
         else:
-            generate_cmd.extend(["--prompt-text", args.prompt_text])
+            generate_cmd.append("--json")
+            if args.prompt_texts_file:
+                generate_cmd.extend(["--prompt-texts-file", args.prompt_texts_file])
+            elif args.prompt_file:
+                generate_cmd.extend(["--prompt-file", args.prompt_file])
+            elif args.prompt_texts:
+                generate_cmd.extend(["--prompt-texts", args.prompt_texts])
+            else:
+                generate_cmd.extend(["--prompt-text", args.prompt_text])
         if args.stream_generation:
             generate_cmd.append("--stream")
-        generate_proc = popen_command(generate_cmd)
+        generate_proc = popen_command(generate_cmd, stdin_text=generate_stdin)
         session_queued, queue_error = wait_workload_queued(base_url, timeout=args.session_queue_timeout)
         steps.append({
             "name": "generate_session_created",
@@ -944,7 +1206,11 @@ def run_local_loopback(args: argparse.Namespace, output_dir: Path) -> dict[str, 
             "error": queue_error,
         })
         if not session_queued:
-            generate_step, generate_payload = finish_process_step("generate", generate_proc, timeout=1.0)
+            generate_step, generate_payload = finish_process_step(
+                "generate",
+                generate_proc,
+                timeout=1.0,
+            )
             steps.append(generate_step)
             payloads["generate"] = generate_payload
             pending_report = finalize_report(args, output_dir, base_url, steps, payloads, serve_process)
@@ -986,7 +1252,21 @@ def run_local_loopback(args: argparse.Namespace, output_dir: Path) -> dict[str, 
                     pending_report = finalize_report(args, output_dir, base_url, steps, payloads, serve_process)
                     return pending_report
 
-        generate_step, generate_payload = finish_process_step("generate", generate_proc, timeout=args.generate_timeout + 10.0)
+        generate_step, generate_payload, generate_stdout, generate_stderr = finish_process_step_with_output(
+            "generate",
+            generate_proc,
+            timeout=args.generate_timeout + 10.0,
+            payload_path=generate_output_dir / "generate_summary.json",
+            parse_stdout=not args.shareable_generate_terminal,
+        )
+        if args.shareable_generate_terminal:
+            payloads["shareable_generate_terminal"] = validate_shareable_generate_terminal(
+                args,
+                output_dir,
+                generate_payload,
+                stdout=generate_stdout,
+                stderr=generate_stderr,
+            )
         steps.append(generate_step)
         payloads["generate"] = generate_payload
         pending_report = finalize_report(args, output_dir, base_url, steps, payloads, serve_process)
@@ -1041,7 +1321,16 @@ def finalize_report(
         and int(stages.get("completed_rows") or 0) >= args.max_new_tokens * 2
     )
     stream_ready = bool(not args.stream_generation or stream.get("stream_generation_ready") is True)
-    ok = bool(step_ok and generation_ready and stage_ready and stream_ready and not ledger_error)
+    shareable_terminal = (
+        payloads.get("shareable_generate_terminal")
+        if isinstance(payloads.get("shareable_generate_terminal"), dict)
+        else {}
+    )
+    shareable_terminal_ready = bool(
+        not getattr(args, "shareable_generate_terminal", False)
+        or shareable_terminal.get("ok") is True
+    )
+    ok = bool(step_ok and generation_ready and stage_ready and stream_ready and shareable_terminal_ready and not ledger_error)
     codes = set()
     if ok:
         codes.update({
@@ -1066,6 +1355,8 @@ def finalize_report(
             codes.add("throughput_summary_ready")
         if resources.get("memory_or_vram_summary_ready"):
             codes.add("memory_or_vram_summary_ready")
+        if shareable_terminal.get("ok"):
+            codes.add("shareable_generate_terminal_ready")
     else:
         codes.add("product_swarm_mvp_blocked")
         if not generation_ready:
@@ -1074,6 +1365,8 @@ def finalize_report(
             codes.add("stream_generation_not_ready")
         if not stage_ready:
             codes.add("stage_assignment_incomplete")
+        if getattr(args, "shareable_generate_terminal", False) and not shareable_terminal_ready:
+            codes.add("shareable_generate_terminal_failed")
         if ledger_error:
             codes.add("admin_results_failed")
     report = {
@@ -1097,6 +1390,7 @@ def finalize_report(
         "stage_assignment": stages,
         "performance": performance,
         "runtime_resources": resources,
+        "shareable_generate_terminal": shareable_terminal or {"enabled": False},
         "ledger": {
             "accepted_rows": len(rows),
             "error": ledger_error,
@@ -1181,6 +1475,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--miner-timeout", type=float, default=180.0)
     parser.add_argument("--generate-timeout", type=float, default=180.0)
     parser.add_argument("--stream-generation", action="store_true", help="require safe generate --stream progress evidence")
+    parser.add_argument(
+        "--shareable-generate-terminal",
+        action="store_true",
+        help="run crowdtensor generate in human --shareable-terminal mode and validate its redacted terminal contract",
+    )
     parser.add_argument("--require-hf-runtime", action="store_true")
     parser.add_argument("--keep-private-state", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--json", action="store_true")
@@ -1202,6 +1501,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "product_swarm_mvp accepts one prompt source: --prompt-text, --prompt-file, "
             "--prompt-texts, or --prompt-texts-file"
         )
+    if args.shareable_generate_terminal and (args.prompt_texts or args.prompt_texts_file):
+        raise SystemExit("--shareable-generate-terminal currently supports one prompt; use --prompt-text or --prompt-file")
     try:
         if args.prompt_texts_file:
             args.prompt_texts_list = read_prompt_texts_file(args.prompt_texts_file)

@@ -10690,6 +10690,89 @@ def resolve_coordinator_from_discovery(
     return "", peer_list, payload
 
 
+def _product_join_runtime_provenance(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
+    coordinator_url = str(report.get("coordinator_url") or "")
+    route_ready = bool(coordinator_url and "coordinator_route_missing" not in set(report.get("diagnosis_codes") or []))
+    if coordinator_url:
+        coordinator_scope = "local-loopback" if is_loopback_coordinator_url(coordinator_url) else "external-existing"
+    elif p2p.get("enabled"):
+        coordinator_scope = "missing"
+    else:
+        coordinator_scope = "missing"
+    return {
+        "schema": PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA,
+        "proof_level": "join-route",
+        "mode": "join",
+        "dry_run": True,
+        "submitted_to_coordinator": False,
+        "completed_generation": False,
+        "coordinator_scope": coordinator_scope,
+        "coordinator_url_present": bool(coordinator_url),
+        "route_source": _p2p_route_source(args) if bool(p2p.get("enabled")) else "coordinator-url",
+        "route_ready": route_ready,
+        "p2p_enabled": bool(p2p.get("enabled")),
+        "p2p_backend": str(p2p.get("backend") or ""),
+        "p2p_peer_count": _safe_int(report.get("peer_count")),
+        "live_preflight_checked": False,
+        "live_preflight_ready": None,
+        "stage_preflight_checked": False,
+        "stage_preflight_ready": None,
+        "ready_to_submit_label": "",
+        "backend": str(getattr(args, "backend", "") or ""),
+        "hf_model_id": str(getattr(args, "hf_model_id", "") or ""),
+        "workload_type": "real_llm_sharded_infer",
+        "kaggle_runtime_attempted": False,
+        "fresh_kaggle_gpu_attempted": False,
+        "fresh_kaggle_gpu_verified": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "crowdtensor join prepares or runs a stage Miner for a Coordinator-backed route. "
+            "This report does not submit generation work or launch Kaggle GPU proof."
+        ),
+    }
+
+
+def _product_join_evidence_scope(report: dict[str, Any]) -> dict[str, Any]:
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    coordinator_scope = str(provenance.get("coordinator_scope") or "missing")
+    route_ready = bool(provenance.get("route_ready"))
+    return {
+        "schema": PRODUCT_GENERATE_EVIDENCE_SCOPE_SCHEMA,
+        "level": "join-route-ready" if route_ready else "join-route-blocked",
+        "executed_where": "not-submitted",
+        "source": str(report.get("schema") or PUBLIC_SWARM_PRODUCT_CLI_SCHEMA),
+        "proof_level": provenance.get("proof_level") or "",
+        "coordinator_scope": coordinator_scope,
+        "route_source": provenance.get("route_source") or "",
+        "route_ready": route_ready,
+        "local_loopback_coordinator": coordinator_scope == "local-loopback",
+        "existing_runtime": bool(route_ready),
+        "submitted_to_coordinator": False,
+        "dry_run": True,
+        "p2p_enabled": bool(provenance.get("p2p_enabled")),
+        "backend": provenance.get("backend") or "",
+        "kaggle_runtime_attempted": False,
+        "fresh_kaggle_gpu_attempted": False,
+        "fresh_kaggle_gpu_verified": False,
+        "retained_gpu_evidence_imported": False,
+        "public_artifact_safe": True,
+        "user_expectation": (
+            "This join report prepared a Miner route; no generation task was submitted."
+            if route_ready
+            else "This join report was blocked before any generation task could be submitted."
+        ),
+    }
+
+
+def _finalize_product_join_report(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    report["runtime_provenance"] = _product_join_runtime_provenance(report, args)
+    report["evidence_scope"] = _product_join_evidence_scope(report)
+    report["gpu_status"] = gpu_status_summary(report["runtime_provenance"], report["evidence_scope"])
+    report["gpu_proof_next_step"] = gpu_proof_next_step_summary(report["gpu_status"])
+    return report
+
+
 def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     coordinator_url = args.coordinator_url
     p2p_bootstrap = args.peer_bootstrap or (DEFAULT_P2P_BOOTSTRAP if args.p2p else "")
@@ -10792,6 +10875,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             "diagnosis_codes": (["p2p_discovery_unreachable"] if discovery_error else []) + ["coordinator_route_missing"],
         }
         report["operator_action"] = _product_join_operator_action(report)
+        report = _finalize_product_join_report(report, args)
         return sanitize(report)
     peer_announce: dict[str, Any] = {}
     if args.p2p:
@@ -10857,6 +10941,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         ]
         report["operator_action"] = _product_join_operator_action(report)
         if not args.run:
+            report = _finalize_product_join_report(report, args)
             return sanitize(redact_values(report, [args.miner_token, args.peer_secret]))
     report["operator_action"] = _product_join_operator_action(report)
     if args.run:
@@ -10869,6 +10954,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         report["returncode"] = completed.returncode
         report["ok"] = bool(ready and completed.returncode == 0)
         report["operator_action"] = _product_join_operator_action(report)
+    report = _finalize_product_join_report(report, args)
     return sanitize(redact_values(report, [args.miner_token, args.peer_secret]))
 
 

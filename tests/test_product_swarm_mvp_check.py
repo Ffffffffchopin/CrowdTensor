@@ -146,6 +146,149 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
             self.assertNotIn('"generated_token_ids":', encoded)
             self.assertNotIn('"generated_text":', encoded)
 
+    def test_finalize_report_accepts_shareable_generate_terminal_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            private_prompt = "private terminal prompt"
+            private_answer = "private generated answer"
+            args = product_check.parse_args([
+                "--output-dir",
+                tmp,
+                "--prompt-text",
+                private_prompt,
+                "--max-new-tokens",
+                "2",
+                "--shareable-generate-terminal",
+            ])
+            generate_dir = output_dir / "generate"
+            generate_dir.mkdir()
+            (generate_dir / "generate_summary.md").write_text(
+                "- Verdict: `answer=shareable-terminal-redacted fresh_kaggle_gpu=False`\n",
+                encoding="utf-8",
+            )
+            payload = {
+                "schema": "public_swarm_product_cli_v1",
+                "ok": True,
+                "inference_verdict": {
+                    "state": "completed",
+                    "answer_scope_state": "shareable-terminal-redacted",
+                    "answer_visible_in_terminal": False,
+                    "gpu_state": "local-cpu-only",
+                    "fresh_kaggle_gpu_verified": False,
+                    "evidence_level": "existing-runtime-submit",
+                    "public_artifact_safe": True,
+                },
+                "output_display": {
+                    "terminal_display": "shareable-terminal-redacted",
+                    "terminal_text_available": False,
+                    "saved_artifact_display": "hash-only",
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "shareable-terminal-redacted",
+                    "visible_in_terminal": False,
+                    "terminal_only": False,
+                    "saved_json_display": "hash-only",
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "public_artifact_safe": True,
+                },
+                "shareable_terminal": {
+                    "enabled": True,
+                    "prompt_sources_redacted": True,
+                    "answer_text_redacted": True,
+                    "public_artifact_safe": True,
+                },
+                "shareable_summary": {
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                    "answer_scope_state": "shareable-terminal-redacted",
+                    "local_answer_terminal_only": False,
+                    "public_artifact_safe": True,
+                },
+                "prompt_scope": {"source": "prompt-stdin", "raw_prompt_public": False},
+                "gpu_status": {"state": "local-cpu-only", "fresh_kaggle_gpu_verified": False},
+                "evidence_scope": {"level": "existing-runtime-submit", "executed_where": "existing-coordinator"},
+                "output_request": {"raw_prompt_public": False, "raw_generated_text_public": False},
+                "local_output": {
+                    "generated_text": "",
+                    "outputs": [{"generated_text": ""}],
+                    "shareable_terminal_redacted": True,
+                },
+                "generation": {
+                    "generated_token_count": 2,
+                    "max_new_tokens": 2,
+                    "generated_text_hash": "sha256:generated",
+                    "decoded_tokens_match": True,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                },
+                "session": {"session_id": "real-session"},
+            }
+            (generate_dir / "generate_summary.json").write_text(
+                json.dumps(payload, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            terminal = (
+                "CrowdTensor generate\n"
+                "  verdict: state=completed answer=shareable-terminal-redacted "
+                "answer_visible=False artifacts_public=True evidence=existing-runtime-submit "
+                "gpu=local-cpu-only fresh_kaggle_gpu=False next=rerun_or_review_artifacts "
+                "recommended=none public_artifact_safe=True\n"
+                "  output_display: terminal=shareable-terminal-redacted terminal_text=False "
+                "saved=hash-only json_stdout=hash-only-json include_output=False raw_public=False "
+                "token_ids_public=False public_artifact_safe=True\n"
+                "  shareable_terminal: enabled=True prompt_sources_redacted=True "
+                "answer_text_redacted=True public_artifact_safe=True\n"
+            )
+            validation = product_check.validate_shareable_generate_terminal(
+                args,
+                output_dir,
+                payload,
+                stdout=terminal,
+                stderr="CrowdTensor generate: submitting a bounded generation request and waiting for a result.\n",
+            )
+            payloads = {"generate": payload, "shareable_generate_terminal": validation}
+            rows = [
+                {"status": "completed", "stage_id": 0, "miner_id": "stage0", "validation": {"generation_step": 0}},
+                {"status": "completed", "stage_id": 1, "miner_id": "stage1", "validation": {"generation_step": 0}},
+                {"status": "completed", "stage_id": 0, "miner_id": "stage0", "validation": {"generation_step": 1}},
+                {"status": "completed", "stage_id": 1, "miner_id": "stage1", "validation": {"generation_step": 1}},
+            ]
+
+            with patch.object(product_check, "request_json", return_value={"results": rows}):
+                report = product_check.finalize_report(
+                    args,
+                    output_dir,
+                    "http://127.0.0.1:9877",
+                    [
+                        {"name": "serve", "ok": True},
+                        {"name": "join_stage0_step_0", "ok": True, "duration_seconds": 0.2},
+                        {"name": "join_stage1_step_0", "ok": True, "duration_seconds": 0.3},
+                        {"name": "join_stage0_step_1", "ok": True, "duration_seconds": 0.2},
+                        {"name": "join_stage1_step_1", "ok": True, "duration_seconds": 0.3},
+                        {"name": "generate", "ok": True},
+                    ],
+                    payloads,
+                    {},
+                )
+
+            encoded = json.dumps(report, sort_keys=True)
+            self.assertTrue(validation["ok"], validation)
+            self.assertTrue(report["ok"], report)
+            self.assertIn("shareable_generate_terminal_ready", report["diagnosis_codes"])
+            self.assertEqual(report["shareable_generate_terminal"]["answer_scope_state"], "shareable-terminal-redacted")
+            self.assertEqual(report["shareable_generate_terminal"]["gpu_state"], "local-cpu-only")
+            self.assertFalse(report["shareable_generate_terminal"]["fresh_kaggle_gpu_verified"])
+            self.assertFalse(report["shareable_generate_terminal"]["terminal_output_persisted"])
+            self.assertNotIn(private_prompt, encoded)
+            self.assertNotIn(private_answer, encoded)
+            self.assertNotIn("CrowdTensor generate", encoded)
+            self.assertNotIn('"generated_token_ids":', encoded)
+
     def test_attach_serve_process_omits_success_runtime_logs(self) -> None:
         report = {
             "schema": product_check.SCHEMA,
@@ -702,6 +845,19 @@ class ProductSwarmMvpCheckTests(unittest.TestCase):
         self.assertEqual(
             str(raised.exception),
             "product_swarm_mvp accepts one prompt source: --prompt-text, --prompt-file, --prompt-texts, or --prompt-texts-file",
+        )
+
+    def test_parse_args_rejects_shareable_terminal_batch(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            product_check.parse_args([
+                "--prompt-texts",
+                "one,two",
+                "--shareable-generate-terminal",
+            ])
+
+        self.assertEqual(
+            str(raised.exception),
+            "--shareable-generate-terminal currently supports one prompt; use --prompt-text or --prompt-file",
         )
 
 
