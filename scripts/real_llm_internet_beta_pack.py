@@ -44,6 +44,8 @@ MODES = [MODE_KAGGLE_AUTO, MODE_EVIDENCE_IMPORT]
 DEFAULT_PUBLIC_HOST = "24.199.118.54"
 DEFAULT_PORT = 9190
 DEFAULT_BASE_PORT = 9191
+DEFAULT_LEASE_SECONDS = 15.0
+DEFAULT_CUDA_KAGGLE_LEASE_SECONDS = 180.0
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 STAGES = ("stage0", "stage1")
 ROLE_NORMAL = "normal"
@@ -2328,7 +2330,8 @@ def build_report(
         observer_token = operator_env.get("CROWDTENSOR_OBSERVER_TOKEN", "")
         admin_token = operator_env.get("CROWDTENSOR_ADMIN_TOKEN", "")
         initial_entries = initial_push_entries(kernel_entries, args.failure_mode)
-        if all(step.get("ok") for step in push_steps) and len(push_steps) == len(initial_entries):
+        pushes_ready = bool(initial_entries) and all(step.get("ok") for step in push_steps) and len(push_steps) == len(initial_entries)
+        if pushes_ready:
             if observer_token and admin_token:
                 if args.failure_mode == FAILURE_NONE:
                     external_step, external_payload = build_external_alpha(
@@ -2739,7 +2742,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--kaggle-delete-timeout-seconds", type=float, default=120.0)
     parser.add_argument("--kaggle-status-timeout-seconds", type=float, default=900.0)
     parser.add_argument("--kaggle-status-poll-interval", type=float, default=15.0)
-    parser.add_argument("--lease-seconds", type=float, default=15.0)
+    parser.add_argument("--lease-seconds", type=float, default=None)
     parser.add_argument("--compute-seconds", type=float, default=0.2)
     parser.add_argument("--victim-compute-seconds", type=float, default=45.0)
     parser.add_argument("--heartbeat-interval", type=float, default=0.1)
@@ -2759,6 +2762,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--max-new-tokens must be between 1 and 32")
     args.real_llm_backend = normalize_real_llm_backend(args.real_llm_backend)
     args.real_llm_partition_mode = normalize_real_llm_partition_mode(args.real_llm_partition_mode)
+    if args.lease_seconds is None:
+        args.lease_seconds = (
+            DEFAULT_CUDA_KAGGLE_LEASE_SECONDS
+            if args.mode == MODE_KAGGLE_AUTO and args.real_llm_backend == REAL_LLM_BACKEND_CUDA
+            else DEFAULT_LEASE_SECONDS
+        )
     if args.real_llm_backend == REAL_LLM_BACKEND_CUDA and not args.torch_spec:
         args.torch_spec = DEFAULT_CUDA_TORCH_RUNTIME_SPEC
         args.torch_index_url = args.torch_index_url or DEFAULT_CUDA_TORCH_INDEX_URL

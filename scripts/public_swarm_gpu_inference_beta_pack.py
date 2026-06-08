@@ -26,6 +26,8 @@ from crowdtensor.real_llm import BACKEND_CUDA, DEFAULT_MODEL_ID, DEFAULT_PROMPTS
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
 from kaggle_real_llm_live_package import DEFAULT_CUDA_TORCH_INDEX_URL, DEFAULT_CUDA_TORCH_RUNTIME_SPEC  # noqa: E402
 from kaggle_real_llm_live_package import DEFAULT_TRANSFORMERS_SPEC  # noqa: E402
+from kaggle_real_llm_live_package import safe_slug as kaggle_safe_slug  # noqa: E402
+from kaggle_real_llm_live_package import validate_kernel_slug_lengths  # noqa: E402
 
 
 SCHEMA = "public_swarm_gpu_inference_beta_v1"
@@ -33,6 +35,8 @@ CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 REMOTE_REAL_SCHEMA = "remote_real_llm_sharded_beta_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 DEFAULT_OUTPUT_DIR = "dist/public-swarm-gpu-inference-beta"
+DEFAULT_LEASE_SECONDS = 15.0
+DEFAULT_CUDA_KAGGLE_LEASE_SECONDS = 180.0
 PUBLIC_ACTIONS = (
     "local-smoke",
     "local-loopback",
@@ -1490,7 +1494,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--remote-timeout-seconds", type=float, default=240.0)
     parser.add_argument("--http-timeout", type=float, default=30.0)
     parser.add_argument("--artifact-timeout", type=float, default=60.0)
-    parser.add_argument("--lease-seconds", type=float, default=15.0)
+    parser.add_argument("--lease-seconds", type=float, default=None)
     parser.add_argument("--compute-seconds", type=float, default=0.2)
     parser.add_argument("--victim-compute-seconds", type=float, default=45.0)
     parser.add_argument("--heartbeat-interval", type=float, default=0.1)
@@ -1519,9 +1523,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     args.mode = args.mode or args.action or "local-smoke"
+    if args.lease_seconds is None:
+        args.lease_seconds = DEFAULT_CUDA_KAGGLE_LEASE_SECONDS if args.mode == "kaggle-auto" else DEFAULT_LEASE_SECONDS
     if args.mode == "kaggle-auto" and not args.torch_spec:
         args.torch_spec = DEFAULT_CUDA_TORCH_RUNTIME_SPEC
         args.torch_index_url = args.torch_index_url or DEFAULT_CUDA_TORCH_INDEX_URL
+    if args.mode == "kaggle-auto" and args.kernel_slug_prefix:
+        validate_kernel_slug_lengths(kaggle_safe_slug(args.kernel_slug_prefix), ["stage0", "stage1"])
     if args.request_count < 1 or args.request_count > 4:
         raise SystemExit("--request-count must be between 1 and 4")
     if args.max_new_tokens < 1 or args.max_new_tokens > 32:

@@ -257,6 +257,8 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
             self.assertEqual(command[command.index("--torch-index-url") + 1], "https://download.pytorch.org/whl/cu118")
             self.assertIn("--transformers-spec", command)
             self.assertEqual(command[command.index("--transformers-spec") + 1], "transformers==4.40.2")
+            self.assertIn("--lease-seconds", command)
+            self.assertEqual(command[command.index("--lease-seconds") + 1], "180.0")
             child_dir = Path(command[command.index("--output-dir") + 1])
             remote = child_dir / "external-alpha" / "live-rc" / "remote-real-llm-runtime"
             remote.mkdir(parents=True, exist_ok=True)
@@ -321,6 +323,19 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertEqual(report["beta"]["transformers_spec"], "transformers==4.40.2")
         self._assert_output_scope(report, output_dir, "kaggle-auto")
         self.assertTrue(calls)
+
+    def test_kaggle_auto_rejects_kernel_slug_prefix_before_packaging(self) -> None:
+        output_dir = self._tmp_dir()
+        with self.assertRaisesRegex(SystemExit, "kernel-slug-prefix is too long"):
+            pack.parse_args([
+                "kaggle-auto",
+                "--output-dir",
+                str(output_dir),
+                "--kaggle-owner",
+                "xuyuhaosuyi",
+                "--kernel-slug-prefix",
+                "crowdtensor-public-swarm-gpu-beta-20260608",
+            ])
 
 
 if __name__ == "__main__":

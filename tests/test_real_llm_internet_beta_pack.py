@@ -361,6 +361,65 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertTrue(report["kaggle_lifecycle"]["kernels_deleted"])
         self.assertIn("external runtime verified", report["not_completed"])
 
+    def test_kaggle_package_failure_does_not_run_external_verify(self) -> None:
+        output_dir = self._tmp_dir()
+        calls: list[list[str]] = []
+
+        def package_failure_runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            joined = " ".join(command)
+            if "kaggle_real_llm_live_package.py" in joined:
+                child_dir = Path(beta_check.option_value(command, "--output-dir"))
+                child_dir.mkdir(parents=True, exist_ok=True)
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="package failed")
+            if "real_llm_internet_alpha_pack.py" in joined and beta_check.option_value(command, "--mode") == "external-existing":
+                raise AssertionError("external verification should not run after Kaggle package failure")
+            return beta_check.fake_runner(command, **kwargs)
+
+        report = pack.build_report(
+            self._args(output_dir),
+            runner=package_failure_runner,
+            popen_factory=beta_check.FakePopen,  # type: ignore[arg-type]
+            ready_probe=beta_check.ready_probe,
+        )
+
+        step_names = [step.get("name") for step in report["steps"]]
+        self.assertFalse(report["ok"], report)
+        self.assertIn("kaggle_real_llm_live_package", step_names)
+        self.assertNotIn("real_llm_internet_alpha_external_existing", step_names)
+        self.assertEqual(report["kaggle_lifecycle"]["push_steps"], [])
+        self.assertEqual(report["kaggle_lifecycle"]["pushed_refs"], {})
+        self.assertFalse(report["kaggle_lifecycle"]["kernels_deleted"])
+        self.assertIn("real_llm_internet_beta_blocked", report["diagnosis_codes"])
+        self.assertTrue(any("kaggle_real_llm_live_package.py" in " ".join(command) for command in calls))
+        self.assertFalse(
+            any(
+                "real_llm_internet_alpha_pack.py" in " ".join(command)
+                and beta_check.option_value(command, "--mode") == "external-existing"
+                for command in calls
+            )
+        )
+
+    def test_cuda_kaggle_auto_defaults_to_longer_lease(self) -> None:
+        args = pack.parse_args([
+            "--real-llm-backend",
+            "hf_transformers_cuda",
+            "--kaggle-owner",
+            "xuyuhaosuyi",
+        ])
+
+        self.assertEqual(args.lease_seconds, 180.0)
+
+    def test_cpu_kaggle_auto_keeps_short_lease_default(self) -> None:
+        args = pack.parse_args([
+            "--real-llm-backend",
+            "hf_transformers_cpu",
+            "--kaggle-owner",
+            "xuyuhaosuyi",
+        ])
+
+        self.assertEqual(args.lease_seconds, 15.0)
+
     def test_report_redacts_private_env_and_token_fragments(self) -> None:
         output_dir = self._tmp_dir()
         report = pack.build_report(

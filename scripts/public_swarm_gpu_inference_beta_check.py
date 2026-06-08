@@ -140,11 +140,11 @@ def fake_gpu_runner(command: list[str], **kwargs: object) -> subprocess.Complete
         },
         "kaggle_lifecycle": {
             "owner": option_value(command, "--kaggle-owner", "xuyuhaosuyi"),
-            "kernel_slug_prefix": option_value(command, "--kernel-slug-prefix", "crowdtensor-public-swarm-gpu-beta-check"),
+            "kernel_slug_prefix": option_value(command, "--kernel-slug-prefix", "ct-public-gpu-beta-check"),
             "expected_push_count": 2,
             "pushed_refs": {
-                "stage0": "xuyuhaosuyi/crowdtensor-public-swarm-gpu-beta-check-stage0",
-                "stage1": "xuyuhaosuyi/crowdtensor-public-swarm-gpu-beta-check-stage1",
+                "stage0": "xuyuhaosuyi/ct-public-gpu-beta-check-stage0",
+                "stage1": "xuyuhaosuyi/ct-public-gpu-beta-check-stage1",
             },
             "kernels_deleted": True,
             "cleanup_required": True,
@@ -309,7 +309,7 @@ def main() -> None:
             "--kaggle-owner",
             args.kaggle_owner,
             "--kernel-slug-prefix",
-            "crowdtensor-public-swarm-gpu-beta-check",
+            "ct-public-gpu-beta-check",
         ])
     if args.mode == "kaggle-auto":
         pack_args = gpu_pack.parse_args(command[2:])
