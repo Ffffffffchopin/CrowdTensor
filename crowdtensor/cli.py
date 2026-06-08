@@ -881,6 +881,7 @@ NEXT_REASON_DETAILS = {
     "rerun_local_inference": "Rerun the local inference path.",
     "rerun_inference": "Rerun the inference request.",
     "rerun_generation": "Rerun the generation request.",
+    "review_source_evidence": "Open the source evidence Markdown before sharing or rerunning.",
     "next_available_command": "Use the first available safe next command.",
 }
 
@@ -5360,10 +5361,16 @@ def _artifact_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[
     saved_safe = bool(saved_summary.get("public_artifact_safe", True))
     source_safe = bool(source_report.get("public_artifact_safe", True)) if source_report else True
     raw_redacted = bool(saved_summary.get("raw_generated_text_redacted", True))
+    prefer_source_inspect = bool(source_report.get("prefer_inspect_first"))
+    inspect_first = (
+        source_summary_markdown or source_summary_json or summary_markdown or summary_json
+        if prefer_source_inspect
+        else summary_markdown or summary_json or source_summary_markdown or source_summary_json
+    )
     return {
         "kind": kind,
         "output_dir": str(report.get("output_dir") or ""),
-        "inspect_first": summary_markdown or summary_json or source_summary_markdown or source_summary_json,
+        "inspect_first": inspect_first,
         "summary_json": summary_json,
         "summary_markdown": summary_markdown,
         "source_summary_json": source_summary_json,
@@ -5374,6 +5381,151 @@ def _artifact_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[
         "public_artifact_safe": saved_safe and source_safe and raw_redacted,
         "summary": "Open inspect_first for a human review; summary_json is the machine-readable redacted report.",
     }
+
+
+def _source_evidence_paths(payload: dict[str, Any], *, output_dir: Path) -> dict[str, str]:
+    artifact_summary = payload.get("artifact_summary") if isinstance(payload.get("artifact_summary"), dict) else {}
+    review_summary = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    source_output_dir = str(payload.get("output_dir") or "")
+    if not source_output_dir:
+        return {}
+    source_dir = Path(source_output_dir)
+    schema = str(payload.get("schema") or "")
+    if schema == "public_swarm_inference_v2":
+        default_json = str(source_dir / "public_swarm_inference_v2.json")
+        default_markdown = str(source_dir / "public_swarm_inference_v2.md")
+    else:
+        return {}
+    summary_json = str(
+        artifact_summary.get("machine_readable")
+        or artifact_summary.get("summary_json")
+        or default_json
+    )
+    summary_markdown = str(
+        review_summary.get("inspect_first")
+        or artifact_summary.get("inspect_first")
+        or artifact_summary.get("summary_markdown")
+        or default_markdown
+    )
+    paths = {
+        "summary_path": summary_json,
+        "summary_markdown_path": summary_markdown,
+    }
+    try:
+        paths["summary_relative_path"] = Path(summary_json).resolve().relative_to(output_dir.resolve()).as_posix()
+    except ValueError:
+        paths["summary_relative_path"] = summary_json
+    try:
+        paths["summary_markdown_relative_path"] = Path(summary_markdown).resolve().relative_to(output_dir.resolve()).as_posix()
+    except ValueError:
+        paths["summary_markdown_relative_path"] = summary_markdown
+    return paths
+
+
+def _source_recommended_command(payload: dict[str, Any], *, paths: dict[str, str] | None = None) -> dict[str, Any]:
+    paths = paths or {}
+    recommended = (
+        payload.get("recommended_next_command")
+        if isinstance(payload.get("recommended_next_command"), dict)
+        else {}
+    )
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    command_line_text = str(recommended.get("command_line") or review.get("next_command") or "")
+    if not command_line_text:
+        return {}
+    source_markdown = str(paths.get("summary_markdown_path") or "")
+    if command_line_text == "less public_swarm_inference_v2.md" and source_markdown:
+        command_line_text = command_line(["less", source_markdown])
+    return {
+        "label": str(recommended.get("label") or review.get("recommended_label") or "review source evidence"),
+        "reason": str(recommended.get("reason") or review.get("recommended_reason") or "review_source_evidence"),
+        "command_line": command_line_text,
+        "requires_env": (
+            list(recommended.get("requires_env"))
+            if isinstance(recommended.get("requires_env"), list)
+            else list(review.get("requires_env") or []) if isinstance(review.get("requires_env"), list) else []
+        ),
+        "reason_detail": str(
+            recommended.get("reason_detail")
+            or next_reason_detail(str(recommended.get("reason") or review.get("recommended_reason") or "review_source_evidence"))
+        ),
+        "public_artifact_safe": bool(recommended.get("public_artifact_safe", True)),
+    }
+
+
+def _source_review_summary_from_payload(
+    payload: dict[str, Any],
+    *,
+    output_dir: Path,
+) -> dict[str, Any]:
+    review = payload.get("review_summary") if isinstance(payload.get("review_summary"), dict) else {}
+    user_status = payload.get("user_status") if isinstance(payload.get("user_status"), dict) else {}
+    paths = _source_evidence_paths(payload, output_dir=output_dir)
+    recommended = _source_recommended_command(payload, paths=paths)
+    codes = [str(code) for code in (payload.get("diagnosis_codes") or [])]
+    if not (review or user_status or paths or recommended):
+        return {}
+    state = str(review.get("state") or user_status.get("state") or ("completed" if payload.get("ok") else "blocked"))
+    primary_code = str(
+        review.get("primary_code")
+        or _primary_diagnosis_code(codes, ok=bool(payload.get("ok")), state=state)
+    )
+    return {
+        "schema": "crowdtensor_infer_source_review_v1",
+        "source_schema": payload.get("schema") or "",
+        "source_mode": payload.get("mode") or "",
+        "state": state,
+        "headline": review.get("headline") or user_status.get("headline") or "",
+        "next_step": review.get("next_step") or user_status.get("next_step") or "",
+        "inspect_first": paths.get("summary_markdown_path") or str(review.get("inspect_first") or ""),
+        "inspect_first_relative": paths.get("summary_markdown_relative_path") or "",
+        "summary_json": paths.get("summary_path") or "",
+        "summary_markdown": paths.get("summary_markdown_path") or "",
+        "recommended_label": recommended.get("label") or review.get("recommended_label") or user_status.get("recommended_label") or "",
+        "recommended_reason": recommended.get("reason") or review.get("recommended_reason") or "",
+        "next_command": recommended.get("command_line") or review.get("next_command") or "",
+        "requires_env": recommended.get("requires_env") if isinstance(recommended.get("requires_env"), list) else [],
+        "primary_code": primary_code,
+        "attention": review.get("attention") or "",
+        "attention_detail": review.get("attention_detail") or "",
+        "not_completed_count": _safe_int(review.get("not_completed_count") or len(payload.get("not_completed") if isinstance(payload.get("not_completed"), list) else [])),
+        "public_artifact_safe": bool(
+            review.get("public_artifact_safe", True)
+            and user_status.get("public_artifact_safe", True)
+            and recommended.get("public_artifact_safe", True)
+        ),
+    }
+
+
+def _prefer_source_review_for_infer(summary: dict[str, Any], source_review: dict[str, Any]) -> None:
+    if not source_review:
+        return
+    review = summary.get("review_summary") if isinstance(summary.get("review_summary"), dict) else {}
+    if not review:
+        return
+    for key in [
+        "state",
+        "headline",
+        "next_step",
+        "inspect_first",
+        "summary_json",
+        "summary_markdown",
+        "recommended_label",
+        "recommended_reason",
+        "next_command",
+        "requires_env",
+        "primary_code",
+        "attention",
+        "attention_detail",
+    ]:
+        value = source_review.get(key)
+        if value not in (None, "", []):
+            review[key] = value
+    review["source_review_schema"] = source_review.get("schema")
+    review["source_schema"] = source_review.get("source_schema")
+    review["source_mode"] = source_review.get("source_mode")
+    review["source_not_completed_count"] = _safe_int(source_review.get("not_completed_count"))
+    review["public_artifact_safe"] = bool(review.get("public_artifact_safe", True) and source_review.get("public_artifact_safe", True))
 
 
 def _review_summary_from_report(report: dict[str, Any], *, kind: str) -> dict[str, Any]:
@@ -6552,8 +6704,9 @@ def render_infer_summary_markdown(summary: dict[str, Any]) -> str:
             f"{suffix}"
         )
     if source_report.get("summary_path") or source_report.get("summary_markdown_path"):
+        source_label = str(source_report.get("label") or "source summary")
         lines.append(
-            "- Source generate summary: "
+            f"- Source {source_label}: "
             f"json=`{source_report.get('summary_path')}` "
             f"markdown=`{source_report.get('summary_markdown_path')}`"
         )
@@ -6800,6 +6953,16 @@ def _infer_summary_from_payload(
         and not local_output_note
     ):
         local_output_note = "Generated output is present, but raw text is suppressed in JSON/public output; rerun without --json for local display."
+    source_saved_summary = payload.get("saved_summary") if isinstance(payload.get("saved_summary"), dict) else {}
+    source_evidence_paths = _source_evidence_paths(payload, output_dir=output_dir)
+    source_review = _source_review_summary_from_payload(payload, output_dir=output_dir)
+    source_recommended = _source_recommended_command(payload, paths=source_evidence_paths)
+    if source_evidence_paths and not source_saved_summary:
+        source_saved_summary = {
+            "path": source_evidence_paths.get("summary_path") or "",
+            "markdown_path": source_evidence_paths.get("summary_markdown_path") or "",
+            "public_artifact_safe": bool(source_review.get("public_artifact_safe", True)),
+        }
     recommended_next_command = _infer_recommended_next_command(
         next_commands,
         ok=ok,
@@ -6809,6 +6972,12 @@ def _infer_summary_from_payload(
         diagnosis_codes=set(str(code) for code in codes),
         full_evidence=bool(getattr(args, "full_evidence", False)),
     )
+    if bool(getattr(args, "full_evidence", False)) and source_recommended:
+        recommended_next_command = {
+            **source_recommended,
+            "source_label": recommended_next_command.get("label") if recommended_next_command else "",
+            "source_index": recommended_next_command.get("source_index") if recommended_next_command else None,
+        }
     trace = _infer_trace_from_payload(
         payload,
         route=route,
@@ -6828,7 +6997,6 @@ def _infer_summary_from_payload(
         operator_action=operator_action,
         recommended_next_command=recommended_next_command,
     )
-    source_saved_summary = payload.get("saved_summary") if isinstance(payload.get("saved_summary"), dict) else {}
     private_runtime_state = _infer_private_runtime_state_from_payload(payload, mode=mode)
     payload_safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
     summary = {
@@ -6927,6 +7095,12 @@ def _infer_summary_from_payload(
             "ok": payload.get("ok"),
             "summary_path": source_saved_summary.get("path") or "",
             "summary_markdown_path": source_saved_summary.get("markdown_path") or "",
+            "summary_relative_path": source_evidence_paths.get("summary_relative_path") or "",
+            "summary_markdown_relative_path": source_evidence_paths.get("summary_markdown_relative_path") or "",
+            "label": "evidence summary" if source_evidence_paths else "generate summary",
+            "prefer_inspect_first": bool(source_evidence_paths),
+            "review_summary": source_review,
+            "recommended_next_command": source_recommended,
             "public_artifact_safe": bool(source_saved_summary.get("public_artifact_safe", True)) if source_saved_summary else True,
         },
         "operator_action": operator_action,
@@ -7010,6 +7184,8 @@ def _infer_summary_from_payload(
     summary["artifacts"] = artifacts
     summary["artifact_summary"] = _artifact_summary_from_report(summary, kind="infer")
     summary["review_summary"] = _review_summary_from_report(summary, kind="infer")
+    if source_evidence_paths:
+        _prefer_source_review_for_infer(summary, source_review)
     output_dir.mkdir(parents=True, exist_ok=True)
     persisted_summary = json.loads(json.dumps(summary))
     _strip_infer_local_output_text(persisted_summary)

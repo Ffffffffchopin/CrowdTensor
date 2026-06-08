@@ -8618,10 +8618,42 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             self.assertEqual(command[2], "local")
+            child_dir = output_dir / "public-swarm-v2"
+            child_dir.mkdir(parents=True, exist_ok=True)
+            (child_dir / "public_swarm_inference_v2.json").write_text("{}\n", encoding="utf-8")
+            (child_dir / "public_swarm_inference_v2.md").write_text("# v2\n", encoding="utf-8")
             return completed({
                 "schema": "public_swarm_inference_v2",
                 "ok": True,
                 "mode": "local",
+                "output_dir": str(child_dir),
+                "user_status": {
+                    "state": "ready",
+                    "headline": "Public Swarm v2 inference evidence is ready.",
+                    "next_step": "review_artifacts",
+                    "recommended_label": "review v2 evidence",
+                    "public_artifact_safe": True,
+                },
+                "review_summary": {
+                    "state": "ready",
+                    "headline": "Public Swarm v2 inference evidence is ready.",
+                    "next_step": "review_artifacts",
+                    "inspect_first": str(child_dir / "public_swarm_inference_v2.md"),
+                    "recommended_label": "review v2 evidence",
+                    "recommended_reason": "v2_ready",
+                    "next_command": "less public_swarm_inference_v2.md",
+                    "requires_env": [],
+                    "primary_code": "public_swarm_inference_v2_ready",
+                    "attention": "",
+                    "public_artifact_safe": True,
+                },
+                "recommended_next_command": {
+                    "label": "review v2 evidence",
+                    "reason": "v2_ready",
+                    "command_line": "less public_swarm_inference_v2.md",
+                    "requires_env": [],
+                    "public_artifact_safe": True,
+                },
                 "readiness": {
                     "local_p2p_generate": {
                         "route_ready": True,
@@ -8639,6 +8671,30 @@ class CrowdTensorCliTests(unittest.TestCase):
         report = cli.build_infer(args, runner=fake_runner)
 
         self.assertTrue(report["ok"], report)
+        child_markdown = str(output_dir / "public-swarm-v2" / "public_swarm_inference_v2.md")
+        self.assertEqual(report["source_report"]["summary_markdown_path"], child_markdown)
+        self.assertEqual(report["source_report"]["summary_markdown_relative_path"], "public-swarm-v2/public_swarm_inference_v2.md")
+        self.assertEqual(report["source_report"]["label"], "evidence summary")
+        self.assertEqual(report["source_report"]["review_summary"]["state"], "ready")
+        self.assertEqual(report["artifact_summary"]["inspect_first"], child_markdown)
+        self.assertEqual(report["review_summary"]["inspect_first"], child_markdown)
+        self.assertEqual(report["review_summary"]["recommended_label"], "review v2 evidence")
+        self.assertEqual(report["review_summary"]["primary_code"], "public_swarm_inference_v2_ready")
+        self.assertEqual(report["recommended_next_command"]["label"], "review v2 evidence")
+        self.assertEqual(report["recommended_next_command"]["reason"], "v2_ready")
+        self.assertEqual(report["recommended_next_command"]["command_line"], f"less {child_markdown}")
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["review_summary"]["inspect_first"], child_markdown)
+        self.assertEqual(persisted["artifact_summary"]["inspect_first"], child_markdown)
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn(f"- Inspect first: `{child_markdown}`", markdown)
+        self.assertIn(f"- Source evidence summary: json=`{output_dir / 'public-swarm-v2' / 'public_swarm_inference_v2.json'}` markdown=`{child_markdown}`", markdown)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_infer(report)
+        rendered = stdout.getvalue()
+        self.assertIn(f"  inspect_first: {child_markdown}", rendered)
+        self.assertIn(f"  recommended_next: review v2 evidence reason=v2_ready less {child_markdown}", rendered)
 
     def test_infer_full_evidence_blocked_keeps_full_evidence_next_step(self) -> None:
         output_dir = Path(self._tmp_dir())
@@ -8656,10 +8712,44 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            child_dir = output_dir / "public-swarm-v2"
+            child_dir.mkdir(parents=True, exist_ok=True)
+            (child_dir / "public_swarm_inference_v2.json").write_text("{}\n", encoding="utf-8")
+            (child_dir / "public_swarm_inference_v2.md").write_text("# v2 blocked\n", encoding="utf-8")
             return completed({
                 "schema": "public_swarm_inference_v2",
                 "ok": False,
                 "mode": "local",
+                "output_dir": str(child_dir),
+                "user_status": {
+                    "state": "blocked",
+                    "headline": "Public Swarm v2 evidence is blocked: local p2p generate route.",
+                    "next_step": "fix_blockers",
+                    "recommended_label": "rerun local v2 gate",
+                    "public_artifact_safe": True,
+                },
+                "review_summary": {
+                    "state": "blocked",
+                    "headline": "Public Swarm v2 inference evidence needs attention.",
+                    "next_step": "fix_blockers",
+                    "inspect_first": str(child_dir / "public_swarm_inference_v2.md"),
+                    "recommended_label": "rerun local v2 gate",
+                    "recommended_reason": "fix_local_v2_evidence",
+                    "next_command": "crowdtensor public-swarm-v2 local --max-new-tokens 16 --json",
+                    "requires_env": ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_MINER_TOKEN"],
+                    "primary_code": "public_swarm_inference_v2_blocked",
+                    "attention": "local p2p generate route",
+                    "attention_detail": "local p2p generate route",
+                    "not_completed_count": 1,
+                    "public_artifact_safe": True,
+                },
+                "recommended_next_command": {
+                    "label": "rerun local v2 gate",
+                    "reason": "fix_local_v2_evidence",
+                    "command_line": "crowdtensor public-swarm-v2 local --max-new-tokens 16 --json",
+                    "requires_env": ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_MINER_TOKEN"],
+                    "public_artifact_safe": True,
+                },
                 "readiness": {
                     "local_p2p_generate": {
                         "route_ready": False,
@@ -8673,21 +8763,26 @@ class CrowdTensorCliTests(unittest.TestCase):
         report = cli.build_infer(args, runner=fake_runner)
 
         self.assertFalse(report["ok"], report)
+        child_markdown = str(output_dir / "public-swarm-v2" / "public_swarm_inference_v2.md")
         self.assertIn("public_swarm_inference_v2_blocked", report["diagnosis_codes"])
         self.assertEqual(report["issue_summary"]["primary_code"], "public_swarm_inference_v2_blocked")
         self.assertEqual(report["review_summary"]["primary_code"], "public_swarm_inference_v2_blocked")
+        self.assertEqual(report["review_summary"]["inspect_first"], child_markdown)
+        self.assertEqual(report["review_summary"]["recommended_label"], "rerun local v2 gate")
+        self.assertEqual(report["source_report"]["review_summary"]["not_completed_count"], 1)
         self.assertIn("Full local Public Swarm v2 evidence is blocked", report["operator_action"])
-        self.assertEqual(report["recommended_next_command"]["label"], "rerun full local evidence")
-        self.assertIn("--full-evidence", report["recommended_next_command"]["command_line"])
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun local v2 gate")
+        self.assertIn("public-swarm-v2 local", report["recommended_next_command"]["command_line"])
         self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
         persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["issue_summary"]["primary_code"], "public_swarm_inference_v2_blocked")
-        self.assertEqual(persisted["recommended_next_command"]["label"], "rerun full local evidence")
-        self.assertIn("--full-evidence", persisted["recommended_next_command"]["command_line"])
+        self.assertEqual(persisted["review_summary"]["inspect_first"], child_markdown)
+        self.assertEqual(persisted["recommended_next_command"]["label"], "rerun local v2 gate")
+        self.assertIn("public-swarm-v2 local", persisted["recommended_next_command"]["command_line"])
         self.assertNotIn(prompt, json.dumps(persisted, sort_keys=True))
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("primary=public_swarm_inference_v2_blocked", markdown)
-        self.assertIn("--full-evidence", markdown)
+        self.assertIn(child_markdown, markdown)
         self.assertNotIn(prompt, markdown)
 
     def test_infer_full_evidence_batch_forwards_only_prompt_texts(self) -> None:
