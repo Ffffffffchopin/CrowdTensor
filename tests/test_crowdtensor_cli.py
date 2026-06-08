@@ -8304,6 +8304,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["cli_schema"], "usable_swarm_inference_cli_v1")
         self.assertTrue(calls)
 
+    def test_usable_swarm_help_explains_modes_and_output_scope(self) -> None:
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(["usable-swarm", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        rendered = stdout.getvalue()
+        normalized = " ".join(rendered.split())
+        self.assertIn("local runs the p2pd -> serve --p2p -> join stage0/stage1 -> generate --p2p path", normalized)
+        self.assertIn("package writes the runbook without running services", normalized)
+        self.assertIn("evidence-import validates an existing P2P report", normalized)
+        self.assertIn("Artifacts are shareable readiness evidence, not answer transcripts", normalized)
+
     def test_usable_swarm_prints_output_scope(self) -> None:
         report = {
             "schema": "usable_swarm_inference_v1",
@@ -8358,6 +8372,45 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "answer_scope_state": "no-local-answer",
                 "local_answer_terminal_only": False,
             },
+            "user_status": {
+                "state": "completed",
+                "headline": "Usable Swarm inference evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect shareable summary",
+                "recommended_reason": "review_artifacts",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "state": "completed",
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/usable/usable_swarm_inference.md",
+                "support_bundle": "dist/usable/support_bundle.json",
+                "runbook": "dist/usable/USABLE_SWARM_INFERENCE.md",
+                "recommended_label": "inspect shareable summary",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p dist/usable/usable_swarm_inference.md",
+                "primary_code": "usable_swarm_inference_ready",
+                "attention": "none",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect shareable summary",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p dist/usable/usable_swarm_inference.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p dist/usable/usable_swarm_inference.md",
+                    "public_artifact_safe": True,
+                },
+                {
+                    "label": "open runbook",
+                    "command_line": "sed -n 1,260p dist/usable/USABLE_SWARM_INFERENCE.md",
+                    "public_artifact_safe": True,
+                },
+            ],
             "diagnosis_codes": ["usable_swarm_inference_ready"],
             "artifacts": {},
         }
@@ -8367,6 +8420,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_usable_swarm_inference(report)
 
         rendered = stdout.getvalue()
+        self.assertIn("  review: state=completed next=review_artifacts", rendered)
+        self.assertIn("  review_next: label=inspect shareable summary reason=review_artifacts", rendered)
+        self.assertIn("  inspect_first: dist/usable/usable_swarm_inference.md", rendered)
+        self.assertIn("  status: completed: Usable Swarm inference evidence is ready.", rendered)
+        self.assertIn("  recommended_next: inspect shareable summary reason=review_artifacts", rendered)
+        self.assertIn("  next[1] inspect shareable summary: sed -n 1,220p dist/usable/usable_swarm_inference.md", rendered)
+        self.assertIn("  next[2] open runbook: sed -n 1,260p dist/usable/USABLE_SWARM_INFERENCE.md", rendered)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             rendered,

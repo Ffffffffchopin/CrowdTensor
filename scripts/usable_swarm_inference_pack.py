@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -43,6 +44,9 @@ DEFAULT_OUTPUT_DIR = "dist/usable-swarm-inference-v1"
 DEFAULT_P2P_REPORT = "dist/goal-final-infer-p2p-v06-16tok-kv-cache-20260601/p2p_swarm_inference_v06.json"
 DEFAULT_PROMPT = "CrowdTensor usable swarm inference"
 DEFAULT_HF_MODEL_ID = "sshleifer/tiny-gpt2"
+PROMPT_PLACEHOLDER = "<prompt>"
+PROMPTS_PLACEHOLDER = "<prompts>"
+PROMPTS_FILE_PLACEHOLDER = "prompts.txt"
 
 INHERITED_CODE_ALLOWLIST = {
     "p2pd_daemon_ready",
@@ -659,6 +663,243 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def command_line(command: list[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in command)
+
+
+def command_entry(label: str, command: list[str], *, reason: str = "", requires_env: list[str] | None = None) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": command,
+        "command_line": command_line(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if requires_env:
+        entry["requires_env"] = list(requires_env)
+    return entry
+
+
+def prompt_command_args(args: argparse.Namespace) -> list[str]:
+    if str(getattr(args, "prompt_texts_file", "") or ""):
+        return ["--prompt-texts-file", PROMPTS_FILE_PLACEHOLDER]
+    if str(getattr(args, "prompt_texts", "") or ""):
+        return ["--prompt-texts", PROMPTS_PLACEHOLDER]
+    return ["--prompt-text", PROMPT_PLACEHOLDER]
+
+
+def usable_swarm_command(args: argparse.Namespace, output_dir: Path, mode: str) -> list[str]:
+    command = [
+        "crowdtensor",
+        "usable-swarm",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--swarm-id",
+        str(args.swarm_id),
+        "--public-host",
+        str(args.public_host),
+        "--p2p-port",
+        str(args.p2p_port),
+        "--coordinator-port",
+        str(args.coordinator_port),
+        "--backend",
+        str(args.backend),
+        "--hf-model-id",
+        str(args.hf_model_id),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--startup-timeout",
+        str(args.startup_timeout),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--http-timeout",
+        str(args.http_timeout),
+        *prompt_command_args(args),
+    ]
+    if mode == MODE_EVIDENCE_IMPORT:
+        command.extend(["--p2p-report", str(args.p2p_report)])
+    if str(getattr(args, "hf_cache_dir", "") or ""):
+        command.extend(["--hf-cache-dir", "<hf-cache-dir>"])
+    if bool(getattr(args, "stream_generation", False)):
+        command.append("--stream-generation")
+    return command
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "usable_swarm_inference.md",
+        "summary_json": output_dir / "usable_swarm_inference.json",
+        "summary_markdown": output_dir / "usable_swarm_inference.md",
+        "support_bundle": output_dir / "support_bundle.json",
+        "runbook": output_dir / "USABLE_SWARM_INFERENCE.md",
+    }
+    present = sum(1 for path in paths.values() if path.is_file())
+    return {
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": present,
+        "shareable_paths": [
+            str(paths["summary_json"]),
+            str(paths["summary_markdown"]),
+            str(paths["support_bundle"]),
+        ],
+        "public_artifact_safe": True,
+    }
+
+
+def next_commands(args: argparse.Namespace, output_dir: Path, *, mode: str, ready: bool) -> list[dict[str, Any]]:
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "usable_swarm_inference.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "open runbook",
+            artifact_command(output_dir, "USABLE_SWARM_INFERENCE.md", lines="1,260p"),
+            reason="follow_user_path",
+        ),
+    ]
+    if mode == MODE_PACKAGE:
+        commands.append(command_entry(
+            "run local usable swarm proof",
+            usable_swarm_command(args, output_dir, MODE_LOCAL),
+            reason="execute_local_p2p_path",
+        ))
+    elif mode == MODE_EVIDENCE_IMPORT:
+        commands.append(command_entry(
+            "run fresh local usable swarm proof",
+            usable_swarm_command(args, output_dir, MODE_LOCAL),
+            reason="replace_import_with_fresh_local_evidence",
+        ))
+    else:
+        commands.append(command_entry(
+            "rerun local usable swarm proof" if ready else "retry local usable swarm proof",
+            usable_swarm_command(args, output_dir, MODE_LOCAL),
+            reason="rerun_local_p2p_path",
+        ))
+    return commands
+
+
+def recommended_next(commands: list[dict[str, Any]], *, mode: str, ready: bool) -> dict[str, Any]:
+    if mode == MODE_PACKAGE:
+        label = "run local usable swarm proof"
+        reason = "execute_local_p2p_path"
+    elif ready:
+        label = "inspect shareable summary"
+        reason = "review_artifacts"
+    else:
+        label = "inspect shareable summary"
+        reason = "review_missing_evidence"
+    for item in commands:
+        if item.get("label") == label:
+            return {**item, "reason": reason}
+    return {}
+
+
+def user_status(
+    *,
+    ready: bool,
+    mode: str,
+    recommended: dict[str, Any],
+    not_completed: list[str],
+) -> dict[str, Any]:
+    if mode == MODE_PACKAGE:
+        state = "package-ready"
+        headline = "Usable Swarm runbook and shareable package were generated."
+        next_step = "run_local_proof"
+    elif ready:
+        state = "completed"
+        headline = "Usable Swarm inference evidence is ready."
+        next_step = "review_artifacts"
+    else:
+        state = "incomplete"
+        headline = "Usable Swarm inference evidence is incomplete."
+        next_step = "fix_missing_evidence"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(not_completed),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> dict[str, Any]:
+    not_completed = [str(item) for item in (report.get("not_completed") or [])]
+    codes = [str(code) for code in (report.get("diagnosis_codes") or [])]
+    mode = str(report.get("mode") or "")
+    ready = bool(report.get("ok"))
+    if mode == MODE_PACKAGE:
+        state = "package-ready"
+        next_step = "run_local_proof"
+        attention = "package_only"
+        attention_detail = "Package mode wrote the runbook and shareable artifacts; run local mode to execute the P2P path."
+    elif ready:
+        state = "completed"
+        next_step = "review_artifacts"
+        attention = "none"
+        attention_detail = ""
+    else:
+        state = "incomplete"
+        next_step = "fix_missing_evidence"
+        attention = "missing_evidence"
+        attention_detail = "; ".join(not_completed[:5])
+    primary = (
+        "usable_swarm_package_ready"
+        if mode == MODE_PACKAGE
+        else ("usable_swarm_inference_ready" if "usable_swarm_inference_ready" in codes else (codes[0] if codes else "none"))
+    )
+    return {
+        "state": state,
+        "next_step": next_step,
+        "inspect_first": str(output_dir / "usable_swarm_inference.md"),
+        "support_bundle": str(output_dir / "support_bundle.json"),
+        "runbook": str(output_dir / "USABLE_SWARM_INFERENCE.md"),
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "has_recommended_command": bool(recommended.get("command_line")),
+        "primary_code": primary,
+        "attention": attention,
+        "attention_detail": attention_detail,
+        "not_completed_count": len(not_completed),
+        "recommended_next_command": recommended,
+        "public_artifact_safe": True,
+    }
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    ready = bool(report.get("ok"))
+    mode = str(report.get("mode") or getattr(args, "mode", MODE_LOCAL))
+    report_commands = next_commands(args, output_dir, mode=mode, ready=ready)
+    recommended = recommended_next(report_commands, mode=mode, ready=ready)
+    report["next_commands"] = report_commands
+    report["recommended_next_command"] = recommended
+    report["user_status"] = user_status(
+        ready=ready,
+        mode=mode,
+        recommended=recommended,
+        not_completed=[str(item) for item in (report.get("not_completed") or [])],
+    )
+    report["review_summary"] = review_summary(report, output_dir=output_dir, recommended=recommended)
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
 def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
     prompt_texts_file = str(getattr(args, "prompt_texts_file", "") or "")
     prompt_texts = str(getattr(args, "prompt_texts", "") or "")
@@ -994,7 +1235,7 @@ def build_common_report(
             if not ok
         ],
     }
-    return persist_report(report, output_dir=output_dir)
+    return persist_report(attach_user_guidance(report, args, output_dir=output_dir), output_dir=output_dir)
 
 
 def build_local(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> dict[str, Any]:
@@ -1039,7 +1280,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
         "operator_action": ["Run local mode to execute the real local P2P product path."],
         "not_completed": [],
     }
-    return persist_report(report, output_dir=output_dir)
+    return persist_report(attach_user_guidance(report, args, output_dir=output_dir), output_dir=output_dir)
 
 
 def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
@@ -1051,13 +1292,22 @@ def render_markdown(report: dict[str, Any]) -> str:
     usable = report.get("usable_swarm") if isinstance(report.get("usable_swarm"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
     p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
+    user_status_report = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     lines = [
         "# CrowdTensor Usable Swarm Inference v1",
         "",
+        f"- review: `state={review.get('state')} next={review.get('next_step')} inspect={review.get('inspect_first')} recommended={review.get('recommended_label')} primary={review.get('primary_code')} attention={review.get('attention')} public_artifact_safe={bool(review.get('public_artifact_safe'))}`",
+        f"- review next: `label={review.get('recommended_label') or 'none'} reason={review.get('recommended_reason') or 'none'} command={review.get('next_command') or 'none'}`",
+        f"- inspect first: `{review.get('inspect_first') or artifact_report.get('inspect_first')}`",
+        f"- status: `{user_status_report.get('state')}: {user_status_report.get('headline')} next={user_status_report.get('next_step')} recommendation={user_status_report.get('recommended_label')} public_artifact_safe={bool(user_status_report.get('public_artifact_safe'))}`",
         f"- schema: `{report.get('schema')}`",
         f"- ok: `{report.get('ok')}`",
         f"- mode: `{report.get('mode')}`",
@@ -1069,6 +1319,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## User Path",
         "",
         "`p2pd` -> `serve --p2p` -> `join --p2p --stage stage0` -> `join --p2p --stage stage1` -> `generate --p2p`",
+        "",
+        "## What To Do Next",
+        "",
+        f"- State: `{review.get('state') or 'unknown'}`",
+        f"- Next step: `{review.get('next_step') or 'none'}`",
+        f"- Inspect first: `{review.get('inspect_first') or artifact_report.get('inspect_first')}`",
+        f"- Recommended: `{recommended.get('label') or 'none'}` reason=`{recommended.get('reason') or 'none'}`",
+        f"- Copy command: `{recommended.get('command_line') or 'none'}`",
+        f"- Support bundle: `{review.get('support_bundle') or artifact_report.get('support_bundle')}`",
+        f"- Runbook: `{review.get('runbook') or artifact_report.get('runbook')}`",
+        "- Safety: saved JSON/Markdown/support artifacts contain hashes/counts and no raw prompts, generated text, token ids, activations, credentials, leases, or idempotency material.",
         "",
         "## Readiness",
         "",
@@ -1095,9 +1356,28 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
         "",
-        "## Boundaries",
+        "## Next Commands",
         "",
     ]
+    if next_items:
+        for index, item in enumerate(next_items, start=1):
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"{index}. `{item.get('label')}`: `{item.get('command_line')}`")
+    else:
+        lines.append("None.")
+    lines.extend([
+        "",
+        "## Artifacts",
+        "",
+        f"- summary json: `{artifact_report.get('summary_json')}`",
+        f"- summary markdown: `{artifact_report.get('summary_markdown')}`",
+        f"- support bundle: `{artifact_report.get('support_bundle')}`",
+        f"- runbook: `{artifact_report.get('runbook')}`",
+        "",
+        "## Boundaries",
+        "",
+    ])
     for item in report.get("limitations") or []:
         lines.append(f"- {item}")
     return "\n".join(lines) + "\n"
@@ -1129,6 +1409,35 @@ def validate_public_report(report: dict[str, Any]) -> list[str]:
         errors.append("prompt_scope_raw_prompt_public_mismatch")
     if prompt_scope.get("public_artifact_safe") is not True:
         errors.append("prompt_scope_public_artifact_safe_mismatch")
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user_status_report = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
+    if not review.get("state") or not review.get("next_step") or not review.get("inspect_first"):
+        errors.append("review_summary_incomplete")
+    if review.get("public_artifact_safe") is not True:
+        errors.append("review_summary_public_artifact_safe_mismatch")
+    if not user_status_report.get("state") or not user_status_report.get("headline") or not user_status_report.get("next_step"):
+        errors.append("user_status_incomplete")
+    if user_status_report.get("public_artifact_safe") is not True:
+        errors.append("user_status_public_artifact_safe_mismatch")
+    if not recommended.get("label") or not recommended.get("command_line"):
+        errors.append("recommended_next_command_missing")
+    if recommended.get("public_artifact_safe") is not True:
+        errors.append("recommended_next_command_public_artifact_safe_mismatch")
+    if not next_items:
+        errors.append("next_commands_missing")
+    for item in next_items:
+        if not isinstance(item, dict) or not item.get("label") or not item.get("command_line"):
+            errors.append("next_command_incomplete")
+            continue
+        if item.get("public_artifact_safe") is not True:
+            errors.append("next_command_public_artifact_safe_mismatch")
+    if not artifact_report.get("inspect_first") or not artifact_report.get("summary_json") or not artifact_report.get("support_bundle"):
+        errors.append("artifact_summary_incomplete")
+    if artifact_report.get("public_artifact_safe") is not True:
+        errors.append("artifact_summary_public_artifact_safe_mismatch")
     encoded = json.dumps(report, sort_keys=True)
     for fragment in SECRET_FRAGMENTS:
         if fragment and fragment in encoded:
@@ -1162,6 +1471,11 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "path": "usable_swarm_inference.md",
         "present": True,
     })
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
+        report["review_summary"]["runbook"] = report["artifact_summary"]["runbook"]
     write_json(output_dir / "usable_swarm_inference.json", report)
     (output_dir / "usable_swarm_inference.md").write_text(render_markdown(report), encoding="utf-8")
     bundle = support_bundle.sanitize({
@@ -1174,6 +1488,11 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
+        "user_status": report.get("user_status"),
+        "review_summary": report.get("review_summary"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
         "safety": report.get("safety"),
         "limitations": report.get("limitations"),
     })
@@ -1185,6 +1504,9 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
         "schema": SUPPORT_SCHEMA,
         "ok": bundle.get("ok"),
     }
+    report["artifact_summary"] = artifact_summary(output_dir)
+    bundle["artifact_summary"] = report.get("artifact_summary")
+    write_json(output_dir / "support_bundle.json", bundle)
     write_json(output_dir / "usable_swarm_inference.json", report)
     return report
 

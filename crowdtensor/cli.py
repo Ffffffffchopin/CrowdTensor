@@ -13768,11 +13768,28 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
     usable = report.get("usable_swarm") if isinstance(report.get("usable_swarm"), dict) else {}
     readiness = report.get("readiness") if isinstance(report.get("readiness"), dict) else {}
     p2p = readiness.get("p2p_product_path") if isinstance(readiness.get("p2p_product_path"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor Usable Swarm Inference v1")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+        print(f"  review_next: {review_next_command_text(review)}")
+        if review.get("inspect_first"):
+            print(f"  inspect_first: {review.get('inspect_first')}")
+        if review.get("attention") and review.get("attention") != "none":
+            print(f"  attention: {review_attention_display_text(review)}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
     print(f"  cli_schema: {report.get('cli_schema')}")
@@ -13793,6 +13810,10 @@ def print_usable_swarm_inference(report: dict[str, Any]) -> None:
         print(f"  shareable: {shareable_summary_text(shareable_summary)}")
     print(f"  output: {report.get('output_dir')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
     for name, artifact in sorted((report.get("artifacts") or {}).items()):
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
@@ -15409,6 +15430,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     usable_swarm = subparsers.add_parser(
         "usable-swarm",
         help="Build the Usable Swarm Inference v1 artifact for the p2pd/serve/join/generate path.",
+        description=(
+            "Build the ordinary user-facing Usable Swarm Inference v1 artifact. "
+            "local runs the p2pd -> serve --p2p -> join stage0/stage1 -> generate --p2p path; "
+            "package writes the runbook without running services; evidence-import validates an existing P2P report."
+        ),
+        epilog=(
+            "Artifacts are shareable readiness evidence, not answer transcripts: raw prompts, generated text, "
+            "token ids, activations, credentials, leases, and idempotency material stay out of JSON/Markdown/support bundles. "
+            "Use crowdtensor generate --p2p in human mode to see the local answer."
+        ),
     )
     usable_swarm.add_argument("usable_swarm_mode", choices=["local", "package", "evidence-import"], nargs="?", default="local")
     usable_swarm.add_argument("--output-dir", default="dist/usable-swarm-inference-v1")
