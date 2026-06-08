@@ -226,17 +226,34 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
                 stderr="",
             )
 
+        private_prompts = "private local prompt one,private local prompt two"
         report = pack.build_report(pack.parse_args([
             "local-loopback",
             "--output-dir",
             str(output_dir),
             "--base-port",
             "9290",
+            "--prompt-texts",
+            private_prompts,
         ]), runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
 
         self.assertTrue(report["ok"], report)
         self.assertIn("public_swarm_inference_beta_ready", report["diagnosis_codes"])
         self.assertIn("local_loopback_ready", report["diagnosis_codes"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
+        self.assertNotIn("private local prompt one", encoded)
+        self.assertNotIn("private local prompt two", encoded)
         self.assertTrue(calls)
 
     def test_product_beta_aggregates_product_rc_and_cpu_fallback(self) -> None:
@@ -312,12 +329,15 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
                 )
             raise AssertionError(command)
 
+        private_prompts = "private product prompt one,private product prompt two"
         report = pack.build_report(pack.parse_args([
             "product-beta",
             "--output-dir",
             str(output_dir),
             "--gpu-report",
             str(gpu_report),
+            "--prompt-texts",
+            private_prompts,
             "--max-new-tokens",
             "4",
             "--cpu-request-count",
@@ -325,6 +345,7 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
             "--external-llm-request-count",
             "1",
         ]), runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
 
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["mode"], "product-beta")
@@ -347,6 +368,17 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -364,11 +396,19 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "public_swarm_inference_beta.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn(
+            "- prompt scope: `source=prompt-texts count=2 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
+        self.assertNotIn("private product prompt one", encoded)
+        self.assertNotIn("private product prompt two", encoded)
+        self.assertNotIn("private product prompt one", markdown)
+        self.assertNotIn("private product prompt two", markdown)
         self.assertTrue(calls)
 
     def test_product_beta_blocks_when_cpu_fallback_missing(self) -> None:
@@ -468,7 +508,54 @@ class PublicSwarmInferenceBetaPackTests(unittest.TestCase):
         broken = dict(report)
         broken["output_request"] = {**report["output_request"], "include_output": True}
         self.assertIn("output_request_include_output_mismatch", check.output_scope_errors(broken))
+        broken_prompt = dict(report)
+        broken_prompt["prompt_scope"] = {**report["prompt_scope"], "raw_prompt_public": True}
+        self.assertIn("prompt_scope_raw_prompt_public_mismatch", check.output_scope_errors(broken_prompt))
         self.assertTrue(calls)
+
+    def test_product_beta_redacts_prompt_texts_from_failed_child_output(self) -> None:
+        output_dir = self._tmp_dir()
+        gpu_report = output_dir / "gpu.json"
+        gpu_report.write_text("{}", encoding="utf-8")
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            joined = " ".join(command)
+            if "public_swarm_product_rc_pack.py" in joined:
+                return subprocess.CompletedProcess(
+                    args=command,
+                    returncode=1,
+                    stdout="failed with private failure prompt one\n",
+                    stderr="stderr private failure prompt two\n",
+                )
+            if "cpu_inference_beta_pack.py" in joined:
+                return subprocess.CompletedProcess(
+                    args=command,
+                    returncode=0,
+                    stdout=json.dumps({
+                        "schema": "cpu_inference_beta_v1",
+                        "ok": True,
+                        "diagnosis_codes": ["cpu_inference_beta_ready", "local_cpu_inference_ready"],
+                    }) + "\n",
+                    stderr="",
+                )
+            raise AssertionError(command)
+
+        report = pack.build_report(pack.parse_args([
+            "product-beta",
+            "--output-dir",
+            str(output_dir),
+            "--gpu-report",
+            str(gpu_report),
+            "--prompt-texts",
+            "private failure prompt one,private failure prompt two",
+        ]), runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("public_swarm_inference_beta_blocked", report["diagnosis_codes"])
+        self.assertIn("<redacted>", encoded)
+        self.assertNotIn("private failure prompt one", encoded)
+        self.assertNotIn("private failure prompt two", encoded)
 
 
 if __name__ == "__main__":
