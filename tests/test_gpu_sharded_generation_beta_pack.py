@@ -52,6 +52,48 @@ class GpuShardedGenerationBetaPackTests(unittest.TestCase):
         self.assertIn("- answer scope note:", markdown)
         self.assertIn("not a local answer transcript", markdown)
 
+        expected_proof = {
+            "evidence-import": "retained-evidence-import",
+            "local-loopback": "local-loopback",
+            "kaggle-auto": "fresh-kaggle-gpu",
+        }[mode]
+        expected_status = {
+            "evidence-import": "evidence-import-ready",
+            "local-loopback": "local-loopback-ready",
+            "kaggle-auto": "fresh-kaggle-gpu-ready",
+        }[mode]
+        self.assertEqual(report["runtime_provenance"]["schema"], "gpu_generation_runtime_provenance_v1")
+        self.assertEqual(report["runtime_provenance"]["proof_level"], expected_proof)
+        self.assertEqual(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"], mode == "kaggle-auto")
+        self.assertEqual(report["runtime_provenance"]["fresh_kaggle_gpu_verified"], mode == "kaggle-auto")
+        self.assertEqual(report["runtime_provenance"]["evidence_import"], mode == "evidence-import")
+        self.assertTrue(report["runtime_provenance"]["public_artifact_safe"])
+        self.assertEqual(report["user_status"]["state"], expected_status)
+        self.assertTrue(report["user_status"]["public_artifact_safe"])
+        self.assertEqual(report["review_summary"]["schema"], "gpu_sharded_generation_beta_review_summary_v1")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertTrue(report["review_summary"]["ready"])
+        self.assertEqual(report["review_summary"]["runtime_proof_level"], expected_proof)
+        self.assertFalse(report["not_completed"])
+        self.assertTrue(report["recommended_next_command"]["command_line"])
+        self.assertGreaterEqual(len(report["next_commands"]), 3)
+        self.assertEqual(report["artifact_summary"]["schema"], "gpu_sharded_generation_beta_artifact_summary_v1")
+        self.assertEqual(
+            report["artifact_summary"]["artifact_count"],
+            report["artifact_summary"]["present_artifact_count"],
+        )
+        self.assertIn("support_bundle_json", report["artifacts"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        support_bundle = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support_bundle["schema"], "gpu_sharded_generation_beta_support_bundle_v1")
+        self.assertEqual(support_bundle["runtime_provenance"]["proof_level"], expected_proof)
+        self.assertIn("## Review", markdown)
+        self.assertIn("## Runtime Provenance", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("## Not Completed", markdown)
+        self.assertIn("- none", markdown)
+
     def test_evidence_import_requires_multi_token_generation_ready(self) -> None:
         output_dir = self._tmp_dir()
         source = output_dir / "source.json"
@@ -153,6 +195,36 @@ class GpuShardedGenerationBetaPackTests(unittest.TestCase):
         self._assert_output_scope(report, output_dir, "local-loopback")
         self.assertTrue(calls)
 
+    def test_kaggle_auto_marks_fresh_gpu_provenance_from_ready_payload(self) -> None:
+        output_dir = self._tmp_dir()
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_swarm_gpu_inference_beta_pack.py", command[1])
+            self.assertIn("kaggle-auto", command)
+            self.assertIn("--kaggle-owner", command)
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=json.dumps(check.synthetic_public_gpu_report(4, mode="kaggle-auto")) + "\n",
+                stderr="",
+            )
+
+        report = pack.build_report(pack.parse_args([
+            "kaggle-auto",
+            "--output-dir",
+            str(output_dir),
+            "--max-new-tokens",
+            "4",
+            "--kaggle-owner",
+            "tester",
+        ]), runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("gpu_multi_machine_generation_ready", report["diagnosis_codes"])
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "fresh-kaggle-gpu")
+        self.assertTrue(report["runtime_provenance"]["fresh_kaggle_gpu_verified"])
+        self._assert_output_scope(report, output_dir, "kaggle-auto")
+
     def test_report_blocks_plain_generated_text_leak(self) -> None:
         output_dir = self._tmp_dir()
         source = output_dir / "leaky.json"
@@ -228,6 +300,9 @@ class GpuShardedGenerationBetaPackTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["generation"]["generated_token_count"], 5)
         self.assertEqual(report["generation"]["generated_text_hash"], "sha256:nested")
+        self.assertEqual(report["runtime_provenance"]["proof_level"], "retained-evidence-import")
+        self.assertFalse(report["runtime_provenance"]["fresh_kaggle_gpu_attempted"])
+        self.assertTrue(report["runtime_provenance"]["external_gpu_runtime_verified"])
         self._assert_output_scope(report, output_dir, "evidence-import")
 
     def test_prefers_nested_generation_hash_over_partial_top_level_summary(self) -> None:

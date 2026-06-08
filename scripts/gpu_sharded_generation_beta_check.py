@@ -209,6 +209,85 @@ def validate_report(report: dict[str, Any], *, max_new_tokens: int) -> list[str]
     own_json = artifacts.get("gpu_sharded_generation_beta_json") if isinstance(artifacts.get("gpu_sharded_generation_beta_json"), dict) else {}
     if own_json.get("present") is not True:
         errors.append("summary_artifact_missing")
+    own_markdown = artifacts.get("gpu_sharded_generation_beta_markdown") if isinstance(artifacts.get("gpu_sharded_generation_beta_markdown"), dict) else {}
+    if own_markdown.get("present") is not True:
+        errors.append("markdown_artifact_missing")
+    support_artifact = artifacts.get("support_bundle_json") if isinstance(artifacts.get("support_bundle_json"), dict) else {}
+    if support_artifact.get("present") is not True:
+        errors.append("support_bundle_artifact_missing")
+    mode = str(report.get("mode") or "")
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    if provenance.get("schema") != "gpu_generation_runtime_provenance_v1":
+        errors.append("runtime_provenance_schema_mismatch")
+    if provenance.get("mode") != mode:
+        errors.append("runtime_provenance_mode_mismatch")
+    if provenance.get("public_artifact_safe") is not True:
+        errors.append("runtime_provenance_public_artifact_safe_mismatch")
+    if mode == "evidence-import":
+        if provenance.get("proof_level") != "retained-evidence-import":
+            errors.append("runtime_provenance_evidence_import_level_mismatch")
+        if provenance.get("evidence_import") is not True:
+            errors.append("runtime_provenance_evidence_import_flag_mismatch")
+        if provenance.get("fresh_kaggle_gpu_attempted") is not False:
+            errors.append("runtime_provenance_fresh_kaggle_attempt_mismatch")
+        if not provenance.get("imported_evidence_path"):
+            errors.append("runtime_provenance_imported_path_missing")
+    elif mode == "local-loopback":
+        if provenance.get("proof_level") != "local-loopback":
+            errors.append("runtime_provenance_local_loopback_level_mismatch")
+        if provenance.get("local_loopback_attempted") is not True:
+            errors.append("runtime_provenance_local_loopback_flag_mismatch")
+        if provenance.get("fresh_kaggle_gpu_attempted") is not False:
+            errors.append("runtime_provenance_local_fresh_kaggle_attempt_mismatch")
+    elif mode == "kaggle-auto":
+        if provenance.get("proof_level") != "fresh-kaggle-gpu":
+            errors.append("runtime_provenance_kaggle_level_mismatch")
+        if provenance.get("fresh_kaggle_gpu_attempted") is not True:
+            errors.append("runtime_provenance_kaggle_attempt_mismatch")
+        if provenance.get("fresh_kaggle_gpu_verified") is not True:
+            errors.append("runtime_provenance_kaggle_verified_mismatch")
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    if user_status.get("state") not in {
+        "evidence-import-ready",
+        "local-loopback-ready",
+        "fresh-kaggle-gpu-ready",
+    }:
+        errors.append("user_status_state_mismatch")
+    if user_status.get("public_artifact_safe") is not True:
+        errors.append("user_status_public_artifact_safe_mismatch")
+    if not user_status.get("headline"):
+        errors.append("user_status_headline_missing")
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    if review.get("schema") != "gpu_sharded_generation_beta_review_summary_v1":
+        errors.append("review_summary_schema_mismatch")
+    if review.get("state") != "ready":
+        errors.append("review_summary_state_mismatch")
+    if review.get("ready") is not True:
+        errors.append("review_summary_ready_mismatch")
+    if review.get("runtime_proof_level") != provenance.get("proof_level"):
+        errors.append("review_summary_runtime_proof_level_mismatch")
+    if review.get("public_artifact_safe") is not True:
+        errors.append("review_summary_public_artifact_safe_mismatch")
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    if not recommended.get("command_line"):
+        errors.append("recommended_next_command_missing")
+    if recommended.get("public_artifact_safe") is not True:
+        errors.append("recommended_next_command_public_artifact_safe_mismatch")
+    next_commands = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
+    if len([item for item in next_commands if isinstance(item, dict) and item.get("command_line")]) < 3:
+        errors.append("next_commands_missing")
+    not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
+    if not_completed:
+        errors.append(f"not_completed_present:{','.join(str(item) for item in not_completed[:5])}")
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    if artifact_summary.get("schema") != "gpu_sharded_generation_beta_artifact_summary_v1":
+        errors.append("artifact_summary_schema_mismatch")
+    if artifact_summary.get("public_artifact_safe") is not True:
+        errors.append("artifact_summary_public_artifact_safe_mismatch")
+    if not artifact_summary.get("inspect_first") or not artifact_summary.get("support_bundle"):
+        errors.append("artifact_summary_paths_missing")
+    if artifact_summary.get("artifact_count") != artifact_summary.get("present_artifact_count"):
+        errors.append("artifact_summary_present_count_mismatch")
     return errors
 
 

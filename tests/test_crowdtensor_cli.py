@@ -18826,6 +18826,63 @@ class CrowdTensorCliTests(unittest.TestCase):
             "output_dir": "dist/gpu-generate",
             "generation": {"generated_token_count": 4, "max_new_tokens": 4},
             "gpu": {"backend": "hf_transformers_cuda", "model_id": "sshleifer/tiny-gpt2"},
+            "runtime_provenance": {
+                "schema": "gpu_generation_runtime_provenance_v1",
+                "proof_level": "retained-evidence-import",
+                "fresh_kaggle_gpu_attempted": False,
+                "fresh_kaggle_gpu_verified": False,
+                "evidence_import": True,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "gpu_sharded_generation_beta_review_summary_v1",
+                "state": "ready",
+                "ready": True,
+                "next_step": "review_artifacts",
+                "inspect_first": "dist/gpu-generate/gpu_sharded_generation_beta_evidence_import.md",
+                "support_bundle": "dist/gpu-generate/support_bundle.json",
+                "runtime_proof_level": "retained-evidence-import",
+                "fresh_kaggle_gpu_verified": False,
+                "recommended_label": "inspect GPU sharded generation evidence",
+                "recommended_reason": "review_artifacts",
+                "public_artifact_safe": True,
+            },
+            "user_status": {
+                "state": "evidence-import-ready",
+                "headline": "Retained GPU sharded generation evidence is imported; this command did not start a fresh Kaggle GPU run.",
+                "next_step": "review_or_refresh_kaggle_gpu",
+                "recommended_label": "inspect GPU sharded generation evidence",
+                "recommended_reason": "review_artifacts",
+                "proof_level": "retained-evidence-import",
+                "fresh_kaggle_gpu_verified": False,
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect GPU sharded generation evidence",
+                "command_line": "sed -n 1,220p dist/gpu-generate/gpu_sharded_generation_beta_evidence_import.md",
+                "public_artifact_safe": True,
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p dist/gpu-generate/gpu_sharded_generation_beta_evidence_import.md",
+                    "public_artifact_safe": True,
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p dist/gpu-generate/support_bundle.json",
+                    "public_artifact_safe": True,
+                },
+            ],
+            "artifact_summary": {
+                "inspect_first": "dist/gpu-generate/gpu_sharded_generation_beta_evidence_import.md",
+                "summary_json": "dist/gpu-generate/gpu_sharded_generation_beta_evidence_import.json",
+                "support_bundle": "dist/gpu-generate/support_bundle.json",
+                "artifact_count": 3,
+                "present_artifact_count": 3,
+                "public_artifact_safe": True,
+            },
+            "not_completed": [],
             "output_request": {
                 "include_output": False,
                 "raw_generated_text_public": False,
@@ -18858,6 +18915,16 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_gpu_sharded_generation_beta(report)
         output = stdout.getvalue()
 
+        self.assertIn("  status: evidence-import-ready", output)
+        self.assertIn("  review: state=ready next=review_artifacts", output)
+        self.assertIn(
+            "  provenance: proof=retained-evidence-import fresh_kaggle_gpu_attempted=False fresh_kaggle_gpu_verified=False evidence_import=True",
+            output,
+        )
+        self.assertIn("  recommended_next: sed -n 1,220p dist/gpu-generate", output)
+        self.assertIn("  next[1] inspect shareable summary:", output)
+        self.assertIn("  next[2] inspect support bundle:", output)
+        self.assertIn("  artifacts: inspect=dist/gpu-generate/gpu_sharded_generation_beta_evidence_import.md present=3/3", output)
         self.assertIn(
             "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True",
             output,

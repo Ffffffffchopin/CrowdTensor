@@ -14832,6 +14832,11 @@ def print_public_swarm_gpu_inference_beta(report: dict[str, Any]) -> None:
 def print_gpu_sharded_generation_beta(report: dict[str, Any]) -> None:
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     gpu = report.get("gpu") if isinstance(report.get("gpu"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -14844,6 +14849,33 @@ def print_gpu_sharded_generation_beta(report: dict[str, Any]) -> None:
     print(f"  backend: {gpu.get('backend')}")
     print(f"  model: {gpu.get('model_id')}")
     print(f"  generated_tokens: {generation.get('generated_token_count')}/{generation.get('max_new_tokens')}")
+    if user_status:
+        print(f"  status: {infer_user_status_text(user_status)}")
+    if review:
+        print(f"  review: {review_summary_text(review)}")
+    if provenance:
+        print(
+            "  provenance: "
+            f"proof={provenance.get('proof_level')} "
+            f"fresh_kaggle_gpu_attempted={bool(provenance.get('fresh_kaggle_gpu_attempted'))} "
+            f"fresh_kaggle_gpu_verified={bool(provenance.get('fresh_kaggle_gpu_verified'))} "
+            f"evidence_import={bool(provenance.get('evidence_import'))}"
+        )
+    if recommended:
+        print(f"  recommended_next: {recommended.get('command_line')}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if isinstance(item, dict):
+            print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}")
+    if artifact_summary:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary.get('inspect_first')} "
+            f"present={artifact_summary.get('present_artifact_count')}/{artifact_summary.get('artifact_count')} "
+            f"support={artifact_summary.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
+        )
+    for item in report.get("not_completed") or []:
+        print(f"  not_completed: {item}")
     if prompt_scope:
         print_prompt_scope_block(prompt_scope)
     if output_request:

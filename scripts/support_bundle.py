@@ -44,6 +44,7 @@ SAFE_SENSITIVE_NAMED_FIELDS = {
     "generated_token_count",
     "generated_token_count_ready",
     "generated_token_ids_public",
+    "generated_token_ids_redacted",
     "lease_expired",
     "max_observed_token_count",
     "multi_token_generation_ready",

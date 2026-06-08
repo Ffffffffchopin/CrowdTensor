@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -20,6 +21,7 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 import public_swarm_gpu_inference_beta_pack as gpu_pack  # noqa: E402
+import support_bundle  # noqa: E402
 from crowdtensor.real_llm import DEFAULT_MODEL_ID  # noqa: E402
 
 
@@ -49,6 +51,10 @@ def utc_now() -> str:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def shell_command(parts: list[Any]) -> str:
+    return shlex.join([str(part) for part in parts])
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -119,6 +125,64 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     if ok is not None:
         entry["ok"] = bool(ok)
     return entry
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    requires_private_credentials: bool = False,
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+        "requires_private_credentials": bool(requires_private_credentials),
+        "side_effectful": bool(side_effectful),
+    }
+    if reason:
+        entry["reason"] = reason
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def report_filenames(mode: str) -> tuple[str, str]:
+    safe = str(mode).replace("-", "_")
+    return f"gpu_sharded_generation_beta_{safe}.json", f"gpu_sharded_generation_beta_{safe}.md"
+
+
+def artifact_summary(output_dir: Path, *, mode: str) -> dict[str, Any]:
+    json_name, markdown_name = report_filenames(mode)
+    paths = {
+        "inspect_first": output_dir / markdown_name,
+        "summary_json": output_dir / json_name,
+        "summary_markdown": output_dir / markdown_name,
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    return {
+        "schema": "gpu_sharded_generation_beta_artifact_summary_v1",
+        "inspect_first": str(paths["inspect_first"]),
+        "summary_json": str(paths["summary_json"]),
+        "summary_markdown": str(paths["summary_markdown"]),
+        "support_bundle": str(paths["support_bundle"]),
+        "shareable_paths": [str(path) for path in paths.values()],
+        "artifact_count": len(paths),
+        "present_artifact_count": sum(1 for path in paths.values() if path.is_file()),
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "summary": (
+            "Open inspect_first first, then support_bundle for diagnostics; "
+            "artifacts contain hashes/counts and runtime provenance, not raw prompts or generated text."
+        ),
+    }
 
 
 def output_request_summary() -> dict[str, Any]:
@@ -209,6 +273,353 @@ def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
         f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
         f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
     )
+
+
+def gpu_generate_command(args: argparse.Namespace, output_dir: Path, mode: str) -> list[str]:
+    command = [
+        "crowdtensor",
+        "gpu-generate",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--hf-model-id",
+        args.hf_model_id,
+        "--real-llm-partition-mode",
+        "stage-local",
+        "--json",
+    ]
+    if args.hf_cache_dir:
+        command.extend(["--hf-cache-dir", args.hf_cache_dir])
+    if mode == "evidence-import":
+        command.extend([
+            "--gpu-report",
+            str(args.gpu_report or "dist/<gpu-proof>/public_swarm_gpu_inference_beta_kaggle_auto.json"),
+        ])
+    if mode in {"local-loopback", "kaggle-auto"}:
+        command.extend([
+            "--public-host",
+            args.public_host,
+            "--port",
+            str(args.port),
+            "--base-port",
+            str(args.base_port),
+            "--miner-id-prefix",
+            args.miner_id_prefix,
+        ])
+    if mode == "kaggle-auto":
+        command.extend([
+            "--kaggle-owner",
+            args.kaggle_owner or "YOUR_KAGGLE_USERNAME",
+            "--dataset-title",
+            args.dataset_title,
+            "--kernel-title-prefix",
+            args.kernel_title_prefix,
+        ])
+        if args.dataset_slug:
+            command.extend(["--dataset-slug", args.dataset_slug])
+        if args.kernel_slug_prefix:
+            command.extend(["--kernel-slug-prefix", args.kernel_slug_prefix])
+        command.append("--inline-kernel-payload" if args.inline_kernel_payload else "--no-inline-kernel-payload")
+        if args.skip_kaggle_cleanup:
+            command.append("--skip-kaggle-cleanup")
+    return command
+
+
+def runtime_provenance_summary(report: dict[str, Any]) -> dict[str, Any]:
+    mode = str(report.get("mode") or "")
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []) if code)
+    step = next((item for item in report.get("steps") or [] if isinstance(item, dict)), {})
+    imported_path = str(step.get("source_path") or "")
+    fresh_kaggle_verified = bool(
+        mode == "kaggle-auto"
+        and report.get("ok") is True
+        and "external_gpu_runtime_verified" in codes
+        and "public_swarm_gpu_beta_kaggle_auto_ready" in codes
+    )
+    if fresh_kaggle_verified:
+        proof_level = "fresh-kaggle-gpu"
+        summary = "This report came from a fresh kaggle-auto GPU run and verified an external GPU runtime."
+    elif mode == "kaggle-auto":
+        proof_level = "fresh-kaggle-gpu-blocked"
+        summary = "This report attempted kaggle-auto GPU verification, but the GPU proof is not ready."
+    elif mode == "local-loopback" and report.get("ok") is True:
+        proof_level = "local-loopback"
+        summary = "This report came from local-loopback execution; it is not a fresh Kaggle GPU run."
+    elif mode == "local-loopback":
+        proof_level = "local-loopback-blocked"
+        summary = "This report attempted local-loopback execution, but the local proof is not ready."
+    elif mode == "evidence-import" and report.get("ok") is True:
+        proof_level = "retained-evidence-import"
+        summary = "This report imported retained GPU evidence; this command did not start a fresh Kaggle GPU run."
+    elif mode == "evidence-import":
+        proof_level = "retained-evidence-import-blocked"
+        summary = "This report attempted to import retained GPU evidence, but the imported proof is not ready."
+    else:
+        proof_level = "unknown"
+        summary = "Runtime provenance is unknown."
+    return {
+        "schema": "gpu_generation_runtime_provenance_v1",
+        "mode": mode,
+        "proof_level": proof_level,
+        "fresh_runtime_attempted": mode in {"local-loopback", "kaggle-auto"},
+        "local_loopback_attempted": mode == "local-loopback",
+        "fresh_kaggle_gpu_attempted": mode == "kaggle-auto",
+        "fresh_kaggle_gpu_verified": fresh_kaggle_verified,
+        "evidence_import": mode == "evidence-import",
+        "imported_evidence_path": imported_path,
+        "external_gpu_runtime_verified": "external_gpu_runtime_verified" in codes,
+        "kaggle_kernels_deleted": "kaggle_kernels_deleted" in codes,
+        "ci_fake_runner_possible": mode == "local-loopback",
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "public_artifact_safe": True,
+        "summary": summary,
+    }
+
+
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    mode = str(report.get("mode") or "")
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []) if code)
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    imported_artifact = artifacts.get("imported_gpu_report") if isinstance(artifacts.get("imported_gpu_report"), dict) else {}
+    items: list[tuple[str, Any]] = [
+        ("GPU sharded generation ready", report.get("ok") is True and "gpu_sharded_generation_ready" in codes),
+        ("multi-token generation ready", generation.get("multi_token_generation_ready") is True and "multi_token_generation_ready" in codes),
+        ("public Swarm GPU Beta ready", "public_swarm_gpu_beta_ready" in codes),
+        ("CUDA backend ready", "hf_transformers_cuda_ready" in codes),
+        ("stage 0 partition loaded", "stage0_partition_loaded" in codes),
+        ("stage 1 partition loaded", "stage1_partition_loaded" in codes),
+        ("partition split valid", "partition_parameter_split_valid" in codes),
+        ("stage-local partition ready", "stage_local_partition_ready" in codes),
+        ("decoded tokens match", "decoded_tokens_match" in codes),
+        ("distinct stage miners ready", "distinct_stage_miners" in codes),
+        ("stage assignment valid", "stage_assignment_valid" in codes),
+        ("raw generated text redacted", safety.get("raw_generated_text_redacted") is True and output_request.get("raw_generated_text_public") is False),
+        ("generated token ids redacted", safety.get("generated_token_ids_redacted") is True and shareable.get("generated_token_ids_public") is False),
+        ("read-only safety boundary present", safety.get("read_only") is True),
+        ("not production boundary present", safety.get("not_production") is True),
+        ("not P2P boundary present", safety.get("not_p2p") is True),
+        ("not large-model serving boundary present", safety.get("not_large_model_serving") is True),
+    ]
+    if mode == "kaggle-auto":
+        items.extend([
+            ("fresh Kaggle GPU proof ready", provenance.get("fresh_kaggle_gpu_verified") is True),
+            ("external GPU runtime verified", "external_gpu_runtime_verified" in codes),
+            ("Kaggle kernels deleted", "kaggle_kernels_deleted" in codes),
+            ("multi-machine GPU generation ready", "gpu_multi_machine_generation_ready" in codes),
+        ])
+    elif mode == "local-loopback":
+        items.extend([
+            ("local loopback generation ready", "gpu_loopback_generation_ready" in codes),
+            ("fresh Kaggle GPU run not claimed for local loopback", provenance.get("fresh_kaggle_gpu_attempted") is False),
+        ])
+    elif mode == "evidence-import":
+        items.extend([
+            ("retained GPU evidence imported", imported_artifact.get("present") is True),
+            ("fresh Kaggle GPU run not claimed for evidence import", provenance.get("fresh_kaggle_gpu_attempted") is False),
+        ])
+    for step in report.get("steps") or []:
+        if isinstance(step, dict) and step.get("ok") is not True:
+            items.append((f"step {step.get('name') or 'step'} passed", False))
+    missing: list[str] = []
+    for label, ready in items:
+        if ready is not True:
+            missing.append(label)
+    return missing
+
+
+def recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    missing: list[str],
+) -> dict[str, Any]:
+    mode = str(report.get("mode") or args.mode)
+    if report.get("ok") is True:
+        return command_entry(
+            "inspect GPU sharded generation evidence",
+            artifact_command(output_dir, report_filenames(mode)[1]),
+            reason="review_artifacts",
+        )
+    if mode == "kaggle-auto":
+        return command_entry(
+            "rerun fresh Kaggle GPU proof",
+            gpu_generate_command(args, output_dir, "kaggle-auto"),
+            reason="fix_fresh_kaggle_gpu_blockers" if missing else "rerun_fresh_kaggle_gpu",
+            requires_private_credentials=True,
+            side_effectful=True,
+        )
+    if mode == "evidence-import":
+        return command_entry(
+            "rerun GPU evidence import",
+            gpu_generate_command(args, output_dir, "evidence-import"),
+            reason="fix_imported_gpu_evidence" if missing else "rerun_evidence_import",
+        )
+    return command_entry(
+        "rerun local GPU loopback proof",
+        gpu_generate_command(args, output_dir, "local-loopback"),
+        reason="fix_local_loopback_blockers" if missing else "rerun_local_loopback",
+        side_effectful=True,
+    )
+
+
+def next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    mode = str(report.get("mode") or args.mode)
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, report_filenames(mode)[1]),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if recommended and all(item.get("command_line") != recommended.get("command_line") for item in commands):
+        commands.append(dict(recommended))
+    refresh = command_entry(
+        "refresh current GPU generation proof",
+        gpu_generate_command(args, output_dir, mode),
+        reason="refresh_current_mode",
+        requires_private_credentials=mode == "kaggle-auto",
+        side_effectful=mode in {"local-loopback", "kaggle-auto"},
+    )
+    if all(item.get("command_line") != refresh.get("command_line") for item in commands):
+        commands.append(refresh)
+    if mode != "kaggle-auto":
+        commands.append(command_entry(
+            "run fresh Kaggle GPU proof",
+            gpu_generate_command(args, output_dir, "kaggle-auto"),
+            reason="verify_external_gpu_runtime",
+            requires_private_credentials=True,
+            side_effectful=True,
+        ))
+    if mode != "evidence-import":
+        commands.append(command_entry(
+            "import retained GPU evidence",
+            gpu_generate_command(args, output_dir, "evidence-import"),
+            reason="validate_retained_gpu_evidence",
+        ))
+    return commands
+
+
+def user_status(report: dict[str, Any], *, recommended: dict[str, Any]) -> dict[str, Any]:
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    mode = str(report.get("mode") or "")
+    if report.get("ok") is True and provenance.get("proof_level") == "fresh-kaggle-gpu":
+        state = "fresh-kaggle-gpu-ready"
+        headline = "Fresh Kaggle GPU sharded generation evidence is ready."
+        next_step = "review_artifacts"
+    elif report.get("ok") is True and mode == "evidence-import":
+        state = "evidence-import-ready"
+        headline = "Retained GPU sharded generation evidence is imported; this command did not start a fresh Kaggle GPU run."
+        next_step = "review_or_refresh_kaggle_gpu"
+    elif report.get("ok") is True and mode == "local-loopback":
+        state = "local-loopback-ready"
+        headline = "Local-loopback GPU sharded generation evidence is ready; this is not a fresh Kaggle GPU run."
+        next_step = "review_or_run_kaggle_gpu"
+    elif mode == "kaggle-auto":
+        state = "fresh-kaggle-gpu-blocked"
+        headline = "Fresh Kaggle GPU sharded generation evidence is not ready."
+        next_step = "fix_kaggle_gpu_blockers"
+    elif mode == "evidence-import":
+        state = "evidence-import-blocked"
+        headline = "Retained GPU sharded generation evidence could not be imported cleanly."
+        next_step = "fix_imported_gpu_evidence"
+    else:
+        state = "local-loopback-blocked"
+        headline = "Local-loopback GPU sharded generation evidence is not ready."
+        next_step = "fix_local_loopback_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "fresh_kaggle_gpu_verified": bool(provenance.get("fresh_kaggle_gpu_verified")),
+        "proof_level": provenance.get("proof_level") or "unknown",
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    mode: str,
+    recommended: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    artifacts = artifact_summary(output_dir, mode=mode)
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    ready = bool(report.get("ok") is True and not missing)
+    return {
+        "schema": "gpu_sharded_generation_beta_review_summary_v1",
+        "state": "ready" if ready else "blocked",
+        "ready": ready,
+        "next_step": "review_artifacts" if ready else "fix_gpu_generation_blockers",
+        "inspect_first": artifacts["inspect_first"],
+        "support_bundle": artifacts["support_bundle"],
+        "runtime_proof_level": provenance.get("proof_level") or "unknown",
+        "fresh_kaggle_gpu_verified": bool(provenance.get("fresh_kaggle_gpu_verified")),
+        "evidence_import": bool(provenance.get("evidence_import")),
+        "not_completed_count": len(missing),
+        "not_completed": list(missing),
+        "recommended_next_command": recommended,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": (report.get("diagnosis_codes") or ["none"])[0],
+        "public_artifact_safe": True,
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+    }
+
+
+def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return support_bundle.sanitize({
+        "schema": "gpu_sharded_generation_beta_support_bundle_v1",
+        "generated_at": utc_now(),
+        "ok": report.get("ok"),
+        "mode": report.get("mode"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "missing_codes": report.get("missing_codes"),
+        "runtime_provenance": report.get("runtime_provenance"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "not_completed": report.get("not_completed"),
+        "artifact_summary": report.get("artifact_summary"),
+        "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
+        "generation": report.get("generation"),
+        "gpu": report.get("gpu"),
+        "steps": report.get("steps"),
+        "payload_summary": report.get("payload_summary"),
+        "safety": report.get("safety"),
+        "limitations": report.get("limitations"),
+    })
 
 
 def run_json_step(name: str, command: list[str], *, runner: Runner, timeout_seconds: float) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -471,7 +882,7 @@ def wrap_payload(args: argparse.Namespace, *, output_dir: Path, mode: str, step:
             "Kaggle mode uses temporary private kernels and requires token rotation after runs.",
         ],
     }
-    return persist_report(report, output_dir=output_dir, mode=mode)
+    return persist_report(report, output_dir=output_dir, mode=mode, args=args)
 
 
 def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
@@ -496,10 +907,10 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
         schema=str(payload.get("schema") or ""),
         ok=payload.get("ok") if payload else None,
     )
-    return persist_report(report, output_dir=output_dir, mode="evidence-import")
+    return persist_report(report, output_dir=output_dir, mode="evidence-import", args=args)
 
 
-def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str) -> dict[str, Any]:
+def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str, args: argparse.Namespace) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     report.setdefault("output_request", output_request_summary())
     report.setdefault("prompt_scope", prompt_scope_summary(report))
@@ -511,9 +922,25 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str) -> di
         report["ok"] = False
         report["diagnosis_codes"] = sorted(set(report.get("diagnosis_codes") or []) | {"sensitive_output_detected"})
         report["safety_error"] = "GPU sharded generation report contained secret-like fragments"
-    json_path = output_dir / f"gpu_sharded_generation_beta_{mode.replace('-', '_')}.json"
-    md_path = output_dir / f"gpu_sharded_generation_beta_{mode.replace('-', '_')}.md"
+    report["runtime_provenance"] = runtime_provenance_summary(report)
+    missing = not_completed_items(report)
+    report["not_completed"] = missing
+    recommended = recommended_next_command(report, args, output_dir=output_dir, missing=missing)
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(report, recommended=recommended)
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        mode=mode,
+        recommended=recommended,
+        missing=missing,
+    )
+    json_name, markdown_name = report_filenames(mode)
+    json_path = output_dir / json_name
+    md_path = output_dir / markdown_name
     report.setdefault("artifacts", {})
+    report["artifact_summary"] = artifact_summary(output_dir, mode=mode)
     report["artifacts"]["gpu_sharded_generation_beta_json"] = artifact_entry(
         json_path,
         output_dir,
@@ -526,10 +953,24 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str) -> di
         output_dir,
         kind="gpu_sharded_generation_beta_markdown",
     )
+    support_path = output_dir / "support_bundle.json"
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_path,
+        output_dir,
+        kind="gpu_sharded_generation_beta_support_bundle",
+        schema="gpu_sharded_generation_beta_support_bundle_v1",
+    )
+    report = support_bundle.sanitize(report)
     write_json(json_path, report)
     md_path.write_text(render_markdown(report), encoding="utf-8")
+    bundle = support_bundle_payload(report)
+    write_json(support_path, bundle)
     report["artifacts"]["gpu_sharded_generation_beta_json"]["present"] = True
     report["artifacts"]["gpu_sharded_generation_beta_markdown"]["present"] = True
+    report["artifacts"]["support_bundle_json"]["present"] = True
+    report["artifact_summary"] = artifact_summary(output_dir, mode=mode)
+    bundle["artifact_summary"] = report["artifact_summary"]
+    write_json(support_path, bundle)
     write_json(json_path, report)
     return report
 
@@ -537,6 +978,11 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, mode: str) -> di
 def render_markdown(report: dict[str, Any]) -> str:
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     gpu = report.get("gpu") if isinstance(report.get("gpu"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    provenance = report.get("runtime_provenance") if isinstance(report.get("runtime_provenance"), dict) else {}
+    artifacts = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
@@ -551,6 +997,52 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- model: `{gpu.get('model_id')}`",
         f"- generated_token_count: `{generation.get('generated_token_count')}`",
         f"- max_new_tokens: `{generation.get('max_new_tokens')}`",
+        "",
+        "## Review",
+        "",
+        f"- status: `{user.get('state')}` {user.get('headline') or ''}",
+        f"- state: `{review.get('state')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- support bundle: `{review.get('support_bundle')}`",
+        f"- recommended next: `{recommended.get('command_line') or 'none'}`",
+        f"- public artifact safe: `{review.get('public_artifact_safe')}`",
+        "",
+        "## Runtime Provenance",
+        "",
+        f"- proof level: `{provenance.get('proof_level')}`",
+        f"- fresh runtime attempted: `{provenance.get('fresh_runtime_attempted')}`",
+        f"- fresh Kaggle GPU attempted: `{provenance.get('fresh_kaggle_gpu_attempted')}`",
+        f"- fresh Kaggle GPU verified: `{provenance.get('fresh_kaggle_gpu_verified')}`",
+        f"- evidence import: `{provenance.get('evidence_import')}`",
+        f"- imported evidence path: `{provenance.get('imported_evidence_path') or ''}`",
+        f"- note: {provenance.get('summary') or 'Runtime provenance unavailable.'}",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    for item in report.get("next_commands") or []:
+        if isinstance(item, dict):
+            lines.append(f"- {item.get('label')}: `{item.get('command_line')}`")
+    if not report.get("next_commands"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifacts.get('inspect_first')}`",
+        f"- summary JSON: `{artifacts.get('summary_json')}`",
+        f"- support bundle: `{artifacts.get('support_bundle')}`",
+        f"- present artifacts: `{artifacts.get('present_artifact_count')}/{artifacts.get('artifact_count')}`",
+        "",
+        "## Not Completed",
+        "",
+    ])
+    for item in report.get("not_completed") or []:
+        lines.append(f"- {item}")
+    if not report.get("not_completed"):
+        lines.append("- none")
+    lines.extend([
         "",
         "## Output Scope",
         "",
@@ -570,7 +1062,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Boundaries",
         "",
-    ]
+    ])
     for item in report.get("limitations") or []:
         lines.append(f"- {item}")
     return "\n".join(lines) + "\n"
