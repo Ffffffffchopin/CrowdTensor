@@ -15365,6 +15365,50 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "live_external_runtime_verified": False,
                 "local_stage_requeue_verified": True,
             },
+            "user_status": {
+                "state": "ready",
+                "headline": "Public Swarm Inference Alpha evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect Public Swarm Alpha evidence",
+                "recommended_reason": "review_artifacts",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "public_swarm_inference_alpha_review_summary_v1",
+                "state": "ready",
+                "headline": "Public Swarm Inference Alpha evidence is ready.",
+                "next_step": "review_artifacts",
+                "inspect_first": "/tmp/public-swarm-alpha/public_swarm_inference_alpha.md",
+                "support_bundle": "/tmp/public-swarm-alpha/support_bundle.json",
+                "recommended_label": "inspect Public Swarm Alpha evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p /tmp/public-swarm-alpha/public_swarm_inference_alpha.md",
+                "attention": "none",
+                "not_completed_count": 0,
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect Public Swarm Alpha evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p /tmp/public-swarm-alpha/public_swarm_inference_alpha.md",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p /tmp/public-swarm-alpha/public_swarm_inference_alpha.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p /tmp/public-swarm-alpha/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "present_artifact_count": 4,
+                "artifact_count": 4,
+                "support_bundle": "/tmp/public-swarm-alpha/support_bundle.json",
+                "public_artifact_safe": True,
+            },
             "output_request": {
                 "include_output": False,
                 "raw_generation_public": False,
@@ -15395,6 +15439,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_public_swarm_inference_alpha(report)
 
         rendered = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("status: ready", rendered)
+        self.assertIn("review: state=ready", rendered)
+        self.assertIn("recommended_next: inspect Public Swarm Alpha evidence", rendered)
+        self.assertIn("next[1] inspect shareable summary", rendered)
+        self.assertIn("artifacts: present=4/4", rendered)
         self.assertIn("output_request: include_output=False", rendered)
         self.assertIn("raw_generated_text_public=False", rendered)
         self.assertIn("answer_scope: state=no-local-answer", rendered)

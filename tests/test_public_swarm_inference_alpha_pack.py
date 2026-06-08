@@ -13,6 +13,27 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
     def _tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="crowdtensor_public_swarm_alpha_test_"))
 
+    def _assert_ready_guidance(self, report: dict, output_dir: Path) -> None:
+        self.assertEqual(report["user_status"]["state"], "ready")
+        self.assertEqual(report["review_summary"]["schema"], "public_swarm_inference_alpha_review_summary_v1")
+        self.assertEqual(report["review_summary"]["state"], "ready")
+        self.assertEqual(report["not_completed"], [])
+        self.assertTrue(report["recommended_next_command"]["command_line"])
+        self.assertGreaterEqual(len(report["next_commands"]), 2)
+        self.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+        self.assertEqual(report["artifact_summary"]["present_artifact_count"], report["artifact_summary"]["artifact_count"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+        markdown = (output_dir / "public_swarm_inference_alpha.md").read_text(encoding="utf-8")
+        self.assertIn("## Review", markdown)
+        self.assertIn("## What To Do Next", markdown)
+        self.assertIn("## Artifact Summary", markdown)
+        self.assertIn("## Not Completed", markdown)
+        support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["schema"], "public_swarm_inference_alpha_support_bundle_v1")
+        self.assertTrue(support["public_artifact_safe"])
+        self.assertEqual(support["review_summary"]["state"], "ready")
+        self.assertEqual(support["recommended_next_command"], report["recommended_next_command"])
+
     def test_live_kaggle_aggregates_live_and_local_requeue(self) -> None:
         output_dir = self._tmp_dir()
         report = pack.build_report(pack.parse_args([
@@ -102,6 +123,7 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generation_public=False generation_ids_public=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
+        self._assert_ready_guidance(report, output_dir)
         self.assertNotIn("operator-secret", serialized)
         self.assertNotIn("stage0-secret", serialized)
         self.assertNotIn("hidden_state", serialized)
@@ -127,6 +149,7 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["include_output"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(report["shareable_summary"]["answer_scope_state"], "no-local-answer")
+        self._assert_ready_guidance(report, output_dir)
 
     def test_keep_child_artifacts_preserves_child_reports_for_debugging(self) -> None:
         output_dir = self._tmp_dir()
@@ -161,6 +184,11 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
         self.assertIn("local_stage_requeue_skipped", report["diagnosis_codes"])
         self.assertIn("public_swarm_inference_alpha_blocked", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_inference_alpha_ready", report["diagnosis_codes"])
+        self.assertEqual(report["user_status"]["state"], "live-kaggle-blocked")
+        self.assertEqual(report["review_summary"]["state"], "blocked")
+        self.assertEqual(report["recommended_next_command"]["label"], "rerun Public Swarm Alpha live proof")
+        self.assertIn("local stage requeue ready", report["not_completed"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
 
     def test_check_contract(self) -> None:
         output_dir = self._tmp_dir()
@@ -171,7 +199,9 @@ class PublicSwarmInferenceAlphaPackTests(unittest.TestCase):
         self.assertEqual(report["missing_codes"], [])
         self.assertEqual(report["sensitive_leaks"], [])
         self.assertEqual(report["scope_errors"], [])
+        self.assertEqual(report["guidance_errors"], [])
         self.assertIn("public_swarm_inference_alpha_check_ready", report["diagnosis_codes"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
 
 
 if __name__ == "__main__":

@@ -282,7 +282,42 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
         scope_errors.append("shareable_local_answer_terminal_only_mismatch")
     if shareable.get("public_artifact_safe") is not True:
         scope_errors.append("shareable_public_artifact_safe_mismatch")
-    ok = bool(report.get("ok") and not missing and not leaks and not scope_errors)
+    guidance_errors: list[str] = []
+    user_status = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    next_commands = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
+    artifact_summary = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    not_completed = report.get("not_completed") if isinstance(report.get("not_completed"), list) else []
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    support = artifacts.get("support_bundle_json") if isinstance(artifacts.get("support_bundle_json"), dict) else {}
+    if user_status.get("public_artifact_safe") is not True:
+        guidance_errors.append("user_status_public_artifact_safe_mismatch")
+    if report.get("ok") is True and user_status.get("state") != "ready":
+        guidance_errors.append("user_status_ready_state_mismatch")
+    if review.get("schema") != "public_swarm_inference_alpha_review_summary_v1":
+        guidance_errors.append("review_summary_schema_mismatch")
+    if report.get("ok") is True and review.get("state") != "ready":
+        guidance_errors.append("review_summary_ready_state_mismatch")
+    if not isinstance(review.get("inspect_first"), str) or not review.get("inspect_first"):
+        guidance_errors.append("review_summary_inspect_first_missing")
+    if not isinstance(review.get("support_bundle"), str) or not review.get("support_bundle"):
+        guidance_errors.append("review_summary_support_bundle_missing")
+    if not isinstance(recommended.get("command_line"), str) or not recommended.get("command_line"):
+        guidance_errors.append("recommended_next_command_missing")
+    if recommended.get("public_artifact_safe") is not True:
+        guidance_errors.append("recommended_next_command_public_artifact_safe_mismatch")
+    if len(next_commands) < 2:
+        guidance_errors.append("next_commands_missing")
+    if not_completed:
+        guidance_errors.append("ready_report_not_completed")
+    if artifact_summary.get("public_artifact_safe") is not True:
+        guidance_errors.append("artifact_summary_public_artifact_safe_mismatch")
+    if artifact_summary.get("present_artifact_count") != artifact_summary.get("artifact_count"):
+        guidance_errors.append("artifact_summary_present_count_mismatch")
+    if support.get("present") is not True:
+        guidance_errors.append("support_bundle_missing")
+    ok = bool(report.get("ok") and not missing and not leaks and not scope_errors and not guidance_errors)
     return {
         "schema": SCHEMA,
         "ok": ok,
@@ -292,6 +327,7 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
         "missing_codes": missing,
         "sensitive_leaks": leaks,
         "scope_errors": scope_errors,
+        "guidance_errors": guidance_errors,
         "diagnosis_codes": sorted(codes | ({"public_swarm_inference_alpha_check_ready"} if ok else {"public_swarm_inference_alpha_check_failed"})),
         "artifacts": {
             "public_swarm_inference_alpha_json": pack.artifact_entry(
@@ -299,6 +335,13 @@ def build_check(args: argparse.Namespace) -> dict[str, Any]:
                 output_dir,
                 kind="public_swarm_inference_alpha",
                 schema=pack.SCHEMA,
+                ok=report.get("ok"),
+            ),
+            "support_bundle_json": pack.artifact_entry(
+                output_dir / "support_bundle.json",
+                output_dir,
+                kind="public_swarm_inference_alpha_support_bundle",
+                schema="public_swarm_inference_alpha_support_bundle_v1",
                 ok=report.get("ok"),
             ),
         },
