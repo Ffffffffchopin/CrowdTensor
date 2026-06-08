@@ -1679,6 +1679,7 @@ def review_next_command_text(summary: dict[str, Any]) -> str:
         if raw_command
         else "none"
     )
+    command = stdin_safe_command_line(command) if command != "none" else command
     return (
         f"label={summary.get('recommended_label') or 'none'} "
         f"reason={summary.get('recommended_reason') or 'none'} "
