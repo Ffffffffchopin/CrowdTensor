@@ -52,6 +52,27 @@ class UserFriendlyInferenceFrontdoorCheckTests(unittest.TestCase):
             self.assertTrue(result["generate"]["terminal_verdict"]["answer_visible_in_terminal"])
             self.assertEqual(result["infer"]["saved_answer_scope"], "saved-terminal-redacted")
             self.assertEqual(result["generate"]["saved_answer_scope"], "saved-terminal-redacted")
+            terminal = result["terminal_output"]
+            self.assertTrue(terminal["contract"]["answer_visible_in_human_terminal"])
+            self.assertTrue(terminal["contract"]["saved_artifacts_redacted"])
+            self.assertFalse(terminal["contract"]["raw_prompt_public"])
+            self.assertFalse(terminal["contract"]["generated_token_ids_public"])
+            self.assertFalse(terminal["contract"]["fresh_kaggle_gpu_verified"])
+            self.assertTrue(terminal["infer"]["answer_visible"])
+            self.assertTrue(terminal["generate"]["answer_visible"])
+            self.assertFalse(terminal["infer"]["prompt_public"])
+            self.assertFalse(terminal["generate"]["prompt_public"])
+            self.assertFalse(terminal["infer"]["admin_token_public"])
+            self.assertFalse(terminal["generate"]["admin_token_public"])
+            self.assertIn("answer=terminal-visible", terminal["infer"]["verdict_line"])
+            self.assertIn("answer_visible=True", terminal["infer"]["verdict_line"])
+            self.assertIn("gpu=local-cpu-only", terminal["infer"]["verdict_line"])
+            self.assertIn("fresh_kaggle_gpu=False", terminal["infer"]["verdict_line"])
+            self.assertIn("state=terminal-visible", terminal["infer"]["answer_scope_line"])
+            self.assertIn("state=local-cpu-only", terminal["infer"]["gpu_status_line"])
+            self.assertIn("answer=terminal-visible", terminal["generate"]["verdict_line"])
+            self.assertIn("state=terminal-visible", terminal["generate"]["answer_scope_line"])
+            self.assertIn("state=local-cpu-only", terminal["generate"]["gpu_status_line"])
 
             for relative in [
                 "infer/infer_summary.json",
@@ -107,6 +128,27 @@ class UserFriendlyInferenceFrontdoorCheckTests(unittest.TestCase):
             self.assertIn("Inference_saved_verdict_answer_visibility_mismatch", errors)
             self.assertIn("Inference_artifact_leaked_frontdoor infer answer must rema", errors)
             self.assertIn("Inference_raw_answer_leaked", errors)
+
+    def test_terminal_validator_rejects_missing_answer_or_prompt_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "generate"
+            report = frontdoor_check.build_fake_generate_report(output_dir, max_new_tokens=2)
+            report["local_output"]["generated_text"] = ""
+            report["local_output"]["outputs"][0]["generated_text"] = ""
+            report["review_summary"]["next_command"] = frontdoor_check.PROMPT_TEXT
+            errors: list[str] = []
+
+            terminal = frontdoor_check._validate_terminal_output(
+                kind="Generation",
+                report=report,
+                raw_answer=frontdoor_check.GENERATE_TEXT,
+                errors=errors,
+            )
+
+            self.assertFalse(terminal["answer_visible"])
+            self.assertTrue(terminal["prompt_public"])
+            self.assertIn("Generation_terminal_answer_not_visible", errors)
+            self.assertTrue(any(error.startswith("Generation_terminal_leaked_CrowdTensor frontdoor private") for error in errors))
 
 
 if __name__ == "__main__":

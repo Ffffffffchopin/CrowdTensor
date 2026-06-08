@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -289,6 +291,91 @@ def build_fake_generate_report(output_dir: Path, *, max_new_tokens: int) -> dict
     )
 
 
+def _render_terminal_output(report: dict[str, Any], *, kind: str) -> str:
+    stream = io.StringIO()
+    printer = cli.print_infer if kind == "Inference" else cli.print_product_generate
+    with contextlib.redirect_stdout(stream):
+        printer(report)
+    return stream.getvalue()
+
+
+def _required_terminal_fragments(kind: str, raw_answer: str) -> list[str]:
+    label = "infer" if kind == "Inference" else "generate"
+    return [
+        f"CrowdTensor {label}",
+        "  review: state=completed",
+        "  inspect_first: ",
+        "  verdict: state=completed completed=True preflight_only=False answer=terminal-visible answer_visible=True",
+        "artifacts_public=True",
+        "gpu=local-cpu-only",
+        "fresh_kaggle_gpu=False",
+        "public_artifact_safe=True",
+        "  verdict_note: ",
+        "visible only in this terminal and saved artifacts are redacted",
+        "  status: completed:",
+        "  runtime_provenance: ",
+        "fresh_kaggle_gpu_verified=False",
+        "  evidence_scope: ",
+        "  gpu_status: state=local-cpu-only",
+        "  output_display: terminal=local-private terminal_text=True saved=hash-only",
+        f"  answer: {raw_answer}",
+        "  answer_scope: state=terminal-visible terminal_only=True visible_in_terminal=True",
+        "saved_json=hash-only saved_markdown=hash-only",
+        "  answer_scope_note: terminal-only; saved JSON/Markdown keep hashes/redacted generated text.",
+        "  local_output: available=True display_only=True public_artifact_safe=False count=1",
+        "  shareable: saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False",
+        "generated_token_ids_public=False",
+        "  output_request: include_output=False raw_generated_text_public=False public_artifact_safe=True raw_prompt_public=False",
+    ]
+
+
+def _validate_terminal_output(
+    *,
+    kind: str,
+    report: dict[str, Any],
+    raw_answer: str,
+    errors: list[str],
+) -> dict[str, Any]:
+    rendered = _render_terminal_output(report, kind=kind)
+    verdict_line = next((line for line in rendered.splitlines() if line.startswith("  verdict: ")), "")
+    answer_scope_line = next((line for line in rendered.splitlines() if line.startswith("  answer_scope: ")), "")
+    gpu_line = next((line for line in rendered.splitlines() if line.startswith("  gpu_status: ")), "")
+    output_display_line = next((line for line in rendered.splitlines() if line.startswith("  output_display: ")), "")
+    answer_line = next((line for line in rendered.splitlines() if line.startswith("  answer: ")), "")
+    for fragment in _required_terminal_fragments(kind, raw_answer):
+        if fragment not in rendered:
+            errors.append(f"{kind}_terminal_missing_{fragment[:32].strip().replace(' ', '_').replace('`', '')}")
+    for fragment in [
+        PROMPT_TEXT,
+        ADMIN_TOKEN,
+        "Bearer ",
+        '"prompt_text":',
+        '"generated_token_ids": [',
+        "input_ids",
+        "hidden_state",
+        "logits",
+        "activation_results",
+    ]:
+        if fragment and fragment in rendered:
+            errors.append(f"{kind}_terminal_leaked_{fragment[:32]}")
+    if raw_answer not in rendered:
+        errors.append(f"{kind}_terminal_answer_not_visible")
+    if "answer=saved-terminal-redacted" in rendered:
+        errors.append(f"{kind}_terminal_saved_scope_used_for_live_answer")
+    return {
+        "line_count": len(rendered.splitlines()),
+        "verdict_line": verdict_line,
+        "answer_scope_line": answer_scope_line,
+        "gpu_status_line": gpu_line,
+        "output_display_line": output_display_line,
+        "answer_visible": raw_answer in rendered,
+        "answer_line": answer_line,
+        "prompt_public": PROMPT_TEXT in rendered,
+        "admin_token_public": ADMIN_TOKEN in rendered,
+        "public_artifact_safe": not any(fragment in rendered for fragment in [PROMPT_TEXT, ADMIN_TOKEN, '"generated_token_ids": [']),
+    }
+
+
 def _required_markdown_fragments(kind: str) -> list[str]:
     return [
         "- Verdict:",
@@ -407,6 +494,18 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
         errors: list[str] = []
         infer_report = build_fake_infer_report(infer_dir, max_new_tokens=args.max_new_tokens)
         generate_report = build_fake_generate_report(generate_dir, max_new_tokens=args.max_new_tokens)
+        infer_terminal = _validate_terminal_output(
+            kind="Inference",
+            report=infer_report,
+            raw_answer=INFER_TEXT,
+            errors=errors,
+        )
+        generate_terminal = _validate_terminal_output(
+            kind="Generation",
+            report=generate_report,
+            raw_answer=GENERATE_TEXT,
+            errors=errors,
+        )
         infer_check = _validate_frontdoor_artifact(
             kind="Inference",
             report=infer_report,
@@ -431,6 +530,17 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
             "checked_generate_verdict": generate_check.get("saved_verdict"),
             "infer": infer_check,
             "generate": generate_check,
+            "terminal_output": {
+                "infer": infer_terminal,
+                "generate": generate_terminal,
+                "contract": {
+                    "answer_visible_in_human_terminal": True,
+                    "saved_artifacts_redacted": True,
+                    "raw_prompt_public": False,
+                    "generated_token_ids_public": False,
+                    "fresh_kaggle_gpu_verified": False,
+                },
+            },
             "errors": errors,
             "diagnosis_codes": [CHECK_READY] if not errors else [CHECK_FAILED],
             "safety": {
