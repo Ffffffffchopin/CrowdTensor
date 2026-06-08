@@ -2404,8 +2404,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, encoded)
         markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
         self.assertIn("this command reads stdin", markdown)
+        self.assertIn("- Copy command: `printf %s '<prompt>' | crowdtensor generate", markdown)
+        self.assertIn("1. `check generation route`: `printf %s '<prompt>' | crowdtensor generate", markdown)
+        self.assertIn("2. `submit generation after live preflight`: `printf %s '<prompt>' | CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor generate", markdown)
         self.assertIn("printf %s '<prompt>' | crowdtensor generate", markdown)
         self.assertIn("Commands with `--prompt-stdin` read the prompt from stdin", markdown)
+        self.assertNotIn("printf %s '<prompt>' | printf %s '<prompt>'", markdown)
         self.assertNotIn(prompt, markdown)
 
     def test_generate_rejects_empty_prompt_stdin(self) -> None:
@@ -2625,8 +2629,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(prompt, encoded)
         markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
         self.assertIn("this command reads stdin", markdown)
+        self.assertIn("- Copy command: `printf %s '<prompt>' | crowdtensor infer", markdown)
+        self.assertIn("1. `check existing swarm`: `printf %s '<prompt>' | crowdtensor infer", markdown)
+        self.assertIn("2. `submit inference after live preflight`: `printf %s '<prompt>' | CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} crowdtensor infer", markdown)
         self.assertIn("printf %s '<prompt>' | crowdtensor infer", markdown)
         self.assertIn("Commands with `--prompt-stdin` read the prompt from stdin", markdown)
+        self.assertNotIn("printf %s '<prompt>' | printf %s '<prompt>'", markdown)
         self.assertNotIn(prompt, markdown)
 
     def test_generate_rejects_ambiguous_prompt_sources(self) -> None:

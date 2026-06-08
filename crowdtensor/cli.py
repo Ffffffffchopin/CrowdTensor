@@ -750,6 +750,15 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
     return notes
 
 
+def stdin_safe_command_line(command_line_text: str) -> str:
+    command_line_text = str(command_line_text or "")
+    if "--prompt-stdin" not in command_line_text:
+        return command_line_text
+    if command_line_text.strip().startswith("printf ") and " | " in command_line_text:
+        return command_line_text
+    return pipe_prompt_placeholder_for_stdin(command_line_text)
+
+
 def markdown_prompt_input_hint(command_text: str) -> str:
     has_prompt = INFER_PROMPT_PLACEHOLDER in command_text
     has_batch = INFER_BATCH_PROMPTS_PLACEHOLDER in command_text
@@ -757,7 +766,7 @@ def markdown_prompt_input_hint(command_text: str) -> str:
     if not has_prompt and not has_batch and not has_stdin:
         return ""
     if has_stdin:
-        stdin_command = pipe_prompt_placeholder_for_stdin(command_text)
+        stdin_command = stdin_safe_command_line(command_text)
         return (
             "- Prompt input: this command reads stdin. Safe copy form: "
             f"`{stdin_command}`. Replace `{INFER_PROMPT_PLACEHOLDER}` locally; saved Markdown does not include raw prompt text."
@@ -1679,7 +1688,8 @@ def review_next_command_text(summary: dict[str, Any]) -> str:
 
 
 def markdown_command_line(item: dict[str, Any]) -> str:
-    return human_next_command_line(item, str(item.get("command_line") or ""))
+    command_line_text = human_next_command_line(item, str(item.get("command_line") or ""))
+    return stdin_safe_command_line(command_line_text)
 
 
 def display_review_summary(
