@@ -103,6 +103,11 @@ It emits `user_friendly_inference_frontdoor_check_v1`, builds CI-safe fake
 completed `infer` and `generate` reports through the real CLI report writers,
 and verifies saved JSON/Markdown keep raw prompts, generated text, token ids,
 credentials, and fresh Kaggle GPU claims out of shareable artifacts.
+The fresh-clone onboarding gate also runs the installed real user entrypoint as
+`crowdtensor infer --prompt-stdin --shareable-terminal`; that smoke must save an
+`infer_summary` verdict with `answer=shareable-terminal-redacted`,
+`gpu=local-cpu-only`, and `fresh_kaggle_gpu=False` without persisting the prompt
+or generated answer.
 In human mode, the terminal prints `answer_scope` so the answer display state is
 explicit: whether any answer text is visible in the terminal and whether saved
 JSON/Markdown stay hash-only. When generated text is available, the terminal

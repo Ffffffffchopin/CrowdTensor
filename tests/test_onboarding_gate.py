@@ -65,6 +65,8 @@ class FakeRunner:
             return "crowdtensor_help"
         if any("user_friendly_inference_frontdoor_check.py" in part for part in command):
             return "user_friendly_inference_frontdoor"
+        if "infer" in command and "--shareable-terminal" in command:
+            return "user_infer_smoke"
         if "local-proof" in command:
             return "local_proof"
         if "home-infer" in command:
@@ -97,6 +99,62 @@ class FakeRunner:
                 "ok": True,
                 "diagnosis_codes": ["user_friendly_inference_frontdoor_check_ready"],
             })
+        if step == "user_infer_smoke":
+            report = {
+                "schema": "crowdtensor_infer_cli_v1",
+                "ok": True,
+                "diagnosis_codes": ["crowdtensor_infer_ready", "user_friendly_infer_ready"],
+                "inference_verdict": {
+                    "schema": "crowdtensor_inference_verdict_v1",
+                    "state": "completed",
+                    "completed": True,
+                    "answer_scope_state": "shareable-terminal-redacted",
+                    "answer_visible_in_terminal": False,
+                    "evidence_level": "local-cpu-loopback",
+                    "executed_where": "local-cpu",
+                    "gpu_state": "local-cpu-only",
+                    "fresh_kaggle_gpu_verified": False,
+                    "public_artifact_safe": True,
+                },
+                "answer_scope": {
+                    "scope_state": "shareable-terminal-redacted",
+                    "visible_in_terminal": False,
+                    "public_artifact_safe": True,
+                },
+                "output_display": {
+                    "terminal_display": "shareable-terminal-redacted",
+                    "terminal_text_available": False,
+                    "saved_artifact_display": "hash-only",
+                    "public_artifact_safe": True,
+                },
+                "gpu_status": {
+                    "state": "local-cpu-only",
+                    "fresh_kaggle_gpu_attempted": False,
+                    "fresh_kaggle_gpu_verified": False,
+                },
+                "shareable_terminal": {
+                    "enabled": True,
+                    "prompt_sources_redacted": True,
+                    "answer_text_redacted": True,
+                    "public_artifact_safe": True,
+                },
+                "shareable_summary": {
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                },
+                "safety": {
+                    "raw_prompt_public": False,
+                    "raw_generated_text_public": False,
+                    "generated_token_ids_public": False,
+                },
+            }
+            (output_dir / "infer_summary.json").write_text(json.dumps(report), encoding="utf-8")
+            (output_dir / "infer_summary.md").write_text(
+                "- Verdict: `answer=shareable-terminal-redacted fresh_kaggle_gpu=False`\n",
+                encoding="utf-8",
+            )
+            return "CrowdTensor infer\n  verdict: state=completed answer=shareable-terminal-redacted\n"
         if step == "local_proof":
             (output_dir / "local_proof_summary.json").write_text("{}", encoding="utf-8")
             return json.dumps({"schema": "local_proof_summary_v1", "ok": True, "diagnosis_codes": ["home_compute_ready"]})
@@ -131,12 +189,13 @@ class OnboardingGateTests(unittest.TestCase):
         self.assertIn("onboarding_ready", summary["diagnosis_codes"])
         joined_commands = [" ".join(command) for command in runner.commands]
         self.assertTrue(any("-m venv" in command for command in joined_commands))
-        self.assertTrue(any("-m pip install -e .[dev]" in command for command in joined_commands))
+        self.assertTrue(any("-m pip install -e .[dev,hf]" in command for command in joined_commands))
         for fragment in [
             "crowdtensor --help",
             "crowdtensord --help",
             "crowdtensor-miner --help",
             "user_friendly_inference_frontdoor_check.py",
+            "infer --prompt-stdin --shareable-terminal",
             "local-proof",
             "home-infer",
             "llm-infer --mock",
@@ -144,6 +203,8 @@ class OnboardingGateTests(unittest.TestCase):
             "release-ready --allow-dirty",
         ]:
             self.assertTrue(any(fragment in command for command in joined_commands), fragment)
+        self.assertEqual(summary["install"]["extras"], ["dev", "hf"])
+        self.assertEqual(summary["install"]["command"], "python -m pip install -e .[dev,hf]")
         self.assertEqual(summary["request_count"], 1)
         self.assertEqual(summary["external_llm_request_count"], 1)
         self.assertTrue(summary["venv"]["removed"])
@@ -155,7 +216,18 @@ class OnboardingGateTests(unittest.TestCase):
             summary["payload_summaries"]["user_friendly_inference_frontdoor"]["schema"],
             "user_friendly_inference_frontdoor_check_v1",
         )
+        self.assertEqual(
+            summary["payload_summaries"]["user_infer_smoke"]["schema"],
+            "user_infer_smoke_validation_v1",
+        )
         self.assertTrue(summary["artifacts"]["user_friendly_inference_frontdoor_check"]["present"])
+        self.assertTrue(summary["artifacts"]["user_infer_smoke_summary"]["present"])
+        user_infer_step = next(step for step in summary["steps"] if step["name"] == "user_infer_smoke")
+        self.assertTrue(user_infer_step["stdin_provided"])
+        self.assertTrue(user_infer_step["stdin_redacted"])
+        self.assertTrue(user_infer_step["validation_ok"])
+        self.assertEqual(user_infer_step["validation"]["gpu_state"], "local-cpu-only")
+        self.assertFalse(user_infer_step["validation"]["fresh_kaggle_gpu_verified"])
         self.assertEqual(
             summary["payload_summaries"]["cpu_infer_beta"]["schema"],
             "cpu_inference_beta_v1",
@@ -194,6 +266,83 @@ class OnboardingGateTests(unittest.TestCase):
         home_step = next(step for step in summary["steps"] if step["name"] == "home_infer")
         self.assertEqual(home_step["error"], "payload_not_ok")
         self.assertIn("home_blocked", home_step["diagnosis_codes"])
+
+    def test_user_infer_smoke_validation_blocks_artifact_regression(self) -> None:
+        tmp_root = Path(self._tmp_dir())
+
+        class BadInferRunner(FakeRunner):
+            def stdout_for(self, step: str, command: list[str]) -> str:
+                if step == "user_infer_smoke":
+                    output_dir = self.output_dir_after(command)
+                    assert output_dir is not None
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    report = {
+                        "schema": "crowdtensor_infer_cli_v1",
+                        "ok": True,
+                        "diagnosis_codes": ["crowdtensor_infer_ready", "user_friendly_infer_ready"],
+                        "inference_verdict": {
+                            "schema": "crowdtensor_inference_verdict_v1",
+                            "state": "completed",
+                            "completed": True,
+                            "answer_scope_state": "terminal-visible",
+                            "answer_visible_in_terminal": True,
+                            "evidence_level": "local-cpu-loopback",
+                            "executed_where": "local-cpu",
+                            "gpu_state": "fresh-kaggle-gpu-verified",
+                            "fresh_kaggle_gpu_verified": True,
+                            "public_artifact_safe": True,
+                        },
+                        "answer_scope": {
+                            "scope_state": "terminal-visible",
+                            "visible_in_terminal": True,
+                            "public_artifact_safe": True,
+                        },
+                        "output_display": {
+                            "terminal_display": "local-private",
+                            "terminal_text_available": True,
+                            "saved_artifact_display": "hash-only",
+                            "public_artifact_safe": True,
+                        },
+                        "gpu_status": {
+                            "state": "fresh-kaggle-gpu-verified",
+                            "fresh_kaggle_gpu_attempted": True,
+                            "fresh_kaggle_gpu_verified": True,
+                        },
+                        "shareable_terminal": {
+                            "enabled": False,
+                            "prompt_sources_redacted": False,
+                            "answer_text_redacted": False,
+                            "public_artifact_safe": False,
+                        },
+                        "shareable_summary": {
+                            "raw_prompt_public": False,
+                            "raw_generated_text_public": False,
+                            "generated_token_ids_public": False,
+                        },
+                        "safety": {
+                            "raw_prompt_public": False,
+                            "raw_generated_text_public": False,
+                            "generated_token_ids_public": False,
+                        },
+                    }
+                    (output_dir / "infer_summary.json").write_text(json.dumps(report), encoding="utf-8")
+                    (output_dir / "infer_summary.md").write_text(
+                        onboarding_gate.USER_INFER_SMOKE_PROMPT,
+                        encoding="utf-8",
+                    )
+                    return "CrowdTensor infer\n"
+                return super().stdout_for(step, command)
+
+        summary = onboarding_gate.build_onboarding_gate(args_for(tmp_root), runner=BadInferRunner())
+
+        self.assertFalse(summary["ok"])
+        self.assertIn("user_infer_smoke_failed", summary["diagnosis_codes"])
+        user_infer_step = next(step for step in summary["steps"] if step["name"] == "user_infer_smoke")
+        self.assertEqual(user_infer_step["error"], "validation_not_ok")
+        self.assertFalse(user_infer_step["validation_ok"])
+        self.assertIn("verdict_answer_scope_mismatch", user_infer_step["validation"]["errors"])
+        self.assertIn("verdict_fresh_kaggle_gpu_mismatch", user_infer_step["validation"]["errors"])
+        self.assertTrue(any(error.startswith("artifact_leaked_") for error in user_infer_step["validation"]["errors"]))
 
     def test_secret_like_failure_output_is_redacted(self) -> None:
         tmp_root = Path(self._tmp_dir())

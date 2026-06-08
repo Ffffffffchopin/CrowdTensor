@@ -183,7 +183,7 @@ The `usable_swarm_inference_v1` report requires `p2pd`, `serve --p2p`, distinct 
 python scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
 ```
 
-The onboarding gate emits `onboarding_gate_v1`. It creates a clean temporary virtualenv, runs `python -m pip install -e .[dev]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `scripts/user_friendly_inference_frontdoor_check.py`, `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, `crowdtensor cpu-infer --mode local`, and `crowdtensor release-ready --allow-dirty` with reduced request counts.
+The onboarding gate emits `onboarding_gate_v1`. It creates a clean temporary virtualenv, runs `python -m pip install -e .[dev,hf]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `scripts/user_friendly_inference_frontdoor_check.py`, the real user entrypoint `crowdtensor infer --prompt-stdin --shareable-terminal`, `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, `crowdtensor cpu-infer --mode local`, and `crowdtensor release-ready --allow-dirty` with reduced request counts. The `user_infer_smoke` step reads the prompt from stdin, writes `infer_summary.json` / `infer_summary.md`, and validates `answer=shareable-terminal-redacted`, `gpu=local-cpu-only`, and `fresh_kaggle_gpu=False` without saving the raw prompt or generated answer.
 
 Use this when validating a fresh checkout or CI image before longer runtime acceptance. It writes reports under `/tmp` by default, removes the temporary venv unless `--keep-venv` is passed, and is not production Swarm Inference readiness.
 

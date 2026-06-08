@@ -24,7 +24,7 @@ Verify the documented fresh-clone onboarding path from a clean virtualenv:
 python3 scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
 ```
 
-The `onboarding_gate_v1` report runs `python3 -m venv`, installs with `python -m pip install -e .[dev]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `scripts/user_friendly_inference_frontdoor_check.py`, `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, `crowdtensor cpu-infer --mode local`, and `crowdtensor release-ready --allow-dirty`. This is an Alpha repository onboarding gate, not production Swarm Inference readiness.
+The `onboarding_gate_v1` report runs `python3 -m venv`, installs with `python -m pip install -e .[dev,hf]`, checks `crowdtensor --help`, `crowdtensord --help`, and `crowdtensor-miner --help`, then smoke-validates `scripts/user_friendly_inference_frontdoor_check.py`, the real user entrypoint `crowdtensor infer --prompt-stdin --shareable-terminal`, `crowdtensor local-proof`, `crowdtensor home-infer`, `crowdtensor llm-infer --mock`, `crowdtensor cpu-infer --mode local`, and `crowdtensor release-ready --allow-dirty`. The `user_infer_smoke` step must preserve `answer=shareable-terminal-redacted`, `gpu=local-cpu-only`, and `fresh_kaggle_gpu=False` in its saved `infer_summary` artifacts. This is an Alpha repository onboarding gate, not production Swarm Inference readiness.
 
 Build the maintainer readiness report before running longer acceptance:
 
