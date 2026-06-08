@@ -186,6 +186,89 @@ def output_request_summary() -> dict[str, Any]:
     }
 
 
+def safe_prompt_count(value: Any) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, count)
+
+
+def normalize_prompt_scope(scope: dict[str, Any]) -> dict[str, Any]:
+    source = str(scope.get("source") or "imported-or-built-in-validation-prompts")
+    inline_prompt_text = bool(scope.get("inline_prompt_text"))
+    return {
+        "source": source,
+        "prompt_count": safe_prompt_count(scope.get("prompt_count")),
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": bool(scope.get("terminal_next_commands_local_private")),
+        "terminal_logs_local_private": bool(scope.get("terminal_logs_local_private")),
+        "saved_artifacts_prompt_placeholders": scope.get("saved_artifacts_prompt_placeholders") is not False,
+        "saved_artifacts_public_safe": scope.get("saved_artifacts_public_safe") is not False,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": bool(scope.get("prefer_prompt_file_or_stdin_for_shareable_logs")),
+        "prompt_file_path_public": bool(scope.get("prompt_file_path_public")),
+        "raw_prompt_public": bool(scope.get("raw_prompt_public")),
+        "public_artifact_safe": scope.get("public_artifact_safe") is not False,
+        "summary": (
+            "Real P2P Core RC reports record prompt source/count and placeholder "
+            "safety only; raw prompt text is excluded from public JSON, Markdown, "
+            "and support bundles."
+        ),
+    }
+
+
+def prompt_scope_summary(args: argparse.Namespace) -> dict[str, Any]:
+    prompt_texts = str(getattr(args, "prompt_texts", "") or "")
+    prompt_count = len(product_mvp.prompt_list_from_args(args))
+    source = "prompt-texts" if prompt_texts else "prompt-text"
+    inline_prompt_text = source in {"prompt-text", "prompt-texts"}
+    return normalize_prompt_scope({
+        "source": source,
+        "prompt_count": prompt_count,
+        "inline_prompt_text": inline_prompt_text,
+        "terminal_next_commands_local_private": inline_prompt_text,
+        "terminal_logs_local_private": inline_prompt_text,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": inline_prompt_text,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+    })
+
+
+def inherited_prompt_scope(args: argparse.Namespace, payload: dict[str, Any]) -> dict[str, Any]:
+    prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
+    if prompt_scope:
+        return normalize_prompt_scope(prompt_scope)
+    return normalize_prompt_scope({
+        "source": "imported-or-built-in-validation-prompts",
+        "prompt_count": len(product_mvp.prompt_list_from_args(args)),
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": False,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+    })
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def answer_scope_summary() -> dict[str, Any]:
     return {
         "scope_state": "no-local-answer",
@@ -919,6 +1002,7 @@ def degraded_report(args: argparse.Namespace, output_dir: Path, missing: list[st
             "real_p2p_core_rc_hf_runtime_missing",
             "real_p2p_swarm_inference_core_rc_blocked",
         ],
+        "prompt_scope": prompt_scope_summary(args),
         "operator_action": "Install optional runtime dependencies with: python -m pip install -e '.[hf]'",
         "safety": safety_block(discovery_backend=args.discovery_backend),
         "not_completed": [
@@ -1628,6 +1712,7 @@ def finalize_report(
         "live_requeue_summary": requeue_summary,
         "performance": performance,
         "runtime_resources": resources,
+        "prompt_scope": prompt_scope_summary(args),
         "ledger": {
             "accepted_rows": len(rows),
             "error": ledger_error,
@@ -1781,6 +1866,7 @@ def run_external_existing(args: argparse.Namespace, *, output_dir: Path, runner:
         "generation": generation,
         "batch": batch,
         "stream": stream,
+        "prompt_scope": prompt_scope_summary(args),
         "steps": support_bundle.sanitize(redact_values(steps, secret_values)),
         "diagnosis_codes": sorted(codes),
         "safety": safety_block(discovery_backend=args.discovery_backend),
@@ -3856,6 +3942,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
         "output_dir": str(output_dir),
         "diagnosis_codes": ["real_p2p_core_rc_runbook_ready"],
         "artifacts": {"runbook": runbook},
+        "prompt_scope": prompt_scope_summary(args),
         "safety": safety_block(discovery_backend=args.discovery_backend),
         "not_completed": [
             "Local real-P2P tiny-GPT generation",
@@ -3912,6 +3999,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
         "generation": payload.get("generation") if isinstance(payload.get("generation"), dict) else {},
         "stage_assignment": payload.get("stage_assignment") if isinstance(payload.get("stage_assignment"), dict) else {},
         "live_requeue_summary": payload.get("live_requeue_summary") if isinstance(payload.get("live_requeue_summary"), dict) else {},
+        "prompt_scope": inherited_prompt_scope(args, payload),
         "safety": safety_block(discovery_backend=args.discovery_backend),
     }
     return sanitize_report(report, output_dir=output_dir, secret_values=[])
@@ -3929,6 +4017,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- output request: `include_output={bool((report.get('output_request') or {}).get('include_output'))} raw_prompt_public={bool((report.get('output_request') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('output_request') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('output_request') or {}).get('generated_token_ids_public'))} public_artifact_safe={bool((report.get('output_request') or {}).get('public_artifact_safe'))}`",
+        f"- prompt scope: `{prompt_scope_text((report.get('prompt_scope') or {}) if isinstance(report.get('prompt_scope'), dict) else {})}`",
         f"- answer scope: `state={(report.get('answer_scope') or {}).get('scope_state')} terminal_only={bool((report.get('answer_scope') or {}).get('terminal_only'))} visible_in_terminal={bool((report.get('answer_scope') or {}).get('visible_in_terminal'))} saved_json={(report.get('answer_scope') or {}).get('saved_json_display')} saved_markdown={(report.get('answer_scope') or {}).get('saved_markdown_display')} public_artifact_safe={bool((report.get('answer_scope') or {}).get('public_artifact_safe'))}`",
         f"- shareable: `saved_artifacts={bool((report.get('shareable_summary') or {}).get('saved_artifacts_public_safe'))} raw_prompt_public={bool((report.get('shareable_summary') or {}).get('raw_prompt_public'))} raw_generated_text_public={bool((report.get('shareable_summary') or {}).get('raw_generated_text_public'))} generated_token_ids_public={bool((report.get('shareable_summary') or {}).get('generated_token_ids_public'))} answer_scope_state={(report.get('shareable_summary') or {}).get('answer_scope_state')} local_answer_terminal_only={bool((report.get('shareable_summary') or {}).get('local_answer_terminal_only'))}`",
         f"- note: {(report.get('answer_scope') or {}).get('summary')}",
@@ -3944,6 +4033,10 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def sanitize_report(report: dict[str, Any], *, output_dir: Path, secret_values: list[str]) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault(
+        "prompt_scope",
+        normalize_prompt_scope({"source": "imported-or-built-in-validation-prompts", "prompt_count": 0}),
+    )
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report = support_bundle.sanitize(redact_values(report, secret_values))
@@ -3976,6 +4069,7 @@ def sanitize_report(report: dict[str, Any], *, output_dir: Path, secret_values: 
         "generation": report.get("generation"),
         "stage_assignment": report.get("stage_assignment"),
         "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
         "answer_scope": report.get("answer_scope"),
         "shareable_summary": report.get("shareable_summary"),
         "safety": report.get("safety"),

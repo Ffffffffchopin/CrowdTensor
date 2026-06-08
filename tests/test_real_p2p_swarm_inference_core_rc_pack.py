@@ -69,6 +69,17 @@ class RealP2PSwarmInferenceCoreRCPackTests(unittest.TestCase):
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
         self.assertTrue(report["output_request"]["public_artifact_safe"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -83,11 +94,40 @@ class RealP2PSwarmInferenceCoreRCPackTests(unittest.TestCase):
         self.assertFalse(report["shareable_summary"]["local_answer_terminal_only"])
         markdown = (output_dir / "import" / "real_p2p_swarm_inference_core_rc.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
+        self.assertIn("prompt scope: `source=prompt-text count=1", markdown)
         self.assertIn("state=no-local-answer", markdown)
         self.assertIn("raw_generated_text_public=False", markdown)
         support = json.loads((output_dir / "import" / "support_bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(support["prompt_scope"], report["prompt_scope"])
         self.assertEqual(support["answer_scope"]["scope_state"], "no-local-answer")
         self.assertEqual(support["shareable_summary"]["answer_scope_state"], "no-local-answer")
+
+    def test_evidence_import_without_source_prompt_scope_uses_safe_fallback(self) -> None:
+        output_dir = self._tmp_dir()
+        source = check.fake_ready_report("local-smoke", output_dir / "source")
+        source.pop("prompt_scope", None)
+        source_path = output_dir / "source" / "real_p2p_swarm_inference_core_rc.json"
+        source_path.write_text(json.dumps(source) + "\n", encoding="utf-8")
+
+        report = pack.build_report(pack.parse_args([
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "import"),
+            "--real-p2p-report",
+            str(source_path),
+        ]))
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertEqual(report["prompt_scope"]["source"], "imported-or-built-in-validation-prompts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertFalse(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertFalse(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
+        self.assertNotIn("CrowdTensor real P2P core RC", encoded)
 
     def test_evidence_import_blocks_non_default_model_without_matching_real_p2p_report(self) -> None:
         output_dir = self._tmp_dir()
@@ -255,12 +295,20 @@ class RealP2PSwarmInferenceCoreRCPackTests(unittest.TestCase):
         self.assertEqual(command[command.index("--prompt-texts") + 1], "first prompt,second prompt")
         self.assertIn("--stream", command)
         self.assertEqual(report["hf_model_id"], "distilgpt2")
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-texts")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 2)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertTrue(report["batch"]["batch_generation_ready"])
         self.assertTrue(report["stream"]["stream_generation_ready"])
         self.assertIn("real_p2p_core_rc_model_metadata_ready", report["diagnosis_codes"])
         self.assertIn("external_real_p2p_generate_batch_ready", report["diagnosis_codes"])
         self.assertIn("external_real_p2p_generate_stream_ready", report["diagnosis_codes"])
         self.assertIn("public_swarm_generate_stream_endpoint_ready", report["diagnosis_codes"])
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn("first prompt", encoded)
+        self.assertNotIn("second prompt", encoded)
 
     def test_prompt_batch_requires_external_verify_generate(self) -> None:
         with self.assertRaises(SystemExit):
