@@ -252,6 +252,11 @@ Beta contract; it writes `public_real_llm_swarm_beta_check.json` with a review
 summary, safe artifact paths, and no raw prompt or generated text. Pass
 `--beta-report` to validate the release artifact you just generated; omitting
 it keeps the CI-safe fixture check path.
+Read `evidence_scope` in `public_real_llm_swarm_beta.json` and
+`checked_evidence_scope` in `public_real_llm_swarm_beta_check.json` for the
+shortest answer to what was verified: local CPU, retained evidence, or fresh
+Kaggle GPU. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
+retained external/GPU evidence is not a new Kaggle run.
 When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`
 first, then `dist/public-real-llm-swarm-beta/support_bundle.json` if you need
 diagnostics. The terminal also prints the final inference status: model and

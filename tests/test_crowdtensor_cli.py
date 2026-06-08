@@ -1044,7 +1044,12 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertIn("--beta-report", rendered)
             self.assertIn("public_real_llm_swarm_beta_check", rendered)
             self.assertIn("public_real_llm_swarm_beta.json", rendered)
+        for rendered in [readme, quickstart, operations]:
+            self.assertIn("checked_evidence_scope", rendered)
+            self.assertIn("fresh Kaggle GPU", rendered)
         self.assertIn("Read `evidence_scope`", operations)
+        self.assertIn("checked_runtime_provenance", operations)
+        self.assertIn("checked_evidence_scope", operations)
         self.assertIn("`fresh_kaggle_gpu=True` is the only claim", operations)
         self.assertIn("retained import is not a fresh Kaggle GPU attempt", operations)
         self.assertIn("Product inference evidence scope", memory)
@@ -7688,6 +7693,17 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "output_dir": str(output_dir),
                 "errors": [],
                 "diagnosis_codes": ["public_real_llm_swarm_beta_check_ready"],
+                "checked_evidence_scope": {
+                    "level": "release-local-cpu-with-retained-external",
+                    "executed_where": "local-cpu-plus-retained-evidence",
+                    "source": "public_real_llm_swarm_beta_v1",
+                    "local_cpu": True,
+                    "retained_external_evidence_imported": True,
+                    "local_gpu_smoke_ran": True,
+                    "retained_gpu_evidence_imported": False,
+                    "fresh_kaggle_gpu_verified": False,
+                    "user_expectation": "This release mixes fresh local CPU checks with retained external/P2P evidence.",
+                },
                 "artifact_summary": {
                     "inspect_first": str(output_dir / "public_real_llm_swarm_beta.md"),
                     "machine_readable": str(output_dir / "public_real_llm_swarm_beta.json"),
@@ -7793,6 +7809,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("  status: ready", rendered)
         self.assertIn("  review: state=ready next=review_checked_artifacts", rendered)
         self.assertIn("  artifacts: inspect=", rendered)
+        self.assertIn("  checked_evidence_scope: level=release-local-cpu-with-retained-external", rendered)
+        self.assertIn("fresh_kaggle_gpu=False", rendered)
+        self.assertIn("  checked_evidence_scope_note:", rendered)
         self.assertIn("  recommended_next: sed -n 1,220p", rendered)
         self.assertIn("  next[1] inspect checked Beta summary:", rendered)
         self.assertIn("  prompt_scope: source=prompt-text count=1 inline_prompt_text=True", rendered)
@@ -8212,6 +8231,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("Safe shareable files", rendered)
         self.assertIn("Do not share private env", rendered)
         self.assertIn("generated token ids", rendered)
+        self.assertIn("Evidence scope: generated Beta reports include evidence_scope", rendered)
+        self.assertIn("checked_evidence_scope", rendered)
+        self.assertIn("fresh_kaggle_gpu=True is the only fresh Kaggle GPU claim", rendered)
         self.assertIn("If ok is false, start with the Not Completed section", rendered)
         self.assertIn("printed not_completed lines", rendered)
         self.assertIn("crowdtensor public-real-llm-swarm-beta release --max-new-tokens 16", rendered)

@@ -15004,6 +15004,7 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
     prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable_summary = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    checked_evidence_scope = report.get("checked_evidence_scope") if isinstance(report.get("checked_evidence_scope"), dict) else {}
     raw_operator_action = report.get("operator_action")
     operator_actions = [str(item) for item in raw_operator_action] if isinstance(raw_operator_action, list) else []
     if raw_operator_action and not operator_actions:
@@ -15040,6 +15041,19 @@ def print_public_real_llm_swarm_beta_check(report: dict[str, Any]) -> None:
             f"check={artifact_summary.get('check_json') or 'none'} "
             f"public_artifact_safe={bool(artifact_summary.get('public_artifact_safe'))}"
         )
+    if checked_evidence_scope:
+        print(
+            "  checked_evidence_scope: "
+            f"level={checked_evidence_scope.get('level') or 'unknown'} "
+            f"executed={checked_evidence_scope.get('executed_where') or 'unknown'} "
+            f"source={checked_evidence_scope.get('source') or 'unknown'} "
+            f"local_cpu={bool(checked_evidence_scope.get('local_cpu'))} "
+            f"retained_external={bool(checked_evidence_scope.get('retained_external_evidence_imported'))} "
+            f"local_gpu_smoke={bool(checked_evidence_scope.get('local_gpu_smoke_ran'))} "
+            f"retained_gpu={bool(checked_evidence_scope.get('retained_gpu_evidence_imported'))} "
+            f"fresh_kaggle_gpu={bool(checked_evidence_scope.get('fresh_kaggle_gpu_verified'))}"
+        )
+        print(f"  checked_evidence_scope_note: {checked_evidence_scope.get('user_expectation') or ''}")
     if recommended_check:
         print(f"  recommended_check: {recommended_check.get('command_line')}")
     if recommended_next:
@@ -16915,6 +16929,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "public_real_llm_swarm_beta.md, and support_bundle.json. Do not share private env\n"
             "files, registries, runtime state, raw prompts, generated text, generated token ids,\n"
             "credentials, activations, leases, or idempotency material.\n\n"
+            "Evidence scope: generated Beta reports include evidence_scope; check output mirrors\n"
+            "the verified report as checked_evidence_scope. Read that line for the shortest\n"
+            "answer to whether the report is local CPU, retained evidence, or fresh Kaggle GPU.\n"
+            "fresh_kaggle_gpu=True is the only fresh Kaggle GPU claim.\n\n"
             "If ok is false, start with the Not Completed section and printed not_completed lines;\n"
             "they map to missing token target, KV-cache, route hardening, batch/stream, external\n"
             "runtime, or requeue evidence."
