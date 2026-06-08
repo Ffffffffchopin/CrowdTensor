@@ -1895,6 +1895,41 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered,
         )
 
+    def test_generate_shareable_terminal_next_commands_preserve_shareable_mode(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "zeta-alpha-generate-needle-927"
+        args = cli.parse_args([
+            "generate",
+            prompt,
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--shareable-terminal",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("skip-live-preflight should not touch live Coordinator endpoints"),
+        ):
+            report = cli.build_product_generate(args)
+
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertTrue(next_lines, report)
+        self.assertTrue(all("--shareable-terminal" in line for line in next_lines), next_lines)
+        self.assertIn("--shareable-terminal", report["recommended_next_command"]["command_line"])
+        persisted = json.loads((output_dir / "generate_summary.json").read_text(encoding="utf-8"))
+        persisted_lines = [item["command_line"] for item in persisted["next_commands"]]
+        self.assertTrue(all("--shareable-terminal" in line for line in persisted_lines), persisted_lines)
+        markdown = (output_dir / "generate_summary.md").read_text(encoding="utf-8")
+        self.assertIn("--shareable-terminal", markdown)
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        self.assertNotIn(prompt, markdown)
+
     def test_generate_main_prints_copyable_batch_prompt_without_single_prompt_placeholder(self) -> None:
         prompts = "first private prompt,second private prompt"
 
@@ -10925,6 +10960,43 @@ class CrowdTensorCliTests(unittest.TestCase):
             "  shareable_terminal: enabled=True prompt_sources_redacted=True answer_text_redacted=False public_artifact_safe=True",
             rendered,
         )
+
+    def test_infer_shareable_terminal_next_commands_preserve_shareable_mode(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        prompt = "zeta-alpha-infer-needle-927"
+        args = cli.parse_args([
+            "infer",
+            prompt,
+            "--mode",
+            "existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--skip-live-preflight",
+            "--shareable-terminal",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        with patch.object(
+            cli,
+            "request_json_url",
+            side_effect=AssertionError("skip-live-preflight should not touch live Coordinator endpoints"),
+        ):
+            report = cli.build_infer(args)
+
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertTrue(next_lines, report)
+        self.assertTrue(all("--shareable-terminal" in line for line in next_lines), next_lines)
+        self.assertIn("--shareable-terminal", report["recommended_next_command"]["command_line"])
+        persisted = json.loads((output_dir / "infer_summary.json").read_text(encoding="utf-8"))
+        persisted_lines = [item["command_line"] for item in persisted["next_commands"]]
+        self.assertTrue(all("--shareable-terminal" in line for line in persisted_lines), persisted_lines)
+        markdown = (output_dir / "infer_summary.md").read_text(encoding="utf-8")
+        self.assertIn("--shareable-terminal", markdown)
+        self.assertNotIn(prompt, json.dumps(report, sort_keys=True))
+        self.assertNotIn(prompt, markdown)
 
     def test_infer_prompt_file_does_not_pollute_startup_commands(self) -> None:
         prompt_file = Path(self._tmp_dir()) / "prompt.txt"

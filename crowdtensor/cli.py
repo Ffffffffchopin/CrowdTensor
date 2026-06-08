@@ -6642,6 +6642,8 @@ def _infer_command_args(
         command.append("--stream")
     if bool(getattr(args, "include_output", False)):
         command.append("--include-output")
+    if bool(getattr(args, "shareable_terminal", False)):
+        command.append("--shareable-terminal")
     if resolved_mode == "local":
         coordinator_port_explicit = bool(getattr(args, "coordinator_port_explicit", False))
         if coordinator_port_override is not None:
@@ -9432,6 +9434,7 @@ def _product_cli_generate_command(
     include_observer: bool = False,
     stream: bool = False,
     include_output: bool = False,
+    shareable_terminal: bool = False,
     timeout_seconds: float = 120.0,
     poll_interval: float = 1.0,
     http_timeout: float = 30.0,
@@ -9476,6 +9479,8 @@ def _product_cli_generate_command(
         command.append("--stream")
     if include_output:
         command.append("--include-output")
+    if shareable_terminal:
+        command.append("--shareable-terminal")
     if float(timeout_seconds) != 120.0:
         command.extend(["--timeout-seconds", str(timeout_seconds)])
     if float(poll_interval) != 1.0:
@@ -10523,6 +10528,8 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
     stream_requested = bool(stream_report.get("enabled") or stream_report.get("requested"))
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
     include_output_requested = bool(output_request.get("include_output"))
+    shareable_terminal = report.get("shareable_terminal") if isinstance(report.get("shareable_terminal"), dict) else {}
+    shareable_terminal_enabled = bool(shareable_terminal.get("enabled"))
     runtime_options = report.get("runtime_options") if isinstance(report.get("runtime_options"), dict) else {}
     timeout_seconds = float(runtime_options.get("timeout_seconds", 120.0) or 120.0)
     poll_interval = float(runtime_options.get("poll_interval", 1.0) or 1.0)
@@ -10583,6 +10590,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
         include_observer=True,
         stream=stream_requested,
         include_output=include_output_requested,
+        shareable_terminal=shareable_terminal_enabled,
         timeout_seconds=timeout_seconds,
         poll_interval=poll_interval,
         http_timeout=http_timeout,
@@ -10620,6 +10628,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 swarm_id=swarm_id,
                 stream=stream_requested,
                 include_output=include_output_requested,
+                shareable_terminal=shareable_terminal_enabled,
                 timeout_seconds=timeout_seconds,
                 poll_interval=poll_interval,
                 http_timeout=http_timeout,
@@ -10696,6 +10705,7 @@ def _product_generate_next_commands(report: dict[str, Any]) -> list[dict[str, An
                 swarm_id=swarm_id,
                 stream=stream_requested,
                 include_output=include_output_requested,
+                shareable_terminal=shareable_terminal_enabled,
                 timeout_seconds=timeout_seconds,
                 poll_interval=poll_interval,
                 http_timeout=http_timeout,
@@ -10733,6 +10743,8 @@ def _finalize_product_generate_report(
     output_dir: Path | None = None,
     shareable_terminal: bool = False,
 ) -> dict[str, Any]:
+    if shareable_terminal:
+        report.setdefault("shareable_terminal", _shareable_terminal_summary_from_report(report))
     report.setdefault("operator_action", _product_generate_operator_action(report))
     report.setdefault("next_commands", _product_generate_next_commands(report))
     recommended_next_command = _generate_recommended_next_command(
@@ -10754,8 +10766,6 @@ def _finalize_product_generate_report(
     report.setdefault("answer_scope", _answer_scope_from_report(report))
     report.setdefault("prompt_scope", prompt_scope_from_report(report))
     report.setdefault("shareable_summary", _shareable_summary_from_report(report, kind="generate"))
-    if shareable_terminal:
-        report.setdefault("shareable_terminal", _shareable_terminal_summary_from_report(report))
     report.setdefault("issue_summary", _issue_summary_from_report(report, kind="generate"))
     report["safety"] = _product_generate_safety_summary(report)
     if output_dir is not None:
