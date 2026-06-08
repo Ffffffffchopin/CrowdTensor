@@ -86,6 +86,7 @@ def synthetic_gpu_report(path: Path, max_new_tokens: int) -> None:
 def output_scope_errors(payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     output_request = payload.get("output_request") if isinstance(payload.get("output_request"), dict) else {}
+    prompt_scope = payload.get("prompt_scope") if isinstance(payload.get("prompt_scope"), dict) else {}
     answer_scope = payload.get("answer_scope") if isinstance(payload.get("answer_scope"), dict) else {}
     shareable = payload.get("shareable_summary") if isinstance(payload.get("shareable_summary"), dict) else {}
     if output_request.get("include_output") is not False:
@@ -98,6 +99,28 @@ def output_scope_errors(payload: dict[str, Any]) -> list[str]:
         errors.append("output_request_generated_token_ids_public_mismatch")
     if output_request.get("public_artifact_safe") is not True:
         errors.append("output_request_public_artifact_safe_mismatch")
+    if prompt_scope.get("source") != "prompt-text":
+        errors.append("prompt_scope_source_mismatch")
+    if prompt_scope.get("prompt_count") != 1:
+        errors.append("prompt_scope_count_mismatch")
+    if prompt_scope.get("inline_prompt_text") is not True:
+        errors.append("prompt_scope_inline_prompt_text_mismatch")
+    if prompt_scope.get("terminal_next_commands_local_private") is not True:
+        errors.append("prompt_scope_terminal_next_commands_mismatch")
+    if prompt_scope.get("terminal_logs_local_private") is not True:
+        errors.append("prompt_scope_terminal_logs_mismatch")
+    if prompt_scope.get("saved_artifacts_prompt_placeholders") is not True:
+        errors.append("prompt_scope_saved_placeholders_mismatch")
+    if prompt_scope.get("saved_artifacts_public_safe") is not True:
+        errors.append("prompt_scope_saved_artifacts_public_safe_mismatch")
+    if prompt_scope.get("prefer_prompt_file_or_stdin_for_shareable_logs") is not True:
+        errors.append("prompt_scope_shareable_log_guidance_mismatch")
+    if prompt_scope.get("prompt_file_path_public") is not False:
+        errors.append("prompt_scope_file_path_public_mismatch")
+    if prompt_scope.get("raw_prompt_public") is not False:
+        errors.append("prompt_scope_raw_prompt_public_mismatch")
+    if prompt_scope.get("public_artifact_safe") is not True:
+        errors.append("prompt_scope_public_artifact_safe_mismatch")
     if answer_scope.get("scope_state") != "no-local-answer":
         errors.append("answer_scope_state_mismatch")
     if answer_scope.get("visible_in_terminal") is not False:
@@ -142,6 +165,8 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
         str(output_dir / "rc"),
         "--gpu-report",
         str(gpu_report),
+        "--prompt-text",
+        "private product rc check prompt",
         "--max-new-tokens",
         str(args.max_new_tokens),
     ]), runner=fake_runner)

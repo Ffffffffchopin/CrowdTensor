@@ -42,6 +42,7 @@ SECRET_FRAGMENTS = {
 }
 SAFE_PUBLIC_LEAK_PATH_PARTS = (
     ".output_request.",
+    ".prompt_scope.",
     ".answer_scope.",
     ".shareable_summary.",
 )
@@ -78,6 +79,26 @@ def output_request_summary() -> dict[str, Any]:
             "surface readiness, session protocol status, P2P-lite discovery, "
             "GPU generation import hashes/counts, and diagnostics only. They "
             "do not include answer text."
+        ),
+    }
+
+
+def prompt_scope_summary() -> dict[str, Any]:
+    return {
+        "source": "prompt-text",
+        "prompt_count": 1,
+        "inline_prompt_text": True,
+        "terminal_next_commands_local_private": True,
+        "terminal_logs_local_private": True,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prefer_prompt_file_or_stdin_for_shareable_logs": True,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Product RC artifact records prompt source/count and placeholder "
+            "safety only; raw prompt text is excluded from public JSON and Markdown."
         ),
     }
 
@@ -121,7 +142,7 @@ def shareable_summary() -> dict[str, Any]:
     }
 
 
-def run_cli_builds(output_dir: Path) -> dict[str, Any]:
+def run_cli_builds(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     serve_args = cli.parse_args([
         "serve",
         "--profile",
@@ -161,11 +182,11 @@ def run_cli_builds(output_dir: Path) -> dict[str, Any]:
         "--coordinator-url",
         "http://127.0.0.1:8787",
         "--prompt-text",
-        "CrowdTensor product RC",
+        args.prompt_text,
         "--backend",
         "cuda",
         "--max-new-tokens",
-        "8",
+        str(args.max_new_tokens),
         "--dry-run",
         "--skip-live-preflight",
         "--json",
@@ -221,6 +242,7 @@ def validate_public_artifact(report: dict[str, Any]) -> list[str]:
 
 def render_markdown(report: dict[str, Any]) -> str:
     output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
@@ -233,6 +255,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Output Scope",
         "",
         f"- include output: `{output_request.get('include_output')}`",
+        f"- prompt scope: `source={prompt_scope.get('source')} count={prompt_scope.get('prompt_count')} inline_prompt_text={prompt_scope.get('inline_prompt_text')} terminal_next_commands_local_private={prompt_scope.get('terminal_next_commands_local_private')} saved_artifacts_prompt_placeholders={prompt_scope.get('saved_artifacts_prompt_placeholders')} prompt_file_path_public={prompt_scope.get('prompt_file_path_public')} raw_prompt_public={prompt_scope.get('raw_prompt_public')} public_artifact_safe={prompt_scope.get('public_artifact_safe')}`",
         f"- answer scope: `{answer_scope.get('scope_state')}`",
         f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
         f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
@@ -266,6 +289,7 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any]:
     report.setdefault("output_request", output_request_summary())
+    report.setdefault("prompt_scope", prompt_scope_summary())
     report.setdefault("answer_scope", answer_scope_summary())
     report.setdefault("shareable_summary", shareable_summary())
     report.setdefault("artifacts", {})
@@ -309,7 +333,7 @@ def persist_report(report: dict[str, Any], *, output_dir: Path) -> dict[str, Any
 def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     output_dir = Path(args.output_dir or tempfile.mkdtemp(prefix="crowdtensor_public_swarm_product_rc_")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    cli_reports = run_cli_builds(output_dir)
+    cli_reports = run_cli_builds(args, output_dir)
     session_step, session_payload = cli.run_json_step(
         "session_protocol_check",
         [sys.executable, str(ROOT / "scripts" / "session_protocol_check.py"), "--json"],
@@ -375,6 +399,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
             "raw_generated_text_public": False,
         },
         "diagnosis_codes": sorted(diagnosis_codes),
+        "prompt_scope": prompt_scope_summary(),
         "safety": {
             "raw_prompt_public": False,
             "raw_generated_text_public": False,
@@ -400,6 +425,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Public Swarm Product RC artifact.")
     parser.add_argument("--output-dir", default="dist/public-swarm-product-rc")
     parser.add_argument("--gpu-report", default=DEFAULT_GPU_REPORT)
+    parser.add_argument("--prompt-text", default="CrowdTensor product RC")
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--timeout-seconds", type=int, default=120)
     parser.add_argument("--json", action="store_true")

@@ -23,10 +23,22 @@ class PublicSwarmProductRcPackTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["schema"], "public_swarm_product_rc_check_v1")
         report = json.loads((output_dir / "rc" / "public_swarm_product_rc.json").read_text(encoding="utf-8"))
+        encoded = json.dumps(report, sort_keys=True)
         self.assertFalse(report["output_request"]["include_output"])
         self.assertFalse(report["output_request"]["raw_prompt_public"])
         self.assertFalse(report["output_request"]["raw_generated_text_public"])
         self.assertFalse(report["output_request"]["generated_token_ids_public"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertEqual(report["prompt_scope"]["prompt_count"], 1)
+        self.assertTrue(report["prompt_scope"]["inline_prompt_text"])
+        self.assertTrue(report["prompt_scope"]["terminal_next_commands_local_private"])
+        self.assertTrue(report["prompt_scope"]["terminal_logs_local_private"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_prompt_placeholders"])
+        self.assertTrue(report["prompt_scope"]["saved_artifacts_public_safe"])
+        self.assertTrue(report["prompt_scope"]["prefer_prompt_file_or_stdin_for_shareable_logs"])
+        self.assertFalse(report["prompt_scope"]["prompt_file_path_public"])
+        self.assertFalse(report["prompt_scope"]["raw_prompt_public"])
+        self.assertTrue(report["prompt_scope"]["public_artifact_safe"])
         self.assertEqual(report["answer_scope"]["scope_state"], "no-local-answer")
         self.assertFalse(report["answer_scope"]["visible_in_terminal"])
         self.assertFalse(report["answer_scope"]["terminal_only"])
@@ -44,11 +56,17 @@ class PublicSwarmProductRcPackTests(unittest.TestCase):
         markdown = (output_dir / "rc" / "public_swarm_product_rc.md").read_text(encoding="utf-8")
         self.assertIn("## Output Scope", markdown)
         self.assertIn("- include output: `False`", markdown)
+        self.assertIn(
+            "- prompt scope: `source=prompt-text count=1 inline_prompt_text=True terminal_next_commands_local_private=True saved_artifacts_prompt_placeholders=True prompt_file_path_public=False raw_prompt_public=False public_artifact_safe=True`",
+            markdown,
+        )
         self.assertIn("- answer scope: `no-local-answer`", markdown)
         self.assertIn(
             "- shareable: `saved_artifacts=True raw_prompt_public=False raw_generated_text_public=False generated_token_ids_public=False local_output_display_only=False answer_scope_state=no-local-answer local_answer_terminal_only=False`",
             markdown,
         )
+        self.assertNotIn("private product rc check prompt", encoded)
+        self.assertNotIn("private product rc check prompt", markdown)
 
     def test_pack_blocks_missing_gpu_evidence(self) -> None:
         output_dir = Path(tempfile.mkdtemp(prefix="crowdtensor_product_rc_missing_gpu_test_"))
@@ -65,16 +83,22 @@ class PublicSwarmProductRcPackTests(unittest.TestCase):
             str(output_dir),
             "--gpu-report",
             str(output_dir / "missing.json"),
+            "--prompt-text",
+            "private missing gpu prompt",
             "--max-new-tokens",
             "4",
         ]), runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
 
         self.assertFalse(report["ok"])
         self.assertIn("gpu_generation_evidence_import_blocked", report["diagnosis_codes"])
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-text")
+        self.assertNotIn("private missing gpu prompt", encoded)
 
     def test_output_scope_errors_rejects_generated_text_public(self) -> None:
         report = {
             "output_request": pack.output_request_summary(),
+            "prompt_scope": pack.prompt_scope_summary(),
             "answer_scope": pack.answer_scope_summary(),
             "shareable_summary": pack.shareable_summary(),
         }
