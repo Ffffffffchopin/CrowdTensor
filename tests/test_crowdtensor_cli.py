@@ -8703,6 +8703,63 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(private_prompt, encoded)
         self.assertTrue(calls)
 
+    def test_infer_local_prompt_stdin_uses_private_prompt_file_for_product_loopback(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        private_prompt = "single private stdin prompt"
+        with patch.object(cli.sys, "stdin", io.StringIO(private_prompt + "\n")):
+            args = cli.parse_args([
+                "infer",
+                "--prompt-stdin",
+                "--output-dir",
+                str(output_dir),
+                "--max-new-tokens",
+                "8",
+                "--json",
+            ])
+        prompt_paths: list[Path] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("product_swarm_mvp_check.py", command[1])
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn(private_prompt, command)
+            self.assertIn("--prompt-file", command)
+            prompt_path = Path(command[command.index("--prompt-file") + 1])
+            prompt_paths.append(prompt_path)
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), private_prompt)
+            return completed({
+                "schema": "product_swarm_mvp_check_v1",
+                "ok": True,
+                "mode": "local-loopback",
+                "hf_model_id": "sshleifer/tiny-gpt2",
+                "generation": {
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "generated_text_hash": "sha256:generated",
+                    "decoded_tokens_match": True,
+                    "request_count": 1,
+                },
+                "batch": {
+                    "enabled": False,
+                    "request_count": 1,
+                    "observed_request_count": 1,
+                    "batch_generation_ready": False,
+                },
+                "stage_assignment": {"distinct_stage_miners": True},
+                "ledger": {"accepted_rows": 16},
+                "diagnosis_codes": ["product_swarm_mvp_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-stdin")
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertNotIn(private_prompt, encoded)
+        self.assertTrue(prompt_paths)
+        self.assertFalse(prompt_paths[0].exists())
+        self.assertFalse((output_dir / ".private").exists())
+
     def test_infer_local_failure_redacts_prompt_from_step_output(self) -> None:
         output_dir = Path(self._tmp_dir())
         prompt = "CrowdTensor private prompt"
@@ -9155,6 +9212,66 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["prompt_scope"]["terminal_logs_local_private"])
         self.assertNotIn(private_prompt, encoded)
         self.assertTrue(calls)
+
+    def test_infer_full_evidence_prompt_stdin_uses_private_prompt_file(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        private_prompt = "single private full evidence stdin prompt"
+        with patch.object(cli.sys, "stdin", io.StringIO(private_prompt + "\n")):
+            args = cli.parse_args([
+                "infer",
+                "--prompt-stdin",
+                "--full-evidence",
+                "--output-dir",
+                str(output_dir),
+                "--max-new-tokens",
+                "16",
+                "--json",
+            ])
+        prompt_paths: list[Path] = []
+
+        def fake_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertIn("public_swarm_inference_v2_pack.py", command[1])
+            self.assertNotIn("--prompt-text", command)
+            self.assertNotIn(private_prompt, command)
+            self.assertIn("--prompt-file", command)
+            prompt_path = Path(command[command.index("--prompt-file") + 1])
+            prompt_paths.append(prompt_path)
+            self.assertEqual(prompt_path.parent, output_dir.resolve() / ".private")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), private_prompt)
+            return completed({
+                "schema": "public_swarm_inference_v2",
+                "ok": True,
+                "mode": "local",
+                "readiness": {
+                    "local_p2p_generate": {
+                        "route_ready": True,
+                        "distinct_stage_miners": True,
+                        "generation": {
+                            "generated_token_count": 16,
+                            "max_new_tokens": 16,
+                            "generated_text_hash": "sha256:generated",
+                            "request_count": 1,
+                        },
+                        "batch": {
+                            "enabled": False,
+                            "request_count": 1,
+                            "observed_request_count": 1,
+                            "batch_generation_ready": False,
+                        },
+                    }
+                },
+                "diagnosis_codes": ["public_swarm_inference_v2_ready"],
+            })
+
+        report = cli.build_infer(args, runner=fake_runner)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["prompt_scope"]["source"], "prompt-stdin")
+        self.assertNotIn(private_prompt, encoded)
+        self.assertTrue(prompt_paths)
+        self.assertFalse(prompt_paths[0].exists())
+        self.assertFalse((output_dir / ".private").exists())
 
     def test_infer_local_preserves_safe_stream_progress(self) -> None:
         output_dir = Path(self._tmp_dir())

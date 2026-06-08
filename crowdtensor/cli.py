@@ -1092,6 +1092,40 @@ def _infer_prompt_redaction_values(args: argparse.Namespace) -> list[str]:
     return unique_redaction_values(values)
 
 
+def _infer_private_stdin_prompt_file(args: argparse.Namespace, output_dir: Path) -> Path | None:
+    if not bool(getattr(args, "prompt_stdin", False)):
+        return None
+    prompt_text = str(getattr(args, "prompt_text", "") or "").strip()
+    if not prompt_text:
+        return None
+    private_dir = output_dir / ".private"
+    private_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        private_dir.chmod(0o700)
+    except OSError:
+        pass
+    path = private_dir / "infer-stdin-prompt.txt"
+    path.write_text(prompt_text, encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return path
+
+
+def _cleanup_infer_private_prompt_file(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+
+
 def _artifact_entry_from_report_path(
     path_value: Any,
     output_dir: Path,
@@ -7259,6 +7293,11 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         if args.dry_run and _infer_existing_should_attach_preflight(payload, args):
             payload = _attach_infer_existing_preflight(payload, args)
         return _infer_summary_from_payload(args, payload, mode=mode, output_dir=output_dir)
+    private_prompt_file = (
+        _infer_private_stdin_prompt_file(args, output_dir)
+        if mode == "local" and bool(getattr(args, "prompt_stdin", False))
+        else None
+    )
     if not args.full_evidence:
         command = [
             sys.executable,
@@ -7286,6 +7325,8 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         ]
         if getattr(args, "prompt_texts_file", ""):
             command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
+        elif private_prompt_file is not None:
+            command.extend(["--prompt-file", str(private_prompt_file)])
         elif getattr(args, "prompt_file", ""):
             command.extend(["--prompt-file", str(args.prompt_file)])
         elif args.prompt_texts:
@@ -7298,14 +7339,17 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
             command.extend(["--hf-cache-dir", args.hf_cache_dir])
         if not args.json:
             command.append("--keep-private-state")
-        step, payload = run_json_step(
-            "crowdtensor_infer_local_product_loopback",
-            command,
-            runner=runner,
-            cwd=ROOT,
-            timeout_seconds=int(max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 900.0),
-            redact_secrets=prompt_redactions,
-        )
+        try:
+            step, payload = run_json_step(
+                "crowdtensor_infer_local_product_loopback",
+                command,
+                runner=runner,
+                cwd=ROOT,
+                timeout_seconds=int(max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 900.0),
+                redact_secrets=prompt_redactions,
+            )
+        finally:
+            _cleanup_infer_private_prompt_file(private_prompt_file)
         if not payload:
             payload = {
                 "schema": "product_swarm_mvp_check_v1",
@@ -7406,6 +7450,8 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
     ]
     if getattr(args, "prompt_texts_file", ""):
         command.extend(["--prompt-texts-file", str(args.prompt_texts_file)])
+    elif private_prompt_file is not None:
+        command.extend(["--prompt-file", str(private_prompt_file)])
     elif getattr(args, "prompt_file", ""):
         command.extend(["--prompt-file", str(args.prompt_file)])
     elif args.prompt_texts:
@@ -7416,14 +7462,17 @@ def build_infer(args: argparse.Namespace, *, runner: Runner = subprocess.run) ->
         command.append("--stream-generation")
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
-    step, payload = run_json_step(
-        "crowdtensor_infer_local_swarm",
-        command,
-        runner=runner,
-        cwd=ROOT,
-        timeout_seconds=int(max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 1800.0),
-        redact_secrets=prompt_redactions,
-    )
+    try:
+        step, payload = run_json_step(
+            "crowdtensor_infer_local_swarm",
+            command,
+            runner=runner,
+            cwd=ROOT,
+            timeout_seconds=int(max(float(args.timeout_seconds), float(args.startup_timeout), 60.0) + 1800.0),
+            redact_secrets=prompt_redactions,
+        )
+    finally:
+        _cleanup_infer_private_prompt_file(private_prompt_file)
     if not payload:
         payload = {
             "schema": "public_swarm_inference_v2",
