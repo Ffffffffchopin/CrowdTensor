@@ -744,6 +744,16 @@ def markdown_next_command_notes(next_commands: list[Any]) -> list[str]:
             "prompt per non-empty line in `prompts.txt` and replace the placeholder with "
             "`--prompt-texts-file prompts.txt`."
         )
+    if f"--prompt-file {INFER_PROMPT_FILE_PLACEHOLDER}" in command_text:
+        notes.append(
+            "- Prompt file placeholder `prompt.txt` is redacted. Create `prompt.txt` with the local prompt, "
+            "or replace it with a local prompt file path before copying the command."
+        )
+    if f"--prompt-texts-file {INFER_PROMPT_TEXTS_FILE_PLACEHOLDER}" in command_text:
+        notes.append(
+            "- Batch prompt file placeholder `prompts.txt` is redacted. Create `prompts.txt` with one prompt "
+            "per non-empty line, or replace it with a local batch prompt file path before copying the command."
+        )
     if "--prompt-stdin" in command_text and INFER_PROMPT_PLACEHOLDER not in command_text:
         notes.append(
             "- Commands with `--prompt-stdin` read the prompt from stdin. To rerun safely, use "

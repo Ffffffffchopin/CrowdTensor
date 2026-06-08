@@ -2388,6 +2388,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(str(prompt_file), encoded)
         self.assertIn("prompt_hash", encoded)
         self.assertEqual(report["prompt_file"], cli.INFER_PROMPT_FILE_PLACEHOLDER)
+        markdown = (Path(report["saved_summary"]["markdown_path"])).read_text(encoding="utf-8")
+        self.assertIn("Prompt file placeholder `prompt.txt` is redacted", markdown)
+        self.assertIn("Create `prompt.txt` with the local prompt", markdown)
+        self.assertIn("replace it with a local prompt file path", markdown)
 
     def test_generate_accepts_prompt_stdin_without_persisting_prompt_text(self) -> None:
         prompt = "Prompt stdin product request"
@@ -2465,6 +2469,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(str(prompt_file), encoded)
         self.assertIn("prompt_hashes", encoded)
         self.assertEqual(report["prompt_texts_file"], cli.INFER_PROMPT_TEXTS_FILE_PLACEHOLDER)
+        markdown = (Path(report["saved_summary"]["markdown_path"])).read_text(encoding="utf-8")
+        self.assertIn("Batch prompt file placeholder `prompts.txt` is redacted", markdown)
+        self.assertIn("Create `prompts.txt` with one prompt per non-empty line", markdown)
+        self.assertIn("replace it with a local batch prompt file path", markdown)
 
     def test_generate_prompt_file_next_commands_keep_file_source_without_prompt_text(self) -> None:
         prompt = "Generate file prompt stays private"
