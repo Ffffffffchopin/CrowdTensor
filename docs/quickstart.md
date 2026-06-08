@@ -168,7 +168,9 @@ those warnings in `What To Do Next`. The adjacent `inspect_first` line points to
 the Markdown summary to open first. The adjacent `review_next` line repeats the
 safe recommended command near that summary; human terminal output renders it
 with local prompt sources for copying, using a `printf` pipe placeholder for
-`--prompt-stdin`, while JSON/Markdown artifacts keep prompt placeholders.
+`--prompt-stdin`. Saved Markdown command lines also use that stdin pipe
+placeholder, while JSON fields and saved Markdown prompt values keep prompt
+placeholders.
 With `--shareable-terminal` and `--prompt-stdin`, terminal output keeps a
 copyable `printf` pipe placeholder without expanding the real stdin prompt; use
 it for reruns.
