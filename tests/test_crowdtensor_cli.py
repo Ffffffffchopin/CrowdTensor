@@ -6,6 +6,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 import shlex
 import tempfile
@@ -2807,6 +2808,29 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("prompt_hash", encoded)
         self.assertFalse(report["output_dir_explicit"])
         self.assertFalse(any("--output-dir" in item["command_line"] for item in report["next_commands"]))
+
+    def test_product_generate_detects_output_dir_from_real_argv(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        argv = [
+            "crowdtensor",
+            "generate",
+            "--prompt-text",
+            "CrowdTensor prompt",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--dry-run",
+            "--skip-live-preflight",
+            f"--output-dir={output_dir}",
+        ]
+
+        with patch.object(sys, "argv", argv):
+            args = cli.parse_args()
+
+        report = cli.build_product_generate(args)
+
+        self.assertTrue(report["output_dir_explicit"])
+        self.assertTrue(any(f"--output-dir {output_dir}" in item["command_line"] for item in report["next_commands"]))
+        self.assertEqual(report["artifact_summary"]["inspect_first"], str(output_dir / "generate_summary.md"))
 
     def test_product_generate_dry_run_checks_coordinator_and_stage_preflight(self) -> None:
         args = cli.parse_args([

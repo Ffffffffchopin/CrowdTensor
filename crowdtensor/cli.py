@@ -16314,7 +16314,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if args.idle_sleep <= 0:
             raise SystemExit("--idle-sleep must be positive")
     if args.command == "generate":
-        args.output_dir_explicit = bool(argv and "--output-dir" in argv)
+        args.output_dir_explicit = _flag_explicit(raw_argv, "--output-dir")
         prompt_sources = [
             name
             for name, value in [
