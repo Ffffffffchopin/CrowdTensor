@@ -150,6 +150,220 @@ def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "",
     return entry
 
 
+def shell_command(parts: list[Any]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in parts if str(part))
+
+
+def command_entry(
+    label: str,
+    command: list[Any],
+    *,
+    reason: str = "",
+    requires_private_credentials: bool = False,
+    side_effectful: bool = False,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "label": label,
+        "command": [str(part) for part in command],
+        "command_line": shell_command(command),
+        "public_artifact_safe": True,
+    }
+    if reason:
+        entry["reason"] = reason
+    if requires_private_credentials:
+        entry["requires_private_credentials"] = True
+        entry["credential_note"] = (
+            "Use local private operator credentials when running this command; "
+            "token values are intentionally excluded from public artifacts."
+        )
+    if side_effectful:
+        entry["side_effectful"] = True
+    return entry
+
+
+def artifact_command(output_dir: Path, filename: str, *, lines: str = "1,220p") -> list[str]:
+    return ["sed", "-n", lines, str(output_dir / filename)]
+
+
+def artifact_summary(output_dir: Path) -> dict[str, Any]:
+    paths = {
+        "inspect_first": output_dir / "real_llm_live_rc.md",
+        "summary_json": output_dir / "real_llm_live_rc.json",
+        "summary_markdown": output_dir / "real_llm_live_rc.md",
+        "support_bundle": output_dir / "support_bundle.json",
+    }
+    present = sum(1 for path in paths.values() if path.is_file())
+    return {
+        **{name: str(path) for name, path in paths.items()},
+        "artifact_count": len(paths),
+        "present_artifact_count": present,
+        "shareable_paths": [
+            str(paths["summary_json"]),
+            str(paths["summary_markdown"]),
+            str(paths["support_bundle"]),
+        ],
+        "public_artifact_safe": True,
+    }
+
+
+def real_llm_live_rc_command(args: argparse.Namespace, output_dir: Path, mode: str) -> list[Any]:
+    command: list[Any] = [
+        "crowdtensor",
+        "real-llm-live-rc",
+        "--mode",
+        mode,
+        "--output-dir",
+        str(output_dir),
+        "--public-host",
+        getattr(args, "public_host", DEFAULT_PUBLIC_HOST),
+        "--bind-host",
+        getattr(args, "bind_host", "0.0.0.0"),
+        "--port",
+        str(getattr(args, "port", DEFAULT_PORT)),
+        "--miner-id",
+        getattr(args, "miner_id", "kaggle-real-llm"),
+        "--request-count",
+        str(getattr(args, "request_count", 1)),
+        "--max-new-tokens",
+        str(getattr(args, "max_new_tokens", 1)),
+        "--hf-model-id",
+        getattr(args, "hf_model_id", DEFAULT_MODEL_ID),
+        "--real-llm-backend",
+        getattr(args, "real_llm_backend", REAL_LLM_BACKEND_CPU),
+        "--real-llm-partition-mode",
+        getattr(args, "real_llm_partition_mode", "full"),
+        "--timeout-seconds",
+        str(getattr(args, "timeout_seconds", 300.0)),
+        "--remote-timeout-seconds",
+        str(getattr(args, "remote_timeout_seconds", 180.0)),
+        "--startup-timeout",
+        str(getattr(args, "startup_timeout", 30.0)),
+        "--process-exit-timeout",
+        str(getattr(args, "process_exit_timeout", 20.0)),
+        "--poll-interval",
+        str(getattr(args, "poll_interval", 1.0)),
+        "--http-timeout",
+        str(getattr(args, "http_timeout", 30.0)),
+        "--lease-seconds",
+        str(getattr(args, "lease_seconds", 15.0)),
+        "--compute-seconds",
+        str(getattr(args, "compute_seconds", 0.2)),
+        "--heartbeat-interval",
+        str(getattr(args, "heartbeat_interval", 0.1)),
+        "--idle-sleep",
+        str(getattr(args, "idle_sleep", 0.5)),
+        "--max-request-attempts",
+        str(getattr(args, "max_request_attempts", 120)),
+    ]
+    if getattr(args, "hf_cache_dir", ""):
+        command.extend(["--hf-cache-dir", "HF_CACHE_DIR"])
+    if mode == MODE_EXTERNAL_EXISTING:
+        command.extend([
+            "--coordinator-url",
+            getattr(args, "coordinator_url", "") or "COORDINATOR_URL",
+            "--observer-token",
+            "$CROWDTENSOR_OBSERVER_TOKEN",
+            "--admin-token",
+            "$CROWDTENSOR_ADMIN_TOKEN",
+        ])
+    elif getattr(args, "coordinator_url", ""):
+        command.extend(["--coordinator-url", "COORDINATOR_URL"])
+    command.append("--json")
+    return command
+
+
+def output_request_summary() -> dict[str, Any]:
+    return {
+        "include_output": False,
+        "raw_prompt_public": False,
+        "raw_generation_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "raw_activation_public": False,
+        "local_output_display_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Real LLM Live RC artifacts summarize tiny GPT split readiness, package state, "
+            "runtime classification, hashes/counts, stage assignment, and diagnostics only. "
+            "They do not include raw prompt text, generated text, token IDs, activations, or credentials."
+        ),
+    }
+
+
+def prompt_scope_summary(report: dict[str, Any]) -> dict[str, Any]:
+    workload = report.get("workload") if isinstance(report.get("workload"), dict) else {}
+    prompt_count = int(workload.get("prompt_text_count") or len(DEFAULT_PROMPTS))
+    return {
+        "source": "built-in-fixed-prompts",
+        "prompt_count": prompt_count,
+        "inline_prompt_text": False,
+        "terminal_next_commands_local_private": False,
+        "terminal_logs_local_private": False,
+        "saved_artifacts_prompt_placeholders": True,
+        "saved_artifacts_public_safe": True,
+        "prompt_file_path_public": False,
+        "raw_prompt_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Real LLM Live RC uses fixed built-in tiny-GPT prompts. Public artifacts record "
+            "prompt count/source only and exclude raw prompt text."
+        ),
+    }
+
+
+def answer_scope_summary() -> dict[str, Any]:
+    return {
+        "scope_state": "no-local-answer",
+        "terminal_only": False,
+        "visible_in_terminal": False,
+        "saved_json_display": "hash-or-counts-only",
+        "saved_markdown_display": "hash-or-counts-only",
+        "json_stdout_display": "summary-only-json",
+        "raw_prompt_public": False,
+        "raw_generation_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "raw_activation_public": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "This Live RC report is shareable operator evidence, not an answer transcript; "
+            "raw generated text, token IDs, activations, credentials, leases, and idempotency keys are excluded."
+        ),
+    }
+
+
+def shareable_summary() -> dict[str, Any]:
+    return {
+        "saved_artifacts_public_safe": True,
+        "raw_prompt_public": False,
+        "raw_generation_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "raw_activation_public": False,
+        "local_output_display_only": False,
+        "answer_scope_state": "no-local-answer",
+        "local_answer_terminal_only": False,
+        "public_artifact_safe": True,
+        "summary": (
+            "Share real_llm_live_rc.json/md and support_bundle.json; they contain "
+            "tiny-model split readiness evidence and diagnostics, not prompts, outputs, activations, or credentials."
+        ),
+    }
+
+
+def prompt_scope_text(prompt_scope: dict[str, Any]) -> str:
+    return (
+        f"source={prompt_scope.get('source') or 'unknown'} "
+        f"count={prompt_scope.get('prompt_count')} "
+        f"inline_prompt_text={bool(prompt_scope.get('inline_prompt_text'))} "
+        f"terminal_next_commands_local_private={bool(prompt_scope.get('terminal_next_commands_local_private'))} "
+        f"saved_artifacts_prompt_placeholders={bool(prompt_scope.get('saved_artifacts_prompt_placeholders'))} "
+        f"prompt_file_path_public={bool(prompt_scope.get('prompt_file_path_public'))} "
+        f"raw_prompt_public={bool(prompt_scope.get('raw_prompt_public'))} "
+        f"public_artifact_safe={bool(prompt_scope.get('public_artifact_safe'))}"
+    )
+
+
 def load_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -943,8 +1157,300 @@ def safety_summary(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: list[str]) -> dict[str, Any]:
+def not_completed_items(report: dict[str, Any]) -> list[str]:
+    runtime = report.get("runtime_classification") if isinstance(report.get("runtime_classification"), dict) else {}
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    codes = set(str(code) for code in (report.get("diagnosis_codes") or []) if code)
+    mode = str(report.get("mode") or "")
+    existing = [str(item) for item in (report.get("not_completed") or []) if str(item)]
+    if mode == MODE_KAGGLE_GENERATED:
+        items: list[tuple[str, Any]] = [
+            ("Kaggle stage upload packages ready", "kaggle_real_llm_stage_upload_packages_ready" in codes),
+            ("Live RC prepare ready", "real_llm_live_rc_prepare_ready" in codes),
+            ("preparation-only classification present", runtime.get("preparation_only") is True),
+            ("external verification still pending", "real_llm_live_rc_ready" in codes),
+        ]
+    else:
+        items = [
+            ("Real LLM Live RC ready", report.get("ok") is True and "real_llm_live_rc_ready" in codes),
+            ("remote real LLM sharded route ready", "remote_real_llm_sharded_ready" in codes),
+            ("real LLM sharded evidence ready", "real_llm_sharded_ready" in codes),
+            ("real LLM artifact ready", "real_llm_artifact_ready" in codes),
+            ("stage 0 accepted", "stage_0_accepted" in codes or "kaggle_real_llm_stage0_seen" in codes),
+            ("stage 1 accepted", "stage_1_accepted" in codes or "kaggle_real_llm_stage1_seen" in codes),
+            ("activation transport ready", "activation_transport_ready" in codes),
+            ("baseline match ready", "baseline_match" in codes),
+            ("decoded tokens match ready", "decoded_tokens_match" in codes),
+            ("distinct stage miners ready", "distinct_stage_miners" in codes),
+            ("stage assignment valid", "stage_assignment_valid" in codes),
+        ]
+        if mode == MODE_LOCAL_GENERATED:
+            items.extend([
+                ("local generated stage upload stand-ins ready", "local_generated_real_llm_stage_upload_standins_ready" in codes),
+                ("local generated stage upload packages ready", "local_generated_real_llm_stage_upload_packages_ready" in codes),
+                ("local stand-in classification present", runtime.get("local_generated_stage_upload_standins") is True),
+            ])
+        elif mode == MODE_EXTERNAL_EXISTING:
+            items.extend([
+                ("external runtime verified", runtime.get("external_runtime_verified") is True or "external_runtime_verified" in codes),
+                ("Kaggle real LLM sharded ready", "kaggle_real_llm_sharded_ready" in codes),
+            ])
+    items.extend([
+        ("read-only safety boundary present", safety.get("read_only") is True),
+        ("activation redaction safety present", safety.get("raw_activation_redacted") is True),
+        ("not production boundary present", safety.get("not_production") is True),
+        ("not P2P boundary present", safety.get("not_p2p") is True),
+        ("not large-model serving boundary present", safety.get("not_large_model_serving") is True),
+    ])
+    for step in report.get("steps") or []:
+        if isinstance(step, dict) and step.get("ok") is not True:
+            items.append((f"step {step.get('name') or 'step'} passed", False))
+    missing = list(existing)
+    seen = set(missing)
+    for label, ready in items:
+        if ready is True or label in seen:
+            continue
+        missing.append(label)
+        seen.add(label)
+    return missing
+
+
+def recommended_next_command(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    missing: list[str],
+) -> dict[str, Any]:
+    mode = str(report.get("mode") or args.mode)
+    if report.get("ok") and mode == MODE_KAGGLE_GENERATED:
+        return command_entry(
+            "verify external real LLM Live RC runtime",
+            real_llm_live_rc_command(args, output_dir, MODE_EXTERNAL_EXISTING),
+            reason="run_external_existing_after_package",
+            requires_private_credentials=True,
+            side_effectful=True,
+        )
+    if report.get("ok"):
+        return command_entry(
+            "inspect real LLM Live RC evidence",
+            artifact_command(output_dir, "real_llm_live_rc.md"),
+            reason="review_artifacts",
+        )
+    if mode == MODE_KAGGLE_GENERATED:
+        return command_entry(
+            "rerun real LLM Live RC package generation",
+            real_llm_live_rc_command(args, output_dir, MODE_KAGGLE_GENERATED),
+            reason="fix_package_blockers" if missing else "rerun_package_generation",
+            side_effectful=True,
+        )
+    if mode == MODE_EXTERNAL_EXISTING:
+        return command_entry(
+            "rerun external real LLM Live RC verification",
+            real_llm_live_rc_command(args, output_dir, MODE_EXTERNAL_EXISTING),
+            reason="fix_external_runtime_blockers" if missing else "rerun_external_existing",
+            requires_private_credentials=True,
+            side_effectful=True,
+        )
+    return command_entry(
+        "rerun local-generated real LLM Live RC",
+        real_llm_live_rc_command(args, output_dir, MODE_LOCAL_GENERATED),
+        reason="fix_local_generated_blockers" if missing else "rerun_local_generated",
+        side_effectful=True,
+    )
+
+
+def next_commands(
+    report: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+) -> list[dict[str, Any]]:
+    mode = str(report.get("mode") or args.mode)
+    commands = [
+        command_entry(
+            "inspect shareable summary",
+            artifact_command(output_dir, "real_llm_live_rc.md"),
+            reason="review_artifacts",
+        ),
+        command_entry(
+            "inspect support bundle",
+            artifact_command(output_dir, "support_bundle.json", lines="1,220p"),
+            reason="inspect_diagnostics",
+        ),
+    ]
+    if report.get("ok"):
+        commands.append(command_entry(
+            f"refresh {mode} proof",
+            real_llm_live_rc_command(args, output_dir, mode),
+            reason="refresh_real_llm_live_rc",
+            requires_private_credentials=mode == MODE_EXTERNAL_EXISTING,
+            side_effectful=True,
+        ))
+    else:
+        commands.append(dict(recommended))
+    if mode == MODE_KAGGLE_GENERATED:
+        commands.append(dict(recommended))
+    elif mode != MODE_EXTERNAL_EXISTING:
+        commands.append(command_entry(
+            "prepare Kaggle stage upload packages",
+            real_llm_live_rc_command(args, output_dir, MODE_KAGGLE_GENERATED),
+            reason="prepare_external_stage_uploads",
+            side_effectful=True,
+        ))
+    return commands
+
+
+def user_status(*, ready: bool, mode: str, recommended: dict[str, Any], missing: list[str]) -> dict[str, Any]:
+    if ready and mode == MODE_KAGGLE_GENERATED:
+        state = "package-ready"
+        headline = "Real LLM Live RC stage upload packages are ready; external verification is next."
+        next_step = "run_external_existing_verification"
+    elif ready:
+        state = "ready"
+        headline = "Real LLM Live RC evidence is ready."
+        next_step = "review_artifacts"
+    elif mode == MODE_KAGGLE_GENERATED:
+        state = "package-blocked"
+        headline = "Real LLM Live RC package generation needs attention."
+        next_step = "fix_package_blockers"
+    elif mode == MODE_EXTERNAL_EXISTING:
+        state = "external-existing-blocked"
+        headline = "Real LLM Live RC external verification needs attention."
+        next_step = "fix_external_runtime_blockers"
+    else:
+        state = "local-generated-blocked"
+        headline = "Real LLM Live RC local-generated proof needs attention."
+        next_step = "fix_local_generated_blockers"
+    return {
+        "state": state,
+        "headline": headline,
+        "next_step": next_step,
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def review_summary(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    recommended: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    ready = bool(report.get("ok"))
+    mode = str(report.get("mode") or "")
+    codes = [str(code) for code in (report.get("diagnosis_codes") or []) if code]
+    return {
+        "schema": "real_llm_live_rc_review_summary_v1",
+        "state": "package-ready" if ready and mode == MODE_KAGGLE_GENERATED else ("ready" if ready else "blocked"),
+        "headline": (
+            "Real LLM Live RC stage upload packages are ready; external verification is next."
+            if ready and mode == MODE_KAGGLE_GENERATED
+            else ("Real LLM Live RC evidence is ready." if ready else "Real LLM Live RC evidence needs attention.")
+        ),
+        "mode": report.get("mode"),
+        "next_step": "run_external_existing_verification" if ready and mode == MODE_KAGGLE_GENERATED else ("review_artifacts" if ready else "fix_blockers"),
+        "inspect_first": str(output_dir / "real_llm_live_rc.md"),
+        "support_bundle": str(output_dir / "support_bundle.json"),
+        "recommended_label": recommended.get("label") or "none",
+        "recommended_reason": recommended.get("reason") or "none",
+        "next_command": recommended.get("command_line") or "",
+        "primary_code": (
+            "real_llm_live_rc_prepare_ready"
+            if ready and mode == MODE_KAGGLE_GENERATED
+            else ("real_llm_live_rc_ready" if ready else (codes[0] if codes else "real_llm_live_rc_blocked"))
+        ),
+        "attention": "external verification pending" if ready and mode == MODE_KAGGLE_GENERATED else ("none" if ready else (missing[0] if missing else "real_llm_live_rc_blocked")),
+        "attention_detail": "; ".join(missing[:6]),
+        "not_completed_count": len(missing),
+        "public_artifact_safe": True,
+    }
+
+
+def attach_user_guidance(report: dict[str, Any], args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    missing = not_completed_items(report)
+    recommended = recommended_next_command(report, args, output_dir=output_dir, missing=missing)
+    report["not_completed"] = missing
+    report["recommended_next_command"] = recommended
+    report["next_commands"] = next_commands(report, args, output_dir=output_dir, recommended=recommended)
+    report["user_status"] = user_status(
+        ready=bool(report.get("ok")),
+        mode=str(report.get("mode") or args.mode),
+        recommended=recommended,
+        missing=missing,
+    )
+    report["review_summary"] = review_summary(
+        report,
+        output_dir=output_dir,
+        recommended=recommended,
+        missing=missing,
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    return report
+
+
+def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "real_llm_live_rc_support_bundle_v1",
+        "ok": report.get("ok"),
+        "mode": report.get("mode"),
+        "output_dir": report.get("output_dir"),
+        "coordinator_url": report.get("coordinator_url"),
+        "diagnosis_codes": report.get("diagnosis_codes"),
+        "runtime_classification": report.get("runtime_classification"),
+        "workload": report.get("workload"),
+        "artifact": report.get("artifact"),
+        "stage_packages": report.get("stage_packages"),
+        "process_summary": report.get("process_summary"),
+        "steps": report.get("steps"),
+        "payload_summaries": report.get("payload_summaries"),
+        "review_summary": report.get("review_summary"),
+        "user_status": report.get("user_status"),
+        "recommended_next_command": report.get("recommended_next_command"),
+        "next_commands": report.get("next_commands"),
+        "artifact_summary": report.get("artifact_summary"),
+        "not_completed": report.get("not_completed"),
+        "output_request": report.get("output_request"),
+        "prompt_scope": report.get("prompt_scope"),
+        "answer_scope": report.get("answer_scope"),
+        "shareable_summary": report.get("shareable_summary"),
+        "safety": report.get("safety"),
+        "operator_action": report.get("operator_action"),
+        "limitations": report.get("limitations"),
+        "public_artifact_safe": True,
+    }
+
+
+def persist_report(
+    report: dict[str, Any],
+    *,
+    output_dir: Path,
+    args: argparse.Namespace,
+    secret_values: list[str],
+) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    report["output_request"] = output_request_summary()
+    report["prompt_scope"] = prompt_scope_summary(report)
+    report["answer_scope"] = answer_scope_summary()
+    report["shareable_summary"] = shareable_summary()
+    report = attach_user_guidance(report, args, output_dir=output_dir)
+    support_path = output_dir / "support_bundle.json"
+    report.setdefault("artifacts", {})
+    report["artifacts"]["support_bundle_json"] = artifact_entry(
+        support_path,
+        output_dir,
+        kind="real_llm_live_rc_support_bundle",
+        schema="real_llm_live_rc_support_bundle_v1",
+        ok=report.get("ok"),
+    )
+    report["artifact_summary"] = artifact_summary(output_dir)
+    if isinstance(report.get("review_summary"), dict):
+        report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+        report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
     report = support_bundle.sanitize(redact_values(report, secret_values))
     encoded = json.dumps(report, sort_keys=True)
     leaks = [fragment for fragment in SECRET_FRAGMENTS if fragment in encoded]
@@ -957,10 +1463,18 @@ def persist_report(report: dict[str, Any], *, output_dir: Path, secret_values: l
     md_path = output_dir / "real_llm_live_rc.md"
     json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     md_path.write_text(render_markdown(report), encoding="utf-8")
+    support_path.write_text(json.dumps(support_bundle_payload(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if "artifacts" in report:
         report["artifacts"]["real_llm_live_rc_json"]["present"] = True
         report["artifacts"]["real_llm_live_rc_markdown"]["present"] = True
+        report["artifacts"]["support_bundle_json"]["present"] = support_path.is_file()
+        report["artifact_summary"] = artifact_summary(output_dir)
+        if isinstance(report.get("review_summary"), dict):
+            report["review_summary"]["inspect_first"] = report["artifact_summary"]["inspect_first"]
+            report["review_summary"]["support_bundle"] = report["artifact_summary"]["support_bundle"]
         json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        md_path.write_text(render_markdown(report), encoding="utf-8")
+        support_path.write_text(json.dumps(support_bundle_payload(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
 
 
@@ -1016,7 +1530,7 @@ def build_kaggle_generated(args: argparse.Namespace, *, output_dir: Path) -> dic
             "No P2P routing, NAT traversal, GPU/TPU pooling, GGUF/llama.cpp serving, large-model serving, training, or arbitrary prompt serving.",
         ],
     }
-    return persist_report(report, output_dir=output_dir, secret_values=secret_values)
+    return persist_report(report, output_dir=output_dir, args=args, secret_values=secret_values)
 
 
 def build_local_generated(
@@ -1182,7 +1696,7 @@ def build_local_generated(
             "No P2P routing, NAT traversal, GPU/TPU pooling, GGUF/llama.cpp serving, large-model serving, training, or arbitrary prompt serving.",
         ],
     }
-    return persist_report(report, output_dir=output_dir, secret_values=secret_values)
+    return persist_report(report, output_dir=output_dir, args=args, secret_values=secret_values)
 
 
 def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> dict[str, Any]:
@@ -1259,7 +1773,7 @@ def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runne
             "No P2P routing, NAT traversal, GPU/TPU pooling, GGUF/llama.cpp serving, large-model serving, training, or arbitrary prompt serving.",
         ],
     }
-    return persist_report(report, output_dir=output_dir, secret_values=secret_values)
+    return persist_report(report, output_dir=output_dir, args=args, secret_values=secret_values)
 
 
 def build_report(
@@ -1280,6 +1794,15 @@ def build_report(
 def render_markdown(report: dict[str, Any]) -> str:
     runtime = report.get("runtime_classification") or {}
     workload = report.get("workload") or {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    user = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
+    next_items = report.get("next_commands") if isinstance(report.get("next_commands"), list) else []
     lines = [
         "# CrowdTensor Real Small-LLM Sharded Inference Live RC",
         "",
@@ -1293,13 +1816,68 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- local_generated_stage_upload_standins: `{runtime.get('local_generated_stage_upload_standins')}`",
         f"- external_runtime_verified: `{runtime.get('external_runtime_verified')}`",
         "",
+        "## Review",
+        "",
+        f"- state: `{review.get('state')}`",
+        f"- status: `{user.get('headline')}`",
+        f"- next step: `{review.get('next_step')}`",
+        f"- inspect first: `{review.get('inspect_first')}`",
+        f"- recommended: `{recommended.get('label')}` reason=`{recommended.get('reason')}`",
+        f"- recommended command: `{recommended.get('command_line')}`",
+        f"- not completed count: `{review.get('not_completed_count')}`",
+        "",
+        "## What To Do Next",
+        "",
+    ]
+    if next_items:
+        lines.extend(
+            (
+                f"- {item.get('label')}: `{item.get('command_line')}`"
+                + (" (requires private credentials; see runbook)" if item.get("requires_private_credentials") else "")
+                + (" side_effectful=`True`" if item.get("side_effectful") else "")
+            )
+            for item in next_items
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Output Scope",
+        "",
+        f"- include output: `{output_request.get('include_output')}`",
+        f"- output request note: {output_request.get('summary') or 'Public artifacts summarize real LLM Live RC evidence only and do not include answer text.'}",
+        f"- prompt scope: `{prompt_scope_text(prompt_scope)}`",
+        f"- prompt scope note: {prompt_scope.get('summary') or 'Public artifacts record prompt source/count only.'}",
+        f"- answer scope: `{answer_scope.get('scope_state')}`",
+        f"- answer scope note: {answer_scope.get('summary') or 'Public artifacts contain no local answer transcript.'}",
+        f"- saved JSON display: `{answer_scope.get('saved_json_display')}`",
+        f"- saved Markdown display: `{answer_scope.get('saved_markdown_display')}`",
+        f"- shareable: `saved_artifacts={shareable.get('saved_artifacts_public_safe')} raw_prompt_public={shareable.get('raw_prompt_public')} raw_generated_text_public={shareable.get('raw_generated_text_public')} generated_token_ids_public={shareable.get('generated_token_ids_public')} raw_activation_public={shareable.get('raw_activation_public')} answer_scope_state={shareable.get('answer_scope_state')} local_answer_terminal_only={shareable.get('local_answer_terminal_only')}`",
+        "",
+        "## Artifact Summary",
+        "",
+        f"- inspect first: `{artifact_report.get('inspect_first')}`",
+        f"- summary JSON: `{artifact_report.get('summary_json')}`",
+        f"- summary Markdown: `{artifact_report.get('summary_markdown')}`",
+        f"- support bundle: `{artifact_report.get('support_bundle')}`",
+        f"- present: `{artifact_report.get('present_artifact_count')}` / `{artifact_report.get('artifact_count')}`",
+        f"- public artifact safe: `{artifact_report.get('public_artifact_safe')}`",
+        "",
         "## Diagnosis",
         "",
         ", ".join(f"`{code}`" for code in report.get("diagnosis_codes") or []) or "`none`",
         "",
+        "## Not Completed",
+        "",
+    ])
+    not_completed = report.get("not_completed") or []
+    lines.extend(f"- {item}" for item in not_completed) if not_completed else lines.append("- none")
+    lines.extend([
+        "",
         "## Stage Packages",
         "",
-    ]
+    ])
     for package in report.get("stage_packages") or []:
         lines.append(
             f"- `{package.get('stage_role')}`: env=`{package.get('miner_env_present')}` "
@@ -1386,16 +1964,99 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def print_human(report: dict[str, Any]) -> None:
+    user_status_report = report.get("user_status") if isinstance(report.get("user_status"), dict) else {}
+    review = report.get("review_summary") if isinstance(report.get("review_summary"), dict) else {}
+    recommended = report.get("recommended_next_command") if isinstance(report.get("recommended_next_command"), dict) else {}
+    artifact_report = report.get("artifact_summary") if isinstance(report.get("artifact_summary"), dict) else {}
+    output_request = report.get("output_request") if isinstance(report.get("output_request"), dict) else {}
+    prompt_scope = report.get("prompt_scope") if isinstance(report.get("prompt_scope"), dict) else {}
+    answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
+    shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     print("CrowdTensor real small-LLM live two-node RC")
     print(f"  ok: {report.get('ok')}")
     print(f"  schema: {report.get('schema')}")
     print(f"  mode: {report.get('mode')}")
     print(f"  coordinator: {report.get('coordinator_url')}")
     print(f"  output: {report.get('output_dir')}")
+    if user_status_report:
+        print(
+            "  status: "
+            f"{user_status_report.get('state')} "
+            f"next={user_status_report.get('next_step')} "
+            f"recommended={user_status_report.get('recommended_label')}"
+        )
+    if review:
+        print(
+            "  review: "
+            f"state={review.get('state')} next={review.get('next_step')} "
+            f"inspect={review.get('inspect_first')} attention={review.get('attention')}"
+        )
+        print(f"  review_next: {review.get('next_command') or 'none'}")
+    if recommended:
+        print(
+            "  recommended_next: "
+            f"{recommended.get('label')} reason={recommended.get('reason')} {recommended.get('command_line')}"
+        )
+    if prompt_scope:
+        print(f"  prompt_scope: {prompt_scope_text(prompt_scope)}")
+        if prompt_scope.get("summary"):
+            print(f"  prompt_scope_note: {prompt_scope.get('summary')}")
+    if output_request:
+        print(
+            "  output_request: "
+            f"include_output={output_request.get('include_output')} "
+            f"raw_prompt_public={output_request.get('raw_prompt_public')} "
+            f"raw_generated_text_public={output_request.get('raw_generated_text_public')} "
+            f"generated_token_ids_public={output_request.get('generated_token_ids_public')} "
+            f"raw_activation_public={output_request.get('raw_activation_public')} "
+            f"public_artifact_safe={output_request.get('public_artifact_safe')}"
+        )
+    if answer_scope:
+        print(
+            "  answer_scope: "
+            f"state={answer_scope.get('scope_state')} "
+            f"terminal_only={answer_scope.get('terminal_only')} "
+            f"saved_json={answer_scope.get('saved_json_display')} "
+            f"saved_markdown={answer_scope.get('saved_markdown_display')} "
+            f"raw_generated_text_public={answer_scope.get('raw_generated_text_public')} "
+            f"generated_token_ids_public={answer_scope.get('generated_token_ids_public')} "
+            f"raw_activation_public={answer_scope.get('raw_activation_public')} "
+            f"public_artifact_safe={answer_scope.get('public_artifact_safe')}"
+        )
+        if answer_scope.get("summary"):
+            print(f"  answer_scope_note: {answer_scope.get('summary')}")
+    if shareable:
+        print(
+            "  shareable: "
+            f"saved_artifacts={shareable.get('saved_artifacts_public_safe')} "
+            f"raw_prompt_public={shareable.get('raw_prompt_public')} "
+            f"raw_generated_text_public={shareable.get('raw_generated_text_public')} "
+            f"generated_token_ids_public={shareable.get('generated_token_ids_public')} "
+            f"raw_activation_public={shareable.get('raw_activation_public')} "
+            f"answer_scope_state={shareable.get('answer_scope_state')} "
+            f"terminal_only={shareable.get('local_answer_terminal_only')} "
+            f"public_artifact_safe={shareable.get('public_artifact_safe')}"
+        )
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
     runtime = report.get("runtime_classification") or {}
     print(f"  local stand-in: {runtime.get('local_generated_stage_upload_standins')}")
     print(f"  external runtime: {runtime.get('external_runtime_verified')}")
+    for index, item in enumerate((report.get("next_commands") or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        suffix = ""
+        if item.get("requires_private_credentials"):
+            suffix += " (requires private credentials)"
+        if item.get("side_effectful"):
+            suffix += " side_effectful=True"
+        print(f"  next[{index}] {item.get('label')}: {item.get('command_line')}{suffix}")
+    if artifact_report:
+        print(
+            "  artifacts: "
+            f"present={artifact_report.get('present_artifact_count')}/{artifact_report.get('artifact_count')} "
+            f"support={artifact_report.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_report.get('public_artifact_safe'))}"
+        )
 
 
 def main() -> None:

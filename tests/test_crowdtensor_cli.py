@@ -19057,6 +19057,113 @@ class CrowdTensorCliTests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertEqual(payload["schema"], "real_llm_live_rc_v1")
 
+    def test_print_real_llm_live_rc_outputs_guidance_summary(self) -> None:
+        report = {
+            "schema": "real_llm_live_rc_v1",
+            "cli_schema": "real_llm_live_rc_cli_v1",
+            "ok": True,
+            "mode": "local-generated",
+            "coordinator_url": "http://127.0.0.1:9184",
+            "output_dir": str(Path(self._tmp_dir())),
+            "user_status": {
+                "state": "ready",
+                "headline": "Real LLM Live RC evidence is ready.",
+                "next_step": "review_artifacts",
+                "recommended_label": "inspect real LLM Live RC evidence",
+                "recommended_reason": "review_artifacts",
+                "public_artifact_safe": True,
+            },
+            "review_summary": {
+                "schema": "real_llm_live_rc_review_summary_v1",
+                "state": "ready",
+                "next_step": "review_artifacts",
+                "inspect_first": "/tmp/real-llm-live-rc/real_llm_live_rc.md",
+                "support_bundle": "/tmp/real-llm-live-rc/support_bundle.json",
+                "recommended_label": "inspect real LLM Live RC evidence",
+                "recommended_reason": "review_artifacts",
+                "next_command": "sed -n 1,220p /tmp/real-llm-live-rc/real_llm_live_rc.md",
+                "attention": "none",
+                "primary_code": "real_llm_live_rc_ready",
+                "public_artifact_safe": True,
+            },
+            "recommended_next_command": {
+                "label": "inspect real LLM Live RC evidence",
+                "reason": "review_artifacts",
+                "command_line": "sed -n 1,220p /tmp/real-llm-live-rc/real_llm_live_rc.md",
+            },
+            "next_commands": [
+                {
+                    "label": "inspect shareable summary",
+                    "command_line": "sed -n 1,220p /tmp/real-llm-live-rc/real_llm_live_rc.md",
+                },
+                {
+                    "label": "inspect support bundle",
+                    "command_line": "sed -n 1,220p /tmp/real-llm-live-rc/support_bundle.json",
+                },
+            ],
+            "artifact_summary": {
+                "present_artifact_count": 4,
+                "artifact_count": 4,
+                "support_bundle": "/tmp/real-llm-live-rc/support_bundle.json",
+                "public_artifact_safe": True,
+            },
+            "output_request": {
+                "include_output": False,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "raw_activation_public": False,
+                "public_artifact_safe": True,
+            },
+            "prompt_scope": {
+                "source": "built-in-fixed-prompts",
+                "prompt_count": 2,
+                "inline_prompt_text": False,
+                "terminal_next_commands_local_private": False,
+                "saved_artifacts_prompt_placeholders": True,
+                "prompt_file_path_public": False,
+                "raw_prompt_public": False,
+                "public_artifact_safe": True,
+            },
+            "answer_scope": {
+                "scope_state": "no-local-answer",
+                "saved_json_display": "hash-or-counts-only",
+                "saved_markdown_display": "hash-or-counts-only",
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "raw_activation_public": False,
+                "public_artifact_safe": True,
+            },
+            "shareable_summary": {
+                "saved_artifacts_public_safe": True,
+                "raw_prompt_public": False,
+                "raw_generated_text_public": False,
+                "generated_token_ids_public": False,
+                "raw_activation_public": False,
+                "answer_scope_state": "no-local-answer",
+            },
+            "diagnosis_codes": ["real_llm_live_rc_ready"],
+            "runtime_classification": {
+                "local_generated_stage_upload_standins": True,
+                "external_runtime_verified": False,
+            },
+            "artifacts": {},
+        }
+        with patch("builtins.print") as mocked_print:
+            cli.print_real_llm_live_rc(report)
+
+        rendered = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
+        self.assertIn("status: ready", rendered)
+        self.assertIn("review: state=ready", rendered)
+        self.assertIn("recommended_next: inspect real LLM Live RC evidence", rendered)
+        self.assertIn("next[1] inspect shareable summary", rendered)
+        self.assertIn("artifacts: present=4/4", rendered)
+        self.assertIn("prompt_scope: source=built-in-fixed-prompts", rendered)
+        self.assertIn("output_request: include_output=False", rendered)
+        self.assertIn("raw_generated_text_public=False", rendered)
+        self.assertIn("answer_scope: state=no-local-answer", rendered)
+        self.assertIn("shareable: saved_artifacts=True", rendered)
+
     def test_real_llm_internet_alpha_wraps_alpha_pack(self) -> None:
         output_dir = Path(self._tmp_dir())
         calls: list[list[str]] = []

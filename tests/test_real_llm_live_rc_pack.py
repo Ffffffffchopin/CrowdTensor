@@ -15,6 +15,26 @@ def completed(payload: dict, returncode: int = 0) -> subprocess.CompletedProcess
     return subprocess.CompletedProcess(args=["cmd"], returncode=returncode, stdout=json.dumps(payload) + "\n", stderr="")
 
 
+def assert_ready_guidance(testcase: unittest.TestCase, report: dict, output_dir: Path) -> None:
+    testcase.assertEqual(report["user_status"]["state"], "ready")
+    testcase.assertEqual(report["review_summary"]["schema"], "real_llm_live_rc_review_summary_v1")
+    testcase.assertEqual(report["review_summary"]["state"], "ready")
+    testcase.assertEqual(report["recommended_next_command"]["label"], "inspect real LLM Live RC evidence")
+    testcase.assertIn("real_llm_live_rc.md", report["recommended_next_command"]["command_line"])
+    testcase.assertEqual(report["not_completed"], [])
+    testcase.assertGreaterEqual(len(report["next_commands"]), 3)
+    testcase.assertTrue(report["artifact_summary"]["public_artifact_safe"])
+    testcase.assertEqual(
+        report["artifact_summary"]["present_artifact_count"],
+        report["artifact_summary"]["artifact_count"],
+    )
+    testcase.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+    support = json.loads((output_dir / "support_bundle.json").read_text(encoding="utf-8"))
+    testcase.assertEqual(support["schema"], "real_llm_live_rc_support_bundle_v1")
+    testcase.assertEqual(support["review_summary"]["state"], "ready")
+    testcase.assertTrue(support["public_artifact_safe"])
+
+
 class FakeProcess:
     _next_pid = 3000
 
@@ -132,6 +152,12 @@ class RealLlmLiveRcPackTests(unittest.TestCase):
         )
         self.assertNotIn("CrowdTensor routes", serialized)
         self.assertNotIn("A miner returns", serialized)
+        self.assertIn("## Review", (output_dir / "real_llm_live_rc.md").read_text(encoding="utf-8"))
+        self.assertIn("## What To Do Next", (output_dir / "real_llm_live_rc.md").read_text(encoding="utf-8"))
+        self.assertIn("## Output Scope", (output_dir / "real_llm_live_rc.md").read_text(encoding="utf-8"))
+        self.assertIn("## Artifact Summary", (output_dir / "real_llm_live_rc.md").read_text(encoding="utf-8"))
+        self.assertIn("## Not Completed", (output_dir / "real_llm_live_rc.md").read_text(encoding="utf-8"))
+        assert_ready_guidance(self, report, output_dir)
         self.assertTrue(calls)
 
     def test_kaggle_generated_prepares_stage_packages_without_claiming_external_runtime(self) -> None:
@@ -154,6 +180,12 @@ class RealLlmLiveRcPackTests(unittest.TestCase):
         self.assertIn("kaggle_real_llm_stage_upload_packages_ready", report["diagnosis_codes"])
         self.assertFalse(report["runtime_classification"]["external_runtime_verified"])
         self.assertNotIn("real_llm_live_rc_ready", report["diagnosis_codes"])
+        self.assertEqual(report["user_status"]["state"], "package-ready")
+        self.assertEqual(report["review_summary"]["state"], "package-ready")
+        self.assertEqual(report["review_summary"]["attention"], "external verification pending")
+        self.assertEqual(report["recommended_next_command"]["label"], "verify external real LLM Live RC runtime")
+        self.assertIn("external verification still pending", report["not_completed"])
+        self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
         for stage in ["stage0", "stage1"]:
             script = output_dir / f"kaggle-upload-real-llm-{stage}" / "kaggle_remote_miner.py"
             py_compile.compile(str(script), doraise=True)
@@ -220,6 +252,7 @@ class RealLlmLiveRcPackTests(unittest.TestCase):
         self.assertIn("kaggle_real_llm_sharded_ready", report["diagnosis_codes"])
         self.assertNotIn("observer-secret", serialized)
         self.assertNotIn("admin-secret", serialized)
+        assert_ready_guidance(self, report, output_dir)
 
 
 if __name__ == "__main__":
