@@ -42,6 +42,10 @@ together; when `--tunnel-command` is supplied, it also writes
 start an operator-supplied tunnel/overlay command before the Coordinator
 without printing the command in public artifacts. `start_discovery.sh` and
 `start_coordinator.sh` remain available for manual debugging.
+Generated `operator_status.sh` sources only `private/operator.private.env` and
+runs the read-only `crowdtensor operator-status` summary against the running
+Coordinator so operators can check `/ready`, `/state`, accounting, and
+settlement status without copying credentials into public scripts.
 Both bootstrap and bootstrap-check reports include
 `bootstrap_handoff.remote_miners_ready`, `recommended_launcher`,
 `verify_before_handoff`, and `ready_to_copy_stage_packages` so operators can
@@ -57,7 +61,8 @@ file permissions, hashed registries, env separation, stage invite Coordinator
 URL consistency, optional `--expect-remote-miners` remote route readiness,
 optional `/ready` checks via `--check-coordinator`, optional token-backed
 no-claim `/tasks/preflight` checks via `--check-admission`, and plaintext token
-leakage, including `stage_support_bundle_scripts_ready` and
+leakage, including `operator_status_script_ready`,
+`stage_support_bundle_scripts_ready`, and
 `stage_package_archives_ready` plus `stage_archive_runner_scripts_ready` and
 `stage_handoff_checksums_ready`.
 

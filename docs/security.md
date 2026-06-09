@@ -138,10 +138,15 @@ Miner tokens, join codes, or tunnel commands. Treat false
 passes. `handoff_doctor.sh` / `crowdtensor swarm-handoff-doctor` writes
 `crowdtensor_swarm_handoff_doctor_v1` (`handoff_doctor.json` and
 `handoff_doctor.md`) with public-safe blockers and stage copy lists.
+`operator_status.sh` stays on the operator host, sources only
+`private/operator.private.env`, and runs read-only `crowdtensor operator-status`
+for `/ready`, `/state`, accounting, and settlement triage without embedding
+operator credentials in public scripts.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
-scripts or public Markdown, including `stage_support_bundle_scripts_ready` and
+scripts or public Markdown, including `operator_status_script_ready`,
+`stage_support_bundle_scripts_ready`, and
 `stage_package_archives_ready` plus `stage_archive_runner_scripts_ready` and
 `stage_handoff_checksums_ready`. It also checks
 `stage_reward_account_metadata_ready` so private stage invites and the private

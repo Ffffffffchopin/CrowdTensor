@@ -11811,6 +11811,29 @@ def _bootstrap_generate_script(*, coordinator_url: str, max_new_tokens: int, dry
     return "\n".join(lines)
 
 
+def _bootstrap_operator_status_script(*, coordinator_url: str) -> str:
+    return "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        '. "$SCRIPT_DIR/private/operator.private.env"',
+        ': "${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN in private/operator.private.env}"',
+        ': "${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN in private/operator.private.env}"',
+        "",
+        "exec crowdtensor operator-status \\",
+        f"  --coordinator-url {_quote_env_value(coordinator_url)} \\",
+        '  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \\',
+        '  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \\',
+        "  --include-admin-summaries \\",
+        "  --require-state \\",
+        "  --require-admin-summaries \\",
+        '  --output-dir "$SCRIPT_DIR/operator-status" \\',
+        '  "$@"',
+        "",
+    ])
+
+
 def _bootstrap_verify_script(*, expect_remote_miners: bool) -> str:
     lines = [
         "#!/usr/bin/env bash",
@@ -11881,6 +11904,7 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("start_coordinator", "")),
         shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("handoff_doctor", "")),
+        shlex.quote(scripts.get("operator_status", "")),
         shlex.quote(scripts.get("stage0_check_join", "")),
         shlex.quote(scripts.get("stage0_support_bundle", "")),
         shlex.quote(scripts.get("stage0_join", "")),
@@ -11968,6 +11992,7 @@ def _bootstrap_handoff_summary(
             "stage1_join": scripts.get("stage1_join", ""),
             "stage0_run_miner": scripts.get("stage0_run_miner", ""),
             "stage1_run_miner": scripts.get("stage1_run_miner", ""),
+            "operator_status": scripts.get("operator_status", ""),
         },
         "verify_before_handoff": scripts.get("verify_bootstrap", ""),
         "stage_packages_to_copy": stage_package_dirs,
@@ -12167,6 +12192,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     start_coordinator_script = output_dir / "start_coordinator.sh"
     verify_bootstrap_script = output_dir / "verify_bootstrap.sh"
     handoff_doctor_script = output_dir / "handoff_doctor.sh"
+    operator_status_script = output_dir / "operator_status.sh"
     check_generation_script = output_dir / "check_generation.sh"
     submit_generation_script = output_dir / "submit_generation.sh"
     safety = {
@@ -12428,6 +12454,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         _bootstrap_handoff_doctor_script(expect_remote_miners=bool(args.expect_remote_miners)),
     )
     _write_executable(
+        operator_status_script,
+        _bootstrap_operator_status_script(coordinator_url=coordinator_url),
+    )
+    _write_executable(
         submit_generation_script,
         _bootstrap_generate_script(
             coordinator_url=coordinator_url,
@@ -12442,6 +12472,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "start_coordinator": str(start_coordinator_script),
         "verify_bootstrap": str(verify_bootstrap_script),
         "handoff_doctor": str(handoff_doctor_script),
+        "operator_status": str(operator_status_script),
         "stage0_check_join": str(stage_check_scripts["stage0"]),
         "stage0_support_bundle": str(stage_support_scripts["stage0"]),
         "stage0_join": str(stage_scripts["stage0"]),
@@ -12566,6 +12597,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 "write handoff doctor report",
                 [str(handoff_doctor_script)],
             ),
+            command_entry(
+                "check operator status",
+                [str(operator_status_script)],
+            ),
             command_entry("check stage0 Miner join", stage_check_commands["stage0"]),
             command_entry("start stage0 Miner", stage_join_commands["stage0"]),
             command_entry("check stage1 Miner join", stage_check_commands["stage1"]),
@@ -12582,13 +12617,14 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "private_join_code_files_created": True,
             "stage_package_archives_created": True,
             "stage_handoff_checksums_created": True,
+            "operator_status_script_created": True,
             "scripts_created": True,
             "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
             "Run start_control_plane.sh on the Coordinator host, run verify_bootstrap.sh for live no-claim admission "
             "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, then run the dry-run generate "
-            "preflight before submitting generation."
+            "preflight and operator_status.sh before submitting generation."
         ),
     }
     next_commands = report["next_commands"]
@@ -12625,30 +12661,34 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[5]["command_line"] = command_line([str(handoff_doctor_script)])
     next_commands[5]["requires_files"] = next_commands[4]["requires_files"]
     next_commands[5]["script"] = str(handoff_doctor_script)
-    next_commands[6]["command"] = [str(stage_check_scripts["stage0"])]
-    next_commands[6]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
-    next_commands[6]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[6]["script"] = str(stage_check_scripts["stage0"])
-    next_commands[7]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[7]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[6]["command"] = [str(operator_status_script)]
+    next_commands[6]["command_line"] = command_line([str(operator_status_script)])
+    next_commands[6]["requires_files"] = [str(operator_env_path)]
+    next_commands[6]["script"] = str(operator_status_script)
+    next_commands[7]["command"] = [str(stage_check_scripts["stage0"])]
+    next_commands[7]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
     next_commands[7]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[7]["script"] = str(stage_scripts["stage0"])
-    next_commands[8]["command"] = [str(stage_check_scripts["stage1"])]
-    next_commands[8]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
-    next_commands[8]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[8]["script"] = str(stage_check_scripts["stage1"])
-    next_commands[9]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[9]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[7]["script"] = str(stage_check_scripts["stage0"])
+    next_commands[8]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[8]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[8]["requires_files"] = [str(stage_join_code_files["stage0"])]
+    next_commands[8]["script"] = str(stage_scripts["stage0"])
+    next_commands[9]["command"] = [str(stage_check_scripts["stage1"])]
+    next_commands[9]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
     next_commands[9]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[9]["script"] = str(stage_scripts["stage1"])
-    next_commands[10]["command"] = [str(check_generation_script)]
-    next_commands[10]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[10]["requires_files"] = [str(operator_env_path)]
-    next_commands[10]["script"] = str(check_generation_script)
-    next_commands[11]["command"] = [str(submit_generation_script)]
-    next_commands[11]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[9]["script"] = str(stage_check_scripts["stage1"])
+    next_commands[10]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[10]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[10]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[10]["script"] = str(stage_scripts["stage1"])
+    next_commands[11]["command"] = [str(check_generation_script)]
+    next_commands[11]["command_line"] = command_line([str(check_generation_script)])
     next_commands[11]["requires_files"] = [str(operator_env_path)]
-    next_commands[11]["script"] = str(submit_generation_script)
+    next_commands[11]["script"] = str(check_generation_script)
+    next_commands[12]["command"] = [str(submit_generation_script)]
+    next_commands[12]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[12]["requires_files"] = [str(operator_env_path)]
+    next_commands[12]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -12968,6 +13008,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "start_coordinator_script": output_dir / "start_coordinator.sh",
         "verify_bootstrap_script": output_dir / "verify_bootstrap.sh",
         "handoff_doctor_script": output_dir / "handoff_doctor.sh",
+        "operator_status_script": output_dir / "operator_status.sh",
         "check_generation_script": output_dir / "check_generation.sh",
         "submit_generation_script": output_dir / "submit_generation.sh",
         "runbook": output_dir / "SWARM_BOOTSTRAP.md",
@@ -13109,6 +13150,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["start_coordinator_script"],
         required_files["verify_bootstrap_script"],
         required_files["handoff_doctor_script"],
+        required_files["operator_status_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["stage0_check_join_script"],
@@ -13338,6 +13380,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     coordinator_script_text, _ = _read_bootstrap_text(required_files["start_coordinator_script"])
     verify_script_text, _ = _read_bootstrap_text(required_files["verify_bootstrap_script"])
     handoff_doctor_script_text, _ = _read_bootstrap_text(required_files["handoff_doctor_script"])
+    operator_status_script_text, _ = _read_bootstrap_text(required_files["operator_status_script"])
     public_files = [
         required_files["start_control_plane_script"],
         required_files["start_tunnel_script"],
@@ -13345,6 +13388,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["start_discovery_script"],
         required_files["verify_bootstrap_script"],
         required_files["handoff_doctor_script"],
+        required_files["operator_status_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["runbook"],
@@ -13700,6 +13744,27 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="handoff_doctor.sh must wrap swarm-handoff-doctor --check-admission for this package",
         diagnosis_code="bootstrap_handoff_doctor_script_invalid",
     )
+    operator_status_script_ready = bool(
+        "crowdtensor operator-status" in operator_status_script_text
+        and "private/operator.private.env" in operator_status_script_text
+        and "CROWDTENSOR_ADMIN_TOKEN" in operator_status_script_text
+        and "CROWDTENSOR_OBSERVER_TOKEN" in operator_status_script_text
+        and "--include-admin-summaries" in operator_status_script_text
+        and "--require-state" in operator_status_script_text
+        and "--require-admin-summaries" in operator_status_script_text
+        and "--output-dir" in operator_status_script_text
+        and "$SCRIPT_DIR/operator-status" in operator_status_script_text
+        and operator_token not in operator_status_script_text
+        and observer_token not in operator_status_script_text
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_status_script_ready",
+        operator_status_script_ready,
+        detail="operator_status.sh must source operator.private.env and run the read-only operator status summary",
+        diagnosis_code="bootstrap_operator_status_script_invalid",
+    )
     stage_package_operator_files = [
         path for stage_dir in [output_dir / "stage0", output_dir / "stage1"]
         for path in stage_dir.glob("*")
@@ -13779,6 +13844,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "start_coordinator": str(required_files["start_coordinator_script"]),
                 "verify_bootstrap": str(required_files["verify_bootstrap_script"]),
                 "handoff_doctor": str(required_files["handoff_doctor_script"]),
+                "operator_status": str(required_files["operator_status_script"]),
                 "stage0_check_join": str(required_files["stage0_check_join_script"]),
                 "stage0_support_bundle": str(required_files["stage0_support_bundle_script"]),
                 "stage0_join": str(required_files["stage0_join_script"]),
@@ -13841,6 +13907,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "start_discovery_script_ready": discovery_script_ready,
             "verify_bootstrap_script_ready": verify_script_ready,
             "handoff_doctor_script_ready": handoff_doctor_script_ready,
+            "operator_status_script_ready": operator_status_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
             "live_preflight_ready": (
                 bool(live_preflight.get("ok")) if live_preflight.get("checked") else None

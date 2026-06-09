@@ -450,14 +450,16 @@ scripts plus `start_control_plane.sh`, optional `start_tunnel.sh`,
 `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz`, matching
 `stage0.run-miner.sh` / `stage1.run-miner.sh`,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
-`stage_handoff_manifest.json`, `handoff_doctor.sh`, stage `check_join.sh`,
-`support_bundle.sh`, and `SWARM_BOOTSTRAP.md`.
+`stage_handoff_manifest.json`, `handoff_doctor.sh`, `operator_status.sh`,
+stage `check_join.sh`, `support_bundle.sh`, and `SWARM_BOOTSTRAP.md`.
 When `--tunnel-command` is supplied, the command is written only to
 `private/tunnel.private.env`; public reports and Markdown show the tunnel
 launcher without echoing tunnel tokens or provider command lines. Keep the operator invite and
 operator env on the operator host, use the coordinator env only for
 `start_coordinator.sh`, run `start_control_plane.sh` to start the tunnel,
 discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
+run `operator_status.sh` for a read-only `/ready` / `/state` / accounting /
+settlement summary from the operator env,
 and send each private stage archive plus matching `stageX.run-miner.sh` and
 `stageX.handoff.sha256` only to the matching Miner host. The runner verifies
 the checksum before it safely extracts the archive; the recommended Miner-side
@@ -486,7 +488,8 @@ Run `handoff_doctor.sh` or `crowdtensor swarm-handoff-doctor` to write
 `crowdtensor swarm-bootstrap-check` verifies required
 files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
-plaintext tokens before handoff, including `stage_support_bundle_scripts_ready`.
+plaintext tokens before handoff, including `operator_status_script_ready` and
+`stage_support_bundle_scripts_ready`.
 It also verifies `stage_package_archives_ready` so the operator can copy one
 private tarball per Miner instead of hand-picking files, plus
 `stage_archive_runner_scripts_ready` for the matching one-command Miner runner
