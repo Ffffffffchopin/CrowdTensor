@@ -16,12 +16,14 @@ controlled two-stage product swarm. Product `crowdtensor serve` forwards both
 `--operator-token-registry` and `--miner-token-registry`; Miners still send
 their plaintext invite token in `x-crowdtensor-miner-token`.
 Generated stage packages use private opaque `miner.join-code.txt` files with
-`doctor.sh` for the recommended first diagnostic, `check_join.sh` for no-run
+`install.sh` for creating a local Miner virtualenv, `doctor.sh` for the
+recommended first diagnostic, `check_join.sh` for no-run
 Coordinator/admission preflight, and `join.sh` for `crowdtensor join
 --invite-code-file --run`, so Miner hosts do not need to edit JSON invites; the
 code file still contains the plaintext Miner token and must remain private.
-Stage `doctor.sh` writes a support bundle and then checks admission without
-starting the Miner. Stage `support_bundle.sh` writes safe
+Stage `install.sh` creates `.crowdtensor-venv` with the default `[hf]` runtime
+when `crowdtensor` is not already on PATH. Stage `doctor.sh` writes a support
+bundle and then checks admission without starting the Miner. Stage `support_bundle.sh` writes safe
 `miner_support_bundle.json` diagnostics for route/admission troubleshooting
 without raw join codes or Miner tokens. The bundle includes
 `crowdtensor_miner_local_environment_v1` with `local_environment_ready`,
@@ -32,8 +34,8 @@ operator can copy one stage package per remote Miner host, plus matching
 `stage0.run-miner.sh` / `stage1.run-miner.sh` runners that safely extract,
 preflight, and start the Miner after verifying matching
 `stage0.handoff.sha256` / `stage1.handoff.sha256` handoff checksums. The
-recommended Miner-side first run is `./stageX.run-miner.sh --doctor`, then
-`--check-only`, then `--run`.
+recommended Miner-side first run is `./stageX.run-miner.sh --install --dry-run`,
+then `--install` if needed, then `--doctor`, `--check-only`, and `--run`.
 `stage_handoff_manifest.json` records the expected archive and runner hashes
 without raw tokens. Bootstrap can also embed `crowdtensor_miner_join_discovery_v1` when
 `--peer-bootstrap` is supplied, allowing the private invite to select the
@@ -70,6 +72,7 @@ optional `/ready` checks via `--check-coordinator`, optional token-backed
 no-claim `/tasks/preflight` checks via `--check-admission`, and plaintext token
 leakage, including `check_route_script_ready`,
 `operator_status_script_ready`,
+`stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, and
 `stage_package_archives_ready` plus `stage_archive_runner_scripts_ready` and

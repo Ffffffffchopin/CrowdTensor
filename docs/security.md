@@ -106,8 +106,10 @@ operator-side dry-run and submit scripts.
 Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its private `miner.join-code.txt`,
-`miner.invite.json`, `doctor.sh`, `check_join.sh`, `support_bundle.sh`, and `join.sh`, to each Miner host. Stage
-`doctor.sh` writes `miner_support_bundle.json` and checks admission without
+`miner.invite.json`, `install.sh`, `doctor.sh`, `check_join.sh`, `support_bundle.sh`, and `join.sh`, to each Miner host. Stage
+`install.sh` creates `.crowdtensor-venv` with the default `[hf]` runtime when
+`crowdtensor` is not already on PATH. Stage `doctor.sh` writes
+`miner_support_bundle.json` and checks admission without
 starting the Miner. Stage
 `check_join.sh` uses `crowdtensor join --invite-code-file miner.join-code.txt`
 with admission checks but without `--run`; stage `join.sh` uses the same private
@@ -125,7 +127,8 @@ copy only the matching one plus its `stage0.run-miner.sh` or
 `stage1.handoff.sha256` checksum to its Miner host.
 `stage_handoff_manifest.json` records the expected stage archive and runner
 hashes without raw tokens. The runner verifies the checksum, supports
-`./stageX.run-miner.sh --doctor` for local diagnostics before admission,
+`./stageX.run-miner.sh --install --dry-run`, then `--install` if needed, then
+`--doctor` for local diagnostics before admission,
 validates archive membership before extracting, runs admission
 preflight, and then starts the Miner. If
 `crowdtensor swarm-bootstrap` is run with `--peer-bootstrap`, that private
@@ -154,6 +157,7 @@ bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
 scripts or public Markdown, including `check_route_script_ready`,
 `operator_status_script_ready`,
+`stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, and
 `stage_package_archives_ready` plus `stage_archive_runner_scripts_ready` and

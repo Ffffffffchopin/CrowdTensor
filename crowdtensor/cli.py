@@ -10896,6 +10896,7 @@ def _write_stage_package_archive(stage_dir: Path, archive_path: Path) -> None:
     package_files = [
         "miner.invite.json",
         "miner.join-code.txt",
+        "install.sh",
         "doctor.sh",
         "check_join.sh",
         "support_bundle.sh",
@@ -11018,6 +11019,10 @@ case "${{1:-}}" in
     MODE="support"
     shift
     ;;
+  --install)
+    MODE="install"
+    shift
+    ;;
   --doctor)
     MODE="doctor"
     shift
@@ -11028,9 +11033,11 @@ case "${{1:-}}" in
     fi
     ;;
   --help|-h)
-    echo "usage: $0 [--doctor|--check-only|--run|--support-bundle|--extract-only] [extra crowdtensor join args]"
+    echo "usage: $0 [--install [--dry-run]|--doctor|--check-only|--run|--support-bundle|--extract-only] [extra crowdtensor join args]"
     echo ""
     echo "recommended first run:"
+    echo "  $0 --install --dry-run"
+    echo "  $0 --install"
     echo "  $0 --doctor"
     echo "  $0 --check-only"
     echo "  $0 --run"
@@ -11038,7 +11045,7 @@ case "${{1:-}}" in
     ;;
   *)
     echo "unknown option: $1" >&2
-    echo "usage: $0 [--doctor|--check-only|--run|--support-bundle|--extract-only] [extra crowdtensor join args]" >&2
+    echo "usage: $0 [--install [--dry-run]|--doctor|--check-only|--run|--support-bundle|--extract-only] [extra crowdtensor join args]" >&2
     exit 2
     ;;
 esac
@@ -11094,6 +11101,7 @@ stage = sys.argv[3]
 expected = {{
     f"{{stage}}/miner.invite.json": 0o600,
     f"{{stage}}/miner.join-code.txt": 0o600,
+    f"{{stage}}/install.sh": 0o700,
     f"{{stage}}/doctor.sh": 0o700,
     f"{{stage}}/check_join.sh": 0o700,
     f"{{stage}}/support_bundle.sh": 0o700,
@@ -11136,6 +11144,9 @@ case "$MODE" in
   support)
     exec "$STAGE_DIR/support_bundle.sh" "$@"
     ;;
+  install)
+    exec "$STAGE_DIR/install.sh" "$@"
+    ;;
   doctor)
     exec "$STAGE_DIR/doctor.sh" "$@"
     ;;
@@ -11147,11 +11158,94 @@ esac
 """
 
 
+def _bootstrap_stage_install_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="${CROWDTENSOR_MINER_VENV:-$SCRIPT_DIR/.crowdtensor-venv}"
+INSTALL_REPO="${CROWDTENSOR_INSTALL_REPO:-git+https://github.com/Ffffffffchopin/CrowdTensor.git}"
+INSTALL_EXTRAS="${CROWDTENSOR_INSTALL_EXTRAS:-hf}"
+INSTALL_SPEC="${CROWDTENSOR_INSTALL_SPEC:-}"
+INSTALL_SOURCE="${CROWDTENSOR_INSTALL_SOURCE:-}"
+DRY_RUN=0
+
+case "${1:-}" in
+  --dry-run)
+    DRY_RUN=1
+    shift
+    ;;
+  --help|-h)
+    echo "usage: $0 [--dry-run]"
+    echo ""
+    echo "Creates a private Miner virtualenv and installs CrowdTensor for this stage package."
+    echo "Overrides:"
+    echo "  CROWDTENSOR_MINER_VENV=$VENV_DIR"
+    echo "  CROWDTENSOR_INSTALL_SPEC='crowdtensord[hf] @ git+https://github.com/Ffffffffchopin/CrowdTensor.git'"
+    echo "  CROWDTENSOR_INSTALL_SOURCE=/path/to/local/CrowdTensor"
+    echo "  CROWDTENSOR_INSTALL_EXTRAS=hf"
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    echo "unknown option: $1" >&2
+    echo "usage: $0 [--dry-run]" >&2
+    exit 2
+    ;;
+esac
+
+if [ -z "$INSTALL_SPEC" ]; then
+  if [ -n "$INSTALL_SOURCE" ]; then
+    if [ -n "$INSTALL_EXTRAS" ]; then
+      INSTALL_SPEC="$INSTALL_SOURCE[$INSTALL_EXTRAS]"
+    else
+      INSTALL_SPEC="$INSTALL_SOURCE"
+    fi
+  elif [ -n "$INSTALL_EXTRAS" ]; then
+    INSTALL_SPEC="crowdtensord[$INSTALL_EXTRAS] @ $INSTALL_REPO"
+  else
+    INSTALL_SPEC="crowdtensord @ $INSTALL_REPO"
+  fi
+fi
+
+PYTHON_BIN="${PYTHON:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  else
+    PYTHON_BIN="python"
+  fi
+fi
+
+echo "CrowdTensor Miner installer"
+echo "venv: $VENV_DIR"
+echo "install_spec: $INSTALL_SPEC"
+if [ "$DRY_RUN" = "1" ]; then
+  echo "dry_run: true"
+  echo "$PYTHON_BIN -m venv $VENV_DIR"
+  echo "$VENV_DIR/bin/python -m pip install --upgrade pip"
+  echo "$VENV_DIR/bin/python -m pip install $INSTALL_SPEC"
+  exit 0
+fi
+
+"$PYTHON_BIN" -m venv "$VENV_DIR"
+"$VENV_DIR/bin/python" -m pip install --upgrade pip
+"$VENV_DIR/bin/python" -m pip install "$INSTALL_SPEC"
+"$VENV_DIR/bin/crowdtensor" --help >/dev/null
+echo "CrowdTensor Miner install ready: $VENV_DIR/bin/crowdtensor"
+"""
+
+
 def _bootstrap_stage_doctor_script() -> str:
     return """#!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VENV_BIN="${CROWDTENSOR_MINER_VENV:-$SCRIPT_DIR/.crowdtensor-venv}/bin"
+if [ -d "$VENV_BIN" ]; then
+  export PATH="$VENV_BIN:$PATH"
+fi
 JOIN_CODE_FILE="${CROWDTENSOR_MINER_INVITE_CODE_FILE:-$SCRIPT_DIR/miner.join-code.txt}"
 SUPPORT_BUNDLE="$SCRIPT_DIR/support_bundle.sh"
 CHECK_JOIN="$SCRIPT_DIR/check_join.sh"
@@ -11186,10 +11280,15 @@ def _bootstrap_stage_join_script() -> str:
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VENV_BIN="${CROWDTENSOR_MINER_VENV:-$SCRIPT_DIR/.crowdtensor-venv}/bin"
+if [ -d "$VENV_BIN" ]; then
+  export PATH="$VENV_BIN:$PATH"
+fi
 INVITE_CODE_FILE="${CROWDTENSOR_MINER_INVITE_CODE_FILE:-$SCRIPT_DIR/miner.join-code.txt}"
 
 if ! command -v crowdtensor >/dev/null 2>&1; then
   echo "crowdtensor CLI is not installed or not on PATH; install CrowdTensor before starting this Miner." >&2
+  echo "Run ./install.sh to create a local Miner virtualenv." >&2
   echo "Run ./support_bundle.sh for a local environment diagnostic." >&2
   exit 127
 fi
@@ -11208,10 +11307,15 @@ def _bootstrap_stage_check_join_script() -> str:
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VENV_BIN="${CROWDTENSOR_MINER_VENV:-$SCRIPT_DIR/.crowdtensor-venv}/bin"
+if [ -d "$VENV_BIN" ]; then
+  export PATH="$VENV_BIN:$PATH"
+fi
 INVITE_CODE_FILE="${CROWDTENSOR_MINER_INVITE_CODE_FILE:-$SCRIPT_DIR/miner.join-code.txt}"
 
 if ! command -v crowdtensor >/dev/null 2>&1; then
   echo "crowdtensor CLI is not installed or not on PATH; install CrowdTensor before checking this Miner." >&2
+  echo "Run ./install.sh to create a local Miner virtualenv." >&2
   echo "Run ./support_bundle.sh for a local environment diagnostic." >&2
   exit 127
 fi
@@ -11229,6 +11333,10 @@ def _bootstrap_stage_support_bundle_script() -> str:
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VENV_BIN="${CROWDTENSOR_MINER_VENV:-$SCRIPT_DIR/.crowdtensor-venv}/bin"
+if [ -d "$VENV_BIN" ]; then
+  export PATH="$VENV_BIN:$PATH"
+fi
 OUT="${1:-${CROWDTENSOR_MINER_SUPPORT_BUNDLE:-$SCRIPT_DIR/miner_support_bundle.json}}"
 PYTHON_BIN="${PYTHON:-}"
 if [ -z "$PYTHON_BIN" ]; then
@@ -11522,6 +11630,7 @@ bundle = {
     "files": {
         "miner_invite": file_entry("miner.invite.json", private=True),
         "miner_join_code": file_entry("miner.join-code.txt", private=True),
+        "install": file_entry("install.sh", executable=True),
         "doctor": file_entry("doctor.sh", executable=True),
         "check_join": file_entry("check_join.sh", executable=True),
         "support_bundle": file_entry("support_bundle.sh", executable=True),
@@ -11551,7 +11660,13 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
         "",
         "This directory is private. It contains the stage-specific Miner invite and opaque join code.",
         "",
-        "Run the Miner-side doctor first. It writes a public-safe support bundle and checks admission without starting the Miner:",
+        "Install the local Miner runtime if `crowdtensor` is not already available:",
+        "",
+        "```bash",
+        "./install.sh",
+        "```",
+        "",
+        "Run the Miner-side doctor next. It writes a public-safe support bundle and checks admission without starting the Miner:",
         "",
         "```bash",
         "./doctor.sh",
@@ -11969,11 +12084,13 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("handoff_doctor", "")),
         shlex.quote(scripts.get("operator_status", "")),
+        shlex.quote(scripts.get("stage0_install", "")),
         shlex.quote(scripts.get("stage0_doctor", "")),
         shlex.quote(scripts.get("stage0_check_join", "")),
         shlex.quote(scripts.get("stage0_support_bundle", "")),
         shlex.quote(scripts.get("stage0_join", "")),
         shlex.quote(scripts.get("stage0_run_miner", "")),
+        shlex.quote(scripts.get("stage1_install", "")),
         shlex.quote(scripts.get("stage1_doctor", "")),
         shlex.quote(scripts.get("stage1_check_join", "")),
         shlex.quote(scripts.get("stage1_support_bundle", "")),
@@ -12051,6 +12168,8 @@ def _bootstrap_handoff_summary(
             "discovery": scripts.get("start_discovery", ""),
             "coordinator": scripts.get("start_coordinator", ""),
             "check_route": scripts.get("check_route", ""),
+            "stage0_install": scripts.get("stage0_install", ""),
+            "stage1_install": scripts.get("stage1_install", ""),
             "stage0_doctor": scripts.get("stage0_doctor", ""),
             "stage1_doctor": scripts.get("stage1_doctor", ""),
             "stage0_check_join": scripts.get("stage0_check_join", ""),
@@ -12405,6 +12524,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         serve_command.append("--i-understand-public-bind")
     serve_command.append("--run")
     stage_scripts: dict[str, Path] = {}
+    stage_install_scripts: dict[str, Path] = {}
     stage_doctor_scripts: dict[str, Path] = {}
     stage_check_scripts: dict[str, Path] = {}
     stage_support_scripts: dict[str, Path] = {}
@@ -12426,6 +12546,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         stage_join_code = stage_dir / "miner.join-code.txt"
         stage_join_code.write_text(str(invite.get("join_invite_code") or "").strip() + "\n", encoding="utf-8")
         stage_join_code.chmod(0o600)
+        install_script = stage_dir / "install.sh"
+        _write_executable(install_script, _bootstrap_stage_install_script())
         doctor_script = stage_dir / "doctor.sh"
         _write_executable(doctor_script, _bootstrap_stage_doctor_script())
         check_join_script = stage_dir / "check_join.sh"
@@ -12438,6 +12560,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             _bootstrap_stage_join_markdown(stage=stage, coordinator_url=coordinator_url),
             encoding="utf-8",
         )
+        stage_install_scripts[stage] = install_script
         stage_doctor_scripts[stage] = doctor_script
         stage_check_scripts[stage] = check_join_script
         stage_support_scripts[stage] = support_bundle_script
@@ -12555,11 +12678,13 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "verify_bootstrap": str(verify_bootstrap_script),
         "handoff_doctor": str(handoff_doctor_script),
         "operator_status": str(operator_status_script),
+        "stage0_install": str(stage_install_scripts["stage0"]),
         "stage0_doctor": str(stage_doctor_scripts["stage0"]),
         "stage0_check_join": str(stage_check_scripts["stage0"]),
         "stage0_support_bundle": str(stage_support_scripts["stage0"]),
         "stage0_join": str(stage_scripts["stage0"]),
         "stage0_run_miner": str(stage_runner_scripts["stage0"]),
+        "stage1_install": str(stage_install_scripts["stage1"]),
         "stage1_doctor": str(stage_doctor_scripts["stage1"]),
         "stage1_check_join": str(stage_check_scripts["stage1"]),
         "stage1_support_bundle": str(stage_support_scripts["stage1"]),
@@ -12689,9 +12814,11 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 "check operator status",
                 [str(operator_status_script)],
             ),
+            command_entry("install stage0 Miner runtime", [str(stage_install_scripts["stage0"]), "--dry-run"]),
             command_entry("doctor stage0 Miner host", [str(stage_doctor_scripts["stage0"])]),
             command_entry("check stage0 Miner join", stage_check_commands["stage0"]),
             command_entry("start stage0 Miner", stage_join_commands["stage0"]),
+            command_entry("install stage1 Miner runtime", [str(stage_install_scripts["stage1"]), "--dry-run"]),
             command_entry("doctor stage1 Miner host", [str(stage_doctor_scripts["stage1"])]),
             command_entry("check stage1 Miner join", stage_check_commands["stage1"]),
             command_entry("start stage1 Miner", stage_join_commands["stage1"]),
@@ -12714,7 +12841,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         },
         "operator_action": (
             "Run start_control_plane.sh on the Coordinator host, run check_route.sh, then run verify_bootstrap.sh for live no-claim admission "
-            "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, run doctor.sh on each Miner host, then run the dry-run generate "
+            "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, run install.sh and doctor.sh on each Miner host, then run the dry-run generate "
             "preflight and operator_status.sh before submitting generation."
         ),
     }
@@ -12759,38 +12886,44 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[7]["command_line"] = command_line([str(operator_status_script)])
     next_commands[7]["requires_files"] = [str(operator_env_path)]
     next_commands[7]["script"] = str(operator_status_script)
-    next_commands[8]["command"] = [str(stage_doctor_scripts["stage0"])]
-    next_commands[8]["command_line"] = command_line([str(stage_doctor_scripts["stage0"])])
-    next_commands[8]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[8]["script"] = str(stage_doctor_scripts["stage0"])
-    next_commands[9]["command"] = [str(stage_check_scripts["stage0"])]
-    next_commands[9]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
+    next_commands[8]["command"] = [str(stage_install_scripts["stage0"]), "--dry-run"]
+    next_commands[8]["command_line"] = command_line([str(stage_install_scripts["stage0"]), "--dry-run"])
+    next_commands[8]["script"] = str(stage_install_scripts["stage0"])
+    next_commands[9]["command"] = [str(stage_doctor_scripts["stage0"])]
+    next_commands[9]["command_line"] = command_line([str(stage_doctor_scripts["stage0"])])
     next_commands[9]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[9]["script"] = str(stage_check_scripts["stage0"])
-    next_commands[10]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[10]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[9]["script"] = str(stage_doctor_scripts["stage0"])
+    next_commands[10]["command"] = [str(stage_check_scripts["stage0"])]
+    next_commands[10]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
     next_commands[10]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[10]["script"] = str(stage_scripts["stage0"])
-    next_commands[11]["command"] = [str(stage_doctor_scripts["stage1"])]
-    next_commands[11]["command_line"] = command_line([str(stage_doctor_scripts["stage1"])])
-    next_commands[11]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[11]["script"] = str(stage_doctor_scripts["stage1"])
-    next_commands[12]["command"] = [str(stage_check_scripts["stage1"])]
-    next_commands[12]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
-    next_commands[12]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[12]["script"] = str(stage_check_scripts["stage1"])
-    next_commands[13]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[13]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[10]["script"] = str(stage_check_scripts["stage0"])
+    next_commands[11]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[11]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[11]["requires_files"] = [str(stage_join_code_files["stage0"])]
+    next_commands[11]["script"] = str(stage_scripts["stage0"])
+    next_commands[12]["command"] = [str(stage_install_scripts["stage1"]), "--dry-run"]
+    next_commands[12]["command_line"] = command_line([str(stage_install_scripts["stage1"]), "--dry-run"])
+    next_commands[12]["script"] = str(stage_install_scripts["stage1"])
+    next_commands[13]["command"] = [str(stage_doctor_scripts["stage1"])]
+    next_commands[13]["command_line"] = command_line([str(stage_doctor_scripts["stage1"])])
     next_commands[13]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[13]["script"] = str(stage_scripts["stage1"])
-    next_commands[14]["command"] = [str(check_generation_script)]
-    next_commands[14]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[14]["requires_files"] = [str(operator_env_path)]
-    next_commands[14]["script"] = str(check_generation_script)
-    next_commands[15]["command"] = [str(submit_generation_script)]
-    next_commands[15]["command_line"] = command_line([str(submit_generation_script)])
-    next_commands[15]["requires_files"] = [str(operator_env_path)]
-    next_commands[15]["script"] = str(submit_generation_script)
+    next_commands[13]["script"] = str(stage_doctor_scripts["stage1"])
+    next_commands[14]["command"] = [str(stage_check_scripts["stage1"])]
+    next_commands[14]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
+    next_commands[14]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[14]["script"] = str(stage_check_scripts["stage1"])
+    next_commands[15]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[15]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[15]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[15]["script"] = str(stage_scripts["stage1"])
+    next_commands[16]["command"] = [str(check_generation_script)]
+    next_commands[16]["command_line"] = command_line([str(check_generation_script)])
+    next_commands[16]["requires_files"] = [str(operator_env_path)]
+    next_commands[16]["script"] = str(check_generation_script)
+    next_commands[17]["command"] = [str(submit_generation_script)]
+    next_commands[17]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[17]["requires_files"] = [str(operator_env_path)]
+    next_commands[17]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -13117,6 +13250,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "runbook": output_dir / "SWARM_BOOTSTRAP.md",
         "stage0_invite": output_dir / "stage0" / "miner.invite.json",
         "stage0_join_code": output_dir / "stage0" / "miner.join-code.txt",
+        "stage0_install_script": output_dir / "stage0" / "install.sh",
         "stage0_doctor_script": output_dir / "stage0" / "doctor.sh",
         "stage0_check_join_script": output_dir / "stage0" / "check_join.sh",
         "stage0_support_bundle_script": output_dir / "stage0" / "support_bundle.sh",
@@ -13127,6 +13261,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "stage0_handoff_checksum": output_dir / "stage0.handoff.sha256",
         "stage1_invite": output_dir / "stage1" / "miner.invite.json",
         "stage1_join_code": output_dir / "stage1" / "miner.join-code.txt",
+        "stage1_install_script": output_dir / "stage1" / "install.sh",
         "stage1_doctor_script": output_dir / "stage1" / "doctor.sh",
         "stage1_check_join_script": output_dir / "stage1" / "check_join.sh",
         "stage1_support_bundle_script": output_dir / "stage1" / "support_bundle.sh",
@@ -13259,10 +13394,12 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["operator_status_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
+        required_files["stage0_install_script"],
         required_files["stage0_doctor_script"],
         required_files["stage0_check_join_script"],
         required_files["stage0_support_bundle_script"],
         required_files["stage0_join_script"],
+        required_files["stage1_install_script"],
         required_files["stage1_doctor_script"],
         required_files["stage1_check_join_script"],
         required_files["stage1_support_bundle_script"],
@@ -13465,6 +13602,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
 
     stage0_script_text, _ = _read_bootstrap_text(required_files["stage0_join_script"])
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
+    stage0_install_script_text, _ = _read_bootstrap_text(required_files["stage0_install_script"])
+    stage1_install_script_text, _ = _read_bootstrap_text(required_files["stage1_install_script"])
     stage0_doctor_script_text, _ = _read_bootstrap_text(required_files["stage0_doctor_script"])
     stage1_doctor_script_text, _ = _read_bootstrap_text(required_files["stage1_doctor_script"])
     stage0_check_script_text, _ = _read_bootstrap_text(required_files["stage0_check_join_script"])
@@ -13507,6 +13646,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["stage_handoff_manifest"],
         required_files["stage0_runner_script"],
         required_files["stage0_handoff_checksum"],
+        required_files["stage0_install_script"],
         required_files["stage0_doctor_script"],
         required_files["stage0_check_join_script"],
         required_files["stage0_support_bundle_script"],
@@ -13514,6 +13654,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["stage0_join_doc"],
         required_files["stage1_runner_script"],
         required_files["stage1_handoff_checksum"],
+        required_files["stage1_install_script"],
         required_files["stage1_doctor_script"],
         required_files["stage1_check_join_script"],
         required_files["stage1_support_bundle_script"],
@@ -13532,6 +13673,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     expected_archive_members = {
         "miner.invite.json",
         "miner.join-code.txt",
+        "install.sh",
         "doctor.sh",
         "check_join.sh",
         "support_bundle.sh",
@@ -13556,12 +13698,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     archive_modes_ready = bool(
         stage0_archive_modes.get("stage0/miner.invite.json") == "0o600"
         and stage0_archive_modes.get("stage0/miner.join-code.txt") == "0o600"
+        and stage0_archive_modes.get("stage0/install.sh") == "0o700"
         and stage0_archive_modes.get("stage0/doctor.sh") == "0o700"
         and stage0_archive_modes.get("stage0/check_join.sh") == "0o700"
         and stage0_archive_modes.get("stage0/support_bundle.sh") == "0o700"
         and stage0_archive_modes.get("stage0/join.sh") == "0o700"
         and stage1_archive_modes.get("stage1/miner.invite.json") == "0o600"
         and stage1_archive_modes.get("stage1/miner.join-code.txt") == "0o600"
+        and stage1_archive_modes.get("stage1/install.sh") == "0o700"
         and stage1_archive_modes.get("stage1/doctor.sh") == "0o700"
         and stage1_archive_modes.get("stage1/check_join.sh") == "0o700"
         and stage1_archive_modes.get("stage1/support_bundle.sh") == "0o700"
@@ -13635,6 +13779,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage_scripts_reference_operator_env = (
         "operator.private.env" in stage0_script_text
         or "operator.private.env" in stage1_script_text
+        or "operator.private.env" in stage0_install_script_text
+        or "operator.private.env" in stage1_install_script_text
         or "operator.private.env" in stage0_doctor_script_text
         or "operator.private.env" in stage1_doctor_script_text
         or "operator.private.env" in stage0_check_script_text
@@ -13645,6 +13791,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         or "operator.private.env" in stage1_runner_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage1_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage0_install_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage1_install_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_doctor_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage1_doctor_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_check_script_text
@@ -13671,6 +13819,28 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "command -v crowdtensor" in stage1_script_text
         and "local environment diagnostic" in stage0_script_text
         and "local environment diagnostic" in stage1_script_text
+    )
+    stage_install_scripts_ready = (
+        "CrowdTensor Miner installer" in stage0_install_script_text
+        and "CrowdTensor Miner installer" in stage1_install_script_text
+        and "-m venv" in stage0_install_script_text
+        and "-m venv" in stage1_install_script_text
+        and "pip install" in stage0_install_script_text
+        and "pip install" in stage1_install_script_text
+        and "CROWDTENSOR_MINER_VENV" in stage0_install_script_text
+        and "CROWDTENSOR_MINER_VENV" in stage1_install_script_text
+        and "CROWDTENSOR_INSTALL_SPEC" in stage0_install_script_text
+        and "CROWDTENSOR_INSTALL_SPEC" in stage1_install_script_text
+        and "CROWDTENSOR_INSTALL_SOURCE" in stage0_install_script_text
+        and "CROWDTENSOR_INSTALL_SOURCE" in stage1_install_script_text
+        and "git+https://github.com/Ffffffffchopin/CrowdTensor.git" in stage0_install_script_text
+        and "git+https://github.com/Ffffffffchopin/CrowdTensor.git" in stage1_install_script_text
+        and "--dry-run" in stage0_install_script_text
+        and "--dry-run" in stage1_install_script_text
+        and "miner.join-code.txt" not in stage0_install_script_text
+        and "miner.join-code.txt" not in stage1_install_script_text
+        and "crowdtensor join" not in stage0_install_script_text
+        and "crowdtensor join" not in stage1_install_script_text
     )
     stage_check_join_scripts_ready = (
         "--invite-code-file" in stage0_check_script_text
@@ -13699,6 +13869,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "does not start the Miner" in stage1_doctor_script_text
         and "CROWDTENSOR_SKIP_JOIN_PREFLIGHT" in stage0_doctor_script_text
         and "CROWDTENSOR_SKIP_JOIN_PREFLIGHT" in stage1_doctor_script_text
+        and ".crowdtensor-venv" in stage0_doctor_script_text
+        and ".crowdtensor-venv" in stage1_doctor_script_text
         and "--run" not in stage0_doctor_script_text
         and "--run" not in stage1_doctor_script_text
     )
@@ -13737,6 +13909,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "tarfile.open" in stage1_runner_script_text
         and "stage archive members mismatch" in stage0_runner_script_text
         and "stage archive members mismatch" in stage1_runner_script_text
+        and "--install" in stage0_runner_script_text
+        and "--install" in stage1_runner_script_text
+        and "install.sh" in stage0_runner_script_text
+        and "install.sh" in stage1_runner_script_text
         and "doctor.sh" in stage0_runner_script_text
         and "doctor.sh" in stage1_runner_script_text
         and "check_join.sh" in stage0_runner_script_text
@@ -13753,6 +13929,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         stage_scripts_use_join_code_file,
         detail="stage join scripts must use private miner.join-code.txt by default",
         diagnosis_code="bootstrap_stage_join_script_not_code_file",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_install_scripts_ready",
+        stage_install_scripts_ready,
+        detail="stage install.sh scripts must create a local Miner virtualenv without reading invite material or starting the Miner",
+        diagnosis_code="bootstrap_stage_install_script_invalid",
     )
     _bootstrap_check_item(
         checks,
@@ -14014,11 +14198,13 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "verify_bootstrap": str(required_files["verify_bootstrap_script"]),
                 "handoff_doctor": str(required_files["handoff_doctor_script"]),
                 "operator_status": str(required_files["operator_status_script"]),
+                "stage0_install": str(required_files["stage0_install_script"]),
                 "stage0_doctor": str(required_files["stage0_doctor_script"]),
                 "stage0_check_join": str(required_files["stage0_check_join_script"]),
                 "stage0_support_bundle": str(required_files["stage0_support_bundle_script"]),
                 "stage0_join": str(required_files["stage0_join_script"]),
                 "stage0_run_miner": str(required_files["stage0_runner_script"]),
+                "stage1_install": str(required_files["stage1_install_script"]),
                 "stage1_doctor": str(required_files["stage1_doctor_script"]),
                 "stage1_check_join": str(required_files["stage1_check_join_script"]),
                 "stage1_support_bundle": str(required_files["stage1_support_bundle_script"]),
@@ -14063,6 +14249,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
             "stage_reward_account_metadata_ready": stage_reward_account_metadata_ready,
+            "stage_install_scripts_ready": stage_install_scripts_ready,
             "stage_doctor_scripts_ready": stage_doctor_scripts_ready,
             "stage_check_join_scripts_ready": stage_check_join_scripts_ready,
             "stage_support_bundle_scripts_ready": stage_support_bundle_scripts_ready,
