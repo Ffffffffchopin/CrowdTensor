@@ -289,6 +289,8 @@ def check_security_docs(root: Path) -> dict[str, Any]:
         "join.sh",
         "scripts/create_operator_invite.py",
         "crowdtensor_operator_invite_v1",
+        "crowdtensor settlement",
+        "crowdtensor_settlement_cli_v1",
     ]:
         if fragment not in text:
             details.append(f"docs/security.md must mention {fragment}")
@@ -326,6 +328,8 @@ def check_api_docs(root: Path) -> dict[str, Any]:
         "GET /admin/settlement",
         "miner_accounting_summary_v1",
         "miner_settlement_draft_v1",
+        "crowdtensor settlement",
+        "crowdtensor_settlement_cli_v1",
         "--operator-token-registry",
         "--miner-token-registry",
         "crowdtensor operator-invite",

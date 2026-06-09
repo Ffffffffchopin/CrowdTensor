@@ -119,6 +119,7 @@ PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
+OPERATOR_SETTLEMENT_CLI_SCHEMA = "crowdtensor_settlement_cli_v1"
 MINER_JOIN_INVITE_SCHEMA = "crowdtensor_miner_join_invite_v1"
 MINER_JOIN_DISCOVERY_SCHEMA = "crowdtensor_miner_join_discovery_v1"
 PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_generate_runtime_provenance_v1"
@@ -15568,6 +15569,264 @@ def _product_generate_safety_summary(report: dict[str, Any]) -> dict[str, Any]:
     return safety
 
 
+def _operator_settlement_query(args: argparse.Namespace, *, include_status: bool) -> str:
+    query: dict[str, Any] = {
+        "limit": int(getattr(args, "limit", 50) or 50),
+    }
+    if include_status:
+        query["status"] = str(getattr(args, "status", "any") or "any")
+    else:
+        query["unit_price_microcredits"] = int(getattr(args, "unit_price_microcredits", 0) or 0)
+    for key in ["miner_id", "workload_type", "session_id", "created_by_subject"]:
+        value = str(getattr(args, key, "") or "").strip()
+        if value:
+            query[key] = value
+    return "?" + urlencode(query)
+
+
+def _redact_reward_account_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "reward_account":
+                redacted[key] = "<redacted>" if item else ""
+            else:
+                redacted[key] = _redact_reward_account_values(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_reward_account_values(item) for item in value]
+    return value
+
+
+def render_operator_settlement_markdown(report: dict[str, Any]) -> str:
+    settlement = report.get("settlement") if isinstance(report.get("settlement"), dict) else {}
+    accounting = report.get("accounting") if isinstance(report.get("accounting"), dict) else {}
+    filters = report.get("filters") if isinstance(report.get("filters"), dict) else {}
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    lines = [
+        "# CrowdTensor Settlement Draft",
+        "",
+        f"- OK: `{bool(report.get('ok'))}`",
+        f"- Coordinator: `{report.get('coordinator_url') or ''}`",
+        f"- Settlement rows: `{settlement.get('row_count', 0)}`",
+        f"- Accounting rows: `{accounting.get('row_count', 0) if accounting else 'not-requested'}`",
+        f"- Unit price microcredits: `{settlement.get('unit_price_microcredits', 0)}`",
+        f"- Draft only: `{bool(settlement.get('draft_only', True))}`",
+        f"- Payment executed: `{bool(settlement.get('payment_executed', False))}`",
+        f"- Reward accounts public: `{bool(settlement.get('reward_accounts_public', False))}`",
+        f"- Diagnosis: `{', '.join(str(code) for code in (report.get('diagnosis_codes') or []))}`",
+        "",
+        "## Filters",
+        "",
+    ]
+    for key in ["limit", "status", "miner_id", "workload_type", "session_id", "created_by_subject"]:
+        lines.append(f"- `{key}`: `{filters.get(key, '')}`")
+    lines.extend([
+        "",
+        "## Settlement Totals",
+        "",
+    ])
+    totals = settlement.get("settlement_totals") if isinstance(settlement.get("settlement_totals"), dict) else {}
+    if totals:
+        for key, item in sorted(totals.items()):
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- `{key}`: accepted=`{item.get('accepted', 0)}` "
+                f"reward_units=`{item.get('reward_units', 0)}` "
+                f"amount_microcredits=`{item.get('reward_amount_microcredits', 0)}` "
+                f"reward_account_present=`{bool(item.get('reward_account_present'))}`"
+            )
+    else:
+        lines.append("- None.")
+    subject_totals = settlement.get("created_by_subject_totals") if isinstance(settlement.get("created_by_subject_totals"), dict) else {}
+    lines.extend([
+        "",
+        "## Subject Totals",
+        "",
+    ])
+    if subject_totals:
+        for key, item in sorted(subject_totals.items()):
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- `{key}`: accepted=`{item.get('accepted', 0)}` "
+                f"reward_units=`{item.get('reward_units', 0)}` "
+                f"amount_microcredits=`{item.get('reward_amount_microcredits', 0)}`"
+            )
+    else:
+        lines.append("- None.")
+    lines.extend([
+        "",
+        "## Safety",
+        "",
+        f"- Public artifact safe: `{bool(report.get('public_artifact_safe'))}`",
+        f"- Admin credentials public: `{bool(safety.get('admin_credentials_public'))}`",
+        f"- Reward destination values public: `{bool(safety.get('reward_destination_values_public'))}`",
+        f"- Lease material public: `{bool(safety.get('lease_material_public'))}`",
+        "- This is a draft-only operator accounting artifact; it does not execute billing, staking, or payouts.",
+        "",
+        "## Artifacts",
+        "",
+    ])
+    for name, artifact in sorted(artifacts.items()):
+        if not isinstance(artifact, dict):
+            continue
+        lines.append(f"- `{name}`: path=`{artifact.get('path')}` present=`{artifact.get('present')}`")
+    if not artifacts:
+        lines.append("- None.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_operator_settlement(args: argparse.Namespace) -> dict[str, Any]:
+    coordinator_url = str(getattr(args, "coordinator_url", "") or "").strip().rstrip("/")
+    admin_token = str(getattr(args, "admin_token", "") or "")
+    output_dir = Path(str(getattr(args, "output_dir", "dist/settlement") or "dist/settlement"))
+    filters = {
+        "limit": int(getattr(args, "limit", 50) or 50),
+        "status": str(getattr(args, "status", "any") or "any"),
+        "miner_id": str(getattr(args, "miner_id", "") or "").strip(),
+        "workload_type": str(getattr(args, "workload_type", "") or "").strip(),
+        "session_id": str(getattr(args, "session_id", "") or "").strip(),
+        "created_by_subject": str(getattr(args, "created_by_subject", "") or "").strip(),
+        "unit_price_microcredits": int(getattr(args, "unit_price_microcredits", 0) or 0),
+    }
+    report: dict[str, Any] = {
+        "schema": OPERATOR_SETTLEMENT_CLI_SCHEMA,
+        "ok": False,
+        "mode": "settlement",
+        "coordinator_url": coordinator_url,
+        "output_dir": str(output_dir),
+        "filters": filters,
+        "include_accounting": bool(getattr(args, "include_accounting", False)),
+        "requires_role": "accounting",
+        "diagnosis_codes": [],
+        "public_artifact_safe": True,
+        "safety": {
+            "admin_credentials_public": False,
+            "reward_destination_values_public": False,
+            "lease_material_public": False,
+            "raw_prompts_public": False,
+            "raw_outputs_public": False,
+            "draft_only": True,
+            "payment_executed": False,
+            "not_production_billing": True,
+        },
+        "operator_action": "",
+    }
+    if not coordinator_url:
+        report["diagnosis_codes"] = ["coordinator_route_missing"]
+        report["operator_action"] = "Pass --coordinator-url for the Coordinator that exposes /admin/settlement."
+        return sanitize(redact_values(report, [admin_token]))
+    if not admin_token:
+        report["diagnosis_codes"] = ["admin_token_required"]
+        report["operator_action"] = "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN with an owner/admin/accounting operator token."
+        return sanitize(redact_values(report, [admin_token]))
+
+    redactions = [admin_token]
+    try:
+        settlement = request_json_url(
+            "GET",
+            coordinator_url,
+            "/admin/settlement" + _operator_settlement_query(args, include_status=False),
+            admin_token=admin_token,
+            timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+        )
+        report["settlement"] = settlement
+        report["diagnosis_codes"].append("settlement_draft_ready")
+        accounting: dict[str, Any] = {}
+        if bool(getattr(args, "include_accounting", False)):
+            accounting = request_json_url(
+                "GET",
+                coordinator_url,
+                "/admin/accounting" + _operator_settlement_query(args, include_status=True),
+                admin_token=admin_token,
+                timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+            )
+            report["accounting"] = accounting
+            report["diagnosis_codes"].append("accounting_summary_ready")
+        report["ok"] = bool(
+            settlement.get("schema") == "miner_settlement_draft_v1"
+            and settlement.get("draft_only") is not False
+            and settlement.get("payment_executed") is False
+            and settlement.get("reward_accounts_public") is False
+            and (
+                not bool(getattr(args, "include_accounting", False))
+                or accounting.get("schema") == "miner_accounting_summary_v1"
+            )
+        )
+        if report["ok"]:
+            report["diagnosis_codes"].append("operator_settlement_ready")
+            report["operator_action"] = "Review settlement_summary.md; this is draft-only and no payment was executed."
+        else:
+            report["diagnosis_codes"].append("operator_settlement_schema_mismatch")
+            report["operator_action"] = "Inspect settlement_summary.json; Coordinator returned an unexpected accounting or settlement schema."
+    except Exception as exc:
+        report.update({
+            "error": type(exc).__name__,
+            "detail": redact_text(str(exc), redactions)[:200],
+            "diagnosis_codes": ["operator_settlement_request_failed"],
+            "operator_action": "Check Coordinator URL, accounting-role admin token, and /admin/settlement reachability.",
+        })
+        if isinstance(exc, HTTPError):
+            report["status_code"] = int(exc.code)
+            if int(exc.code) in {401, 403}:
+                report["diagnosis_codes"] = ["operator_settlement_token_rejected"]
+    report["diagnosis_codes"] = sorted(set(str(code) for code in report.get("diagnosis_codes", []) if code))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report["saved_summary"] = {
+        "path": str(output_dir / "settlement_summary.json"),
+        "markdown_path": str(output_dir / "settlement_summary.md"),
+        "public_artifact_safe": True,
+    }
+    report["artifacts"] = {
+        "settlement_summary": {
+            "path": str(output_dir / "settlement_summary.json"),
+            "present": True,
+            "kind": "crowdtensor_settlement_summary",
+        },
+        "settlement_summary_markdown": {
+            "path": str(output_dir / "settlement_summary.md"),
+            "present": True,
+            "kind": "crowdtensor_settlement_summary_markdown",
+        },
+    }
+    safe_report = sanitize(_redact_reward_account_values(redact_values(copy.deepcopy(report), redactions)))
+    (output_dir / "settlement_summary.json").write_text(
+        json.dumps(safe_report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "settlement_summary.md").write_text(
+        render_operator_settlement_markdown(safe_report),
+        encoding="utf-8",
+    )
+    return safe_report
+
+
+def print_operator_settlement(report: dict[str, Any]) -> None:
+    settlement = report.get("settlement") if isinstance(report.get("settlement"), dict) else {}
+    accounting = report.get("accounting") if isinstance(report.get("accounting"), dict) else {}
+    saved = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
+    print("CrowdTensor settlement")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    print(f"  settlement_rows: {settlement.get('row_count', 0)}")
+    if accounting:
+        print(f"  accounting_rows: {accounting.get('row_count', 0)}")
+    print(f"  draft_only: {settlement.get('draft_only')}")
+    print(f"  payment_executed: {settlement.get('payment_executed')}")
+    print(f"  reward_accounts_public: {settlement.get('reward_accounts_public')}")
+    print(f"  output: {report.get('output_dir')}")
+    if saved:
+        print(f"  saved_summary: {saved.get('path')} markdown={saved.get('markdown_path')}")
+    print(f"  diagnosis: {', '.join(str(code) for code in (report.get('diagnosis_codes') or []))}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
+
+
 def _finalize_product_generate_report(
     report: dict[str, Any],
     *,
@@ -20378,6 +20637,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     operator_invite.add_argument("--invite-file", default="")
     operator_invite.add_argument("--json", action="store_true")
 
+    settlement = subparsers.add_parser(
+        "settlement",
+        help="Fetch a public-safe Miner settlement draft from a Coordinator.",
+        description=(
+            "Read /admin/settlement with an owner/admin/accounting operator token and write "
+            "settlement_summary.json plus settlement_summary.md. This is a draft-only "
+            "operator accounting artifact: it does not execute payments, staking, or payouts, "
+            "and it keeps reward account values, prompts, outputs, and lease material out of "
+            "public artifacts."
+        ),
+        epilog=(
+            "examples:\n"
+            "  CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} \\\n"
+            "    crowdtensor settlement --coordinator-url http://127.0.0.1:8787 --include-accounting\n"
+            "  crowdtensor settlement --coordinator-url https://YOUR-COORDINATOR \\\n"
+            "    --created-by-subject operator:generate-desk --unit-price-microcredits 4 --json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    settlement.add_argument("--output-dir", default="dist/settlement")
+    settlement.add_argument("--coordinator-url", default=os.environ.get("CROWDTENSOR_COORDINATOR_URL", ""))
+    settlement.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    settlement.add_argument("--limit", type=int, default=50)
+    settlement.add_argument("--status", choices=["any", "leased", "accepted", "rejected"], default="any")
+    settlement.add_argument("--miner-id", default="")
+    settlement.add_argument("--workload-type", default="")
+    settlement.add_argument("--session-id", default="")
+    settlement.add_argument("--created-by-subject", default="")
+    settlement.add_argument("--unit-price-microcredits", type=int, default=0)
+    settlement.add_argument("--include-accounting", action="store_true")
+    settlement.add_argument("--http-timeout", type=float, default=10.0)
+    settlement.add_argument("--json", action="store_true")
+
     swarm_bootstrap = subparsers.add_parser(
         "swarm-bootstrap",
         help="Prepare private operator and Miner invites for a two-stage swarm.",
@@ -22706,7 +22998,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -22814,6 +23106,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--rate-window-seconds must be non-negative")
         if (args.rate_limit > 0) != (args.rate_window_seconds > 0):
             raise SystemExit("--rate-limit and --rate-window-seconds must be set together")
+    if args.command == "settlement":
+        if args.coordinator_url:
+            parsed_settlement_url = urlparse(args.coordinator_url)
+            if parsed_settlement_url.scheme not in {"http", "https"} or not parsed_settlement_url.hostname:
+                raise SystemExit("--coordinator-url must be a full http(s) URL with a host")
+        if args.limit < 0 or args.limit > 500:
+            raise SystemExit("--limit must be between 0 and 500")
+        if args.unit_price_microcredits < 0:
+            raise SystemExit("--unit-price-microcredits must be non-negative")
+        if args.http_timeout <= 0:
+            raise SystemExit("--http-timeout must be positive")
     if args.command == "swarm-bootstrap":
         if args.port < 1:
             raise SystemExit("--port must be positive")
@@ -23821,6 +24124,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_operator_invite(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "settlement":
+        report = build_operator_settlement(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_operator_settlement(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "swarm-bootstrap":
         report = build_swarm_bootstrap(args)

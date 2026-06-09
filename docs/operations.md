@@ -863,6 +863,26 @@ rows by subject/workload without including anonymous background tasks. Use the
 exact `created_by_subject` query parameter to draft settlement rows for one
 operator/admin subject.
 
+Operator settlement CLI:
+
+```bash
+CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} \
+  crowdtensor settlement \
+    --coordinator-url http://127.0.0.1:8787 \
+    --include-accounting \
+    --unit-price-microcredits 1 \
+    --output-dir dist/settlement
+```
+
+`crowdtensor settlement` wraps those two admin endpoints for ordinary
+accounting operators. It emits `crowdtensor_settlement_cli_v1`, writes
+`settlement_summary.json` and `settlement_summary.md`, supports the same exact
+Miner/workload/session/`created_by_subject` filters, optionally includes the
+accounting summary with `--include-accounting`, and keeps the admin token,
+reward account values, raw prompts, outputs, and lease material out of saved
+artifacts. The report is still draft-only: no billing, staking, payout, or
+automatic settlement is executed.
+
 ## Acceptance Checks
 
 First-run Doctor:

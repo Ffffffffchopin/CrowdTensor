@@ -1521,6 +1521,196 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("session_policy:", rendered)
         self.assertNotIn("operator-secret", rendered)
 
+    def test_operator_settlement_fetches_draft_and_redacts_private_values(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "settlement"
+        admin_token = "settlement-admin-secret"
+        reward_account = "acct-private-stage0"
+        calls: list[dict[str, object]] = []
+
+        def fake_request(method, base_url, path, payload=None, *, admin_token="", miner_token="", observer_token="", timeout=10.0):
+            calls.append({
+                "method": method,
+                "base_url": base_url,
+                "path": path,
+                "payload": payload,
+                "admin_token": admin_token,
+                "miner_token": miner_token,
+                "observer_token": observer_token,
+                "timeout": timeout,
+            })
+            if path.startswith("/admin/settlement"):
+                return {
+                    "schema": "miner_settlement_draft_v1",
+                    "rows": [
+                        {
+                            "schema": "miner_settlement_row_v1",
+                            "miner_id": "stage0-miner",
+                            "workload_type": "real_llm_sharded_infer",
+                            "reward_unit": "token",
+                            "reward_units": 8,
+                            "reward_amount_microcredits": 32,
+                            "reward_account_present": True,
+                            "join_policy": {
+                                "trust_tier": "probation",
+                                "reward_account_present": True,
+                                "reward_account": reward_account,
+                            },
+                        }
+                    ],
+                    "row_count": 1,
+                    "limit": 20,
+                    "miner_id": "stage0-miner",
+                    "workload_type": "real_llm_sharded_infer",
+                    "session_id": "session-1",
+                    "created_by_subject": "operator:generate-desk",
+                    "unit_price_microcredits": 4,
+                    "currency": "operator_microcredit_v1",
+                    "settlement_totals": {
+                        "stage0-miner/real_llm_sharded_infer": {
+                            "accepted": 1,
+                            "reward_units": 8,
+                            "reward_amount_microcredits": 32,
+                            "reward_account_present": True,
+                            "reward_account": reward_account,
+                        }
+                    },
+                    "created_by_subject_totals": {
+                        "operator:generate-desk/real_llm_sharded_infer": {
+                            "accepted": 1,
+                            "reward_units": 8,
+                            "reward_amount_microcredits": 32,
+                        }
+                    },
+                    "draft_only": True,
+                    "payment_executed": False,
+                    "reward_accounts_public": False,
+                    "raw_prompts_public": False,
+                    "raw_outputs_public": False,
+                    "lease_material_public": False,
+                    "public_artifact_safe": True,
+                }
+            if path.startswith("/admin/accounting"):
+                return {
+                    "schema": "miner_accounting_summary_v1",
+                    "rows": [
+                        {
+                            "miner_id": "stage0-miner",
+                            "workload_type": "real_llm_sharded_infer",
+                            "accounting_status": "accepted",
+                            "created_by_subject": "operator:generate-desk",
+                            "join_policy": {
+                                "reward_account_present": True,
+                                "reward_account": reward_account,
+                            },
+                        }
+                    ],
+                    "row_count": 1,
+                    "limit": 20,
+                    "status": "accepted",
+                    "miner_totals": {},
+                    "created_by_subject_totals": {},
+                    "raw_prompts_public": False,
+                    "raw_outputs_public": False,
+                    "lease_material_public": False,
+                    "public_artifact_safe": True,
+                }
+            raise AssertionError(path)
+
+        args = cli.parse_args([
+            "settlement",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--admin-token",
+            admin_token,
+            "--limit",
+            "20",
+            "--status",
+            "accepted",
+            "--miner-id",
+            "stage0-miner",
+            "--workload-type",
+            "real_llm_sharded_infer",
+            "--session-id",
+            "session-1",
+            "--created-by-subject",
+            "operator:generate-desk",
+            "--unit-price-microcredits",
+            "4",
+            "--include-accounting",
+            "--http-timeout",
+            "7",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_operator_settlement(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        saved_json = (output_dir / "settlement_summary.json").read_text(encoding="utf-8")
+        saved_md = (output_dir / "settlement_summary.md").read_text(encoding="utf-8")
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "crowdtensor_settlement_cli_v1")
+        self.assertEqual(report["settlement"]["row_count"], 1)
+        self.assertEqual(report["accounting"]["row_count"], 1)
+        self.assertIn("operator_settlement_ready", report["diagnosis_codes"])
+        self.assertIn("settlement_draft_ready", report["diagnosis_codes"])
+        self.assertIn("accounting_summary_ready", report["diagnosis_codes"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["method"], "GET")
+        self.assertEqual(calls[0]["base_url"], "https://ct.example")
+        self.assertIn("/admin/settlement?", calls[0]["path"])
+        self.assertIn("unit_price_microcredits=4", calls[0]["path"])
+        self.assertIn("miner_id=stage0-miner", calls[0]["path"])
+        self.assertIn("created_by_subject=operator%3Agenerate-desk", calls[0]["path"])
+        self.assertEqual(calls[0]["admin_token"], admin_token)
+        self.assertEqual(calls[0]["timeout"], 7.0)
+        self.assertIn("/admin/accounting?", calls[1]["path"])
+        self.assertIn("status=accepted", calls[1]["path"])
+        self.assertFalse(report["settlement"]["reward_accounts_public"])
+        self.assertFalse(report["safety"]["admin_credentials_public"])
+        self.assertFalse(report["safety"]["reward_destination_values_public"])
+        self.assertNotIn(admin_token, encoded)
+        self.assertNotIn(admin_token, saved_json)
+        self.assertNotIn(admin_token, saved_md)
+        self.assertNotIn(reward_account, encoded)
+        self.assertNotIn(reward_account, saved_json)
+        self.assertNotIn(reward_account, saved_md)
+        self.assertEqual(report["settlement"]["rows"][0]["join_policy"]["reward_account"], "<redacted>")
+        self.assertIn("CrowdTensor Settlement Draft", saved_md)
+        self.assertIn("Payment executed: `False`", saved_md)
+
+        with io.StringIO() as buffer, contextlib.redirect_stdout(buffer):
+            cli.print_operator_settlement(report)
+            rendered = buffer.getvalue()
+
+        self.assertIn("CrowdTensor settlement", rendered)
+        self.assertIn("settlement_rows: 1", rendered)
+        self.assertIn("accounting_rows: 1", rendered)
+        self.assertNotIn(admin_token, rendered)
+        self.assertNotIn(reward_account, rendered)
+
+    def test_operator_settlement_requires_token_before_request(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "settlement"
+        args = cli.parse_args([
+            "settlement",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url") as request_mock:
+            report = cli.build_operator_settlement(args)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("admin_token_required", report["diagnosis_codes"])
+        request_mock.assert_not_called()
+        self.assertFalse((output_dir / "settlement_summary.json").exists())
+
     def test_swarm_bootstrap_creates_private_invites_and_copyable_commands(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"
         args = cli.parse_args([

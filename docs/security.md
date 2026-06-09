@@ -250,6 +250,12 @@ settlement attribution. The `created_by_subject` query parameter is an exact
 label filter for accounting/settlement export, not a token lookup; plaintext
 admin/operator tokens remain private and are never included in those rows or
 totals.
+For the operator CLI path, `crowdtensor settlement` fetches
+`/admin/settlement` and optionally `/admin/accounting`, writes
+`crowdtensor_settlement_cli_v1` artifacts, and keeps admin credentials, reward
+account values, raw prompts, outputs, and lease material out of the generated
+JSON and Markdown. It is still draft-only and never executes billing, staking,
+or payouts.
 
 ## What Is Protected
 

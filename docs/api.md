@@ -264,6 +264,14 @@ against safe labels, and subject totals only include rows with a non-empty
 `draft_only` is true, `payment_executed` is false, and reward account values are
 never exposed.
 
+The product CLI wraps this endpoint as `crowdtensor settlement`. It writes
+`crowdtensor_settlement_cli_v1` artifacts (`settlement_summary.json` and
+`settlement_summary.md`), can also fetch `/admin/accounting` with
+`--include-accounting`, accepts the same exact filters, and requires a legacy
+admin token or an operator token with `owner`, `admin`, or `accounting` access.
+The CLI is public-safe by default: it redacts the admin token and reward account
+values and remains draft-only with `payment_executed=false`.
+
 ### `POST /admin/inference-sessions`
 
 Creates one admin-controlled, read-only `model_bundle_infer` task. Requires `x-crowdtensor-admin-token` with legacy admin, `owner`, or `admin` access.
