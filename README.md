@@ -433,6 +433,21 @@ accidental `127.0.0.1` or `localhost` invites before running.
 Multi-operator deployments can start the same product Coordinator with
 `crowdtensor serve --operator-token-registry state/operator_registry.json --run`
 so audit/accounting operators do not need the legacy owner-level admin token.
+Create role-scoped operator entries with `crowdtensor operator-invite`; it writes
+only a hashed verifier to the registry and a private invite file containing the
+plaintext operator token:
+
+```bash
+crowdtensor operator-invite \
+  --registry state/operator_registry.json \
+  --operator-id generate-desk \
+  --role admin \
+  --allowed-workload real-llm-sharded \
+  --max-new-tokens 8 \
+  --max-total-sessions 100 \
+  --invite-file state/private/generate-desk.operator.invite.json
+```
+
 Add `--inference-session-rate-limit N --inference-session-rate-window-seconds S`
 to rate-limit generation session creation per admin/operator subject.
 

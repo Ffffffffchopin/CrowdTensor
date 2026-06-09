@@ -44,6 +44,7 @@ from crowdtensor.p2p_lite import (
     sign_peer_announcement,
     stable_peer_id,
 )
+from crowdtensor.operator_invite import create_operator_invite
 from crowdtensor.real_p2p import (
     DEFAULT_DISCOVERY_BACKEND,
     PROVIDER_RECORD_SCHEMA,
@@ -10764,6 +10765,93 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
     return sanitize(report)
 
 
+def build_operator_invite(args: argparse.Namespace) -> dict[str, Any]:
+    registry_path = Path(args.registry)
+    invite_file = (
+        Path(args.invite_file)
+        if str(getattr(args, "invite_file", "") or "")
+        else registry_path.with_name(f"{args.operator_id}.operator.invite.json")
+    )
+    invite = create_operator_invite(
+        registry_path=registry_path,
+        operator_id=args.operator_id,
+        roles=args.role or ["auditor"],
+        label=args.label,
+        token=args.token,
+        replace=args.replace,
+        allowed_workloads=args.allowed_workload,
+        max_request_count=args.max_request_count,
+        max_decode_steps=args.max_decode_steps,
+        max_new_tokens=args.max_new_tokens,
+        max_active_sessions=args.max_active_sessions,
+        max_total_sessions=args.max_total_sessions,
+        rate_limit=args.rate_limit,
+        rate_window_seconds=args.rate_window_seconds,
+        invite_file=invite_file,
+    )
+    secret_values = [
+        str((invite.get("env") or {}).get("CROWDTENSOR_ADMIN_TOKEN") or ""),
+        str((invite.get("operator_invite") or {}).get("operator_token") or ""),
+        str(invite.get("operator_invite_code") or ""),
+    ]
+    safe_invite = {
+        "schema": "crowdtensor_operator_invite_cli_v1",
+        "ok": True,
+        "mode": "operator-invite",
+        "operator_id": invite["operator_id"],
+        "roles": invite["roles"],
+        "registry": invite["registry"],
+        "invite_file": invite["invite_file"],
+        "session_policy": invite["session_policy"],
+        "command": [
+            "crowdtensor",
+            "serve",
+            "--operator-token-registry",
+            invite["registry"],
+            "--run",
+        ],
+        "diagnosis_codes": ["operator_invite_ready", "operator_registry_hashed"],
+        "safety": {
+            "plaintext_token_public": False,
+            "invite_file_private": True,
+            "registry_plaintext_token_public": False,
+            "operator_invite_code_public": False,
+            "not_production_billing": True,
+        },
+        "operator_action": (
+            "Keep the operator invite file private, start the Coordinator with --operator-token-registry, "
+            "and give the operator only their private token/invite."
+        ),
+    }
+    safe_invite["command_line"] = command_line(safe_invite["command"])
+    safe_invite = redact_values(safe_invite, secret_values)
+    return sanitize(safe_invite)
+
+
+def print_operator_invite(report: dict[str, Any]) -> None:
+    print("CrowdTensor operator invite")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  operator_id: {report.get('operator_id')}")
+    print(f"  roles: {', '.join(str(role) for role in (report.get('roles') or []))}")
+    print(f"  registry: {report.get('registry')}")
+    print(f"  invite_file: {report.get('invite_file')}")
+    policy = report.get("session_policy") if isinstance(report.get("session_policy"), dict) else {}
+    if policy:
+        print(
+            "  session_policy: "
+            f"workloads={','.join(str(item) for item in (policy.get('allowed_workloads') or [])) or 'any'} "
+            f"max_requests={policy.get('max_request_count', 0)} "
+            f"max_tokens={policy.get('max_new_tokens', 0)} "
+            f"active={policy.get('max_active_sessions', 0)} "
+            f"total={policy.get('max_total_sessions', 0)} "
+            f"rate={policy.get('rate_limit', 0)}/{policy.get('rate_window_seconds', 0.0)}s"
+        )
+    print(f"  command: {report.get('command_line')}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+
+
 def _product_serve_operator_action(report: dict[str, Any]) -> str:
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
     remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
@@ -17155,6 +17243,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     serve.add_argument("--run", action="store_true")
     serve.add_argument("--json", action="store_true")
 
+    operator_invite = subparsers.add_parser(
+        "operator-invite",
+        help="Create a role-scoped operator registry entry and private invite.",
+        description=(
+            "Create or update a private operator token registry entry with hashed token verifier, "
+            "roles, and optional session-policy limits. The default JSON/terminal report does not "
+            "print the plaintext token; read the generated invite file privately."
+        ),
+    )
+    operator_invite.add_argument("--registry", required=True, help="path to operator token registry JSON")
+    operator_invite.add_argument("--operator-id", required=True)
+    operator_invite.add_argument("--role", action="append", default=[], help="operator role; repeat for multiple roles")
+    operator_invite.add_argument("--label", default="")
+    operator_invite.add_argument("--token", default="", help="plaintext token to use; omit to generate one")
+    operator_invite.add_argument("--replace", action="store_true")
+    operator_invite.add_argument("--allowed-workload", action="append", default=[])
+    operator_invite.add_argument("--max-request-count", type=int, default=0)
+    operator_invite.add_argument("--max-decode-steps", type=int, default=0)
+    operator_invite.add_argument("--max-new-tokens", type=int, default=0)
+    operator_invite.add_argument("--max-active-sessions", type=int, default=0)
+    operator_invite.add_argument("--max-total-sessions", type=int, default=0)
+    operator_invite.add_argument("--rate-limit", type=int, default=0)
+    operator_invite.add_argument("--rate-window-seconds", type=float, default=0.0)
+    operator_invite.add_argument("--invite-file", default="")
+    operator_invite.add_argument("--json", action="store_true")
+
     join = subparsers.add_parser(
         "join",
         help="Print or run a product-facing Miner command.",
@@ -19384,7 +19498,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -19472,6 +19586,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--inference-session-rate-limit and --inference-session-rate-window-seconds must be set together")
         if args.http_timeout <= 0:
             raise SystemExit("--http-timeout must be positive")
+    if args.command == "operator-invite":
+        allowed_roles = {"owner", "admin", "accounting", "auditor"}
+        roles = args.role or ["auditor"]
+        unknown_roles = sorted({str(role) for role in roles if str(role) not in allowed_roles})
+        if unknown_roles:
+            raise SystemExit(f"unknown operator roles: {', '.join(unknown_roles)}")
+        for name in [
+            "max_request_count",
+            "max_decode_steps",
+            "max_new_tokens",
+            "max_active_sessions",
+            "max_total_sessions",
+            "rate_limit",
+        ]:
+            if getattr(args, name) < 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be non-negative")
+        if args.rate_window_seconds < 0:
+            raise SystemExit("--rate-window-seconds must be non-negative")
+        if (args.rate_limit > 0) != (args.rate_window_seconds > 0):
+            raise SystemExit("--rate-limit and --rate-window-seconds must be set together")
     if args.command == "join":
         if args.http_timeout <= 0:
             raise SystemExit("--http-timeout must be positive")
@@ -20434,6 +20568,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_product_serve(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "operator-invite":
+        report = build_operator_invite(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_operator_invite(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "join":
         report = build_product_join(args)

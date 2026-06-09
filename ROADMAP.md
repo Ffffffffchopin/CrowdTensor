@@ -34,6 +34,9 @@ Hivemind-level large-model serving.
 
 - Shorten the two-machine setup path.
 - Improve join packs for non-expert Miner operators.
+- Add first-class operator invite flows for role-scoped generation,
+  accounting, and audit users while keeping plaintext tokens out of public
+  reports.
 - Extend role-scoped operator tokens into tenant/project-scoped policies and
   user-facing operator management.
 - Extend private Miner join policy enforcement, claim-rate limits, accounting
@@ -46,6 +49,9 @@ Hivemind-level large-model serving.
   default.
 - Add more operator-facing examples for local, LAN, VPN, and temporary public
   demos.
+- Keep remote-Miner onboarding explicit about reachability: a Coordinator needs
+  a Miner-facing URL via public HTTPS, a tunnel, VPN, reverse proxy, or trusted
+  LAN before Miner hosts outside the local machine can join.
 
 **Harden the public swarm route.**
 

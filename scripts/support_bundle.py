@@ -52,6 +52,8 @@ SAFE_SENSITIVE_NAMED_FIELDS = {
     "next_token_redacted",
     "observed_token_counts",
     "peer_secret_gossiped",
+    "plaintext_token_public",
+    "registry_plaintext_token_public",
     "required_generated_token_count",
     "target_token_count",
     "token_target_ready",

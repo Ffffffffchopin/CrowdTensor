@@ -37,6 +37,7 @@ REQUIRED_FILES = [
     "scripts/result_idempotency_check.py",
     "scripts/result_ledger_check.py",
     "scripts/create_miner_invite.py",
+    "scripts/create_operator_invite.py",
     "scripts/remote_miner_join_check.py",
     "scripts/miner_resilience_check.py",
     "scripts/readiness_check.py",
@@ -243,7 +244,16 @@ def check_security_docs(root: Path) -> dict[str, Any]:
     except OSError as exc:
         return check_result("security_docs", False, [str(exc)])
     details: list[str] = []
-    for fragment in ["sha256:", "scripts/hash_token.py", "hashed token", "--operator-token-registry", "roles"]:
+    for fragment in [
+        "sha256:",
+        "scripts/hash_token.py",
+        "hashed token",
+        "--operator-token-registry",
+        "roles",
+        "crowdtensor operator-invite",
+        "scripts/create_operator_invite.py",
+        "crowdtensor_operator_invite_v1",
+    ]:
         if fragment not in text:
             details.append(f"docs/security.md must mention {fragment}")
     return check_result("security_docs", not details, details)
@@ -281,6 +291,7 @@ def check_api_docs(root: Path) -> dict[str, Any]:
         "miner_accounting_summary_v1",
         "miner_settlement_draft_v1",
         "--operator-token-registry",
+        "crowdtensor operator-invite",
         "operator_registry_summary",
         "POST /admin/trust-overrides",
         "POST /tasks/claim",
@@ -375,6 +386,7 @@ def check_remote_miner_docs(root: Path) -> dict[str, Any]:
     )
     for fragment in [
         "scripts/create_miner_invite.py",
+        "scripts/create_operator_invite.py",
         "scripts/remote_miner_join_check.py",
         "scripts/remote_miner_readiness_check.py",
         "model_bundle_lm",

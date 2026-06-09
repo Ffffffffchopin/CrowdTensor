@@ -653,7 +653,34 @@ Then pass the printed `sha256:` value to `--miner-token`, `--observer-token`,
 `--admin-token`, a per-Miner registry entry, or a per-operator registry entry.
 Clients still send the original token.
 
-For role-scoped operator access, create a private operator registry:
+For role-scoped operator access, prefer the product invite helper instead of
+hand-writing token hashes:
+
+```bash
+crowdtensor operator-invite \
+  --registry state/operator_registry.json \
+  --operator-id generate-desk \
+  --role admin \
+  --label "bounded generation desk" \
+  --allowed-workload real-llm-sharded \
+  --max-request-count 2 \
+  --max-new-tokens 8 \
+  --max-active-sessions 4 \
+  --max-total-sessions 100 \
+  --rate-limit 30 \
+  --rate-window-seconds 60 \
+  --invite-file state/private/generate-desk.operator.invite.json \
+  --json
+```
+
+The CLI report is safe to paste into operator notes because it omits plaintext
+operator tokens and invite codes. The private invite file contains the
+operator's plaintext token and should stay local/private. For private automation
+only, `scripts/create_operator_invite.py --json` can print the full invite,
+including the plaintext token, while still writing only the `sha256:` verifier
+to the registry.
+
+The registry format is:
 
 ```json
 {

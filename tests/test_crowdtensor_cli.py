@@ -1434,6 +1434,69 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("command_line", report)
         self.assertIn("trusted network boundary", report["operator_action"])
 
+    def test_operator_invite_creates_private_operator_registry_without_leaking_token(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        registry = output_dir / "operator_registry.json"
+        invite_file = output_dir / "desk.operator.invite.json"
+        args = cli.parse_args([
+            "operator-invite",
+            "--registry",
+            str(registry),
+            "--operator-id",
+            "generate-desk",
+            "--role",
+            "admin",
+            "--label",
+            "bounded generator",
+            "--token",
+            "operator-secret",
+            "--allowed-workload",
+            "real-llm-sharded",
+            "--max-new-tokens",
+            "8",
+            "--max-total-sessions",
+            "100",
+            "--rate-limit",
+            "3",
+            "--rate-window-seconds",
+            "60",
+            "--invite-file",
+            str(invite_file),
+            "--json",
+        ])
+
+        report = cli.build_operator_invite(args)
+        encoded = json.dumps(report, sort_keys=True)
+        registry_payload = json.loads(registry.read_text(encoding="utf-8"))
+        invite_payload = json.loads(invite_file.read_text(encoding="utf-8"))
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["operator_id"], "generate-desk")
+        self.assertEqual(report["roles"], ["admin"])
+        self.assertEqual(report["session_policy"]["allowed_workloads"], ["real_llm_sharded_infer"])
+        self.assertEqual(report["session_policy"]["max_new_tokens"], 8)
+        self.assertEqual(report["session_policy"]["max_total_sessions"], 100)
+        self.assertEqual(report["session_policy"]["rate_limit"], 3)
+        self.assertIn("operator_invite_ready", report["diagnosis_codes"])
+        self.assertIn("--operator-token-registry", report["command"])
+        self.assertTrue(report["safety"]["invite_file_private"])
+        self.assertFalse(report["safety"]["plaintext_token_public"])
+        self.assertNotIn("token_hash", report)
+        self.assertTrue(registry_payload["operators"][0]["token"].startswith("sha256:"))
+        self.assertEqual(invite_payload["operator_token"], "operator-secret")
+        self.assertNotIn("operator-secret", registry.read_text(encoding="utf-8"))
+        self.assertNotIn("operator-secret", encoded)
+        self.assertNotIn("operator_invite_code", report)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_operator_invite(report)
+        rendered = stdout.getvalue()
+        self.assertIn("CrowdTensor operator invite", rendered)
+        self.assertIn("roles: admin", rendered)
+        self.assertIn("session_policy:", rendered)
+        self.assertNotIn("operator-secret", rendered)
+
     def test_product_serve_public_tunnel_url_guides_remote_miners_without_public_bind(self) -> None:
         args = cli.parse_args([
             "serve",

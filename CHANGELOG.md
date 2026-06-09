@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `crowdtensor operator-invite` and `scripts/create_operator_invite.py` for role-scoped operator onboarding. The helper writes a hashed `--operator-token-registry` entry plus a private `crowdtensor_operator_invite_v1` file with optional `/admin/inference-sessions` workload, request, token, active-session, total-session, and rate limits; the product CLI report redacts plaintext operator tokens and invite codes.
 - Added Coordinator remote-access guidance to the product CLI: `crowdtensor serve --coordinator-public-url --expect-remote-miners` can advertise a tunnel/VPN/reverse-proxy URL while binding locally, and `crowdtensor join --expect-remote-coordinator` blocks accidental local-only join URLs for remote Miner hosts.
 - Added token-backed Miner admission preflight with `POST /tasks/preflight` and `crowdtensor join --check-admission`, verifying Miner auth, join policy, quota, claim-rate, stage/backend/model capability, and safe claim readiness without leasing a task or recording blocked-claim events.
 - Extended `crowdtensor join --check-coordinator` for invite joins to compare the invite against `/ready` redacted `miner_policy_summary`, surfacing `join_invite_policy_miner_missing` and `join_invite_policy_mismatch` before a Miner sends its token or claims work.

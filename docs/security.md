@@ -83,8 +83,38 @@ The invite output prints the plaintext token once for the remote Miner, while th
 
 For multi-operator demos, `--operator-token-registry` or
 `CROWDTENSOR_OPERATOR_TOKEN_REGISTRY` can replace or supplement the legacy
-admin token with per-operator roles. The registry stores token verifiers and
-safe role metadata only:
+admin token with per-operator roles. Create role-scoped operator entries with
+the product CLI so the registry stores only token verifiers and safe role or
+policy metadata:
+
+```bash
+crowdtensor operator-invite \
+  --registry state/operator_registry.json \
+  --operator-id generate-desk \
+  --role admin \
+  --allowed-workload real-llm-sharded \
+  --max-request-count 2 \
+  --max-new-tokens 8 \
+  --max-active-sessions 4 \
+  --max-total-sessions 100 \
+  --rate-limit 30 \
+  --rate-window-seconds 60 \
+  --invite-file state/private/generate-desk.operator.invite.json \
+  --json
+```
+
+The `crowdtensor operator-invite` report is public-safe: it includes the
+registry path, private invite-file path, roles, and policy summary, but not the
+plaintext operator token, invite code, or token verifier. The private invite file
+contains `crowdtensor_operator_invite_v1` with the plaintext token for the
+operator and must not be committed or shared publicly.
+
+The lower-level `scripts/create_operator_invite.py` helper prints the plaintext
+token or full JSON invite for private operator handoff. Use it only in a
+private terminal/log path and keep its output with the same care as an admin
+token.
+
+The resulting registry shape is:
 
 ```json
 {
