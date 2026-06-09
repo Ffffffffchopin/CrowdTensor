@@ -100,7 +100,10 @@ Use `crowdtensor coordinator-route --coordinator-url ...` before handoff when
 the operator needs a no-token route verdict. It emits
 `crowdtensor_coordinator_route_cli_v1`, writes `coordinator_route.json` and
 `coordinator_route.md`, classifies local-only, private-network, and
-public/tunnel URLs, and optionally checks `/ready` with `--check-ready`.
+public/tunnel URLs, includes public-safe `join_options`,
+`recommended_join_option`, and `recommended_setup_command` templates for public
+HTTPS/reverse-proxy, tunnel, VPN/LAN, or explicit port-forwarding, and
+optionally checks `/ready` with `--check-ready`.
 
 ## Public Endpoints
 

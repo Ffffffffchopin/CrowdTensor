@@ -696,6 +696,78 @@ def coordinator_remote_access_summary(
         diagnosis_code = "coordinator_route_invalid"
     if expect_remote_miners and not remote_supported:
         diagnosis_code = "coordinator_remote_route_required"
+    port = local_coordinator_port_from_url(url, default=8787)
+    bind_hint = str(bind_host or "127.0.0.1") or "127.0.0.1"
+    if bind_hint in {"0.0.0.0", "::"}:
+        bind_hint = "127.0.0.1"
+    join_options = [
+        {
+            "kind": "public_https_or_reverse_proxy",
+            "label": "Use a public HTTPS URL or reverse proxy",
+            "when": "Coordinator host already has a DNS name, public IP, load balancer, or reverse proxy.",
+            "coordinator_url_example": "https://YOUR-COORDINATOR.example",
+            "bootstrap_command": (
+                "crowdtensor swarm-bootstrap --coordinator-url https://YOUR-COORDINATOR.example "
+                "--expect-remote-miners"
+            ),
+            "requires_public_inbound": True,
+            "keeps_coordinator_local_bind": False,
+        },
+        {
+            "kind": "operator_tunnel",
+            "label": "Use an operator-managed tunnel",
+            "when": "Coordinator stays bound locally and Cloudflare Tunnel, ngrok, frp, or Tailscale Funnel provides the Miner-facing URL.",
+            "coordinator_url_example": "https://YOUR-TUNNEL.example",
+            "bootstrap_command": (
+                f"crowdtensor swarm-bootstrap --coordinator-url https://YOUR-TUNNEL.example "
+                f"--tunnel-command 'cloudflared tunnel --url http://{bind_hint}:{port}' --expect-remote-miners"
+            ),
+            "requires_public_inbound": False,
+            "keeps_coordinator_local_bind": True,
+        },
+        {
+            "kind": "vpn_or_lan",
+            "label": "Use a VPN, trusted LAN, or private overlay",
+            "when": "Every Miner is on the same trusted private route as the Coordinator.",
+            "coordinator_url_example": f"http://10.0.0.10:{port}",
+            "bootstrap_command": (
+                f"crowdtensor swarm-bootstrap --coordinator-url http://10.0.0.10:{port} "
+                "--expect-remote-miners"
+            ),
+            "requires_public_inbound": False,
+            "keeps_coordinator_local_bind": False,
+        },
+        {
+            "kind": "port_forward",
+            "label": "Use explicit port forwarding",
+            "when": "The operator controls router/firewall rules and can forward a public port to the Coordinator.",
+            "coordinator_url_example": f"http://YOUR-PUBLIC-IP:{port}",
+            "bootstrap_command": (
+                f"crowdtensor swarm-bootstrap --bind-host 0.0.0.0 --public-host YOUR-PUBLIC-IP "
+                f"--port {port} --expect-remote-miners"
+            ),
+            "requires_public_inbound": True,
+            "keeps_coordinator_local_bind": False,
+        },
+    ]
+    if route_kind == "public-or-tunnel" and external_forwarder_required:
+        recommended_join_option = "operator_tunnel"
+    elif route_kind == "public-or-tunnel":
+        recommended_join_option = "public_https_or_reverse_proxy"
+    elif route_kind == "private-network":
+        recommended_join_option = "vpn_or_lan"
+    elif route_kind == "local-only":
+        recommended_join_option = "operator_tunnel"
+    else:
+        recommended_join_option = "public_https_or_reverse_proxy"
+    recommended_setup_command = next(
+        (
+            str(option["bootstrap_command"])
+            for option in join_options
+            if option.get("kind") == recommended_join_option
+        ),
+        "",
+    )
     if route_kind == "public-or-tunnel" and external_forwarder_required:
         action = "Start the tunnel or reverse proxy so this public Coordinator URL forwards to the local bind host and port."
     elif route_kind == "public-or-tunnel":
@@ -724,6 +796,9 @@ def coordinator_remote_access_summary(
         "external_forwarder_required": external_forwarder_required,
         "diagnosis_code": diagnosis_code,
         "operator_action": action,
+        "join_options": join_options,
+        "recommended_join_option": recommended_join_option,
+        "recommended_setup_command": recommended_setup_command,
         "not_nat_traversal": True,
         "not_decentralized_discovery": True,
         "public_artifact_safe": True,
@@ -12428,6 +12503,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "coordinator_url": coordinator_url,
             "tunnel": tunnel_summary,
             "remote_access": remote_access,
+            "join_options": remote_access.get("join_options") if isinstance(remote_access.get("join_options"), list) else [],
+            "recommended_join_option": str(remote_access.get("recommended_join_option") or ""),
+            "recommended_setup_command": str(remote_access.get("recommended_setup_command") or ""),
             "registries": {},
             "private_env": {},
             "private_invites": {},
@@ -12444,7 +12522,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 "private_invites_created": False,
                 "scripts_created": False,
             },
-            "operator_action": "Set --coordinator-url to a public HTTPS, tunnel, VPN, reverse-proxy, or LAN URL before creating or sharing Miner invites.",
+            "operator_action": (
+                "Set --coordinator-url to a public HTTPS, tunnel, VPN, reverse-proxy, or LAN URL before creating or sharing Miner invites. "
+                f"Recommended setup template: {remote_access.get('recommended_setup_command') or 'crowdtensor coordinator-route --coordinator-url https://YOUR-COORDINATOR.example --expect-remote-miners'}"
+            ),
         })
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -16463,8 +16544,12 @@ def _coordinator_route_next_actions(report: dict[str, Any]) -> list[str]:
     actions: list[str] = []
     if "coordinator_remote_route_required" in codes:
         actions.append("Use a public HTTPS URL, VPN/LAN address, or tunnel URL before sharing Miner join packages.")
+        if remote_access.get("recommended_setup_command"):
+            actions.append(f"Recommended tunnel bootstrap template: {remote_access.get('recommended_setup_command')}")
     elif "coordinator_route_public_or_tunnel" in codes and remote_access.get("external_forwarder_required"):
         actions.append("Start the tunnel or reverse proxy that forwards this public URL to the local Coordinator bind address.")
+        if remote_access.get("recommended_setup_command"):
+            actions.append(f"Bootstrap template: {remote_access.get('recommended_setup_command')}")
     elif "coordinator_route_private_network" in codes:
         actions.append("Only Miners on the same LAN, VPN, or trusted private route should use this Coordinator URL.")
     elif "coordinator_route_local_only" in codes:
@@ -16503,6 +16588,27 @@ def render_coordinator_route_markdown(report: dict[str, Any]) -> str:
     ]
     for action in report.get("next_actions") or []:
         lines.append(f"- {action}")
+    join_options = remote.get("join_options") if isinstance(remote.get("join_options"), list) else []
+    if join_options:
+        lines.extend([
+            "",
+            "## Join Options",
+            "",
+        ])
+        for option in join_options:
+            if not isinstance(option, dict):
+                continue
+            marker = " (recommended)" if option.get("kind") == remote.get("recommended_join_option") else ""
+            lines.extend([
+                f"### {option.get('label', option.get('kind', 'option'))}{marker}",
+                "",
+                f"- Kind: `{option.get('kind', '')}`",
+                f"- When: {option.get('when', '')}",
+                f"- Coordinator URL example: `{option.get('coordinator_url_example', '')}`",
+                f"- Bootstrap command: `{option.get('bootstrap_command', '')}`",
+                f"- Requires public inbound: `{bool(option.get('requires_public_inbound'))}`",
+                "",
+            ])
     lines.extend([
         "",
         "## Boundary",

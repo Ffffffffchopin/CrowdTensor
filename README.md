@@ -532,8 +532,11 @@ Use `crowdtensor coordinator-route --coordinator-url ... --expect-remote-miners`
 as the no-token first check for whether the advertised Coordinator URL is
 local-only, private-network, or public/tunnel, and add `--check-ready` after the
 Coordinator is running to verify `/ready`. It writes
-`crowdtensor_coordinator_route_cli_v1` artifacts and does not join Miners,
-claim tasks, or provide NAT traversal.
+`crowdtensor_coordinator_route_cli_v1` artifacts with `join_options`,
+`recommended_join_option`, and `recommended_setup_command` so an operator can
+choose public HTTPS/reverse-proxy, tunnel, VPN/LAN, or explicit port-forwarding
+before creating Miner packages. It does not join Miners, claim tasks, or provide
+NAT traversal.
 Use `crowdtensor operator-status --coordinator-url ...` as a read-only daily
 operator check over `/ready`, `/state`, trust/quarantine counters, and optional
 accounting/settlement summaries. It writes public-safe

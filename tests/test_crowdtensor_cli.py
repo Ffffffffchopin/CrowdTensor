@@ -1867,10 +1867,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ready_checked"])
         self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
         self.assertTrue(report["remote_access"]["external_forwarder_required"])
+        self.assertEqual(report["remote_access"]["recommended_join_option"], "operator_tunnel")
+        self.assertIn("join_options", report["remote_access"])
+        self.assertTrue(any(
+            option.get("kind") == "operator_tunnel"
+            for option in report["remote_access"]["join_options"]
+        ))
+        self.assertIn("cloudflared tunnel", report["remote_access"]["recommended_setup_command"])
         self.assertIn("coordinator_route_ready", report["diagnosis_codes"])
         self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
         self.assertIn("coordinator_route.json", saved_json)
         self.assertIn("Remote Miners ready", saved_md)
+        self.assertIn("## Join Options", saved_md)
+        self.assertIn("Use an operator-managed tunnel", saved_md)
+        self.assertIn("cloudflared tunnel", saved_md)
 
     def test_coordinator_route_blocks_local_url_for_remote_miners(self) -> None:
         output_dir = Path(self._tmp_dir()) / "route"
@@ -1890,8 +1900,15 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["route_ready"])
         self.assertFalse(report["remote_miners_ready"])
         self.assertEqual(report["remote_access"]["route_kind"], "local-only")
+        self.assertEqual(report["remote_access"]["recommended_join_option"], "operator_tunnel")
+        self.assertIn("cloudflared tunnel", report["remote_access"]["recommended_setup_command"])
+        self.assertTrue(any(
+            option.get("kind") == "vpn_or_lan"
+            for option in report["remote_access"]["join_options"]
+        ))
         self.assertIn("coordinator_remote_route_required", report["diagnosis_codes"])
         self.assertIn("public HTTPS URL", report["operator_action"])
+        self.assertIn("Recommended tunnel bootstrap template", report["operator_action"])
 
     def test_coordinator_route_can_check_ready_endpoint(self) -> None:
         output_dir = Path(self._tmp_dir()) / "route"
@@ -3632,6 +3649,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["private_invites"], {})
         self.assertEqual(report["scripts"], {})
         self.assertEqual(report["runbook"], "")
+        self.assertEqual(report["recommended_join_option"], "operator_tunnel")
+        self.assertIn("cloudflared tunnel", report["recommended_setup_command"])
+        self.assertIn("Recommended setup template", report["operator_action"])
+        self.assertTrue(any(option.get("kind") == "port_forward" for option in report["join_options"]))
         self.assertFalse(report["safety"]["registries_created"])
         self.assertFalse(report["safety"]["private_env_files_created"])
         self.assertFalse(report["safety"]["private_invites_created"])

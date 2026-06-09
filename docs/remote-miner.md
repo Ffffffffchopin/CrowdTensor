@@ -20,6 +20,10 @@ matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
 `--coordinator-url` and a private `--tunnel-command`; the raw tunnel command is
 stored only in `private/tunnel.private.env` and is started by `start_control_plane.sh`.
+`crowdtensor coordinator-route --coordinator-url ... --expect-remote-miners`
+emits public-safe `join_options`, `recommended_join_option`, and
+`recommended_setup_command` templates for public HTTPS/reverse-proxy, tunnel,
+VPN/LAN, or explicit port-forwarding before any Miner package is shared.
 Keep the generated operator
 invite and operator env on the operator host, use the coordinator env only for
 the Coordinator process, run `start_control_plane.sh` to start the tunnel,
@@ -61,7 +65,8 @@ stage join-code consistency, `stage_check_join_scripts_ready`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, `stage_package_archives_ready`,
-`stage_archive_runner_scripts_ready`, `stage_handoff_checksums_ready`, and
+`stage_archive_runner_scripts_ready`, `stage_setup_start_runner_ready`,
+`stage_handoff_checksums_ready`, and
 plaintext token leakage in scripts or public Markdown.
 After starting the Coordinator, rerun the same command with `--check-coordinator`
 to call `/ready` and match both stage invites against the redacted registry

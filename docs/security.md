@@ -146,8 +146,11 @@ passes. `handoff_doctor.sh` / `crowdtensor swarm-handoff-doctor` writes
 `check_route.sh` runs `crowdtensor coordinator-route` without tokens to classify
 the advertised Coordinator URL and optional `/ready` reachability before stage
 package handoff; it emits `crowdtensor_coordinator_route_cli_v1` artifacts
-(`coordinator_route.json` and `coordinator_route.md`). It is not NAT traversal
-and does not join a Miner or claim a task.
+(`coordinator_route.json` and `coordinator_route.md`) with public-safe
+`join_options`, `recommended_join_option`, and `recommended_setup_command`
+templates for public HTTPS/reverse-proxy, tunnel, VPN/LAN, or explicit
+port-forwarding. It is not NAT traversal and does not join a Miner or claim a
+task.
 `operator_status.sh` stays on the operator host, sources only
 `private/operator.private.env`, and runs read-only `crowdtensor operator-status`
 for `/ready`, `/state`, accounting, and settlement triage without embedding
