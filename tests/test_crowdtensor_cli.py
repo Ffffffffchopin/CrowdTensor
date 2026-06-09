@@ -1757,6 +1757,101 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("settlement: rows=1", rendered)
         self.assertNotIn(admin_token, rendered)
 
+    def test_operator_status_can_report_events_summary_without_raw_events(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "operator-status-events"
+        admin_token = "auditor-secret-token"
+        observer_token = "observer-secret-token"
+        calls: list[dict[str, object]] = []
+
+        def fake_request(method, base_url, path, payload=None, *, admin_token="", miner_token="", observer_token="", timeout=10.0):
+            calls.append({"method": method, "path": path, "admin_token": admin_token, "observer_token": observer_token})
+            if path == "/ready":
+                return {
+                    "ok": True,
+                    "event_index": 7,
+                    "task_counts": {},
+                    "task_lanes": [],
+                    "auth": {
+                        "miner_required": True,
+                        "observer_required": True,
+                        "admin_configured": True,
+                        "miner_registry_configured": True,
+                        "operator_registry_configured": True,
+                    },
+                    "operator_registry_summary": {
+                        "operator_count": 1,
+                        "operators": [
+                            {
+                                "operator_id": "audit",
+                                "enabled": True,
+                                "label": "private auditor label",
+                                "roles": ["auditor"],
+                                "session_policy": {},
+                            }
+                        ],
+                    },
+                    "miner_policy_summary": {"miner_count": 0, "policy_count": 0, "miners": []},
+                }
+            if path == "/state":
+                return {
+                    "event_index": 7,
+                    "miner_workload_scores": {},
+                    "quarantined_miners": {},
+                    "effective_quarantined_miners": {},
+                    "manual_blocked_miners": {},
+                    "miner_trust_overrides": {},
+                    "blocked_claims": 0,
+                    "incompatible_claims": 0,
+                }
+            if path.startswith("/admin/events"):
+                return {
+                    "limit": 3,
+                    "events": [
+                        {"event_index": 5, "type": "task_claimed", "subject": "operator:secret", "lease_token": "lease-secret"},
+                        {"event_index": 6, "type": "task_claimed", "prompt": "private prompt"},
+                        {"event_index": 7, "type": "result_accepted", "output_text": "private output"},
+                    ],
+                }
+            raise AssertionError(path)
+
+        args = cli.parse_args([
+            "operator-status",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--observer-token",
+            observer_token,
+            "--admin-token",
+            admin_token,
+            "--include-events-summary",
+            "--require-events-summary",
+            "--limit",
+            "3",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_operator_status(args)
+
+        saved_json = (output_dir / "operator_status.json").read_text(encoding="utf-8")
+        saved_md = (output_dir / "operator_status.md").read_text(encoding="utf-8")
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("events_summary_ready", report["diagnosis_codes"])
+        self.assertIn("operator_events_summary_ready", report["diagnosis_codes"])
+        self.assertEqual(report["events_status"]["event_count"], 3)
+        self.assertEqual(report["events_status"]["event_type_counts"], {"result_accepted": 1, "task_claimed": 2})
+        self.assertEqual(report["events_status"]["latest_event_index"], 7)
+        self.assertFalse(report["events_status"]["raw_events_public"])
+        self.assertEqual([call["path"] for call in calls], ["/ready", "/state", "/admin/events?limit=3"])
+        self.assertEqual(calls[2]["admin_token"], admin_token)
+        for secret in [admin_token, observer_token, "lease-secret", "private prompt", "private output", "private auditor label"]:
+            self.assertNotIn(secret, encoded)
+            self.assertNotIn(secret, saved_json)
+            self.assertNotIn(secret, saved_md)
+
     def test_operator_status_can_report_ready_without_admin_summary_token(self) -> None:
         output_dir = Path(self._tmp_dir()) / "operator-status-lite"
         calls: list[dict[str, object]] = []
@@ -2442,6 +2537,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         miner_registry = json.loads((output_dir / "miner_registry.json").read_text(encoding="utf-8"))
         coordinator_env_path = Path(report["private_env"]["coordinator"])
         operator_env_path = Path(report["private_env"]["operator"])
+        auditor_env_path = Path(report["private_env"]["auditor"])
+        accounting_env_path = Path(report["private_env"]["accounting"])
         tunnel_env_path = Path(report["private_env"]["tunnel"])
         stage0_join_code_path = Path(report["private_join_codes"]["stage0"])
         stage1_join_code_path = Path(report["private_join_codes"]["stage1"])
@@ -2453,6 +2550,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         coordinator_env = coordinator_env_path.read_text(encoding="utf-8")
         operator_env = operator_env_path.read_text(encoding="utf-8")
         operator_invite = json.loads(Path(report["private_invites"]["operator"]).read_text(encoding="utf-8"))
+        auditor_invite = json.loads(Path(report["private_operator_invites"]["auditor"]).read_text(encoding="utf-8"))
+        accounting_invite = json.loads(Path(report["private_operator_invites"]["accounting"]).read_text(encoding="utf-8"))
         stage0_invite = json.loads(Path(report["private_invites"]["stage0"]).read_text(encoding="utf-8"))
         stage0_join_code = stage0_join_code_path.read_text(encoding="utf-8").strip()
         scripts = {name: Path(path) for name, path in report["scripts"].items()}
@@ -2462,18 +2561,28 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["schema"], "crowdtensor_swarm_bootstrap_v1")
         self.assertIn("swarm_bootstrap_ready", report["diagnosis_codes"])
         self.assertEqual(report["coordinator_url"], "https://ct.example")
-        self.assertEqual(operator_registry["operators"][0]["operator_id"], "generate-desk")
-        self.assertTrue(operator_registry["operators"][0]["token"].startswith("sha256:"))
+        self.assertEqual(len(operator_registry["operators"]), 3)
+        operator_roles = {item["operator_id"]: item["roles"] for item in operator_registry["operators"]}
+        self.assertEqual(operator_roles["generate-desk"], ["admin"])
+        self.assertEqual(operator_roles["generate-desk-auditor"], ["auditor"])
+        self.assertEqual(operator_roles["generate-desk-accounting"], ["accounting"])
+        self.assertTrue(all(item["token"].startswith("sha256:") for item in operator_registry["operators"]))
         self.assertEqual(len(miner_registry["miners"]), 2)
         self.assertTrue(all(item["token"].startswith("sha256:") for item in miner_registry["miners"]))
         self.assertEqual(stage0_invite["schema"], "crowdtensor_miner_join_invite_v1")
         self.assertEqual(stage0_invite["stage"], "stage0")
         self.assertEqual(operator_invite["schema"], "crowdtensor_operator_invite_v1")
         self.assertIn("operator_token", operator_invite)
+        self.assertEqual(auditor_invite["roles"], ["auditor"])
+        self.assertEqual(accounting_invite["roles"], ["accounting"])
         self.assertEqual(coordinator_env_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(operator_env_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(auditor_env_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(accounting_env_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(tunnel_env_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(Path(report["private_invites"]["operator"]).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(Path(report["private_operator_invites"]["auditor"]).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(Path(report["private_operator_invites"]["accounting"]).stat().st_mode & 0o777, 0o600)
         self.assertEqual(Path(report["private_invites"]["stage0"]).stat().st_mode & 0o777, 0o600)
         self.assertEqual(Path(report["private_invites"]["stage1"]).stat().st_mode & 0o777, 0o600)
         self.assertEqual((output_dir / "stage0" / "miner.invite.json").stat().st_mode & 0o777, 0o600)
@@ -2489,6 +2598,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN=", operator_env)
         self.assertIn("CROWDTENSOR_OBSERVER_TOKEN=", operator_env)
         self.assertNotIn(operator_invite["operator_token"], encoded)
+        self.assertNotIn(auditor_invite["operator_token"], encoded)
+        self.assertNotIn(accounting_invite["operator_token"], encoded)
         for line in operator_env.splitlines():
             if "CROWDTENSOR_OBSERVER_TOKEN=" in line:
                 observer_token = line.split("=", 1)[1].strip().strip("'")
@@ -2509,8 +2620,23 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["check_route_script_created"])
         self.assertTrue(report["safety"]["ready_for_handoff_script_created"])
         self.assertTrue(report["safety"]["operator_status_script_created"])
+        self.assertTrue(report["safety"]["operator_role_invites_created"])
+        self.assertTrue(report["safety"]["operator_role_env_files_created"])
+        self.assertTrue(report["safety"]["auditor_status_script_created"])
+        self.assertTrue(report["safety"]["accounting_status_script_created"])
+        self.assertEqual(report["operator_roles"]["role_counts"], {"accounting": 1, "admin": 1, "auditor": 1})
+        self.assertFalse(report["operator_roles"]["plaintext_tokens_public"])
+        self.assertIn("private/auditor.private.env", scripts["auditor_status"].read_text(encoding="utf-8"))
+        self.assertIn("--include-events-summary", scripts["auditor_status"].read_text(encoding="utf-8"))
+        self.assertNotIn("--include-admin-summaries", scripts["auditor_status"].read_text(encoding="utf-8"))
+        self.assertIn("private/accounting.private.env", scripts["accounting_status"].read_text(encoding="utf-8"))
+        self.assertIn("--include-admin-summaries", scripts["accounting_status"].read_text(encoding="utf-8"))
+        self.assertNotIn(auditor_invite["operator_token"], scripts["auditor_status"].read_text(encoding="utf-8"))
+        self.assertNotIn(accounting_invite["operator_token"], scripts["accounting_status"].read_text(encoding="utf-8"))
         handoff = report["bootstrap_handoff"]
         self.assertEqual(handoff["schema"], "crowdtensor_bootstrap_handoff_v1")
+        self.assertEqual(handoff["operator_role_handoff"]["role_counts"], {"accounting": 1, "admin": 1, "auditor": 1})
+        self.assertFalse(handoff["operator_role_handoff"]["plaintext_tokens_public"])
         self.assertTrue(handoff["remote_miners_ready"])
         self.assertEqual(handoff["route_handoff"]["schema"], "crowdtensor_route_handoff_v1")
         self.assertEqual(handoff["route_handoff"]["miner_join_url"], "https://ct.example")
@@ -2821,7 +2947,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["next_commands"][18]["command"], [str(scripts["stage1_run_miner"]), "--setup"])
         self.assertEqual(report["next_commands"][19]["command"], [str(scripts["stage1_run_miner"]), "--start"])
         self.assertEqual(report["next_commands"][22]["command_line"], str(scripts["check_generation"]))
-        self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
+        self.assertEqual(report["next_commands"][23]["command_line"], str(scripts["submit_generation"]))
+        self.assertIn(str(operator_env_path), report["next_commands"][23]["requires_files"])
+        self.assertEqual(report["next_commands"][24]["command"], [str(scripts["auditor_status"])])
+        self.assertIn(str(auditor_env_path), report["next_commands"][24]["requires_files"])
+        self.assertEqual(report["next_commands"][25]["command"], [str(scripts["accounting_status"])])
+        self.assertIn(str(accounting_env_path), report["next_commands"][25]["requires_files"])
 
     def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"
@@ -3242,6 +3373,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["artifacts"]["check_route_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["tunnel_doctor_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["operator_status_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["auditor_status_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["accounting_status_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["auditor_env"]["mode"], "0o600")
+        self.assertEqual(report["artifacts"]["accounting_env"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["stage0_join_code"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["stage0_install_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["stage0_doctor_script"]["mode"], "0o700")
@@ -3258,6 +3393,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["check_route_script_ready"])
         self.assertTrue(report["safety"]["tunnel_doctor_script_ready"])
         self.assertTrue(report["safety"]["operator_status_script_ready"])
+        self.assertTrue(report["safety"]["auditor_status_script_ready"])
+        self.assertTrue(report["safety"]["accounting_status_script_ready"])
+        self.assertTrue(report["safety"]["operator_role_envs_contain_distinct_credentials"])
+        self.assertTrue(report["safety"]["operator_role_invites_ready"])
+        self.assertEqual(report["operator_roles"]["role_counts"], {"accounting": 1, "admin": 1, "auditor": 1})
         self.assertTrue(report["safety"]["stage_join_scripts_use_invite_code_file"])
         self.assertTrue(report["safety"]["stage_install_scripts_ready"])
         self.assertTrue(report["safety"]["stage_doctor_scripts_ready"])

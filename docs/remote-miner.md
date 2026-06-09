@@ -6,8 +6,9 @@ Use HTTPS, a VPN, or a private network for any remote demo. Miner tokens are sen
 
 For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
-private Miner registry, coordinator/operator private env files, one operator
-invite, stage0/stage1 Miner packages, executable `start_control_plane.sh`,
+private Miner registry, coordinator/operator private env files, role-scoped
+admin/auditor/accounting operator invites, stage0/stage1 Miner packages,
+executable `start_control_plane.sh`,
 `install_operator.sh`, `operator_quickstart.sh`, optional `start_tunnel.sh`, `tunnel_doctor.sh`, `start_discovery.sh`,
 `start_coordinator.sh`, stage
 `install.sh` / `doctor.sh` / `check_join.sh` / `support_bundle.sh` / `join.sh` files, private `miner.join-code.txt` files,
@@ -15,7 +16,8 @@ private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
 matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
 `stage_handoff_manifest.json`,
-`handoff_doctor.sh`, `ready_for_handoff.sh`, `check_route.sh`, `operator_status.sh`,
+`handoff_doctor.sh`, `ready_for_handoff.sh`, `check_route.sh`,
+`operator_status.sh`, `auditor_status.sh`, `accounting_status.sh`,
 `verify_bootstrap.sh`, generation scripts, and
 `SWARM_BOOTSTRAP.md`.
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
@@ -37,8 +39,8 @@ control-plane launcher, and Miner-facing URL without starting the tunnel.
 emits public-safe `join_options`, `recommended_join_option`, and
 `recommended_setup_command` templates for public HTTPS/reverse-proxy, tunnel,
 VPN/LAN, or explicit port-forwarding before any Miner package is shared.
-Keep the generated operator invite and operator env on the operator host, use
-the coordinator env only for the Coordinator process, and run
+Keep generated operator role invites and operator env files on their assigned
+operator hosts, use the coordinator env only for the Coordinator process, and run
 `operator_quickstart.sh` as the recommended Operator path. It runs
 `install_operator.sh` when `crowdtensor`, `crowdtensord`, or
 `crowdtensor-miner` is missing, starts `start_control_plane.sh` in the
@@ -51,8 +53,11 @@ managed runtimes. You can still run `install_operator.sh`,
 `start_control_plane.sh`, `ready_for_handoff.sh`, `verify_bootstrap.sh`, and
 `check_route.sh` separately to debug the advertised Coordinator URL and live
 no-claim admission path,
-run `operator_status.sh` on the operator host for read-only Coordinator,
-trust, accounting, and settlement status,
+run `operator_status.sh` on the admin operator host for read-only Coordinator,
+trust, accounting, and settlement status. Use `auditor_status.sh` with
+`private/auditor.private.env` for a read-only events summary and
+`accounting_status.sh` with `private/accounting.private.env` for accounting
+plus draft settlement summaries without sharing the admin operator token,
 and copy only the matching private stage archive plus `stageX.run-miner.sh` and
 `stageX.handoff.sha256` to each Miner host. The runner verifies the checksum, validates and extracts the archive, and supports the recommended first run `./stageX.run-miner.sh --quickstart` (`CrowdTensor Miner quickstart`), which installs the local runtime, writes diagnostics, checks admission, and starts the Miner. Use `--setup` then `--start` for manual troubleshooting, `CROWDTENSOR_MINER_QUICKSTART_SKIP_INSTALL=1` when the Miner runtime is managed externally, `--install --dry-run` to preview installation, and `--doctor`, `--check-only`, or `--support-bundle` for troubleshooting. Stage `install.sh` creates
 `.crowdtensor-venv` with the default `[hf]` runtime when `crowdtensor` is not
@@ -92,7 +97,9 @@ stage join-code consistency, `stage_check_join_scripts_ready`,
 `stage_handoff_checksums_ready`, `tunnel_doctor_script_ready`,
 `ready_for_handoff_script_ready`, `operator_install_script_ready`,
 `operator_quickstart_script_ready`,
-`operator_scripts_use_operator_venv`, and
+`operator_scripts_use_operator_venv`, `operator_role_invites_ready`,
+`operator_role_envs_contain_distinct_credentials`,
+`auditor_status_script_ready`, `accounting_status_script_ready`, and
 plaintext token leakage in scripts or public Markdown.
 After starting the Coordinator, rerun the same command with `--check-coordinator`
 to call `/ready` and match both stage invites against the redacted registry

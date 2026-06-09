@@ -12325,28 +12325,47 @@ def _bootstrap_generate_script(*, coordinator_url: str, max_new_tokens: int, dry
     return "\n".join(lines)
 
 
-def _bootstrap_operator_status_script(*, coordinator_url: str) -> str:
-    return "\n".join([
+def _bootstrap_operator_status_script(
+    *,
+    coordinator_url: str,
+    env_file: str = "operator.private.env",
+    output_subdir: str = "operator-status",
+    include_admin_summaries: bool = True,
+    require_admin_summaries: bool = True,
+    include_events_summary: bool = False,
+    require_events_summary: bool = False,
+) -> str:
+    env_ref = f"private/{env_file}"
+    lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
         *_bootstrap_operator_path_prelude(),
-        '. "$SCRIPT_DIR/private/operator.private.env"',
-        ': "${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN in private/operator.private.env}"',
-        ': "${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN in private/operator.private.env}"',
+        f'. "$SCRIPT_DIR/{env_ref}"',
+        f': "${{CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN in {env_ref}}}"',
+        f': "${{CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN in {env_ref}}}"',
         "",
         "exec crowdtensor operator-status \\",
         f"  --coordinator-url {_quote_env_value(coordinator_url)} \\",
         '  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \\',
         '  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \\',
-        "  --include-admin-summaries \\",
-        "  --require-state \\",
-        "  --require-admin-summaries \\",
-        '  --output-dir "$SCRIPT_DIR/operator-status" \\',
+    ]
+    if include_admin_summaries:
+        lines.append("  --include-admin-summaries \\")
+    if include_events_summary:
+        lines.append("  --include-events-summary \\")
+    lines.append("  --require-state \\")
+    if require_admin_summaries:
+        lines.append("  --require-admin-summaries \\")
+    if require_events_summary:
+        lines.append("  --require-events-summary \\")
+    lines.extend([
+        f'  --output-dir "$SCRIPT_DIR/{output_subdir}" \\',
         '  "$@"',
         "",
     ])
+    return "\n".join(lines)
 
 
 def _bootstrap_check_route_script(*, coordinator_url: str, expect_remote_miners: bool) -> str:
@@ -12432,6 +12451,30 @@ def _bootstrap_ready_for_handoff_script() -> str:
     ])
 
 
+def _bootstrap_operator_roles_runbook_lines(operator_roles: dict[str, Any] | None) -> list[str]:
+    role_report = operator_roles if isinstance(operator_roles, dict) else {}
+    operators = role_report.get("operators") if isinstance(role_report.get("operators"), list) else []
+    if not operators:
+        return []
+    lines = ["", "## Operator Roles", ""]
+    for operator in operators:
+        if not isinstance(operator, dict):
+            continue
+        role = str(operator.get("bootstrap_role") or "")
+        roles = ", ".join(str(item) for item in (operator.get("roles") or []) if str(item))
+        lines.append(
+            f"- {role}: id=`{operator.get('operator_id', '')}` roles=`{roles}` "
+            f"env=`{operator.get('private_env', '')}` invite=`{operator.get('private_invite', '')}` "
+            f"status=`{operator.get('status_script', '')}`"
+        )
+    lines.extend([
+        "",
+        "Share only the matching role env/invite with each operator. The admin role can create sessions; the auditor role can read event summaries; the accounting role can read accounting and draft settlement summaries.",
+        "",
+    ])
+    return lines
+
+
 def _bootstrap_runbook(
     *,
     coordinator_url: str,
@@ -12440,6 +12483,7 @@ def _bootstrap_runbook(
     private_env: dict[str, str],
     private_invites: dict[str, str],
     remote_access: dict[str, Any],
+    operator_roles: dict[str, Any] | None = None,
 ) -> str:
     return "\n".join([
         "# CrowdTensor Swarm Bootstrap",
@@ -12453,6 +12497,7 @@ def _bootstrap_runbook(
         f"- Operator invite: `{private_invites.get('operator', '')}`",
         f"- Stage0 package: `{Path(scripts.get('stage0_join', '')).parent}`",
         f"- Stage1 package: `{Path(scripts.get('stage1_join', '')).parent}`",
+        *_bootstrap_operator_roles_runbook_lines(operator_roles),
         "",
         "## Run",
         "",
@@ -12524,6 +12569,7 @@ def _bootstrap_handoff_summary(
     stage_package_archives: dict[str, str] | None = None,
     stage_handoff_checksums: dict[str, str] | None = None,
     stage_handoff_manifest: str = "",
+    operator_roles: dict[str, Any] | None = None,
     live_preflight: dict[str, Any] | None = None,
     offline_package_ready: bool | None = None,
 ) -> dict[str, Any]:
@@ -12580,6 +12626,28 @@ def _bootstrap_handoff_summary(
         "not_nat_traversal": True,
         "public_artifact_safe": True,
     }
+    role_report = operator_roles if isinstance(operator_roles, dict) else {}
+    role_operators = role_report.get("operators") if isinstance(role_report.get("operators"), list) else []
+    operator_role_handoff = {
+        "schema": "crowdtensor_operator_role_handoff_v1",
+        "operator_count": int(role_report.get("operator_count") or 0),
+        "role_counts": role_report.get("role_counts") if isinstance(role_report.get("role_counts"), dict) else {},
+        "roles": [
+            {
+                "operator_id": operator.get("operator_id"),
+                "bootstrap_role": operator.get("bootstrap_role"),
+                "roles": operator.get("roles") if isinstance(operator.get("roles"), list) else [],
+                "private_env": operator.get("private_env"),
+                "private_invite": operator.get("private_invite"),
+                "status_script": operator.get("status_script"),
+            }
+            for operator in role_operators
+            if isinstance(operator, dict)
+        ],
+        "share_only_matching_role_material": True,
+        "plaintext_tokens_public": False,
+        "public_artifact_safe": True,
+    }
     return {
         "schema": "crowdtensor_bootstrap_handoff_v1",
         "coordinator_url": coordinator_url,
@@ -12588,6 +12656,7 @@ def _bootstrap_handoff_summary(
         "remote_route_kind": str(remote_access.get("route_kind") or ""),
         "external_forwarder_required": bool(remote_access.get("external_forwarder_required")),
         "route_handoff": route_handoff,
+        "operator_role_handoff": operator_role_handoff,
         "tunnel_configured": bool(tunnel.get("enabled")),
         "discovery_configured": bool(discovery.get("enabled")),
         "recommended_launcher": scripts.get("start_control_plane", ""),
@@ -12613,6 +12682,8 @@ def _bootstrap_handoff_summary(
             "stage1_run_miner": scripts.get("stage1_run_miner", ""),
             "ready_for_handoff": scripts.get("ready_for_handoff", ""),
             "operator_status": scripts.get("operator_status", ""),
+            "auditor_status": scripts.get("auditor_status", ""),
+            "accounting_status": scripts.get("accounting_status", ""),
         },
         "verify_before_handoff": scripts.get("verify_bootstrap", ""),
         "one_command_handoff_check": scripts.get("ready_for_handoff", ""),
@@ -12624,7 +12695,11 @@ def _bootstrap_handoff_summary(
         "checksum_verification_required": bool(checksum_paths),
         "operator_host_private_files": [
             private_env.get("operator", ""),
+            private_env.get("auditor", ""),
+            private_env.get("accounting", ""),
             private_invites.get("operator", ""),
+            private_invites.get("auditor", ""),
+            private_invites.get("accounting", ""),
         ],
         "coordinator_host_private_files": [
             item for item in [
@@ -13066,6 +13141,42 @@ def _swarm_bootstrap_miner_summaries(
     return summaries
 
 
+def _swarm_bootstrap_operator_roles_summary(
+    *,
+    role_invites: dict[str, dict[str, Any]],
+    private_env: dict[str, str],
+    private_invites: dict[str, str],
+    status_scripts: dict[str, str],
+) -> dict[str, Any]:
+    operators: list[dict[str, Any]] = []
+    role_counts: dict[str, int] = {}
+    for role in ["admin", "auditor", "accounting"]:
+        invite = role_invites.get(role) if isinstance(role_invites.get(role), dict) else {}
+        roles = [str(item) for item in invite.get("roles") or [] if str(item)]
+        for item in roles:
+            role_counts[item] = role_counts.get(item, 0) + 1
+        operators.append({
+            "operator_id": str(invite.get("operator_id") or ""),
+            "bootstrap_role": role,
+            "roles": roles,
+            "session_policy": invite.get("session_policy") if isinstance(invite.get("session_policy"), dict) else {},
+            "private_env": private_env.get(role, ""),
+            "private_invite": private_invites.get(role, ""),
+            "status_script": status_scripts.get(role, ""),
+            "plaintext_token_public": False,
+        })
+    return {
+        "schema": "crowdtensor_bootstrap_operator_roles_v1",
+        "operator_count": len([operator for operator in operators if operator.get("operator_id")]),
+        "role_counts": dict(sorted(role_counts.items())),
+        "operators": operators,
+        "private_env_local_only": True,
+        "private_invites_local_only": True,
+        "plaintext_tokens_public": False,
+        "public_artifact_safe": True,
+    }
+
+
 def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir)
     private_dir = output_dir / "private"
@@ -13092,8 +13203,14 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     miner_registry = output_dir / "miner_registry.json"
     coordinator_env_path = private_dir / "coordinator.private.env"
     operator_env_path = private_dir / "operator.private.env"
+    auditor_env_path = private_dir / "auditor.private.env"
+    accounting_env_path = private_dir / "accounting.private.env"
     tunnel_env_path = private_dir / "tunnel.private.env"
     operator_invite_path = private_dir / f"{_bootstrap_slug(args.operator_id)}.operator.invite.json"
+    auditor_operator_id = f"{args.operator_id}-auditor"
+    accounting_operator_id = f"{args.operator_id}-accounting"
+    auditor_invite_path = private_dir / f"{_bootstrap_slug(auditor_operator_id)}.operator.invite.json"
+    accounting_invite_path = private_dir / f"{_bootstrap_slug(accounting_operator_id)}.operator.invite.json"
     runbook_path = output_dir / "SWARM_BOOTSTRAP.md"
     operator_install_script = output_dir / "install_operator.sh"
     operator_quickstart_script = output_dir / "operator_quickstart.sh"
@@ -13107,6 +13224,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     handoff_doctor_script = output_dir / "handoff_doctor.sh"
     ready_for_handoff_script = output_dir / "ready_for_handoff.sh"
     operator_status_script = output_dir / "operator_status.sh"
+    auditor_status_script = output_dir / "auditor_status.sh"
+    accounting_status_script = output_dir / "accounting_status.sh"
     check_generation_script = output_dir / "check_generation.sh"
     submit_generation_script = output_dir / "submit_generation.sh"
     safety = {
@@ -13171,13 +13290,41 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         invite_file=operator_invite_path,
     )
     operator_invite_path.chmod(0o600)
+    auditor_invite = create_operator_invite(
+        registry_path=operator_registry,
+        operator_id=auditor_operator_id,
+        roles=["auditor"],
+        label="swarm read-only auditor",
+        replace=args.replace,
+        invite_file=auditor_invite_path,
+    )
+    auditor_invite_path.chmod(0o600)
+    accounting_invite = create_operator_invite(
+        registry_path=operator_registry,
+        operator_id=accounting_operator_id,
+        roles=["accounting"],
+        label="swarm accounting operator",
+        replace=args.replace,
+        invite_file=accounting_invite_path,
+    )
+    accounting_invite_path.chmod(0o600)
     operator_token = str((operator_invite.get("env") or {}).get("CROWDTENSOR_ADMIN_TOKEN") or "")
+    auditor_token = str((auditor_invite.get("env") or {}).get("CROWDTENSOR_ADMIN_TOKEN") or "")
+    accounting_token = str((accounting_invite.get("env") or {}).get("CROWDTENSOR_ADMIN_TOKEN") or "")
     observer_token = os.urandom(24).hex()
     _write_private_env(coordinator_env_path, {
         "CROWDTENSOR_OBSERVER_TOKEN": hash_token(observer_token),
     })
     _write_private_env(operator_env_path, {
         "CROWDTENSOR_ADMIN_TOKEN": operator_token,
+        "CROWDTENSOR_OBSERVER_TOKEN": observer_token,
+    })
+    _write_private_env(auditor_env_path, {
+        "CROWDTENSOR_ADMIN_TOKEN": auditor_token,
+        "CROWDTENSOR_OBSERVER_TOKEN": observer_token,
+    })
+    _write_private_env(accounting_env_path, {
+        "CROWDTENSOR_ADMIN_TOKEN": accounting_token,
         "CROWDTENSOR_OBSERVER_TOKEN": observer_token,
     })
     _write_private_env(tunnel_env_path, {
@@ -13409,6 +13556,30 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         _bootstrap_operator_status_script(coordinator_url=coordinator_url),
     )
     _write_executable(
+        auditor_status_script,
+        _bootstrap_operator_status_script(
+            coordinator_url=coordinator_url,
+            env_file="auditor.private.env",
+            output_subdir="operator-status-auditor",
+            include_admin_summaries=False,
+            require_admin_summaries=False,
+            include_events_summary=True,
+            require_events_summary=True,
+        ),
+    )
+    _write_executable(
+        accounting_status_script,
+        _bootstrap_operator_status_script(
+            coordinator_url=coordinator_url,
+            env_file="accounting.private.env",
+            output_subdir="operator-status-accounting",
+            include_admin_summaries=True,
+            require_admin_summaries=True,
+            include_events_summary=False,
+            require_events_summary=False,
+        ),
+    )
+    _write_executable(
         submit_generation_script,
         _bootstrap_generate_script(
             coordinator_url=coordinator_url,
@@ -13429,6 +13600,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "handoff_doctor": str(handoff_doctor_script),
         "ready_for_handoff": str(ready_for_handoff_script),
         "operator_status": str(operator_status_script),
+        "auditor_status": str(auditor_status_script),
+        "accounting_status": str(accounting_status_script),
         "stage0_install": str(stage_install_scripts["stage0"]),
         "stage0_doctor": str(stage_doctor_scripts["stage0"]),
         "stage0_check_join": str(stage_check_scripts["stage0"]),
@@ -13447,13 +13620,40 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     private_env_report = {
         "coordinator": str(coordinator_env_path),
         "operator": str(operator_env_path),
+        "admin": str(operator_env_path),
+        "auditor": str(auditor_env_path),
+        "accounting": str(accounting_env_path),
         "tunnel": str(tunnel_env_path),
     }
     private_invites_report = {
         "operator": str(operator_invite_path),
+        "admin": str(operator_invite_path),
+        "auditor": str(auditor_invite_path),
+        "accounting": str(accounting_invite_path),
         "stage0": str(stage_invites[0]["invite_file"]),
         "stage1": str(stage_invites[1]["invite_file"]),
     }
+    private_operator_invites_report = {
+        "admin": str(operator_invite_path),
+        "auditor": str(auditor_invite_path),
+        "accounting": str(accounting_invite_path),
+    }
+    operator_role_invites = {
+        "admin": operator_invite,
+        "auditor": auditor_invite,
+        "accounting": accounting_invite,
+    }
+    operator_role_scripts = {
+        "admin": str(operator_status_script),
+        "auditor": str(auditor_status_script),
+        "accounting": str(accounting_status_script),
+    }
+    operator_roles_report = _swarm_bootstrap_operator_roles_summary(
+        role_invites=operator_role_invites,
+        private_env=private_env_report,
+        private_invites=private_operator_invites_report,
+        status_scripts=operator_role_scripts,
+    )
     stage_package_dirs = {
         "stage0": str(stage_scripts["stage0"].parent),
         "stage1": str(stage_scripts["stage1"].parent),
@@ -13483,6 +13683,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             private_env=private_env_report,
             private_invites=private_invites_report,
             remote_access=remote_access,
+            operator_roles=operator_roles_report,
         ),
         encoding="utf-8",
     )
@@ -13501,6 +13702,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         },
         "private_env": private_env_report,
         "private_invites": private_invites_report,
+        "private_operator_invites": private_operator_invites_report,
         "private_join_codes": private_join_codes_report,
         "stage_package_archives": stage_package_archives,
         "stage_handoff_checksums": stage_handoff_checksums,
@@ -13516,6 +13718,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             scripts=scripts,
             private_env=private_env_report,
             private_invites=private_invites_report,
+            operator_roles=operator_roles_report,
             stage_package_dirs=stage_package_dirs,
             stage_package_archives=stage_package_archives,
             stage_handoff_checksums=stage_handoff_checksums,
@@ -13527,6 +13730,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "roles": operator_invite["roles"],
             "session_policy": operator_invite["session_policy"],
         },
+        "operator_roles": operator_roles_report,
         "miners": _swarm_bootstrap_miner_summaries(stage_invites, stage_join_code_files),
         "next_commands": [
             command_entry(
@@ -13594,6 +13798,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             command_entry("doctor stage1 Miner host", [str(stage_runner_scripts["stage1"]), "--doctor"]),
             command_entry("check generation route", dry_run_command),
             command_entry("submit generation with operator invite token", generate_command),
+            command_entry("check auditor status", [str(auditor_status_script)]),
+            command_entry("check accounting status", [str(accounting_status_script)]),
         ],
         "diagnosis_codes": ["swarm_bootstrap_ready", str(remote_access.get("diagnosis_code") or "")],
         "safety": {
@@ -13610,6 +13816,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "check_route_script_created": True,
             "ready_for_handoff_script_created": True,
             "operator_status_script_created": True,
+            "operator_role_invites_created": True,
+            "operator_role_env_files_created": True,
+            "auditor_status_script_created": True,
+            "accounting_status_script_created": True,
             "scripts_created": True,
             "scripts_embed_plaintext_tokens": False,
         },
@@ -13738,13 +13948,29 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[23]["requires_files"] = [str(operator_env_path)]
     next_commands[23]["script"] = str(submit_generation_script)
     next_commands[23]["requires_running"] = ["control_plane", "stage0_miner", "stage1_miner"]
+    next_commands[24]["command"] = [str(auditor_status_script)]
+    next_commands[24]["command_line"] = command_line([str(auditor_status_script)])
+    next_commands[24]["requires_files"] = [str(auditor_env_path)]
+    next_commands[24]["script"] = str(auditor_status_script)
+    next_commands[24]["requires_running"] = ["control_plane"]
+    next_commands[25]["command"] = [str(accounting_status_script)]
+    next_commands[25]["command_line"] = command_line([str(accounting_status_script)])
+    next_commands[25]["requires_files"] = [str(accounting_env_path)]
+    next_commands[25]["script"] = str(accounting_status_script)
+    next_commands[25]["requires_running"] = ["control_plane"]
     return sanitize(redact_values(report, [
         operator_token,
+        auditor_token,
+        accounting_token,
         observer_token,
         str(getattr(args, "tunnel_command", "") or "").strip(),
         tunnel_command,
         str((operator_invite.get("operator_invite") or {}).get("operator_token") or ""),
         str(operator_invite.get("operator_invite_code") or ""),
+        str((auditor_invite.get("operator_invite") or {}).get("operator_token") or ""),
+        str(auditor_invite.get("operator_invite_code") or ""),
+        str((accounting_invite.get("operator_invite") or {}).get("operator_token") or ""),
+        str(accounting_invite.get("operator_invite_code") or ""),
         *[
             str((invite.get("env") or {}).get("CROWDTENSOR_MINER_TOKEN") or "")
             for invite in stage_invites
@@ -14064,6 +14290,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "miner_registry": output_dir / "miner_registry.json",
         "coordinator_env": private_dir / "coordinator.private.env",
         "operator_env": private_dir / "operator.private.env",
+        "auditor_env": private_dir / "auditor.private.env",
+        "accounting_env": private_dir / "accounting.private.env",
         "tunnel_env": private_dir / "tunnel.private.env",
         "operator_install_script": output_dir / "install_operator.sh",
         "operator_quickstart_script": output_dir / "operator_quickstart.sh",
@@ -14077,6 +14305,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "handoff_doctor_script": output_dir / "handoff_doctor.sh",
         "ready_for_handoff_script": output_dir / "ready_for_handoff.sh",
         "operator_status_script": output_dir / "operator_status.sh",
+        "auditor_status_script": output_dir / "auditor_status.sh",
+        "accounting_status_script": output_dir / "accounting_status.sh",
         "check_generation_script": output_dir / "check_generation.sh",
         "submit_generation_script": output_dir / "submit_generation.sh",
         "runbook": output_dir / "SWARM_BOOTSTRAP.md",
@@ -14137,19 +14367,37 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage0_invite, stage0_invite_error = _load_bootstrap_json(required_files["stage0_invite"])
     stage1_invite, stage1_invite_error = _load_bootstrap_json(required_files["stage1_invite"])
     operator_invite_files = sorted(private_dir.glob("*.operator.invite.json")) if private_dir.is_dir() else []
-    operator_invite: dict[str, Any] = {}
-    operator_invite_error = "missing"
-    if operator_invite_files:
-        operator_invite, operator_invite_error = _load_bootstrap_json(operator_invite_files[0])
+    operator_invites: list[dict[str, Any]] = []
+    operator_invite_records: list[tuple[Path, dict[str, Any]]] = []
+    operator_invite_errors: list[str] = []
+    for invite_file in operator_invite_files:
+        invite, invite_error = _load_bootstrap_json(invite_file)
+        if invite_error:
+            operator_invite_errors.append(f"{invite_file.name}: {invite_error}")
+        else:
+            operator_invites.append(invite)
+            operator_invite_records.append((invite_file, invite))
+    operator_invite_by_role: dict[str, dict[str, Any]] = {}
+    operator_invite_path_by_role: dict[str, Path] = {}
+    for invite_file, invite in operator_invite_records:
+        roles = {str(role) for role in invite.get("roles") or []}
+        for role in ["admin", "auditor", "accounting"]:
+            if role in roles:
+                operator_invite_by_role[role] = invite
+                operator_invite_path_by_role[role] = invite_file
+    operator_invite = operator_invite_by_role.get("admin") or (operator_invites[0] if operator_invites else {})
+    operator_invite_error = "; ".join(operator_invite_errors) if operator_invite_errors else ("" if operator_invite else "missing")
     private_stage_invites = sorted(private_dir.glob("*.miner.invite.json")) if private_dir.is_dir() else []
     coordinator_env, coordinator_env_error = _parse_bootstrap_env(required_files["coordinator_env"])
     operator_env, operator_env_error = _parse_bootstrap_env(required_files["operator_env"])
+    auditor_env, auditor_env_error = _parse_bootstrap_env(required_files["auditor_env"])
+    accounting_env, accounting_env_error = _parse_bootstrap_env(required_files["accounting_env"])
     tunnel_env, tunnel_env_error = _parse_bootstrap_env(required_files["tunnel_env"])
 
     json_errors = [
         f"operator_registry: {operator_registry_error}" if operator_registry_error else "",
         f"miner_registry: {miner_registry_error}" if miner_registry_error else "",
-        f"operator_invite: {operator_invite_error}" if operator_invite_error else "",
+        f"operator_invites: {operator_invite_error}" if operator_invite_error else "",
         f"stage0_invite: {stage0_invite_error}" if stage0_invite_error else "",
         f"stage1_invite: {stage1_invite_error}" if stage1_invite_error else "",
     ]
@@ -14165,6 +14413,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     env_errors = [
         f"coordinator_env: {coordinator_env_error}" if coordinator_env_error else "",
         f"operator_env: {operator_env_error}" if operator_env_error else "",
+        f"auditor_env: {auditor_env_error}" if auditor_env_error else "",
+        f"accounting_env: {accounting_env_error}" if accounting_env_error else "",
         f"tunnel_env: {tunnel_env_error}" if tunnel_env_error else "",
     ]
     env_errors = [item for item in env_errors if item]
@@ -14179,8 +14429,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     _bootstrap_check_item(
         checks,
         diagnosis_codes,
-        "operator_invite_private_file_present",
-        len(operator_invite_files) == 1,
+        "operator_invite_private_files_present",
+        len(operator_invite_files) >= 3,
         detail=", ".join(str(path) for path in operator_invite_files),
         diagnosis_code="bootstrap_operator_invite_missing",
     )
@@ -14196,6 +14446,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     private_files = [
         required_files["coordinator_env"],
         required_files["operator_env"],
+        required_files["auditor_env"],
+        required_files["accounting_env"],
         required_files["tunnel_env"],
         *operator_invite_files,
         *private_stage_invites,
@@ -14228,6 +14480,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["handoff_doctor_script"],
         required_files["ready_for_handoff_script"],
         required_files["operator_status_script"],
+        required_files["auditor_status_script"],
+        required_files["accounting_status_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["stage0_install_script"],
@@ -14256,7 +14510,15 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     observer_verifier = str(coordinator_env.get("CROWDTENSOR_OBSERVER_TOKEN") or "")
     operator_token = str(operator_env.get("CROWDTENSOR_ADMIN_TOKEN") or "")
     observer_token = str(operator_env.get("CROWDTENSOR_OBSERVER_TOKEN") or "")
+    auditor_token = str(auditor_env.get("CROWDTENSOR_ADMIN_TOKEN") or "")
+    auditor_observer_token = str(auditor_env.get("CROWDTENSOR_OBSERVER_TOKEN") or "")
+    accounting_token = str(accounting_env.get("CROWDTENSOR_ADMIN_TOKEN") or "")
+    accounting_observer_token = str(accounting_env.get("CROWDTENSOR_OBSERVER_TOKEN") or "")
     operator_invite_token = str(operator_invite.get("operator_token") or "")
+    auditor_invite = operator_invite_by_role.get("auditor") or {}
+    accounting_invite = operator_invite_by_role.get("accounting") or {}
+    auditor_invite_token = str(auditor_invite.get("operator_token") or "")
+    accounting_invite_token = str(accounting_invite.get("operator_token") or "")
     stage0_token = str(stage0_invite.get("miner_token") or "")
     stage1_token = str(stage1_invite.get("miner_token") or "")
     tunnel_command = str(tunnel_env.get("CROWDTENSOR_TUNNEL_COMMAND") or "")
@@ -14266,9 +14528,17 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage1_reward_account = str(stage1_policy.get("reward_account") or "")
     secret_values = unique_redaction_values([
         operator_token,
+        auditor_token,
+        accounting_token,
         observer_token,
+        auditor_observer_token,
+        accounting_observer_token,
         operator_invite_token,
         str(operator_invite.get("token_hash") or ""),
+        auditor_invite_token,
+        str(auditor_invite.get("token_hash") or ""),
+        accounting_invite_token,
+        str(accounting_invite.get("token_hash") or ""),
         stage0_token,
         stage1_token,
         str(stage0_invite.get("token_hash") or ""),
@@ -14299,6 +14569,23 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="operator env must contain plaintext operator and observer tokens for operator-side scripts",
         diagnosis_code="bootstrap_operator_env_credentials_missing",
     )
+    role_envs_ok = bool(
+        auditor_token
+        and accounting_token
+        and auditor_observer_token == observer_token
+        and accounting_observer_token == observer_token
+        and auditor_token != operator_token
+        and accounting_token != operator_token
+        and auditor_token != accounting_token
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_role_envs_contain_distinct_credentials",
+        role_envs_ok,
+        detail="auditor/accounting env files must carry distinct role tokens and the shared observer token",
+        diagnosis_code="bootstrap_operator_role_env_credentials_missing",
+    )
     _bootstrap_check_item(
         checks,
         diagnosis_codes,
@@ -14307,6 +14594,28 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="operator_registry operators and miner_registry miners must use sha256: verifiers",
         diagnosis_code="bootstrap_registry_plaintext_token",
     )
+    operator_registry_entries = operator_registry.get("operators") if isinstance(operator_registry.get("operators"), list) else []
+    operator_role_counts: dict[str, int] = {}
+    for entry in operator_registry_entries:
+        if not isinstance(entry, dict):
+            continue
+        for role in entry.get("roles") or []:
+            role_text = str(role)
+            operator_role_counts[role_text] = operator_role_counts.get(role_text, 0) + 1
+    operator_role_invites_ready = bool(
+        {"admin", "auditor", "accounting"}.issubset(set(operator_invite_by_role))
+        and operator_role_counts.get("admin", 0) >= 1
+        and operator_role_counts.get("auditor", 0) >= 1
+        and operator_role_counts.get("accounting", 0) >= 1
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_role_invites_ready",
+        operator_role_invites_ready,
+        detail=f"roles={operator_role_counts} invite_roles={sorted(operator_invite_by_role)}",
+        diagnosis_code="bootstrap_operator_role_invites_missing",
+    )
     _bootstrap_check_item(
         checks,
         diagnosis_codes,
@@ -14314,6 +14623,19 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         bool(operator_invite_token and operator_invite_token == operator_token),
         detail="private operator invite token must match operator.private.env",
         diagnosis_code="bootstrap_operator_invite_env_mismatch",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_role_invites_match_role_envs",
+        bool(
+            auditor_invite_token
+            and accounting_invite_token
+            and auditor_invite_token == auditor_token
+            and accounting_invite_token == accounting_token
+        ),
+        detail="private auditor/accounting invite tokens must match their role env files",
+        diagnosis_code="bootstrap_operator_role_invite_env_mismatch",
     )
     _bootstrap_check_item(
         checks,
@@ -14471,6 +14793,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     handoff_doctor_script_text, _ = _read_bootstrap_text(required_files["handoff_doctor_script"])
     ready_for_handoff_script_text, _ = _read_bootstrap_text(required_files["ready_for_handoff_script"])
     operator_status_script_text, _ = _read_bootstrap_text(required_files["operator_status_script"])
+    auditor_status_script_text, _ = _read_bootstrap_text(required_files["auditor_status_script"])
+    accounting_status_script_text, _ = _read_bootstrap_text(required_files["accounting_status_script"])
     check_generation_script_text, _ = _read_bootstrap_text(required_files["check_generation_script"])
     submit_generation_script_text, _ = _read_bootstrap_text(required_files["submit_generation_script"])
     public_files = [
@@ -14486,6 +14810,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["handoff_doctor_script"],
         required_files["ready_for_handoff_script"],
         required_files["operator_status_script"],
+        required_files["auditor_status_script"],
+        required_files["accounting_status_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["runbook"],
@@ -14907,10 +15233,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and ".crowdtensor-operator-venv" in handoff_doctor_script_text
         and ".crowdtensor-operator-venv" in ready_for_handoff_script_text
         and ".crowdtensor-operator-venv" in operator_status_script_text
+        and ".crowdtensor-operator-venv" in auditor_status_script_text
+        and ".crowdtensor-operator-venv" in accounting_status_script_text
         and ".crowdtensor-operator-venv" in check_generation_script_text
         and ".crowdtensor-operator-venv" in submit_generation_script_text
         and "CROWDTENSOR_OPERATOR_VENV" in coordinator_script_text
         and "CROWDTENSOR_OPERATOR_VENV" in operator_status_script_text
+        and "CROWDTENSOR_OPERATOR_VENV" in auditor_status_script_text
+        and "CROWDTENSOR_OPERATOR_VENV" in accounting_status_script_text
         and "CROWDTENSOR_OPERATOR_VENV" in check_generation_script_text
     )
     _bootstrap_check_item(
@@ -15099,6 +15429,34 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and operator_token not in operator_status_script_text
         and observer_token not in operator_status_script_text
     )
+    auditor_status_script_ready = bool(
+        "crowdtensor operator-status" in auditor_status_script_text
+        and "private/auditor.private.env" in auditor_status_script_text
+        and "CROWDTENSOR_ADMIN_TOKEN" in auditor_status_script_text
+        and "CROWDTENSOR_OBSERVER_TOKEN" in auditor_status_script_text
+        and "--include-events-summary" in auditor_status_script_text
+        and "--require-events-summary" in auditor_status_script_text
+        and "--require-state" in auditor_status_script_text
+        and "--include-admin-summaries" not in auditor_status_script_text
+        and "--require-admin-summaries" not in auditor_status_script_text
+        and "$SCRIPT_DIR/operator-status-auditor" in auditor_status_script_text
+        and auditor_token not in auditor_status_script_text
+        and observer_token not in auditor_status_script_text
+    )
+    accounting_status_script_ready = bool(
+        "crowdtensor operator-status" in accounting_status_script_text
+        and "private/accounting.private.env" in accounting_status_script_text
+        and "CROWDTENSOR_ADMIN_TOKEN" in accounting_status_script_text
+        and "CROWDTENSOR_OBSERVER_TOKEN" in accounting_status_script_text
+        and "--include-admin-summaries" in accounting_status_script_text
+        and "--require-admin-summaries" in accounting_status_script_text
+        and "--require-state" in accounting_status_script_text
+        and "--include-events-summary" not in accounting_status_script_text
+        and "--require-events-summary" not in accounting_status_script_text
+        and "$SCRIPT_DIR/operator-status-accounting" in accounting_status_script_text
+        and accounting_token not in accounting_status_script_text
+        and observer_token not in accounting_status_script_text
+    )
     _bootstrap_check_item(
         checks,
         diagnosis_codes,
@@ -15106,6 +15464,22 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         operator_status_script_ready,
         detail="operator_status.sh must source operator.private.env and run the read-only operator status summary",
         diagnosis_code="bootstrap_operator_status_script_invalid",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "auditor_status_script_ready",
+        auditor_status_script_ready,
+        detail="auditor_status.sh must source auditor.private.env and run the read-only events summary",
+        diagnosis_code="bootstrap_auditor_status_script_invalid",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "accounting_status_script_ready",
+        accounting_status_script_ready,
+        detail="accounting_status.sh must source accounting.private.env and run the accounting/settlement summary",
+        diagnosis_code="bootstrap_accounting_status_script_invalid",
     )
     stage_package_operator_files = [
         path for stage_dir in [output_dir / "stage0", output_dir / "stage1"]
@@ -15164,6 +15538,30 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         )
     else:
         operator_action = "Fix the failed bootstrap package checks before copying stage packages or starting the Coordinator."
+    private_operator_invites_report = {
+        role: str(path)
+        for role, path in sorted(operator_invite_path_by_role.items())
+        if role in {"admin", "auditor", "accounting"}
+    }
+    operator_roles_report = _swarm_bootstrap_operator_roles_summary(
+        role_invites={
+            "admin": operator_invite_by_role.get("admin") or {},
+            "auditor": operator_invite_by_role.get("auditor") or {},
+            "accounting": operator_invite_by_role.get("accounting") or {},
+        },
+        private_env={
+            "admin": str(required_files["operator_env"]),
+            "operator": str(required_files["operator_env"]),
+            "auditor": str(required_files["auditor_env"]),
+            "accounting": str(required_files["accounting_env"]),
+        },
+        private_invites=private_operator_invites_report,
+        status_scripts={
+            "admin": str(required_files["operator_status_script"]),
+            "auditor": str(required_files["auditor_status_script"]),
+            "accounting": str(required_files["accounting_status_script"]),
+        },
+    )
     report = {
         "schema": "crowdtensor_swarm_bootstrap_check_v1",
         "ok": ok,
@@ -15192,6 +15590,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "handoff_doctor": str(required_files["handoff_doctor_script"]),
                 "ready_for_handoff": str(required_files["ready_for_handoff_script"]),
                 "operator_status": str(required_files["operator_status_script"]),
+                "auditor_status": str(required_files["auditor_status_script"]),
+                "accounting_status": str(required_files["accounting_status_script"]),
                 "stage0_install": str(required_files["stage0_install_script"]),
                 "stage0_doctor": str(required_files["stage0_doctor_script"]),
                 "stage0_check_join": str(required_files["stage0_check_join_script"]),
@@ -15208,13 +15608,20 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             private_env={
                 "coordinator": str(required_files["coordinator_env"]),
                 "operator": str(required_files["operator_env"]),
+                "admin": str(required_files["operator_env"]),
+                "auditor": str(required_files["auditor_env"]),
+                "accounting": str(required_files["accounting_env"]),
                 "tunnel": str(required_files["tunnel_env"]),
             },
             private_invites={
-                "operator": str(operator_invite_files[0]) if operator_invite_files else "",
+                "operator": str(operator_invite_path_by_role.get("admin") or operator_invite_files[0]) if operator_invite_files else "",
+                "admin": str(operator_invite_path_by_role.get("admin") or "") if operator_invite_files else "",
+                "auditor": str(operator_invite_path_by_role.get("auditor") or "") if operator_invite_files else "",
+                "accounting": str(operator_invite_path_by_role.get("accounting") or "") if operator_invite_files else "",
                 "stage0": str(private_stage_invites[0]) if len(private_stage_invites) > 0 else "",
                 "stage1": str(private_stage_invites[1]) if len(private_stage_invites) > 1 else "",
             },
+            operator_roles=operator_roles_report,
             stage_package_dirs={
                 "stage0": str(output_dir / "stage0"),
                 "stage1": str(output_dir / "stage1"),
@@ -15232,6 +15639,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             offline_package_ready=ok,
         ),
         "artifacts": artifacts,
+        "operator_roles": operator_roles_report,
+        "private_operator_invites": private_operator_invites_report,
         "checks": checks,
         "safety": {
             "private_files_local_only": True,
@@ -15239,6 +15648,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_mode_0700": not bad_script_modes,
             "coordinator_env_excludes_operator_credentials": coordinator_env_ok,
             "operator_env_contains_operator_credentials": operator_env_ok,
+            "operator_role_envs_contain_distinct_credentials": role_envs_ok,
+            "operator_role_invites_ready": operator_role_invites_ready,
             "registries_store_hashed_tokens": _all_registry_tokens_hashed(operator_registry, "operators") and _all_registry_tokens_hashed(miner_registry, "miners"),
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
@@ -15268,6 +15679,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "handoff_doctor_script_ready": handoff_doctor_script_ready,
             "ready_for_handoff_script_ready": ready_for_handoff_script_ready,
             "operator_status_script_ready": operator_status_script_ready,
+            "auditor_status_script_ready": auditor_status_script_ready,
+            "accounting_status_script_ready": accounting_status_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
             "live_preflight_ready": (
                 bool(live_preflight.get("ok")) if live_preflight.get("checked") else None
@@ -17394,6 +17807,31 @@ def _safe_settlement_status(settlement: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _safe_events_status(events_payload: dict[str, Any]) -> dict[str, Any]:
+    events = events_payload.get("events") if isinstance(events_payload.get("events"), list) else []
+    type_counts: dict[str, int] = {}
+    latest_event_index: int | None = None
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        event_type = str(item.get("type") or "unknown")
+        type_counts[event_type] = type_counts.get(event_type, 0) + 1
+        try:
+            event_index = int(item.get("event_index"))
+        except (TypeError, ValueError):
+            continue
+        latest_event_index = event_index if latest_event_index is None else max(latest_event_index, event_index)
+    return {
+        "schema": "crowdtensor_events_status_v1",
+        "event_count": len(events),
+        "limit": int(events_payload.get("limit") or 0),
+        "event_type_counts": dict(sorted(type_counts.items())),
+        "latest_event_index": latest_event_index,
+        "raw_events_public": False,
+        "public_artifact_safe": True,
+    }
+
+
 def _operator_status_next_actions(report: dict[str, Any]) -> list[str]:
     codes = set(str(code) for code in report.get("diagnosis_codes") or [])
     actions: list[str] = []
@@ -17405,6 +17843,8 @@ def _operator_status_next_actions(report: dict[str, Any]) -> list[str]:
         actions.append("Pass --observer-token or set CROWDTENSOR_OBSERVER_TOKEN when /state is protected.")
     if "admin_summary_unavailable" in codes:
         actions.append("Pass an owner/admin/accounting token to include accounting and settlement summaries.")
+    if "events_summary_unavailable" in codes:
+        actions.append("Pass an owner/admin/auditor token to include the read-only events summary.")
     if "trust_effective_blocks_present" in codes:
         actions.append("Inspect trust_summary rows, then use crowdtensor trust --mode allow/block/reset for workload-scoped decisions.")
     if "blocked_claim_audit_ready" in codes:
@@ -17604,6 +18044,7 @@ def render_operator_status_markdown(report: dict[str, Any]) -> str:
     operator_registry = report.get("operator_registry") if isinstance(report.get("operator_registry"), dict) else {}
     miner_registry = report.get("miner_registry") if isinstance(report.get("miner_registry"), dict) else {}
     trust = report.get("trust_summary") if isinstance(report.get("trust_summary"), dict) else {}
+    events = report.get("events_status") if isinstance(report.get("events_status"), dict) else {}
     accounting = report.get("accounting_status") if isinstance(report.get("accounting_status"), dict) else {}
     settlement = report.get("settlement_status") if isinstance(report.get("settlement_status"), dict) else {}
     safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
@@ -17637,9 +18078,22 @@ def render_operator_status_markdown(report: dict[str, Any]) -> str:
         f"- Manual blocked pairs: `{trust.get('manual_blocked_count', 0)}`",
         f"- Trust override counts: `{trust.get('trust_override_counts') or {}}`",
         "",
-        "## Accounting",
+        "## Events",
         "",
     ]
+    if events:
+        lines.extend([
+            f"- Events: `{events.get('event_count', 0)}`",
+            f"- Latest event index: `{events.get('latest_event_index')}`",
+            f"- Event types: `{events.get('event_type_counts') or {}}`",
+        ])
+    else:
+        lines.append("- Events summary: `not-requested-or-unavailable`")
+    lines.extend([
+        "",
+        "## Accounting",
+        "",
+    ])
     if accounting:
         lines.extend([
             f"- Accounting rows: `{accounting.get('row_count', 0)}`",
@@ -17702,6 +18156,7 @@ def build_operator_status(args: argparse.Namespace) -> dict[str, Any]:
         "coordinator_url": coordinator_url,
         "output_dir": str(output_dir),
         "include_admin_summaries": bool(getattr(args, "include_admin_summaries", False)),
+        "include_events_summary": bool(getattr(args, "include_events_summary", False)),
         "diagnosis_codes": [],
         "public_artifact_safe": True,
         "safety": {
@@ -17777,6 +18232,34 @@ def build_operator_status(args: argparse.Namespace) -> dict[str, Any]:
         report["diagnosis_codes"].append("state_unavailable")
         if isinstance(exc, HTTPError) and int(exc.code) in {401, 403}:
             report["diagnosis_codes"].append("observer_token_rejected")
+    events_ready = False
+    if bool(getattr(args, "include_events_summary", False)):
+        if not admin_token:
+            report["diagnosis_codes"].append("admin_token_required_for_events_summary")
+        else:
+            try:
+                events_payload = request_json_url(
+                    "GET",
+                    coordinator_url,
+                    f"/admin/events?{urlencode({'limit': limit})}",
+                    admin_token=admin_token,
+                    timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+                )
+                report["events_status"] = _safe_events_status(events_payload)
+                events_ready = bool(
+                    isinstance(events_payload.get("events"), list)
+                    and report["events_status"].get("public_artifact_safe") is True
+                    and report["events_status"].get("raw_events_public") is False
+                )
+                report["diagnosis_codes"].append("events_summary_ready")
+                if events_ready:
+                    report["diagnosis_codes"].append("operator_events_summary_ready")
+            except Exception as exc:
+                report["events_summary_error"] = type(exc).__name__
+                report["events_summary_detail"] = redact_text(str(exc), redactions)[:200]
+                report["diagnosis_codes"].append("events_summary_unavailable")
+                if isinstance(exc, HTTPError) and int(exc.code) in {401, 403}:
+                    report["diagnosis_codes"].append("operator_events_token_rejected")
     admin_ready = False
     if bool(getattr(args, "include_admin_summaries", False)):
         if not admin_token:
@@ -17819,6 +18302,8 @@ def build_operator_status(args: argparse.Namespace) -> dict[str, Any]:
     report["ok"] = bool(ready_ok and (state_ready or not bool(getattr(args, "require_state", False))) and report.get("public_artifact_safe"))
     if bool(getattr(args, "include_admin_summaries", False)) and bool(getattr(args, "require_admin_summaries", False)):
         report["ok"] = bool(report["ok"] and admin_ready)
+    if bool(getattr(args, "include_events_summary", False)) and bool(getattr(args, "require_events_summary", False)):
+        report["ok"] = bool(report["ok"] and events_ready)
     report["diagnosis_codes"] = sorted(set(str(code) for code in report.get("diagnosis_codes", []) if code))
     report["next_actions"] = _operator_status_next_actions(report)
     report["operator_action"] = report["next_actions"][0] if report["next_actions"] else ""
@@ -17857,6 +18342,7 @@ def print_operator_status(report: dict[str, Any]) -> None:
     operator_registry = report.get("operator_registry") if isinstance(report.get("operator_registry"), dict) else {}
     miner_registry = report.get("miner_registry") if isinstance(report.get("miner_registry"), dict) else {}
     trust = report.get("trust_summary") if isinstance(report.get("trust_summary"), dict) else {}
+    events = report.get("events_status") if isinstance(report.get("events_status"), dict) else {}
     accounting = report.get("accounting_status") if isinstance(report.get("accounting_status"), dict) else {}
     settlement = report.get("settlement_status") if isinstance(report.get("settlement_status"), dict) else {}
     saved = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
@@ -17883,6 +18369,12 @@ def print_operator_status(report: dict[str, Any]) -> None:
         f"effective_blocked={trust.get('effective_blocked_count', 0)} "
         f"manual_blocked={trust.get('manual_blocked_count', 0)}"
     )
+    if events:
+        print(
+            "  events: "
+            f"count={events.get('event_count', 0)} "
+            f"types={events.get('event_type_counts') or {}}"
+        )
     if accounting:
         print(f"  accounting: rows={accounting.get('row_count', 0)} totals={accounting.get('miner_totals_count', 0)}")
     if settlement:
@@ -23239,8 +23731,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     operator_status.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
     operator_status.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
     operator_status.add_argument("--include-admin-summaries", action="store_true")
+    operator_status.add_argument("--include-events-summary", action="store_true")
     operator_status.add_argument("--require-state", action="store_true")
     operator_status.add_argument("--require-admin-summaries", action="store_true")
+    operator_status.add_argument("--require-events-summary", action="store_true")
     operator_status.add_argument("--limit", type=int, default=50)
     operator_status.add_argument("--unit-price-microcredits", type=int, default=0)
     operator_status.add_argument("--http-timeout", type=float, default=10.0)

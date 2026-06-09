@@ -88,8 +88,14 @@ crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-re
 
 The public report lists local file paths and copyable commands, but not
 plaintext operator or Miner tokens. The generated private invite files do
-contain usable tokens; keep the operator invite on the Coordinator/operator
-host and copy only the matching stage Miner invite to each Miner host. Optional
+contain usable tokens. `swarm-bootstrap` now creates role-scoped operator
+material by default: the legacy-compatible admin operator invite/env remains at
+`private/operator.private.env` and `private_invites.operator`, while
+`private/auditor.private.env`, `private/accounting.private.env`,
+`private_operator_invites.auditor`, and `private_operator_invites.accounting`
+are separate least-privilege handoff files. Keep all operator role env/invite
+files on their assigned operator hosts and copy only the matching stage Miner
+invite to each Miner host. Optional
 `--stage0-reward-account` and `--stage1-reward-account` values are private Beta
 accounting metadata written into the matching Miner invite and hashed registry;
 public reports, bootstrap checks, and handoff doctor reports expose only
@@ -124,8 +130,12 @@ URL without starting a tunnel; `ready_for_handoff.sh` chains
 discovery, and Coordinator together; `start_discovery.sh`
 starts the configured P2P-lite or real-P2P discovery daemon when `--peer-bootstrap` is used; and
 `verify_bootstrap.sh` runs the live no-claim bootstrap admission check.
-`operator.private.env` contains the operator admin token plus observer token for
-operator-side dry-run and submit scripts.
+`operator.private.env` contains the admin operator token plus observer token for
+operator-side dry-run and submit scripts. `auditor_status.sh` sources
+`auditor.private.env` and requests only a read-only events summary;
+`accounting_status.sh` sources `accounting.private.env` and requests only
+accounting plus draft settlement summaries. `operator_status.sh` remains the
+admin status helper.
 Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its private `miner.join-code.txt`,
