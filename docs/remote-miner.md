@@ -31,8 +31,9 @@ trust, accounting, and settlement status,
 and copy only the matching private stage archive plus `stageX.run-miner.sh` and
 `stageX.handoff.sha256` to each Miner host. The runner verifies the checksum,
 validates and extracts the archive, and supports the recommended first run
-`./stageX.run-miner.sh --install --dry-run`, then `--install` if needed, then
-`--doctor`, `--check-only`, and `--run`. Stage `install.sh` creates
+`./stageX.run-miner.sh --setup`, then `./stageX.run-miner.sh --start`. Use
+`--install --dry-run` to preview installation, and `--doctor`, `--check-only`,
+or `--support-bundle` for troubleshooting. Stage `install.sh` creates
 `.crowdtensor-venv` with the default `[hf]` runtime when `crowdtensor` is not
 already on PATH. Stage `doctor.sh` writes `miner_support_bundle.json` and checks admission without starting the
 Miner. Stage `check_join.sh` uses the private invite code file to verify

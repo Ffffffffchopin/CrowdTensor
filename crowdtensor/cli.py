@@ -10945,7 +10945,7 @@ def _write_stage_handoff_checksum_file(
         "runner_sha256": runner_hash,
         "runner_bytes": runner_path.stat().st_size,
         "verify_command": f"sha256sum -c {checksum_path.name}",
-        "run_command": f"./{runner_path.name} --run",
+        "run_command": f"./{runner_path.name} --start",
         "raw_tokens_public": False,
         "contains_private_package_hashes": True,
         "share_with_matching_miner_only": True,
@@ -11004,7 +11004,7 @@ ARCHIVE="${{CROWDTENSOR_STAGE_PACKAGE_ARCHIVE:-$SCRIPT_DIR/{archive_name}}}"
 CHECKSUM="${{CROWDTENSOR_STAGE_PACKAGE_CHECKSUM:-$SCRIPT_DIR/{checksum_name}}}"
 RUNNER="$SCRIPT_DIR/{stage}.run-miner.sh"
 DEST="${{CROWDTENSOR_STAGE_PACKAGE_DEST:-$SCRIPT_DIR}}"
-MODE="run"
+MODE="start"
 
 case "${{1:-}}" in
   --extract-only)
@@ -11027,25 +11027,32 @@ case "${{1:-}}" in
     MODE="doctor"
     shift
     ;;
-  --run|"")
-    if [ "${{1:-}}" = "--run" ]; then
+  --setup)
+    MODE="setup"
+    shift
+    ;;
+  --start|--run|"")
+    if [ "${{1:-}}" = "--start" ] || [ "${{1:-}}" = "--run" ]; then
       shift
     fi
     ;;
   --help|-h)
-    echo "usage: $0 [--install [--dry-run]|--doctor|--check-only|--run|--support-bundle|--extract-only] [extra crowdtensor join args]"
+    echo "usage: $0 [--setup|--start|--run|--install [--dry-run]|--doctor|--check-only|--support-bundle|--extract-only] [extra crowdtensor join args]"
     echo ""
     echo "recommended first run:"
+    echo "  $0 --setup"
+    echo "  $0 --start"
+    echo ""
+    echo "advanced checks:"
     echo "  $0 --install --dry-run"
-    echo "  $0 --install"
     echo "  $0 --doctor"
     echo "  $0 --check-only"
-    echo "  $0 --run"
+    echo "  $0 --support-bundle"
     exit 0
     ;;
   *)
     echo "unknown option: $1" >&2
-    echo "usage: $0 [--install [--dry-run]|--doctor|--check-only|--run|--support-bundle|--extract-only] [extra crowdtensor join args]" >&2
+    echo "usage: $0 [--setup|--start|--run|--install [--dry-run]|--doctor|--check-only|--support-bundle|--extract-only] [extra crowdtensor join args]" >&2
     exit 2
     ;;
 esac
@@ -11150,7 +11157,15 @@ case "$MODE" in
   doctor)
     exec "$STAGE_DIR/doctor.sh" "$@"
     ;;
-  run)
+  setup)
+    if [ "$#" -gt 0 ]; then
+      echo "--setup does not accept extra arguments; use --install --dry-run for install preview or --start for join args" >&2
+      exit 2
+    fi
+    "$STAGE_DIR/install.sh"
+    exec "$STAGE_DIR/doctor.sh"
+    ;;
+  start)
     "$STAGE_DIR/check_join.sh" "$@"
     exec "$STAGE_DIR/join.sh" "$@"
     ;;
@@ -11660,7 +11675,14 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
         "",
         "This directory is private. It contains the stage-specific Miner invite and opaque join code.",
         "",
-        "Install the local Miner runtime if `crowdtensor` is not already available:",
+        "If you received the archive runner, use it from the handoff directory:",
+        "",
+        "```bash",
+        f"./{stage}.run-miner.sh --setup",
+        f"./{stage}.run-miner.sh --start",
+        "```",
+        "",
+        "If this directory was already extracted, install the local Miner runtime if `crowdtensor` is not already available:",
         "",
         "```bash",
         "./install.sh",
@@ -11684,7 +11706,7 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
         "./support_bundle.sh",
         "```",
         "",
-        "Run:",
+        "Start the Miner:",
         "",
         "```bash",
         "./join.sh",
@@ -12084,18 +12106,20 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("handoff_doctor", "")),
         shlex.quote(scripts.get("operator_status", "")),
-        shlex.quote(scripts.get("stage0_install", "")),
+        f"{shlex.quote(scripts.get('stage0_run_miner', ''))} --setup",
+        f"{shlex.quote(scripts.get('stage0_run_miner', ''))} --start",
+        f"{shlex.quote(scripts.get('stage1_run_miner', ''))} --setup",
+        f"{shlex.quote(scripts.get('stage1_run_miner', ''))} --start",
+        f"{shlex.quote(scripts.get('stage0_install', ''))} --dry-run",
         shlex.quote(scripts.get("stage0_doctor", "")),
         shlex.quote(scripts.get("stage0_check_join", "")),
         shlex.quote(scripts.get("stage0_support_bundle", "")),
         shlex.quote(scripts.get("stage0_join", "")),
-        shlex.quote(scripts.get("stage0_run_miner", "")),
-        shlex.quote(scripts.get("stage1_install", "")),
+        f"{shlex.quote(scripts.get('stage1_install', ''))} --dry-run",
         shlex.quote(scripts.get("stage1_doctor", "")),
         shlex.quote(scripts.get("stage1_check_join", "")),
         shlex.quote(scripts.get("stage1_support_bundle", "")),
         shlex.quote(scripts.get("stage1_join", "")),
-        shlex.quote(scripts.get("stage1_run_miner", "")),
         shlex.quote(scripts.get("check_generation", "")),
         shlex.quote(scripts.get("submit_generation", "")),
         "```",
@@ -12228,7 +12252,7 @@ def _build_handoff_doctor_markdown(report: dict[str, Any]) -> str:
         f"1. Start control plane: `{report.get('recommended_launcher', '')}`",
         f"2. Verify before handoff: `{report.get('verify_before_handoff', '')}`",
         "3. Copy only the listed stage files to each matching Miner host.",
-        "4. Ask each Miner to run `./stageX.run-miner.sh --doctor`, then `--check-only`, then `--run`.",
+        "4. Ask each Miner to run `./stageX.run-miner.sh --setup`, then `./stageX.run-miner.sh --start`.",
         "",
         "## Stage Files",
         "",
@@ -12814,14 +12838,14 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 "check operator status",
                 [str(operator_status_script)],
             ),
-            command_entry("install stage0 Miner runtime", [str(stage_install_scripts["stage0"]), "--dry-run"]),
-            command_entry("doctor stage0 Miner host", [str(stage_doctor_scripts["stage0"])]),
-            command_entry("check stage0 Miner join", stage_check_commands["stage0"]),
-            command_entry("start stage0 Miner", stage_join_commands["stage0"]),
-            command_entry("install stage1 Miner runtime", [str(stage_install_scripts["stage1"]), "--dry-run"]),
-            command_entry("doctor stage1 Miner host", [str(stage_doctor_scripts["stage1"])]),
-            command_entry("check stage1 Miner join", stage_check_commands["stage1"]),
-            command_entry("start stage1 Miner", stage_join_commands["stage1"]),
+            command_entry("setup stage0 Miner package", [str(stage_runner_scripts["stage0"]), "--setup"]),
+            command_entry("start stage0 Miner", [str(stage_runner_scripts["stage0"]), "--start"]),
+            command_entry("preview stage0 Miner install", [str(stage_runner_scripts["stage0"]), "--install", "--dry-run"]),
+            command_entry("doctor stage0 Miner host", [str(stage_runner_scripts["stage0"]), "--doctor"]),
+            command_entry("setup stage1 Miner package", [str(stage_runner_scripts["stage1"]), "--setup"]),
+            command_entry("start stage1 Miner", [str(stage_runner_scripts["stage1"]), "--start"]),
+            command_entry("preview stage1 Miner install", [str(stage_runner_scripts["stage1"]), "--install", "--dry-run"]),
+            command_entry("doctor stage1 Miner host", [str(stage_runner_scripts["stage1"]), "--doctor"]),
             command_entry("check generation route", dry_run_command),
             command_entry("submit generation with operator invite token", generate_command),
         ],
@@ -12841,7 +12865,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         },
         "operator_action": (
             "Run start_control_plane.sh on the Coordinator host, run check_route.sh, then run verify_bootstrap.sh for live no-claim admission "
-            "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, run install.sh and doctor.sh on each Miner host, then run the dry-run generate "
+            "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, ask each Miner to run stageX.run-miner.sh --setup and --start, then run the dry-run generate "
             "preflight and operator_status.sh before submitting generation."
         ),
     }
@@ -12886,36 +12910,46 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[7]["command_line"] = command_line([str(operator_status_script)])
     next_commands[7]["requires_files"] = [str(operator_env_path)]
     next_commands[7]["script"] = str(operator_status_script)
-    next_commands[8]["command"] = [str(stage_install_scripts["stage0"]), "--dry-run"]
-    next_commands[8]["command_line"] = command_line([str(stage_install_scripts["stage0"]), "--dry-run"])
-    next_commands[8]["script"] = str(stage_install_scripts["stage0"])
-    next_commands[9]["command"] = [str(stage_doctor_scripts["stage0"])]
-    next_commands[9]["command_line"] = command_line([str(stage_doctor_scripts["stage0"])])
-    next_commands[9]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[9]["script"] = str(stage_doctor_scripts["stage0"])
-    next_commands[10]["command"] = [str(stage_check_scripts["stage0"])]
-    next_commands[10]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
-    next_commands[10]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[10]["script"] = str(stage_check_scripts["stage0"])
-    next_commands[11]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[11]["command_line"] = command_line([str(stage_scripts["stage0"])])
-    next_commands[11]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[11]["script"] = str(stage_scripts["stage0"])
-    next_commands[12]["command"] = [str(stage_install_scripts["stage1"]), "--dry-run"]
-    next_commands[12]["command_line"] = command_line([str(stage_install_scripts["stage1"]), "--dry-run"])
-    next_commands[12]["script"] = str(stage_install_scripts["stage1"])
-    next_commands[13]["command"] = [str(stage_doctor_scripts["stage1"])]
-    next_commands[13]["command_line"] = command_line([str(stage_doctor_scripts["stage1"])])
-    next_commands[13]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[13]["script"] = str(stage_doctor_scripts["stage1"])
-    next_commands[14]["command"] = [str(stage_check_scripts["stage1"])]
-    next_commands[14]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
-    next_commands[14]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[14]["script"] = str(stage_check_scripts["stage1"])
-    next_commands[15]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[15]["command_line"] = command_line([str(stage_scripts["stage1"])])
-    next_commands[15]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[15]["script"] = str(stage_scripts["stage1"])
+    next_commands[8]["command"] = [str(stage_runner_scripts["stage0"]), "--setup"]
+    next_commands[8]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--setup"])
+    next_commands[8]["requires_files"] = [
+        str(stage_archives["stage0"]),
+        str(stage_runner_scripts["stage0"]),
+        str(stage_checksum_files["stage0"]),
+    ]
+    next_commands[8]["script"] = str(stage_runner_scripts["stage0"])
+    next_commands[9]["command"] = [str(stage_runner_scripts["stage0"]), "--start"]
+    next_commands[9]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--start"])
+    next_commands[9]["requires_files"] = next_commands[8]["requires_files"]
+    next_commands[9]["script"] = str(stage_runner_scripts["stage0"])
+    next_commands[10]["command"] = [str(stage_runner_scripts["stage0"]), "--install", "--dry-run"]
+    next_commands[10]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--install", "--dry-run"])
+    next_commands[10]["requires_files"] = next_commands[8]["requires_files"]
+    next_commands[10]["script"] = str(stage_runner_scripts["stage0"])
+    next_commands[11]["command"] = [str(stage_runner_scripts["stage0"]), "--doctor"]
+    next_commands[11]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--doctor"])
+    next_commands[11]["requires_files"] = next_commands[8]["requires_files"]
+    next_commands[11]["script"] = str(stage_runner_scripts["stage0"])
+    next_commands[12]["command"] = [str(stage_runner_scripts["stage1"]), "--setup"]
+    next_commands[12]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--setup"])
+    next_commands[12]["requires_files"] = [
+        str(stage_archives["stage1"]),
+        str(stage_runner_scripts["stage1"]),
+        str(stage_checksum_files["stage1"]),
+    ]
+    next_commands[12]["script"] = str(stage_runner_scripts["stage1"])
+    next_commands[13]["command"] = [str(stage_runner_scripts["stage1"]), "--start"]
+    next_commands[13]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--start"])
+    next_commands[13]["requires_files"] = next_commands[12]["requires_files"]
+    next_commands[13]["script"] = str(stage_runner_scripts["stage1"])
+    next_commands[14]["command"] = [str(stage_runner_scripts["stage1"]), "--install", "--dry-run"]
+    next_commands[14]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--install", "--dry-run"])
+    next_commands[14]["requires_files"] = next_commands[12]["requires_files"]
+    next_commands[14]["script"] = str(stage_runner_scripts["stage1"])
+    next_commands[15]["command"] = [str(stage_runner_scripts["stage1"]), "--doctor"]
+    next_commands[15]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--doctor"])
+    next_commands[15]["requires_files"] = next_commands[12]["requires_files"]
+    next_commands[15]["script"] = str(stage_runner_scripts["stage1"])
     next_commands[16]["command"] = [str(check_generation_script)]
     next_commands[16]["command_line"] = command_line([str(check_generation_script)])
     next_commands[16]["requires_files"] = [str(operator_env_path)]
@@ -13749,6 +13783,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and set(manifest_stages) == {"stage0", "stage1"}
         and manifest_stages.get("stage0", {}).get("checksum_file") == "stage0.handoff.sha256"
         and manifest_stages.get("stage1", {}).get("checksum_file") == "stage1.handoff.sha256"
+        and manifest_stages.get("stage0", {}).get("run_command") == "./stage0.run-miner.sh --start"
+        and manifest_stages.get("stage1", {}).get("run_command") == "./stage1.run-miner.sh --start"
         and manifest_stages.get("stage0", {}).get("archive", {}).get("sha256") == stage0_checksum_entries.get("stage0.miner-package.tar.gz")
         and manifest_stages.get("stage1", {}).get("archive", {}).get("sha256") == stage1_checksum_entries.get("stage1.miner-package.tar.gz")
         and manifest_stages.get("stage0", {}).get("runner", {}).get("sha256") == stage0_checksum_entries.get("stage0.run-miner.sh")
@@ -13969,6 +14005,31 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         stage_archive_runner_scripts_ready,
         detail="stage run-miner scripts must safely extract the private archive before check/run",
         diagnosis_code="bootstrap_stage_archive_runner_script_invalid",
+    )
+    stage_setup_start_runner_ready = (
+        stage_archive_runner_scripts_ready
+        and "--setup" in stage0_runner_script_text
+        and "--setup" in stage1_runner_script_text
+        and "--start" in stage0_runner_script_text
+        and "--start" in stage1_runner_script_text
+        and "--run" in stage0_runner_script_text
+        and "--run" in stage1_runner_script_text
+        and "install.sh" in stage0_runner_script_text
+        and "install.sh" in stage1_runner_script_text
+        and "doctor.sh" in stage0_runner_script_text
+        and "doctor.sh" in stage1_runner_script_text
+        and "check_join.sh" in stage0_runner_script_text
+        and "check_join.sh" in stage1_runner_script_text
+        and "join.sh" in stage0_runner_script_text
+        and "join.sh" in stage1_runner_script_text
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_setup_start_runner_ready",
+        stage_setup_start_runner_ready,
+        detail="stage run-miner scripts must expose --setup and --start while preserving --run compatibility",
+        diagnosis_code="bootstrap_stage_setup_start_runner_invalid",
     )
     coordinator_script_admin_reference = "operator.private.env" in coordinator_script_text or "CROWDTENSOR_ADMIN_TOKEN" in coordinator_script_text
     _bootstrap_check_item(
@@ -14254,6 +14315,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "stage_check_join_scripts_ready": stage_check_join_scripts_ready,
             "stage_support_bundle_scripts_ready": stage_support_bundle_scripts_ready,
             "stage_archive_runner_scripts_ready": stage_archive_runner_scripts_ready,
+            "stage_setup_start_runner_ready": stage_setup_start_runner_ready,
             "stage_handoff_checksums_ready": stage_handoff_checksums_ready,
             "stage_join_scripts_use_invite_code_file": stage_scripts_use_join_code_file,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,

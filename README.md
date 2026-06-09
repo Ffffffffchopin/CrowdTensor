@@ -465,8 +465,11 @@ settlement summary from the operator env,
 and send each private stage archive plus matching `stageX.run-miner.sh` and
 `stageX.handoff.sha256` only to the matching Miner host. The runner verifies
 the checksum before it safely extracts the archive; the recommended Miner-side
-flow is `./stageX.run-miner.sh --install --dry-run`, then `--install` if needed, then `--doctor`, `--check-only`, and `--run`.
-The runner extracts the package and delegates `--doctor` to stage `doctor.sh`.
+flow is `./stageX.run-miner.sh --setup`, then `./stageX.run-miner.sh --start`.
+Use `./stageX.run-miner.sh --install --dry-run` to preview the install step,
+and `--doctor`, `--check-only`, or `--support-bundle` for troubleshooting.
+The runner extracts the package and delegates `--setup` to stage `install.sh`
+plus `doctor.sh`.
 Stage `install.sh` creates `.crowdtensor-venv` with the default `[hf]` runtime when `crowdtensor` is not already on PATH. Stage `doctor.sh` writes `miner_support_bundle.json` and then checks Coordinator
 reachability plus token-backed admission without starting the Miner; stage
 `check_join.sh` exposes that no-run admission check directly, and stage

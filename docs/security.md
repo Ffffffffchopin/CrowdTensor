@@ -127,10 +127,10 @@ copy only the matching one plus its `stage0.run-miner.sh` or
 `stage1.handoff.sha256` checksum to its Miner host.
 `stage_handoff_manifest.json` records the expected stage archive and runner
 hashes without raw tokens. The runner verifies the checksum, supports
-`./stageX.run-miner.sh --install --dry-run`, then `--install` if needed, then
-`--doctor` for local diagnostics before admission,
-validates archive membership before extracting, runs admission
-preflight, and then starts the Miner. If
+`./stageX.run-miner.sh --setup`, then `./stageX.run-miner.sh --start`; use
+`--install --dry-run` to preview installation and `--doctor` for local
+diagnostics before admission. It validates archive membership before extracting,
+runs admission preflight, and then starts the Miner. If
 `crowdtensor swarm-bootstrap` is run with `--peer-bootstrap`, that private
 invite also contains `crowdtensor_miner_join_discovery_v1` so the Miner can use
 P2P-lite discovery without hand-written route flags; this is still not NAT
@@ -160,8 +160,8 @@ scripts or public Markdown, including `check_route_script_ready`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, and
-`stage_package_archives_ready` plus `stage_archive_runner_scripts_ready` and
-`stage_handoff_checksums_ready`. It also checks
+`stage_package_archives_ready` plus `stage_archive_runner_scripts_ready`,
+`stage_setup_start_runner_ready`, and `stage_handoff_checksums_ready`. It also checks
 `stage_reward_account_metadata_ready` so private stage invites and the private
 Miner registry agree on reward-account metadata without publishing those
 values. Add `--expect-remote-miners` when stage packages
