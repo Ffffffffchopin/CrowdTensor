@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import copy
 import json
 import os
@@ -111,6 +113,7 @@ PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
+MINER_JOIN_INVITE_SCHEMA = "crowdtensor_miner_join_invite_v1"
 PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_generate_runtime_provenance_v1"
 PRODUCT_GENERATE_EVIDENCE_SCOPE_SCHEMA = "crowdtensor_generate_evidence_scope_v1"
 INFER_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_infer_runtime_provenance_v1"
@@ -10767,6 +10770,79 @@ def _product_join_evidence_scope(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _load_product_join_invite(args: argparse.Namespace) -> tuple[dict[str, Any], str]:
+    invite_file = str(getattr(args, "invite_file", "") or "").strip()
+    invite_code = str(getattr(args, "invite", "") or "").strip()
+    if invite_file and invite_code:
+        raise SystemExit("join accepts either --invite-file or --invite, not both")
+    if not invite_file and not invite_code:
+        return {}, ""
+    try:
+        if invite_file:
+            payload = json.loads(Path(invite_file).read_text(encoding="utf-8"))
+            source = "invite-file"
+        else:
+            padded = invite_code + "=" * (-len(invite_code) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+            source = "invite-code"
+    except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError, binascii.Error) as exc:
+        raise SystemExit(f"invalid join invite: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit("join invite must decode to a JSON object")
+    if str(payload.get("schema") or "") != MINER_JOIN_INVITE_SCHEMA:
+        raise SystemExit(f"join invite schema must be {MINER_JOIN_INVITE_SCHEMA}")
+    return payload, source
+
+
+def _apply_product_join_invite(args: argparse.Namespace) -> dict[str, Any]:
+    invite, source = _load_product_join_invite(args)
+    if not invite:
+        return {}
+    stage = str(invite.get("stage") or "").strip()
+    backend = str(invite.get("backend") or "").strip()
+    if stage not in {"stage0", "stage1", "both"}:
+        raise SystemExit("join invite stage must be one of: stage0, stage1, both")
+    if backend not in {"cpu", "cuda"}:
+        raise SystemExit("join invite backend must be one of: cpu, cuda")
+    coordinator_url = str(invite.get("coordinator_url") or "").strip()
+    miner_id = str(invite.get("miner_id") or "").strip()
+    token = str(invite.get("miner_token") or "").strip()
+    hf_model_id = str(invite.get("hf_model_id") or "sshleifer/tiny-gpt2").strip()
+    if not coordinator_url or not miner_id or not token or not hf_model_id:
+        raise SystemExit("join invite requires coordinator_url, miner_id, miner_token, and hf_model_id")
+    args.coordinator_url = coordinator_url
+    args.miner_id = miner_id
+    args.stage = stage
+    args.backend = backend
+    args.miner_token = token
+    args.hf_model_id = hf_model_id
+    policy = invite.get("policy") if isinstance(invite.get("policy"), dict) else {}
+    if int(policy.get("max_tasks") or 0) > 0 and int(getattr(args, "max_tasks", 0) or 0) <= 0:
+        args.max_tasks = int(policy.get("max_tasks") or 0)
+    if float(policy.get("max_runtime_seconds") or 0.0) > 0 and float(getattr(args, "max_runtime_seconds", 0.0) or 0.0) <= 0:
+        args.max_runtime_seconds = float(policy.get("max_runtime_seconds") or 0.0)
+    return {
+        "schema": MINER_JOIN_INVITE_SCHEMA,
+        "source": source,
+        "coordinator_url_present": True,
+        "miner_id": miner_id,
+        "stage": stage,
+        "backend": backend,
+        "hf_model_id": hf_model_id,
+        "token_hash": invite.get("token_hash") or "",
+        "policy": {
+            "schema": policy.get("schema") or "crowdtensor_miner_join_policy_v1",
+            "trust_tier": policy.get("trust_tier") or "new",
+            "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+            "reward_account_present": bool(policy.get("reward_account")),
+            "read_only_workload": policy.get("read_only_workload") or "real_llm_sharded_infer",
+            "not_production": policy.get("not_production", True) is not False,
+        },
+        "miner_token_plaintext_public": False,
+        "public_artifact_safe": True,
+    }
+
+
 def _finalize_product_join_report(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     report["runtime_provenance"] = _product_join_runtime_provenance(report, args)
     report["evidence_scope"] = _product_join_evidence_scope(report)
@@ -10776,6 +10852,7 @@ def _finalize_product_join_report(report: dict[str, Any], args: argparse.Namespa
 
 
 def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    invite_summary = _apply_product_join_invite(args)
     coordinator_url = args.coordinator_url
     p2p_bootstrap = args.peer_bootstrap or (DEFAULT_P2P_BOOTSTRAP if args.p2p else "")
     p2p_backend = _p2p_backend(args)
@@ -10929,14 +11006,17 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             [("real_p2p_stage_miner_announce_ready" if p2p_backend == "real" else "p2p_stage_miner_announce_ready")]
             if args.p2p and peer_announce.get("ok")
             else []
-        ),
+        ) + (["join_invite_applied"] if invite_summary else []),
         "safety": {
             "tokens_redacted_in_report": True,
+            "invite_token_redacted": bool(invite_summary),
             "not_production": True,
             "p2p_discovery_enabled": bool(args.p2p),
             "coordinator_result_fallback": True,
         },
     }
+    if invite_summary:
+        report["join_invite"] = invite_summary
     if args.p2p and not peer_announce.get("ok"):
         report["diagnosis_codes"] = [
             "real_p2p_stage_miner_announce_failed" if p2p_backend == "real" else "p2p_stage_miner_announce_failed"
@@ -13012,6 +13092,18 @@ def print_product_join(report: dict[str, Any]) -> None:
     print("CrowdTensor join")
     print(f"  ok: {report.get('ok')}")
     print(f"  coordinator_url: {report.get('coordinator_url')}")
+    invite = report.get("join_invite") if isinstance(report.get("join_invite"), dict) else {}
+    if invite:
+        policy = invite.get("policy") if isinstance(invite.get("policy"), dict) else {}
+        print(
+            "  invite: "
+            f"source={invite.get('source')} "
+            f"stage={invite.get('stage')} "
+            f"backend={invite.get('backend')} "
+            f"model={invite.get('hf_model_id')} "
+            f"trust={policy.get('trust_tier')} "
+            f"quota={policy.get('quota_task_limit')}"
+        )
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     if p2p:
         announce = p2p.get("announce") if isinstance(p2p.get("announce"), dict) else {}
@@ -16484,6 +16576,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         epilog=(
             "examples:\n"
+            "  crowdtensor join --invite-file miner.invite.json --run\n"
             "  crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run\n"
             "  crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run\n"
             "  crowdtensor join --p2p --peer-bootstrap http://127.0.0.1:8788 --miner-id stage0-miner --stage stage0 --run\n"
@@ -16492,6 +16585,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    join.add_argument("--invite-file", default="", help="read a product Miner join invite JSON generated by scripts/create_miner_invite.py")
+    join.add_argument("--invite", default="", help="base64url product Miner join invite code; prefer --invite-file for local secrecy")
     join.add_argument("--coordinator-url", default="")
     join.add_argument("--peer-bootstrap", default="")
     join.add_argument("--p2p", action="store_true", help="discover Coordinator and announce stage capability through p2pd")

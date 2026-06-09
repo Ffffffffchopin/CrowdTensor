@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import io
 import json
@@ -3773,6 +3774,97 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
             next_lines,
         )
+
+    def test_product_join_accepts_invite_file_and_redacts_token(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        invite_path = output_dir / "miner.invite.json"
+        invite_path.write_text(json.dumps({
+            "schema": "crowdtensor_miner_join_invite_v1",
+            "coordinator_url": "https://coord.example",
+            "miner_id": "invited-stage0",
+            "stage": "stage0",
+            "backend": "cuda",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "miner_token": "invite-secret",
+            "token_hash": "sha256:" + "a" * 64,
+            "policy": {
+                "schema": "crowdtensor_miner_join_policy_v1",
+                "trust_tier": "probation",
+                "quota_task_limit": 5,
+                "reward_account": "acct_123",
+                "read_only_workload": "real_llm_sharded_infer",
+                "not_production": True,
+                "max_tasks": 2,
+                "max_runtime_seconds": 60,
+            },
+        }), encoding="utf-8")
+        args = cli.parse_args([
+            "join",
+            "--invite-file",
+            str(invite_path),
+            "--json",
+        ])
+
+        report = cli.build_product_join(args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["coordinator_url"], "https://coord.example")
+        self.assertIn("join_invite_applied", report["diagnosis_codes"])
+        self.assertEqual(report["join_invite"]["source"], "invite-file")
+        self.assertEqual(report["join_invite"]["stage"], "stage0")
+        self.assertEqual(report["join_invite"]["backend"], "cuda")
+        self.assertEqual(report["join_invite"]["policy"]["trust_tier"], "probation")
+        self.assertEqual(report["join_invite"]["policy"]["quota_task_limit"], 5)
+        self.assertTrue(report["join_invite"]["policy"]["reward_account_present"])
+        self.assertTrue(report["safety"]["invite_token_redacted"])
+        self.assertNotIn("invite-secret", encoded)
+        command = report["command"]
+        self.assertIn("--coordinator", command)
+        self.assertEqual(command[command.index("--coordinator") + 1], "https://coord.example")
+        self.assertEqual(command[command.index("--miner-id") + 1], "invited-stage0")
+        self.assertEqual(command[command.index("--real-llm-backend") + 1], "hf_transformers_cuda")
+        self.assertEqual(command[command.index("--real-llm-stage-role") + 1], "stage0")
+        self.assertEqual(command[command.index("--max-tasks") + 1], "2")
+        self.assertEqual(command[command.index("--max-runtime-seconds") + 1], "60.0")
+
+    def test_product_join_accepts_invite_code_and_redacts_token(self) -> None:
+        invite = {
+            "schema": "crowdtensor_miner_join_invite_v1",
+            "coordinator_url": "https://coord.example",
+            "miner_id": "invited-stage1",
+            "stage": "stage1",
+            "backend": "cpu",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "miner_token": "invite-code-secret",
+            "token_hash": "sha256:" + "b" * 64,
+            "policy": {
+                "schema": "crowdtensor_miner_join_policy_v1",
+                "trust_tier": "new",
+                "quota_task_limit": 3,
+                "read_only_workload": "real_llm_sharded_infer",
+                "not_production": True,
+            },
+        }
+        invite_code = base64.urlsafe_b64encode(
+            json.dumps(invite, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii").rstrip("=")
+        args = cli.parse_args([
+            "join",
+            "--invite",
+            invite_code,
+            "--json",
+        ])
+
+        report = cli.build_product_join(args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["join_invite"]["source"], "invite-code")
+        self.assertEqual(report["join_invite"]["stage"], "stage1")
+        self.assertEqual(report["join_invite"]["backend"], "cpu")
+        self.assertNotIn("invite-code-secret", encoded)
+        self.assertEqual(report["command"][report["command"].index("--real-llm-stage-role") + 1], "stage1")
 
     def test_product_join_missing_route_action(self) -> None:
         args = cli.parse_args([

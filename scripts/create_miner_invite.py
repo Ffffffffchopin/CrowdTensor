@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import secrets
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -51,6 +53,15 @@ def create_invite(
     label: str = "",
     token: str = "",
     replace: bool = False,
+    stage: str = "both",
+    backend: str = "cpu",
+    hf_model_id: str = "sshleifer/tiny-gpt2",
+    max_tasks: int = 0,
+    max_runtime_seconds: float = 0.0,
+    trust_tier: str = "new",
+    quota_task_limit: int = 0,
+    reward_account: str = "",
+    invite_file: Path | None = None,
 ) -> dict:
     miner_name = str(miner_id or "").strip()
     if not miner_name:
@@ -58,6 +69,24 @@ def create_invite(
     coordinator = str(coordinator_url or "").strip().rstrip("/")
     if not coordinator:
         raise ValueError("coordinator_url is required")
+    stage_value = str(stage or "both").strip()
+    if stage_value not in {"stage0", "stage1", "both"}:
+        raise ValueError("stage must be one of: stage0, stage1, both")
+    backend_value = str(backend or "cpu").strip()
+    if backend_value not in {"cpu", "cuda"}:
+        raise ValueError("backend must be one of: cpu, cuda")
+    model_id = str(hf_model_id or "sshleifer/tiny-gpt2").strip()
+    if not model_id:
+        raise ValueError("hf_model_id is required")
+    task_limit = int(max_tasks or 0)
+    if task_limit < 0:
+        raise ValueError("max_tasks must be non-negative")
+    runtime_limit = float(max_runtime_seconds or 0.0)
+    if runtime_limit < 0:
+        raise ValueError("max_runtime_seconds must be non-negative")
+    quota_limit = int(quota_task_limit or 0)
+    if quota_limit < 0:
+        raise ValueError("quota_task_limit must be non-negative")
 
     plaintext_token = token or secrets.token_urlsafe(32)
     token_hash = hash_token(plaintext_token)
@@ -70,6 +99,20 @@ def create_invite(
         "miner_id": miner_name,
         "token": validate_token_verifier(token_hash, field_name="miner token"),
         "updated_at": now,
+        "join_policy": {
+            "schema": "crowdtensor_miner_join_policy_v1",
+            "coordinator_url": coordinator,
+            "stage": stage_value,
+            "backend": backend_value,
+            "hf_model_id": model_id,
+            "max_tasks": task_limit,
+            "max_runtime_seconds": runtime_limit,
+            "trust_tier": str(trust_tier or "new"),
+            "quota_task_limit": quota_limit,
+            "reward_account": str(reward_account or ""),
+            "read_only_workload": "real_llm_sharded_infer",
+            "not_production": True,
+        },
     }
 
     existing_index = next(
@@ -87,19 +130,65 @@ def create_invite(
         miners[existing_index] = entry
 
     write_registry(registry_path, registry)
-    command = (
+    legacy_command = (
         f"CROWDTENSOR_MINER_TOKEN={plaintext_token} "
         f"crowdtensor-miner --coordinator {coordinator} --miner-id {miner_name} "
         "--max-tasks 1"
     )
+    product_command_parts = [
+        "crowdtensor",
+        "join",
+        "--coordinator-url",
+        coordinator,
+        "--miner-id",
+        miner_name,
+        "--stage",
+        stage_value,
+        "--backend",
+        backend_value,
+        "--hf-model-id",
+        model_id,
+    ]
+    if task_limit > 0:
+        product_command_parts.extend(["--max-tasks", str(task_limit)])
+    if runtime_limit > 0:
+        product_command_parts.extend(["--max-runtime-seconds", str(runtime_limit)])
+    product_command_parts.append("--run")
+    join_invite = {
+        "schema": "crowdtensor_miner_join_invite_v1",
+        "coordinator_url": coordinator,
+        "miner_id": miner_name,
+        "stage": stage_value,
+        "backend": backend_value,
+        "hf_model_id": model_id,
+        "miner_token": plaintext_token,
+        "token_hash": token_hash,
+        "policy": entry["join_policy"],
+        "public_artifact_safe": False,
+    }
+    invite_code = base64.urlsafe_b64encode(
+        json.dumps(join_invite, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    invite_file_path = ""
+    if invite_file is not None:
+        invite_file.parent.mkdir(parents=True, exist_ok=True)
+        invite_file.write_text(json.dumps(join_invite, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        invite_file_path = str(invite_file)
     return {
         "coordinator_url": coordinator,
         "env": {
             "CROWDTENSOR_MINER_TOKEN": plaintext_token,
         },
+        "invite_file": invite_file_path,
+        "join_invite": join_invite,
+        "join_invite_code": invite_code,
         "miner_id": miner_name,
+        "product_join_command": (
+            f"CROWDTENSOR_MINER_TOKEN={shlex.quote(plaintext_token)} "
+            f"{shlex.join(product_command_parts)}"
+        ),
         "registry": str(registry_path),
-        "run_command": command,
+        "run_command": legacy_command,
         "token_hash": token_hash,
     }
 
@@ -112,6 +201,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label", default="")
     parser.add_argument("--token", default="", help="plaintext token to use; defaults to a generated random token")
     parser.add_argument("--replace", action="store_true", help="replace an existing registry entry for this miner_id")
+    parser.add_argument("--stage", choices=["stage0", "stage1", "both"], default="both")
+    parser.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    parser.add_argument("--max-tasks", type=int, default=0)
+    parser.add_argument("--max-runtime-seconds", type=float, default=0.0)
+    parser.add_argument("--trust-tier", default="new")
+    parser.add_argument("--quota-task-limit", type=int, default=0)
+    parser.add_argument("--reward-account", default="")
+    parser.add_argument("--invite-file", default="", help="write the plaintext Miner join invite JSON to this private path")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     return parser.parse_args()
 
@@ -126,6 +224,15 @@ def main() -> None:
             label=args.label,
             token=args.token,
             replace=args.replace,
+            stage=args.stage,
+            backend=args.backend,
+            hf_model_id=args.hf_model_id,
+            max_tasks=args.max_tasks,
+            max_runtime_seconds=args.max_runtime_seconds,
+            trust_tier=args.trust_tier,
+            quota_task_limit=args.quota_task_limit,
+            reward_account=args.reward_account,
+            invite_file=Path(args.invite_file) if args.invite_file else None,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
@@ -144,6 +251,16 @@ def main() -> None:
     print()
     print("Remote command:")
     print(invite["run_command"])
+    print()
+    print("Product join command:")
+    print(invite["product_join_command"])
+    if invite.get("invite_file"):
+        print()
+        print("Invite file:")
+        print(invite["invite_file"])
+    print()
+    print("Invite code:")
+    print(invite["join_invite_code"])
 
 
 if __name__ == "__main__":

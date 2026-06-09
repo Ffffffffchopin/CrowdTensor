@@ -30,6 +30,41 @@ The report schema is `remote_two_machine_beta_check_v1`. It runs local loopback 
 
 ## 1. Create a Miner Registry Entry
 
+For the product-shaped `serve` / `join` / `generate` path, the Coordinator host
+can also create a private Miner join invite. The Coordinator URL must be
+reachable from the Miner: use a public HTTPS endpoint, a VPN address, a trusted
+private network, or a tunnel such as Cloudflare Tunnel, ngrok, frp, or a reverse
+proxy. The Miner does not need to expose a public port because it connects
+outbound to the Coordinator.
+
+```bash
+python scripts/create_miner_invite.py \
+  --registry dist/public-swarm/miner_registry.json \
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --miner-id stage0-gpu-1 \
+  --stage stage0 \
+  --backend cuda \
+  --trust-tier probation \
+  --quota-task-limit 25 \
+  --invite-file dist/public-swarm/stage0-gpu-1.invite.json \
+  --json
+```
+
+Copy only the generated `*.invite.json` file to the Miner host, then run:
+
+```bash
+crowdtensor join --invite-file stage0-gpu-1.invite.json --run
+```
+
+`--invite` also accepts the base64url invite code printed by the script, but the
+file form is preferred because the invite contains the plaintext Miner token and
+may otherwise end up in shell history. The Coordinator registry stores only the
+token verifier plus `join_policy` metadata. `/ready` exposes a redacted
+`miner_policy_summary` with the invited stage, backend, trust tier, quota limit,
+and reward-account presence, but never the plaintext token or reward account.
+This policy is admission and audit metadata for the current Beta; it is not
+production billing, staking, or automatic economic settlement.
+
 For the recommended high-level two-machine home-compute demo, start with `crowdtensor remote-demo prepare`. The Coordinator host runs `crowdtensord`; the Miner host runs `crowdtensor-miner`; the operator keeps `operator.private.env`; only `miner.private.env`, `miner_join.sh`, and `MINER_JOIN.md` are copied to the Miner host. It creates the registry, private env files, public runbook, `miner_join_pack_v1`, and `remote_home_compute_demo_v1` summary in one output directory:
 
 ```bash

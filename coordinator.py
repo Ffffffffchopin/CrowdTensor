@@ -75,8 +75,51 @@ def load_miner_token_registry(path: str | Path | None) -> dict[str, dict[str, An
             "token": token,
             "enabled": enabled,
             "label": str(label or ""),
+            "join_policy": _safe_miner_join_policy(entry.get("join_policy")),
         }
     return registry
+
+
+def _safe_miner_join_policy(policy: Any) -> dict[str, Any]:
+    if not isinstance(policy, dict):
+        return {}
+    return {
+        "schema": str(policy.get("schema") or "crowdtensor_miner_join_policy_v1"),
+        "coordinator_url_present": bool(str(policy.get("coordinator_url") or "").strip()),
+        "stage": str(policy.get("stage") or ""),
+        "backend": str(policy.get("backend") or ""),
+        "hf_model_id": str(policy.get("hf_model_id") or ""),
+        "max_tasks": int(policy.get("max_tasks") or 0),
+        "max_runtime_seconds": float(policy.get("max_runtime_seconds") or 0.0),
+        "trust_tier": str(policy.get("trust_tier") or "new"),
+        "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+        "reward_account_present": bool(str(policy.get("reward_account") or "").strip()),
+        "read_only_workload": str(policy.get("read_only_workload") or ""),
+        "not_production": policy.get("not_production", True) is not False,
+    }
+
+
+def miner_registry_policy_summary(registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    miners: list[dict[str, Any]] = []
+    for miner_id, entry in sorted(registry.items()):
+        policy = entry.get("join_policy") if isinstance(entry.get("join_policy"), dict) else {}
+        if not policy:
+            continue
+        miners.append({
+            "miner_id": miner_id,
+            "enabled": bool(entry.get("enabled")),
+            "label": str(entry.get("label") or ""),
+            "policy": dict(policy),
+        })
+    return {
+        "schema": "crowdtensor_miner_registry_policy_summary_v1",
+        "miner_count": len(registry),
+        "policy_count": len(miners),
+        "miners": miners,
+        "plaintext_tokens_public": False,
+        "reward_accounts_public": False,
+        "public_artifact_safe": True,
+    }
 
 
 def _metric_value(value: Any) -> str:
@@ -261,8 +304,9 @@ def readiness_payload(
     observer_required: bool,
     admin_configured: bool,
     miner_registry_configured: bool,
+    miner_policy_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "ok": True,
         **version_payload(),
         "event_index": summary.get("event_index", 0),
@@ -275,6 +319,9 @@ def readiness_payload(
             "miner_registry_configured": bool(miner_registry_configured),
         },
     }
+    if miner_policy_summary:
+        payload["miner_policy_summary"] = miner_policy_summary
+    return payload
 
 
 def create_app(
@@ -479,6 +526,7 @@ def create_app(
                 observer_required=bool(configured_observer_token),
                 admin_configured=bool(configured_admin_token),
                 miner_registry_configured=bool(configured_miner_registry),
+                miner_policy_summary=miner_registry_policy_summary(configured_miner_registry),
             )
         except Exception as exc:
             raise HTTPException(status_code=503, detail={"ok": False, "reason": str(exc)}) from exc

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from coordinator import create_app, load_miner_token_registry, parse_task_lane
+from coordinator import create_app, load_miner_token_registry, miner_registry_policy_summary, parse_task_lane
 from crowdtensor.auth import hash_token
 from crowdtensor.diloco import run_inner_loop
 from crowdtensor.external_llm import WORKLOAD_TYPE as WORKLOAD_EXTERNAL_LLM_INFER
@@ -234,6 +234,91 @@ class CoordinatorApiTests(unittest.TestCase):
                 path.write_text(json.dumps(payload), encoding="utf-8")
                 with self.assertRaises(ValueError, msg=filename):
                     load_miner_token_registry(path)
+
+    def test_miner_token_registry_preserves_safe_join_policy_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_registry(
+                Path(tmp) / "miners.json",
+                [
+                    {
+                        "miner_id": "stage0-gpu",
+                        "token": hash_token("registered-token"),
+                        "enabled": True,
+                        "label": "alpha",
+                        "join_policy": {
+                            "schema": "crowdtensor_miner_join_policy_v1",
+                            "coordinator_url": "https://coord.example",
+                            "stage": "stage0",
+                            "backend": "cuda",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "max_tasks": 4,
+                            "max_runtime_seconds": 120.0,
+                            "trust_tier": "probation",
+                            "quota_task_limit": 25,
+                            "reward_account": "acct-secret",
+                            "read_only_workload": "real_llm_sharded_infer",
+                            "not_production": True,
+                        },
+                    },
+                ],
+            )
+
+            registry = load_miner_token_registry(registry_path)
+            summary = miner_registry_policy_summary(registry)
+            encoded = json.dumps(summary, sort_keys=True)
+
+            self.assertEqual(summary["schema"], "crowdtensor_miner_registry_policy_summary_v1")
+            self.assertEqual(summary["miner_count"], 1)
+            self.assertEqual(summary["policy_count"], 1)
+            policy = summary["miners"][0]["policy"]
+            self.assertEqual(policy["stage"], "stage0")
+            self.assertEqual(policy["backend"], "cuda")
+            self.assertEqual(policy["trust_tier"], "probation")
+            self.assertEqual(policy["quota_task_limit"], 25)
+            self.assertTrue(policy["coordinator_url_present"])
+            self.assertTrue(policy["reward_account_present"])
+            self.assertNotIn("registered-token", encoded)
+            self.assertNotIn("acct-secret", encoded)
+
+    def test_ready_exposes_safe_miner_policy_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_registry(
+                Path(tmp) / "miners.json",
+                [
+                    {
+                        "miner_id": "stage1-cpu",
+                        "token": hash_token("registered-token"),
+                        "join_policy": {
+                            "coordinator_url": "https://coord.example",
+                            "stage": "stage1",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "trust_tier": "new",
+                            "quota_task_limit": 5,
+                            "reward_account": "acct-secret",
+                        },
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                miner_token_registry=registry_path,
+            )
+            ready = endpoint_for(app, "/ready", "GET")
+
+            payload = ready()
+            encoded = json.dumps(payload, sort_keys=True)
+
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["auth"]["miner_registry_configured"])
+            policy_summary = payload["miner_policy_summary"]
+            self.assertEqual(policy_summary["policy_count"], 1)
+            self.assertEqual(policy_summary["miners"][0]["miner_id"], "stage1-cpu")
+            self.assertEqual(policy_summary["miners"][0]["policy"]["stage"], "stage1")
+            self.assertNotIn("registered-token", encoded)
+            self.assertNotIn("acct-secret", encoded)
 
     def test_hashed_miner_token_registry_claims_with_plaintext_request_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
