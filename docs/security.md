@@ -116,7 +116,9 @@ copy only the matching one plus its `stage0.run-miner.sh` or
 `stage1.run-miner.sh` helper and matching `stage0.handoff.sha256` or
 `stage1.handoff.sha256` checksum to its Miner host.
 `stage_handoff_manifest.json` records the expected stage archive and runner
-hashes without raw tokens. The runner verifies the checksum, validates archive membership before extracting, runs admission
+hashes without raw tokens. The runner verifies the checksum, supports
+`./stageX.run-miner.sh --doctor` for local diagnostics before admission,
+validates archive membership before extracting, runs admission
 preflight, and then starts the Miner. If
 `crowdtensor swarm-bootstrap` is run with `--peer-bootstrap`, that private
 invite also contains `crowdtensor_miner_join_discovery_v1` so the Miner can use

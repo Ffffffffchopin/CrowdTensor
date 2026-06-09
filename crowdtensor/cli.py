@@ -11013,18 +11013,27 @@ case "${{1:-}}" in
     MODE="support"
     shift
     ;;
+  --doctor)
+    MODE="doctor"
+    shift
+    ;;
   --run|"")
     if [ "${{1:-}}" = "--run" ]; then
       shift
     fi
     ;;
   --help|-h)
-    echo "usage: $0 [--run|--check-only|--support-bundle|--extract-only] [extra crowdtensor join args]"
+    echo "usage: $0 [--doctor|--check-only|--run|--support-bundle|--extract-only] [extra crowdtensor join args]"
+    echo ""
+    echo "recommended first run:"
+    echo "  $0 --doctor"
+    echo "  $0 --check-only"
+    echo "  $0 --run"
     exit 0
     ;;
   *)
     echo "unknown option: $1" >&2
-    echo "usage: $0 [--run|--check-only|--support-bundle|--extract-only] [extra crowdtensor join args]" >&2
+    echo "usage: $0 [--doctor|--check-only|--run|--support-bundle|--extract-only] [extra crowdtensor join args]" >&2
     exit 2
     ;;
 esac
@@ -11119,6 +11128,10 @@ case "$MODE" in
     exec "$STAGE_DIR/check_join.sh" "$@"
     ;;
   support)
+    exec "$STAGE_DIR/support_bundle.sh" "$@"
+    ;;
+  doctor)
+    echo "Writing $STAGE Miner diagnostic support bundle..."
     exec "$STAGE_DIR/support_bundle.sh" "$@"
     ;;
   run)
@@ -13350,6 +13363,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "stage1.handoff.sha256" in stage1_runner_script_text
         and "sha256sum -c" in stage0_runner_script_text
         and "sha256sum -c" in stage1_runner_script_text
+        and "--doctor" in stage0_runner_script_text
+        and "--doctor" in stage1_runner_script_text
+        and "recommended first run" in stage0_runner_script_text
+        and "recommended first run" in stage1_runner_script_text
         and "same directory for automatic verification" in stage0_runner_script_text
         and "same directory for automatic verification" in stage1_runner_script_text
         and "tarfile.open" in stage0_runner_script_text

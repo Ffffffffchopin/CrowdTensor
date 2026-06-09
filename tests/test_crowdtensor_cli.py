@@ -1709,6 +1709,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage0.miner-package.tar.gz", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("stage0.handoff.sha256", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("sha256sum -c", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
+        self.assertIn("--doctor", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
+        self.assertIn("recommended first run", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("stage archive members mismatch", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("check_join.sh", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("join.sh", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
@@ -2107,6 +2109,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         shutil.copy2(source_checksum, checksum)
         runner.chmod(0o700)
 
+        help_result = subprocess.run(
+            [str(runner), "--help"],
+            cwd=str(miner_host_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertIn("--doctor", help_result.stdout)
+        self.assertIn("recommended first run", help_result.stdout)
+
         extracted = subprocess.run(
             [str(runner), "--extract-only"],
             cwd=str(miner_host_dir),
@@ -2123,6 +2135,16 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         env = os.environ.copy()
         env["CROWDTENSOR_SKIP_JOIN_PREFLIGHT"] = "1"
+        doctor = subprocess.run(
+            [str(runner), "--doctor"],
+            cwd=str(miner_host_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertIn("Writing stage0 Miner diagnostic support bundle", doctor.stdout)
+        self.assertIn("miner_support_bundle.json", doctor.stdout)
         supported = subprocess.run(
             [str(runner), "--support-bundle"],
             cwd=str(miner_host_dir),

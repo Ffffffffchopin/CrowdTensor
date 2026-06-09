@@ -24,8 +24,9 @@ the Coordinator process, run `start_control_plane.sh` to start the tunnel,
 discovery, and Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
 and copy only the matching private stage archive plus `stageX.run-miner.sh` and
 `stageX.handoff.sha256` to each Miner host. The runner verifies the checksum,
-validates and extracts the archive, runs
-`check_join.sh`, then starts `join.sh`. Stage `check_join.sh`
+validates and extracts the archive, and supports the recommended first run
+`./stageX.run-miner.sh --doctor`, then `--check-only`, then `--run`. It writes
+diagnostics, runs `check_join.sh`, then starts `join.sh`. Stage `check_join.sh`
 uses the private invite code file to verify Coordinator reachability and
 admission without starting the Miner; stage `join.sh` uses the same path with
 `--run`, while `miner.invite.json` remains private compatibility material. When

@@ -460,8 +460,9 @@ operator env on the operator host, use the coordinator env only for
 discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
 and send each private stage archive plus matching `stageX.run-miner.sh` and
 `stageX.handoff.sha256` only to the matching Miner host. The runner verifies
-the checksum before it safely extracts the archive, runs
-`check_join.sh`, then starts `join.sh`. Stage
+the checksum before it safely extracts the archive; the recommended Miner-side
+flow is `./stageX.run-miner.sh --doctor`, then `--check-only`, then `--run`.
+The runner writes diagnostics, runs `check_join.sh`, then starts `join.sh`. Stage
 `check_join.sh` verifies Coordinator reachability and token-backed admission
 without starting the Miner; stage `join.sh` then runs the same invite-code path
 with `--run`, so the Miner host does not need to edit JSON invites. If the
