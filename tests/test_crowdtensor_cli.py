@@ -2549,7 +2549,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["stage_handoff"]["raw_tokens_public"])
         self.assertFalse(report["stage_handoff"]["raw_invite_codes_public"])
         self.assertEqual(report["stage_handoff"]["stages"]["stage0"]["checksum_file"], "stage0.handoff.sha256")
-        self.assertEqual(report["stage_handoff"]["stages"]["stage0"]["run_command"], "./stage0.run-miner.sh --start")
+        self.assertEqual(report["stage_handoff"]["stages"]["stage0"]["run_command"], "./stage0.run-miner.sh --quickstart")
         self.assertEqual(
             report["stage_handoff"]["stages"]["stage0"]["copy_files"],
             ["stage0.miner-package.tar.gz", "stage0.run-miner.sh", "stage0.handoff.sha256"],
@@ -2601,6 +2601,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             stage0_invite,
         )
         stage0_doc = (output_dir / "stage0" / "MINER_JOIN.md").read_text(encoding="utf-8")
+        self.assertIn("./stage0.run-miner.sh --quickstart", stage0_doc)
         self.assertIn("./stage0.run-miner.sh --setup", stage0_doc)
         self.assertIn("./stage0.run-miner.sh --start", stage0_doc)
         self.assertIn("--invite-code-file miner.join-code.txt", stage0_doc)
@@ -2735,6 +2736,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("stage0.miner-package.tar.gz", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("stage0.handoff.sha256", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("sha256sum -c", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
+        self.assertIn("--quickstart", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
+        self.assertIn("CrowdTensor Miner quickstart", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
+        self.assertIn("CROWDTENSOR_MINER_QUICKSTART_SKIP_INSTALL", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("--install", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("--setup", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("--start", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
@@ -2781,18 +2785,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["next_commands"][10]["requires_running"], ["control_plane"])
         self.assertEqual(report["next_commands"][11]["command"], [str(scripts["operator_status"])])
         self.assertIn(str(operator_env_path), report["next_commands"][11]["requires_files"])
-        self.assertEqual(report["next_commands"][12]["command"], [str(scripts["stage0_run_miner"]), "--setup"])
+        self.assertEqual(report["next_commands"][12]["command"], [str(scripts["stage0_run_miner"]), "--quickstart"])
         self.assertIn(str(stage0_archive_path), report["next_commands"][12]["requires_files"])
         self.assertIn(str(stage0_checksum_path), report["next_commands"][12]["requires_files"])
-        self.assertEqual(report["next_commands"][13]["command"], [str(scripts["stage0_run_miner"]), "--start"])
+        self.assertEqual(report["next_commands"][13]["command"], [str(scripts["stage0_run_miner"]), "--setup"])
         self.assertIn(str(stage0_archive_path), report["next_commands"][13]["requires_files"])
-        self.assertEqual(report["next_commands"][14]["command"], [str(scripts["stage0_run_miner"]), "--install", "--dry-run"])
-        self.assertEqual(report["next_commands"][15]["command"], [str(scripts["stage0_run_miner"]), "--doctor"])
-        self.assertEqual(report["next_commands"][16]["command"], [str(scripts["stage1_run_miner"]), "--setup"])
-        self.assertIn(str(stage1_archive_path), report["next_commands"][16]["requires_files"])
-        self.assertIn(str(stage1_checksum_path), report["next_commands"][16]["requires_files"])
-        self.assertEqual(report["next_commands"][17]["command"], [str(scripts["stage1_run_miner"]), "--start"])
-        self.assertEqual(report["next_commands"][20]["command_line"], str(scripts["check_generation"]))
+        self.assertEqual(report["next_commands"][14]["command"], [str(scripts["stage0_run_miner"]), "--start"])
+        self.assertEqual(report["next_commands"][15]["command"], [str(scripts["stage0_run_miner"]), "--install", "--dry-run"])
+        self.assertEqual(report["next_commands"][16]["command"], [str(scripts["stage0_run_miner"]), "--doctor"])
+        self.assertEqual(report["next_commands"][17]["command"], [str(scripts["stage1_run_miner"]), "--quickstart"])
+        self.assertIn(str(stage1_archive_path), report["next_commands"][17]["requires_files"])
+        self.assertIn(str(stage1_checksum_path), report["next_commands"][17]["requires_files"])
+        self.assertEqual(report["next_commands"][18]["command"], [str(scripts["stage1_run_miner"]), "--setup"])
+        self.assertEqual(report["next_commands"][19]["command"], [str(scripts["stage1_run_miner"]), "--start"])
+        self.assertEqual(report["next_commands"][22]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
     def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:
@@ -3229,8 +3235,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(written["schema"], "crowdtensor_swarm_handoff_doctor_v1")
         self.assertIn("CrowdTensor Handoff Doctor", markdown)
         self.assertIn("stage0.miner-package.tar.gz", markdown)
-        self.assertIn("./stageX.run-miner.sh --setup", markdown)
-        self.assertIn("./stageX.run-miner.sh --start", markdown)
+        self.assertIn("./stageX.run-miner.sh --quickstart", markdown)
+        self.assertIn("`--setup` then `--start`", markdown)
         self.assertTrue(report["public_artifact_safe"])
         self.assertFalse(report["raw_tokens_public"])
         self.assertFalse(report["raw_join_codes_public"])
@@ -3370,11 +3376,13 @@ class CrowdTensorCliTests(unittest.TestCase):
             text=True,
             check=True,
         )
+        self.assertIn("--quickstart", help_result.stdout)
         self.assertIn("--setup", help_result.stdout)
         self.assertIn("--start", help_result.stdout)
         self.assertIn("--run", help_result.stdout)
         self.assertIn("--doctor", help_result.stdout)
         self.assertIn("recommended first run", help_result.stdout)
+        self.assertIn("stage0.run-miner.sh --quickstart", help_result.stdout)
         self.assertIn("stage0.run-miner.sh --setup", help_result.stdout)
         self.assertIn("stage0.run-miner.sh --start", help_result.stdout)
 
@@ -3407,6 +3415,23 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("pip install", install.stdout)
         self.assertIn("crowdtensord[hf] @ git+https://github.com/Ffffffffchopin/CrowdTensor.git", install.stdout)
         self.assertFalse((miner_host_dir / "stage0" / ".crowdtensor-venv").exists())
+
+        quickstart_env = os.environ.copy()
+        quickstart_env["CROWDTENSOR_MINER_QUICKSTART_SKIP_INSTALL"] = "1"
+        quickstart = subprocess.run(
+            [str(runner), "--quickstart"],
+            cwd=str(miner_host_dir),
+            env=quickstart_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(quickstart.returncode, 0)
+        self.assertIn("CrowdTensor Miner quickstart", quickstart.stdout)
+        self.assertIn("skipped install", quickstart.stdout)
+        self.assertIn("writing support bundle", quickstart.stdout)
+        self.assertIn("checking Coordinator admission", quickstart.stdout)
+        self.assertTrue((miner_host_dir / "stage0" / "miner_support_bundle.json").is_file())
 
         setup_with_args = subprocess.run(
             [str(runner), "--setup", "--dry-run"],

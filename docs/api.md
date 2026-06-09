@@ -47,11 +47,7 @@ Bootstrap also writes private
 operator can copy one stage package per remote Miner host, plus matching
 `stage0.run-miner.sh` / `stage1.run-miner.sh` runners that safely extract,
 preflight, and start the Miner after verifying matching
-`stage0.handoff.sha256` / `stage1.handoff.sha256` handoff checksums. The
-recommended Miner-side first run is `./stageX.run-miner.sh --setup`, then
-`./stageX.run-miner.sh --start`. Use `--install --dry-run` to preview the
-install step, and `--doctor`, `--check-only`, or `--support-bundle` for
-troubleshooting.
+`stage0.handoff.sha256` / `stage1.handoff.sha256` handoff checksums. The recommended Miner-side first run is `./stageX.run-miner.sh --quickstart` (`CrowdTensor Miner quickstart`), which installs the local runtime, writes diagnostics, checks admission, and starts the Miner. Use `--setup` then `--start` for manual troubleshooting, `CROWDTENSOR_MINER_QUICKSTART_SKIP_INSTALL=1` when the Miner runtime is managed externally, `--install --dry-run` to preview the install step, and `--doctor`, `--check-only`, or `--support-bundle` for diagnostics.
 `stage_handoff_manifest.json` records the expected archive and runner hashes
 without raw tokens. Bootstrap can also embed `crowdtensor_miner_join_discovery_v1` when
 `--peer-bootstrap` is supplied, allowing the private invite to select the
