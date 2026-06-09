@@ -8,8 +8,9 @@ For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_control_plane.sh`,
-optional `start_tunnel.sh`, `start_discovery.sh`, `start_coordinator.sh`, stage `join.sh`
-files, private `miner.join-code.txt` files, `verify_bootstrap.sh`, generation scripts, and `SWARM_BOOTSTRAP.md`.
+optional `start_tunnel.sh`, `start_discovery.sh`, `start_coordinator.sh`, stage
+`check_join.sh` / `join.sh` files, private `miner.join-code.txt` files,
+`verify_bootstrap.sh`, generation scripts, and `SWARM_BOOTSTRAP.md`.
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
 `--coordinator-url` and a private `--tunnel-command`; the raw tunnel command is
 stored only in `private/tunnel.private.env` and is started by `start_control_plane.sh`.
@@ -17,9 +18,10 @@ Keep the generated operator
 invite and operator env on the operator host, use the coordinator env only for
 the Coordinator process, run `start_control_plane.sh` to start the tunnel,
 discovery, and Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
-and copy only the matching stage directory to each Miner host. Stage `join.sh`
-uses `crowdtensor join --invite-code-file miner.join-code.txt` by default, while
-`miner.invite.json` remains private compatibility material. If bootstrap is run
+and copy only the matching stage directory to each Miner host. Stage `check_join.sh`
+uses the private invite code file to verify Coordinator reachability and
+admission without starting the Miner; stage `join.sh` uses the same path with
+`--run`, while `miner.invite.json` remains private compatibility material. If bootstrap is run
 with `--peer-bootstrap`, the private invite embeds
 `crowdtensor_miner_join_discovery_v1` so the stage join command can discover the
 Coordinator through P2P-lite without the Miner operator manually passing
@@ -32,14 +34,14 @@ it emits `crowdtensor_swarm_bootstrap_check_v1` and verifies required files,
 `0600` private env/invite/join-code permissions, `0700` helper scripts, hashed
 registries, env separation, stage invite Coordinator URL consistency,
 non-local-only remote route readiness via `coordinator_url_remote_route_ready`,
-stage join-code consistency, and plaintext token leakage in scripts or public Markdown. After starting the Coordinator, rerun
-with `--check-admission` and wait for
+stage join-code consistency, `stage_check_join_scripts_ready`, and plaintext token leakage in scripts or public Markdown.
+After starting the Coordinator, rerun the same command with `--check-coordinator`
+to call `/ready` and match both stage invites against the redacted registry
+policy, or with `--check-admission` to also call token-backed `/tasks/preflight`
+for both stage invites without claiming tasks. Wait for
 `bootstrap_handoff.ready_to_copy_stage_packages=true`; until then the package is
 generated but not live-verified for remote Miner handoff.
-the same command with `--check-coordinator` to call `/ready` and match both
-stage invites against the redacted registry policy, or `--check-admission` to
-also call token-backed `/tasks/preflight` for both stage invites without
-claiming tasks. A clean live check reports `swarm_bootstrap_live_preflight_ready`.
+A clean live check reports `swarm_bootstrap_live_preflight_ready`.
 Bootstrap is not NAT traversal.
 
 For a local maintainer check of the CPU inference Beta path before involving a second machine, run:

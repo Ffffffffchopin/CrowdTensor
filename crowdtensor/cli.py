@@ -10901,11 +10901,32 @@ exec crowdtensor join \\
 """
 
 
+def _bootstrap_stage_check_join_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INVITE_CODE_FILE="${CROWDTENSOR_MINER_INVITE_CODE_FILE:-$SCRIPT_DIR/miner.join-code.txt}"
+
+exec crowdtensor join \\
+  --invite-code-file "$INVITE_CODE_FILE" \\
+  --check-admission \\
+  --expect-remote-coordinator \\
+  "$@"
+"""
+
+
 def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
     return "\n".join([
         f"# CrowdTensor {stage} Miner Join",
         "",
         "This directory is private. It contains the stage-specific Miner invite and opaque join code.",
+        "",
+        "Check the Coordinator route and admission policy without starting the Miner:",
+        "",
+        "```bash",
+        "./check_join.sh",
+        "```",
         "",
         "Run:",
         "",
@@ -11241,7 +11262,9 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("start_discovery", "")),
         shlex.quote(scripts.get("start_coordinator", "")),
         shlex.quote(scripts.get("verify_bootstrap", "")),
+        shlex.quote(scripts.get("stage0_check_join", "")),
         shlex.quote(scripts.get("stage0_join", "")),
+        shlex.quote(scripts.get("stage1_check_join", "")),
         shlex.quote(scripts.get("stage1_join", "")),
         shlex.quote(scripts.get("check_generation", "")),
         shlex.quote(scripts.get("submit_generation", "")),
@@ -11299,6 +11322,10 @@ def _bootstrap_handoff_summary(
             "tunnel": scripts.get("start_tunnel", ""),
             "discovery": scripts.get("start_discovery", ""),
             "coordinator": scripts.get("start_coordinator", ""),
+            "stage0_check_join": scripts.get("stage0_check_join", ""),
+            "stage1_check_join": scripts.get("stage1_check_join", ""),
+            "stage0_join": scripts.get("stage0_join", ""),
+            "stage1_join": scripts.get("stage1_join", ""),
         },
         "verify_before_handoff": scripts.get("verify_bootstrap", ""),
         "stage_packages_to_copy": stage_package_dirs,
@@ -11525,7 +11552,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         serve_command.append("--i-understand-public-bind")
     serve_command.append("--run")
     stage_scripts: dict[str, Path] = {}
+    stage_check_scripts: dict[str, Path] = {}
     stage_join_code_files: dict[str, Path] = {}
+    stage_check_commands: dict[str, list[str]] = {}
     stage_join_commands: dict[str, list[str]] = {}
     for invite in stage_invites:
         stage = str((invite.get("join_invite") or {}).get("stage") or "")
@@ -11538,14 +11567,25 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         stage_join_code = stage_dir / "miner.join-code.txt"
         stage_join_code.write_text(str(invite.get("join_invite_code") or "").strip() + "\n", encoding="utf-8")
         stage_join_code.chmod(0o600)
+        check_join_script = stage_dir / "check_join.sh"
+        _write_executable(check_join_script, _bootstrap_stage_check_join_script())
         join_script = stage_dir / "join.sh"
         _write_executable(join_script, _bootstrap_stage_join_script())
         (stage_dir / "MINER_JOIN.md").write_text(
             _bootstrap_stage_join_markdown(stage=stage, coordinator_url=coordinator_url),
             encoding="utf-8",
         )
+        stage_check_scripts[stage] = check_join_script
         stage_scripts[stage] = join_script
         stage_join_code_files[stage] = stage_join_code
+        stage_check_commands[stage] = [
+            "crowdtensor",
+            "join",
+            "--invite-code-file",
+            str(stage_join_code),
+            "--check-admission",
+            "--expect-remote-coordinator",
+        ]
         stage_join_commands[stage] = [
             "crowdtensor",
             "join",
@@ -11618,7 +11658,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "start_discovery": str(start_discovery_script),
         "start_coordinator": str(start_coordinator_script),
         "verify_bootstrap": str(verify_bootstrap_script),
+        "stage0_check_join": str(stage_check_scripts["stage0"]),
         "stage0_join": str(stage_scripts["stage0"]),
+        "stage1_check_join": str(stage_check_scripts["stage1"]),
         "stage1_join": str(stage_scripts["stage1"]),
         "check_generation": str(check_generation_script),
         "submit_generation": str(submit_generation_script),
@@ -11712,7 +11754,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 ["crowdtensor", "swarm-bootstrap-check", "--output-dir", str(output_dir), "--check-admission"]
                 + (["--expect-remote-miners"] if args.expect_remote_miners else []),
             ),
+            command_entry("check stage0 Miner join", stage_check_commands["stage0"]),
             command_entry("start stage0 Miner", stage_join_commands["stage0"]),
+            command_entry("check stage1 Miner join", stage_check_commands["stage1"]),
             command_entry("start stage1 Miner", stage_join_commands["stage1"]),
             command_entry("check generation route", dry_run_command),
             command_entry("submit generation with operator invite token", generate_command),
@@ -11763,22 +11807,30 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         str(stage_join_code_files["stage1"]),
     ]
     next_commands[4]["script"] = str(verify_bootstrap_script)
-    next_commands[5]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[5]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[5]["command"] = [str(stage_check_scripts["stage0"])]
+    next_commands[5]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
     next_commands[5]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[5]["script"] = str(stage_scripts["stage0"])
-    next_commands[6]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[6]["command_line"] = command_line([str(stage_scripts["stage1"])])
-    next_commands[6]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[6]["script"] = str(stage_scripts["stage1"])
-    next_commands[7]["command"] = [str(check_generation_script)]
-    next_commands[7]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[7]["requires_files"] = [str(operator_env_path)]
-    next_commands[7]["script"] = str(check_generation_script)
-    next_commands[8]["command"] = [str(submit_generation_script)]
-    next_commands[8]["command_line"] = command_line([str(submit_generation_script)])
-    next_commands[8]["requires_files"] = [str(operator_env_path)]
-    next_commands[8]["script"] = str(submit_generation_script)
+    next_commands[5]["script"] = str(stage_check_scripts["stage0"])
+    next_commands[6]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[6]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[6]["requires_files"] = [str(stage_join_code_files["stage0"])]
+    next_commands[6]["script"] = str(stage_scripts["stage0"])
+    next_commands[7]["command"] = [str(stage_check_scripts["stage1"])]
+    next_commands[7]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
+    next_commands[7]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[7]["script"] = str(stage_check_scripts["stage1"])
+    next_commands[8]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[8]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[8]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[8]["script"] = str(stage_scripts["stage1"])
+    next_commands[9]["command"] = [str(check_generation_script)]
+    next_commands[9]["command_line"] = command_line([str(check_generation_script)])
+    next_commands[9]["requires_files"] = [str(operator_env_path)]
+    next_commands[9]["script"] = str(check_generation_script)
+    next_commands[10]["command"] = [str(submit_generation_script)]
+    next_commands[10]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[10]["requires_files"] = [str(operator_env_path)]
+    next_commands[10]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -12042,10 +12094,12 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "runbook": output_dir / "SWARM_BOOTSTRAP.md",
         "stage0_invite": output_dir / "stage0" / "miner.invite.json",
         "stage0_join_code": output_dir / "stage0" / "miner.join-code.txt",
+        "stage0_check_join_script": output_dir / "stage0" / "check_join.sh",
         "stage0_join_script": output_dir / "stage0" / "join.sh",
         "stage0_join_doc": output_dir / "stage0" / "MINER_JOIN.md",
         "stage1_invite": output_dir / "stage1" / "miner.invite.json",
         "stage1_join_code": output_dir / "stage1" / "miner.join-code.txt",
+        "stage1_check_join_script": output_dir / "stage1" / "check_join.sh",
         "stage1_join_script": output_dir / "stage1" / "join.sh",
         "stage1_join_doc": output_dir / "stage1" / "MINER_JOIN.md",
     }
@@ -12166,7 +12220,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["verify_bootstrap_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
+        required_files["stage0_check_join_script"],
         required_files["stage0_join_script"],
+        required_files["stage1_check_join_script"],
         required_files["stage1_join_script"],
     ]
     bad_script_modes = [f"{path}:{_mode_string(path)}" for path in executable_scripts if path.exists() and not _has_mode(path, 0o700)]
@@ -12337,6 +12393,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
 
     stage0_script_text, _ = _read_bootstrap_text(required_files["stage0_join_script"])
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
+    stage0_check_script_text, _ = _read_bootstrap_text(required_files["stage0_check_join_script"])
+    stage1_check_script_text, _ = _read_bootstrap_text(required_files["stage1_check_join_script"])
     stage0_join_code_text, _ = _read_bootstrap_text(required_files["stage0_join_code"])
     stage1_join_code_text, _ = _read_bootstrap_text(required_files["stage1_join_code"])
     control_plane_script_text, _ = _read_bootstrap_text(required_files["start_control_plane_script"])
@@ -12353,8 +12411,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["runbook"],
+        required_files["stage0_check_join_script"],
         required_files["stage0_join_script"],
         required_files["stage0_join_doc"],
+        required_files["stage1_check_join_script"],
         required_files["stage1_join_script"],
         required_files["stage1_join_doc"],
     ]
@@ -12370,8 +12430,12 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage_scripts_reference_operator_env = (
         "operator.private.env" in stage0_script_text
         or "operator.private.env" in stage1_script_text
+        or "operator.private.env" in stage0_check_script_text
+        or "operator.private.env" in stage1_check_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage1_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage0_check_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage1_check_script_text
     )
     _bootstrap_check_item(
         checks,
@@ -12387,6 +12451,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "miner.join-code.txt" in stage0_script_text
         and "miner.join-code.txt" in stage1_script_text
     )
+    stage_check_join_scripts_ready = (
+        "--invite-code-file" in stage0_check_script_text
+        and "--invite-code-file" in stage1_check_script_text
+        and "miner.join-code.txt" in stage0_check_script_text
+        and "miner.join-code.txt" in stage1_check_script_text
+        and "--run" not in stage0_check_script_text
+        and "--run" not in stage1_check_script_text
+    )
     _bootstrap_check_item(
         checks,
         diagnosis_codes,
@@ -12394,6 +12466,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         stage_scripts_use_join_code_file,
         detail="stage join scripts must use private miner.join-code.txt by default",
         diagnosis_code="bootstrap_stage_join_script_not_code_file",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_check_join_scripts_ready",
+        stage_check_join_scripts_ready,
+        detail="stage check_join.sh scripts must use private miner.join-code.txt and must not run the Miner",
+        diagnosis_code="bootstrap_stage_check_join_script_invalid",
     )
     coordinator_script_admin_reference = "operator.private.env" in coordinator_script_text or "CROWDTENSOR_ADMIN_TOKEN" in coordinator_script_text
     _bootstrap_check_item(
@@ -12562,6 +12642,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "start_discovery": str(required_files["start_discovery_script"]),
                 "start_coordinator": str(required_files["start_coordinator_script"]),
                 "verify_bootstrap": str(required_files["verify_bootstrap_script"]),
+                "stage0_check_join": str(required_files["stage0_check_join_script"]),
+                "stage0_join": str(required_files["stage0_join_script"]),
+                "stage1_check_join": str(required_files["stage1_check_join_script"]),
+                "stage1_join": str(required_files["stage1_join_script"]),
             },
             private_env={
                 "coordinator": str(required_files["coordinator_env"]),
@@ -12591,6 +12675,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "registries_store_hashed_tokens": _all_registry_tokens_hashed(operator_registry, "operators") and _all_registry_tokens_hashed(miner_registry, "miners"),
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
+            "stage_check_join_scripts_ready": stage_check_join_scripts_ready,
             "stage_join_scripts_use_invite_code_file": stage_scripts_use_join_code_file,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
             "stage_join_code_files_match_invites": join_codes_match_invites,

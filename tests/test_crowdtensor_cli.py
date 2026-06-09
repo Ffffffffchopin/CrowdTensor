@@ -1601,6 +1601,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(handoff["recommended_launcher"], str(scripts["start_control_plane"]))
         self.assertEqual(handoff["verify_before_handoff"], str(scripts["verify_bootstrap"]))
         self.assertEqual(handoff["stage_packages_to_copy"]["stage0"], str(output_dir / "stage0"))
+        self.assertEqual(handoff["manual_launchers"]["stage0_check_join"], str(scripts["stage0_check_join"]))
+        self.assertEqual(handoff["manual_launchers"]["stage1_check_join"], str(scripts["stage1_check_join"]))
         self.assertIn(str(coordinator_env_path), handoff["coordinator_host_private_files"])
         self.assertIn(str(operator_env_path), handoff["operator_host_private_files"])
         self.assertNotIn(stage0_join_code, encoded)
@@ -1613,6 +1615,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertNotIn(stage0_join_code, script_text)
         self.assertTrue((output_dir / "stage0" / "miner.invite.json").is_file())
         self.assertTrue((output_dir / "stage0" / "miner.join-code.txt").is_file())
+        self.assertTrue((output_dir / "stage0" / "check_join.sh").is_file())
         self.assertTrue((output_dir / "stage0" / "MINER_JOIN.md").is_file())
         self.assertEqual(
             json.loads(base64.urlsafe_b64decode(stage0_join_code.encode("ascii")).decode("utf-8")),
@@ -1620,6 +1623,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         )
         stage0_doc = (output_dir / "stage0" / "MINER_JOIN.md").read_text(encoding="utf-8")
         self.assertIn("--invite-code-file miner.join-code.txt", stage0_doc)
+        self.assertIn("./check_join.sh", stage0_doc)
         self.assertNotIn(stage0_join_code, stage0_doc)
         self.assertIn("CrowdTensor Swarm Bootstrap", runbook)
         self.assertIn(str(scripts["start_control_plane"]), runbook)
@@ -1630,6 +1634,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("No tunnel or overlay command configured", scripts["start_tunnel"].read_text(encoding="utf-8"))
         self.assertIn("--check-admission", scripts["verify_bootstrap"].read_text(encoding="utf-8"))
         self.assertIn("--expect-remote-miners", scripts["verify_bootstrap"].read_text(encoding="utf-8"))
+        self.assertIn("--invite-code-file", scripts["stage0_check_join"].read_text(encoding="utf-8"))
+        self.assertIn("miner.join-code.txt", scripts["stage0_check_join"].read_text(encoding="utf-8"))
+        self.assertNotIn("--run", scripts["stage0_check_join"].read_text(encoding="utf-8"))
         self.assertIn("--invite-code-file", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("miner.join-code.txt", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("verify_bootstrap.sh", report["operator_action"])
@@ -1644,9 +1651,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("CROWDTENSOR_OBSERVER_TOKEN", report["next_commands"][3].get("requires_env", []))
         self.assertIn(str(coordinator_env_path), report["next_commands"][3]["requires_files"])
         self.assertEqual(report["next_commands"][4]["command"], [str(scripts["verify_bootstrap"])])
-        self.assertEqual(report["next_commands"][5]["command"], [str(scripts["stage0_join"])])
+        self.assertEqual(report["next_commands"][5]["command"], [str(scripts["stage0_check_join"])])
         self.assertIn(str(stage0_join_code_path), report["next_commands"][5]["requires_files"])
-        self.assertEqual(report["next_commands"][7]["command_line"], str(scripts["check_generation"]))
+        self.assertEqual(report["next_commands"][6]["command"], [str(scripts["stage0_join"])])
+        self.assertIn(str(stage0_join_code_path), report["next_commands"][6]["requires_files"])
+        self.assertEqual(report["next_commands"][9]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
     def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:

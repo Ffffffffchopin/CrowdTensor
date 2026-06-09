@@ -446,16 +446,18 @@ The report lists the local private operator invite, stage0/stage1 Miner invites,
 private `miner.join-code.txt` files, operator/coordinator private env files,
 hashed registries, and copyable discovery / `serve` / `join` / `generate`
 scripts plus `start_control_plane.sh`, optional `start_tunnel.sh`,
-`start_discovery.sh`, `verify_bootstrap.sh`, and `SWARM_BOOTSTRAP.md`.
+`start_discovery.sh`, `verify_bootstrap.sh`, stage `check_join.sh`, and
+`SWARM_BOOTSTRAP.md`.
 When `--tunnel-command` is supplied, the command is written only to
 `private/tunnel.private.env`; public reports and Markdown show the tunnel
 launcher without echoing tunnel tokens or provider command lines. Keep the operator invite and
 operator env on the operator host, use the coordinator env only for
 `start_coordinator.sh`, run `start_control_plane.sh` to start the tunnel,
 discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
-and send each stage directory only to the matching Miner host. Stage `join.sh`
-defaults to `crowdtensor join --invite-code-file miner.join-code.txt` so the
-Miner host does not need to edit JSON invites. When bootstrap is run with
+and send each stage directory only to the matching Miner host. Stage
+`check_join.sh` verifies Coordinator reachability and token-backed admission
+without starting the Miner; stage `join.sh` then runs the same invite-code path
+with `--run`, so the Miner host does not need to edit JSON invites. When bootstrap is run with
 `--peer-bootstrap`, the private invite also carries
 `crowdtensor_miner_join_discovery_v1`, so `join --invite-code-file` can enable
 P2P-lite discovery and resolve the Coordinator without the Miner user

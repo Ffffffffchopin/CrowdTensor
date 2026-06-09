@@ -100,9 +100,11 @@ operator-side dry-run and submit scripts.
 Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its private `miner.join-code.txt`,
-`miner.invite.json`, and `join.sh`, to each Miner host. Stage `join.sh` uses
-`crowdtensor join --invite-code-file miner.join-code.txt` by default; the join
-code contains the plaintext Miner token and must be treated as private. If
+`miner.invite.json`, `check_join.sh`, and `join.sh`, to each Miner host. Stage
+`check_join.sh` uses `crowdtensor join --invite-code-file miner.join-code.txt`
+with admission checks but without `--run`; stage `join.sh` uses the same private
+join code with `--run`. The join code contains the plaintext Miner token and
+must be treated as private. If
 `crowdtensor swarm-bootstrap` is run with `--peer-bootstrap`, that private
 invite also contains `crowdtensor_miner_join_discovery_v1` so the Miner can use
 P2P-lite discovery without hand-written route flags; this is still not NAT
