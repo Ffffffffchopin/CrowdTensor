@@ -1387,6 +1387,36 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN", start["requires_env"])
         self.assertIn("CROWDTENSOR_OPERATOR_TOKEN_REGISTRY", start["requires_env"])
 
+    def test_product_serve_forwards_inference_session_rate_limit(self) -> None:
+        args = cli.parse_args([
+            "serve",
+            "--inference-session-rate-limit",
+            "2",
+            "--inference-session-rate-window-seconds",
+            "30",
+            "--json",
+        ])
+
+        command = cli.build_serve_command(args)
+        report = cli.build_product_serve(args)
+        next_line = report["next_commands"][0]["command_line"]
+
+        self.assertIn("--inference-session-rate-limit", command)
+        self.assertEqual(command[command.index("--inference-session-rate-limit") + 1], "2")
+        self.assertEqual(command[command.index("--inference-session-rate-window-seconds") + 1], "30.0")
+        self.assertTrue(report["safety"]["inference_session_rate_limit_configured"])
+        self.assertIn("--inference-session-rate-limit 2", next_line)
+        self.assertIn("--inference-session-rate-window-seconds 30.0", next_line)
+
+    def test_product_serve_requires_complete_inference_session_rate_limit_pair(self) -> None:
+        with self.assertRaises(SystemExit) as limit_only:
+            cli.parse_args(["serve", "--inference-session-rate-limit", "2"])
+        self.assertIn("--inference-session-rate-limit and --inference-session-rate-window-seconds", str(limit_only.exception))
+
+        with self.assertRaises(SystemExit) as window_only:
+            cli.parse_args(["serve", "--inference-session-rate-window-seconds", "30"])
+        self.assertIn("--inference-session-rate-limit and --inference-session-rate-window-seconds", str(window_only.exception))
+
     def test_product_serve_public_bind_action(self) -> None:
         args = cli.parse_args([
             "serve",

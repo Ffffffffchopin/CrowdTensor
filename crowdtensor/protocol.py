@@ -20,6 +20,7 @@ EVENT_TASK_REJECTED = "task_rejected"
 EVENT_INCOMPATIBLE_CLAIM = "incompatible_claim"
 EVENT_CLAIM_BLOCKED = "claim_blocked"
 EVENT_TRUST_OVERRIDE_SET = "trust_override_set"
+EVENT_CONTROL_PLANE_BLOCKED = "control_plane_blocked"
 
 REQUIREMENT_ANY = "any"
 DEFAULT_PROTOCOL_VERSION = "runtime_contract_v1"

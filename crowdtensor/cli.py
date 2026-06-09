@@ -10129,6 +10129,12 @@ def build_serve_command(args: argparse.Namespace) -> list[str]:
         "--lease-seconds",
         str(args.lease_seconds),
     ]
+    if getattr(args, "inference_session_rate_limit", 0) > 0:
+        command.extend(["--inference-session-rate-limit", str(args.inference_session_rate_limit)])
+        command.extend([
+            "--inference-session-rate-window-seconds",
+            str(args.inference_session_rate_window_seconds),
+        ])
     if args.admin_token:
         command.extend(["--admin-token", args.admin_token])
     if getattr(args, "operator_token_registry", ""):
@@ -10163,6 +10169,12 @@ def _product_cli_serve_command(args: argparse.Namespace, *, include_run: bool = 
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     if args.lease_seconds != 15.0:
         command.extend(["--lease-seconds", str(args.lease_seconds)])
+    if getattr(args, "inference_session_rate_limit", 0) > 0:
+        command.extend(["--inference-session-rate-limit", str(args.inference_session_rate_limit)])
+        command.extend([
+            "--inference-session-rate-window-seconds",
+            str(args.inference_session_rate_window_seconds),
+        ])
     if getattr(args, "operator_token_registry", ""):
         command.extend(["--operator-token-registry", args.operator_token_registry])
     if args.p2p:
@@ -10585,6 +10597,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             "operator_registry_supported": True,
             "operator_registry_configured": bool(getattr(args, "operator_token_registry", "")),
             "legacy_admin_configured": bool(getattr(args, "admin_token", "")),
+            "inference_session_rate_limit_configured": bool(getattr(args, "inference_session_rate_limit", 0) > 0),
             "public_bind_explicit": public_bind,
             "not_production": True,
             "p2p_discovery_enabled": bool(args.p2p),
@@ -16579,6 +16592,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     serve.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
     serve.add_argument("--hf-cache-dir", default="")
     serve.add_argument("--lease-seconds", type=float, default=15.0)
+    serve.add_argument(
+        "--inference-session-rate-limit",
+        type=int,
+        default=0,
+        help="max generation session creates per admin/operator subject per window; 0 disables",
+    )
+    serve.add_argument(
+        "--inference-session-rate-window-seconds",
+        type=float,
+        default=0.0,
+        help="window seconds for --inference-session-rate-limit; set both to enable request abuse protection",
+    )
     serve.add_argument("--p2p", action="store_true", help="announce this Coordinator to a p2pd bootstrap before printing/running")
     serve.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
     serve.add_argument("--peer-bootstrap", default=DEFAULT_P2P_BOOTSTRAP)
@@ -18881,6 +18906,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--ttl-seconds must be positive")
         if args.lease_seconds <= 0:
             raise SystemExit("--lease-seconds must be positive")
+        if args.inference_session_rate_limit < 0:
+            raise SystemExit("--inference-session-rate-limit must be non-negative")
+        if args.inference_session_rate_window_seconds < 0:
+            raise SystemExit("--inference-session-rate-window-seconds must be non-negative")
+        if (args.inference_session_rate_limit > 0) != (args.inference_session_rate_window_seconds > 0):
+            raise SystemExit("--inference-session-rate-limit and --inference-session-rate-window-seconds must be set together")
         if args.http_timeout <= 0:
             raise SystemExit("--http-timeout must be positive")
     if args.command == "join":

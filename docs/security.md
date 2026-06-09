@@ -105,6 +105,12 @@ can read event/result/stream audit views; `admin` and `owner` can use all admin
 endpoints. `/ready` exposes only `crowdtensor_operator_registry_summary_v1`
 operator IDs, labels, enabled flags, and roles, never plaintext tokens.
 
+To reduce request abuse on shared Coordinators, start the product Coordinator
+with `--inference-session-rate-limit` plus
+`--inference-session-rate-window-seconds`. The limit applies per legacy admin
+or per operator-registry subject on `/admin/inference-sessions`; blocked creates
+return `429` and append a safe `control_plane_blocked` audit event.
+
 ## What Is Protected
 
 The current controls reduce accidental public access and keep local demo Miners separated from read-only observers and admins.

@@ -21,6 +21,7 @@ from .protocol import (
     DEFAULT_PROTOCOL_VERSION,
     DEFAULT_WORKLOAD_TYPE,
     EVENT_CLAIM_BLOCKED,
+    EVENT_CONTROL_PLANE_BLOCKED,
     EVENT_INCOMPATIBLE_CLAIM,
     EVENT_TASK_CLAIMED,
     EVENT_TASK_COMPLETED,
@@ -337,6 +338,40 @@ class StateStore:
             })
             self._apply_task_event(event)
             return dict(self._blocked_claims[-1]) if self._blocked_claims else {}
+
+    def record_control_plane_blocked(
+        self,
+        *,
+        reason: str,
+        endpoint: str,
+        subject: str,
+        workload_type: str = "",
+        window_seconds: float = 0.0,
+        limit: int = 0,
+        observed_count: int = 0,
+    ) -> dict:
+        with self._lock:
+            event = self._append_event({
+                "type": EVENT_CONTROL_PLANE_BLOCKED,
+                "reason": str(reason or "control plane request blocked"),
+                "endpoint": str(endpoint or ""),
+                "subject": str(subject or "anonymous"),
+                "workload_type": str(workload_type or ""),
+                "window_seconds": float(window_seconds or 0.0),
+                "limit": int(limit or 0),
+                "observed_count": int(observed_count or 0),
+                "ts": now_epoch(),
+            })
+            return {
+                "event_index": int(event["event_index"]),
+                "reason": event["reason"],
+                "endpoint": event["endpoint"],
+                "subject": event["subject"],
+                "workload_type": event["workload_type"],
+                "window_seconds": event["window_seconds"],
+                "limit": event["limit"],
+                "observed_count": event["observed_count"],
+            }
 
     def miner_claim_usage(self, miner_id: str) -> dict:
         miner_name = str(miner_id or "")

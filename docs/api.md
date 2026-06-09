@@ -194,6 +194,12 @@ Creates one admin-controlled, read-only `model_bundle_infer` task. Requires `x-c
 
 This is the current service-shaped API for asking the Coordinator to enqueue a bounded local CPU inference session and then inspect the accepted result by `task_id`. It is not an OpenAI-compatible chat API, does not accept arbitrary prompts, and does not start real LLM serving. The created task is constrained to `runtime=python-cli`, `backend=cpu`, `schema=inference_session_request_v1`, and a `request_count` between `1` and `8`.
 
+Operators can protect this endpoint with `--inference-session-rate-limit` and
+`--inference-session-rate-window-seconds`. The limit is enforced per legacy
+admin or per operator-registry subject. When exceeded, the endpoint returns
+`429` with `reason=inference_session_rate_limited` and records a safe
+`control_plane_blocked` audit event without raw prompts or tokens.
+
 Request:
 
 ```json

@@ -427,6 +427,8 @@ boundary, use explicit tokens, and rotate temporary tokens after public demos.
 Multi-operator deployments can start the same product Coordinator with
 `crowdtensor serve --operator-token-registry state/operator_registry.json --run`
 so audit/accounting operators do not need the legacy owner-level admin token.
+Add `--inference-session-rate-limit N --inference-session-rate-window-seconds S`
+to rate-limit generation session creation per admin/operator subject.
 
 ## How It Works
 

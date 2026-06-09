@@ -1300,6 +1300,76 @@ class CoordinatorApiTests(unittest.TestCase):
                 admin_trust(override_request, x_crowdtensor_admin_token="accounting-token")
             self.assertEqual(accounting_trust.exception.status_code, 403)
 
+    def test_inference_session_create_rate_limit_blocks_per_admin_subject(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                admin_token="secret",
+                inference_session_rate_limit=1,
+                inference_session_rate_window_seconds=60.0,
+            )
+            admin_session = endpoint_for(app, "/admin/inference-sessions", "POST")
+            admin_events = endpoint_for(app, "/admin/events", "GET")
+            session_request = request_model(admin_session)(request_count=1)
+
+            first = admin_session(session_request, x_crowdtensor_admin_token="secret")
+            self.assertEqual(first["schema"], "inference_session_request_v1")
+
+            with self.assertRaises(HTTPException) as limited:
+                admin_session(session_request, x_crowdtensor_admin_token="secret")
+            self.assertEqual(limited.exception.status_code, 429)
+            self.assertEqual(limited.exception.detail["reason"], "inference_session_rate_limited")
+            self.assertEqual(limited.exception.detail["limit"], 1)
+
+            events = admin_events(limit=5, x_crowdtensor_admin_token="secret")["events"]
+            rate_events = [event for event in events if event.get("type") == "control_plane_blocked"]
+            self.assertEqual(len(rate_events), 1)
+            self.assertEqual(rate_events[0]["reason"], "inference_session_rate_limited")
+            self.assertEqual(rate_events[0]["endpoint"], "/admin/inference-sessions")
+            self.assertEqual(rate_events[0]["subject"], "legacy-admin")
+            self.assertEqual(rate_events[0]["workload_type"], "model_bundle_infer")
+            self.assertNotIn("prompt", json.dumps(rate_events[0], sort_keys=True))
+
+    def test_inference_session_create_rate_limit_is_per_operator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_operator_registry(
+                Path(tmp) / "operators.json",
+                [
+                    {"operator_id": "owner-a", "token": hash_token("owner-a-token"), "roles": ["owner"]},
+                    {"operator_id": "owner-b", "token": hash_token("owner-b-token"), "roles": ["owner"]},
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                admin_token="",
+                operator_token_registry=registry_path,
+                inference_session_rate_limit=1,
+                inference_session_rate_window_seconds=60.0,
+            )
+            admin_session = endpoint_for(app, "/admin/inference-sessions", "POST")
+            admin_events = endpoint_for(app, "/admin/events", "GET")
+            session_request = request_model(admin_session)(request_count=1)
+
+            self.assertEqual(
+                admin_session(session_request, x_crowdtensor_admin_token="owner-a-token")["schema"],
+                "inference_session_request_v1",
+            )
+            self.assertEqual(
+                admin_session(session_request, x_crowdtensor_admin_token="owner-b-token")["schema"],
+                "inference_session_request_v1",
+            )
+            with self.assertRaises(HTTPException) as limited:
+                admin_session(session_request, x_crowdtensor_admin_token="owner-a-token")
+            self.assertEqual(limited.exception.status_code, 429)
+
+            events = admin_events(limit=5, x_crowdtensor_admin_token="owner-b-token")["events"]
+            rate_events = [event for event in events if event.get("type") == "control_plane_blocked"]
+            self.assertEqual(rate_events[0]["subject"], "operator:owner-a")
+
     def test_admin_trust_override_blocks_allows_and_events_are_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(

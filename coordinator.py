@@ -5,6 +5,8 @@ import argparse
 import asyncio
 import json
 import os
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -617,6 +619,8 @@ def create_app(
     delta_format: str = "dense_float",
     admin_token: str | None = None,
     operator_token_registry: str | Path | None = None,
+    inference_session_rate_limit: int = 0,
+    inference_session_rate_window_seconds: float = 0.0,
     miner_token: str | None = None,
     miner_token_registry: str | Path | None = None,
     observer_token: str | None = None,
@@ -669,6 +673,14 @@ def create_app(
         configured_miner_token = validate_token_verifier(configured_miner_token, field_name="miner token")
     if configured_observer_token:
         configured_observer_token = validate_token_verifier(configured_observer_token, field_name="observer token")
+    session_create_history: dict[str, list[float]] = {}
+    session_create_history_lock = threading.Lock()
+    configured_session_rate_limit = max(0, int(inference_session_rate_limit or 0))
+    configured_session_rate_window_seconds = max(0.0, float(inference_session_rate_window_seconds or 0.0))
+    if (configured_session_rate_limit > 0) != (configured_session_rate_window_seconds > 0):
+        raise ValueError(
+            "inference session rate limit and window seconds must be set together"
+        )
 
     class ClaimRequest(BaseModel):
         miner_id: str = Field(default="anonymous", min_length=1)
@@ -721,6 +733,14 @@ def create_app(
                 return {str(role) for role in entry.get("roles") or []}
         return set()
 
+    def _token_operator_identity(token: str | None) -> tuple[str, set[str]]:
+        if token is None:
+            return "", set()
+        for operator_id, entry in configured_operator_registry.items():
+            if entry["enabled"] and token_matches(token, entry["token"]):
+                return str(operator_id), {str(role) for role in entry.get("roles") or []}
+        return "", set()
+
     def _roles_allow(roles: set[str], required_roles: set[str]) -> bool:
         if OPERATOR_ROLE_OWNER in roles or OPERATOR_ROLE_ADMIN in roles:
             return True
@@ -738,6 +758,45 @@ def create_app(
         if operator_roles:
             raise HTTPException(status_code=403, detail="operator token lacks required role")
         raise HTTPException(status_code=403, detail="invalid admin token")
+
+    def admin_subject(token: str | None) -> str:
+        operator_id, _roles = _token_operator_identity(token)
+        if operator_id:
+            return f"operator:{operator_id}"
+        if configured_admin_token and token_matches(token, configured_admin_token):
+            return "legacy-admin"
+        return "unknown"
+
+    def enforce_inference_session_rate_limit(token: str | None, *, workload_type: str) -> None:
+        if configured_session_rate_limit <= 0 or configured_session_rate_window_seconds <= 0:
+            return
+        subject = admin_subject(token)
+        now = time.monotonic()
+        cutoff = now - configured_session_rate_window_seconds
+        with session_create_history_lock:
+            history = [seen for seen in session_create_history.get(subject, []) if seen >= cutoff]
+            if len(history) < configured_session_rate_limit:
+                history.append(now)
+                session_create_history[subject] = history
+                return
+            observed_count = len(history)
+        store.record_control_plane_blocked(
+            reason="inference_session_rate_limited",
+            endpoint="/admin/inference-sessions",
+            subject=subject,
+            workload_type=workload_type,
+            window_seconds=configured_session_rate_window_seconds,
+            limit=configured_session_rate_limit,
+            observed_count=observed_count,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "reason": "inference_session_rate_limited",
+                "window_seconds": configured_session_rate_window_seconds,
+                "limit": configured_session_rate_limit,
+            },
+        )
 
     def token_matches_registry(token: str | None) -> bool:
         if token is None:
@@ -1043,6 +1102,10 @@ def create_app(
             "real-llm-shard": WORKLOAD_REAL_LLM_SHARDED_INFER,
         }
         workload_type = aliases.get(requested_workload, requested_workload)
+        enforce_inference_session_rate_limit(
+            x_crowdtensor_admin_token,
+            workload_type=workload_type,
+        )
         try:
             if workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
                 session = store.create_readonly_inference_task(
@@ -1311,6 +1374,18 @@ def parse_args() -> argparse.Namespace:
         help="JSON per-operator token registry path; falls back to CROWDTENSOR_OPERATOR_TOKEN_REGISTRY",
     )
     parser.add_argument(
+        "--inference-session-rate-limit",
+        type=int,
+        default=0,
+        help="max /admin/inference-sessions creates per operator/admin subject per window; 0 disables",
+    )
+    parser.add_argument(
+        "--inference-session-rate-window-seconds",
+        type=float,
+        default=0.0,
+        help="window seconds for --inference-session-rate-limit; set both to enable request abuse protection",
+    )
+    parser.add_argument(
         "--miner-token",
         default=None,
         help="shared token for Miner task endpoints; falls back to CROWDTENSOR_MINER_TOKEN",
@@ -1388,6 +1463,8 @@ def main() -> None:
         delta_format=args.delta_format,
         admin_token=args.admin_token,
         operator_token_registry=args.operator_token_registry,
+        inference_session_rate_limit=args.inference_session_rate_limit,
+        inference_session_rate_window_seconds=args.inference_session_rate_window_seconds,
         miner_token=args.miner_token,
         miner_token_registry=args.miner_token_registry,
         observer_token=args.observer_token,

@@ -677,6 +677,8 @@ Start the product Coordinator with:
 ```bash
 crowdtensor serve \
   --operator-token-registry state/operator_registry.json \
+  --inference-session-rate-limit 30 \
+  --inference-session-rate-window-seconds 60 \
   --miner-token sha256:MINER_DIGEST \
   --observer-token sha256:OBSERVER_DIGEST \
   --run
@@ -698,6 +700,9 @@ The role split is intentionally small: `accounting` can read
 owner-level access for existing scripts. When `crowdtensor serve` is started
 with an operator registry and no explicit `--admin-token` or
 `CROWDTENSOR_ADMIN_TOKEN`, it does not add the local default admin token.
+The optional session create rate limit protects the ordinary `generate` path by
+returning `429` after too many `/admin/inference-sessions` creates by the same
+legacy admin or operator subject in the configured window.
 
 ## Run Miner
 
