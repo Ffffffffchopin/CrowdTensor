@@ -266,6 +266,7 @@ class CoordinatorApiTests(unittest.TestCase):
                             "max_request_count": 2,
                             "max_decode_steps": 3,
                             "max_new_tokens": 4,
+                            "max_active_sessions": 6,
                             "rate_limit": 5,
                             "rate_window_seconds": 60.0,
                         },
@@ -288,6 +289,7 @@ class CoordinatorApiTests(unittest.TestCase):
                 ["external_llm_infer", "model_bundle_infer"],
             )
             self.assertEqual(registry["acct"]["session_policy"]["max_request_count"], 2)
+            self.assertEqual(registry["acct"]["session_policy"]["max_active_sessions"], 6)
             self.assertEqual(summary["schema"], "crowdtensor_operator_registry_summary_v1")
             self.assertEqual(summary["operator_count"], 2)
             self.assertEqual(summary["operators"][0]["session_policy"]["max_new_tokens"], 4)
@@ -1401,6 +1403,7 @@ class CoordinatorApiTests(unittest.TestCase):
                             "max_request_count": 2,
                             "max_decode_steps": 1,
                             "max_new_tokens": 1,
+                            "max_active_sessions": 1,
                             "rate_limit": 1,
                             "rate_window_seconds": 60.0,
                         },
@@ -1409,6 +1412,16 @@ class CoordinatorApiTests(unittest.TestCase):
                         "operator_id": "unlimited",
                         "token": hash_token("unlimited-token"),
                         "roles": ["admin"],
+                    },
+                    {
+                        "operator_id": "rate-limited",
+                        "token": hash_token("rate-token"),
+                        "roles": ["admin"],
+                        "session_policy": {
+                            "allowed_workloads": ["model_bundle_infer"],
+                            "rate_limit": 1,
+                            "rate_window_seconds": 60.0,
+                        },
                     },
                 ],
             )
@@ -1432,6 +1445,7 @@ class CoordinatorApiTests(unittest.TestCase):
                 if item["operator_id"] == "limited"
             )
             self.assertEqual(limited_summary["session_policy"]["max_request_count"], 2)
+            self.assertEqual(limited_summary["session_policy"]["max_active_sessions"], 1)
             self.assertEqual(limited_summary["session_policy"]["allowed_workloads"], ["model_bundle_infer"])
 
             accepted = admin_session(
@@ -1439,6 +1453,18 @@ class CoordinatorApiTests(unittest.TestCase):
                 x_crowdtensor_admin_token="limited-token",
             )
             self.assertEqual(accepted["created_by_subject"], "operator:limited")
+
+            with self.assertRaises(HTTPException) as active_blocked:
+                admin_session(
+                    session_request(request_count=1, workload_type=WORKLOAD_MODEL_BUNDLE_INFER),
+                    x_crowdtensor_admin_token="limited-token",
+                )
+            self.assertEqual(active_blocked.exception.status_code, 429)
+            self.assertEqual(
+                active_blocked.exception.detail["reason"],
+                "operator_session_policy_active_sessions_exceeded",
+            )
+            self.assertEqual(active_blocked.exception.detail["limit"], 1)
 
             with self.assertRaises(HTTPException) as workload_blocked:
                 admin_session(
@@ -1463,10 +1489,17 @@ class CoordinatorApiTests(unittest.TestCase):
             )
             self.assertEqual(request_count_blocked.exception.detail["limit"], 2)
 
+            self.assertEqual(
+                admin_session(
+                    session_request(request_count=1, workload_type=WORKLOAD_MODEL_BUNDLE_INFER),
+                    x_crowdtensor_admin_token="rate-token",
+                )["created_by_subject"],
+                "operator:rate-limited",
+            )
             with self.assertRaises(HTTPException) as rate_blocked:
                 admin_session(
                     session_request(request_count=1, workload_type=WORKLOAD_MODEL_BUNDLE_INFER),
-                    x_crowdtensor_admin_token="limited-token",
+                    x_crowdtensor_admin_token="rate-token",
                 )
             self.assertEqual(rate_blocked.exception.status_code, 429)
             self.assertEqual(rate_blocked.exception.detail["reason"], "operator_session_policy_rate_limited")
@@ -1488,13 +1521,18 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertEqual(
                 [event["reason"] for event in policy_events],
                 [
+                    "operator_session_policy_active_sessions_exceeded",
                     "operator_session_policy_workload_not_allowed",
                     "operator_session_policy_request_count_exceeded",
                     "operator_session_policy_rate_limited",
                 ],
             )
-            self.assertEqual({event["subject"] for event in policy_events}, {"operator:limited"})
+            self.assertEqual(
+                {event["subject"] for event in policy_events},
+                {"operator:limited", "operator:rate-limited"},
+            )
             self.assertNotIn("limited-token", json.dumps(events, sort_keys=True))
+            self.assertNotIn("rate-token", json.dumps(events, sort_keys=True))
 
     def test_admin_trust_override_blocks_allows_and_events_are_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

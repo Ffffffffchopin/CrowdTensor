@@ -211,6 +211,7 @@ def _safe_operator_session_policy(policy: Any, *, entry_index: int | None = None
         "max_request_count": non_negative_int("max_request_count"),
         "max_decode_steps": non_negative_int("max_decode_steps"),
         "max_new_tokens": non_negative_int("max_new_tokens"),
+        "max_active_sessions": non_negative_int("max_active_sessions"),
         "rate_limit": rate_limit,
         "rate_window_seconds": rate_window_seconds,
     }
@@ -895,6 +896,24 @@ def create_app(
                 raise HTTPException(
                     status_code=422,
                     detail={"reason": reason, "limit": limit, "observed_count": observed},
+                )
+
+        max_active = int(policy.get("max_active_sessions") or 0)
+        if max_active > 0:
+            active = store.active_inference_session_count(created_by_subject=subject)
+            active_count = int(active.get("active_count") or 0)
+            if active_count >= max_active:
+                reason = "operator_session_policy_active_sessions_exceeded"
+                _record_operator_session_policy_block(
+                    subject=subject,
+                    workload_type=workload_type,
+                    reason=reason,
+                    limit=max_active,
+                    observed_count=active_count,
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail={"reason": reason, "limit": max_active, "observed_count": active_count},
                 )
 
         policy_rate_limit = int(policy.get("rate_limit") or 0)

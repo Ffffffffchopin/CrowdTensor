@@ -373,6 +373,39 @@ class StateStore:
                 "observed_count": event["observed_count"],
             }
 
+    def active_inference_session_count(
+        self,
+        *,
+        created_by_subject: str | None = None,
+        workload_type: str | None = None,
+    ) -> dict:
+        wanted_subject = str(created_by_subject or "").strip()
+        wanted_workload = str(workload_type or "").strip()
+        with self._lock:
+            count = 0
+            by_workload: dict[str, int] = {}
+            for task in self._tasks.values():
+                if task.get("status") not in {STATUS_QUEUED, STATUS_LEASED}:
+                    continue
+                metadata = task.get("workload_metadata") if isinstance(task.get("workload_metadata"), dict) else {}
+                subject = str(metadata.get("created_by_subject") or "").strip()
+                if wanted_subject and subject != wanted_subject:
+                    continue
+                workload = self._workload_type(task)
+                if wanted_workload and workload != wanted_workload:
+                    continue
+                if not subject:
+                    continue
+                count += 1
+                by_workload[workload] = int(by_workload.get(workload, 0)) + 1
+            return {
+                "schema": "active_inference_session_count_v1",
+                "created_by_subject": wanted_subject,
+                "workload_type": wanted_workload,
+                "active_count": count,
+                "active_by_workload": by_workload,
+            }
+
     def miner_claim_usage(self, miner_id: str) -> dict:
         miner_name = str(miner_id or "")
         with self._lock:

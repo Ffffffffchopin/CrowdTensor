@@ -1004,7 +1004,13 @@ class StateStoreTests(unittest.TestCase):
                 scenario_id="route-baseline",
                 created_by_subject="operator:owner-a",
             )
+            active_before_claim = store.active_inference_session_count(created_by_subject="operator:owner-a")
+            self.assertEqual(active_before_claim["schema"], "active_inference_session_count_v1")
+            self.assertEqual(active_before_claim["active_count"], 1)
+            self.assertEqual(active_before_claim["active_by_workload"][WORKLOAD_MODEL_BUNDLE_INFER], 1)
             claim = store.claim_task("admin-session-miner", capabilities=self._model_bundle_inference_capabilities())
+            active_after_claim = store.active_inference_session_count(created_by_subject="operator:owner-a")
+            self.assertEqual(active_after_claim["active_count"], 1)
             inner_result = run_model_bundle_inference(claim["workload_spec"])
             result = store.complete_task(
                 claim["task_id"],
@@ -1021,6 +1027,10 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(session["scenario_id"], "route-baseline")
             self.assertEqual(session["task_requirements"]["runtime"], "python-cli")
             self.assertEqual(session["task_requirements"]["backend"], "cpu")
+            self.assertEqual(
+                store.active_inference_session_count(created_by_subject="operator:owner-a")["active_count"],
+                0,
+            )
             self.assertEqual(claim["workload_type"], WORKLOAD_MODEL_BUNDLE_INFER)
             self.assertEqual(claim["workload_spec"]["request_count"], 3)
             self.assertEqual(claim["workload_spec"]["scenario_id"], "route-baseline")

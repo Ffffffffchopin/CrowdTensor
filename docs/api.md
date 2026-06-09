@@ -220,11 +220,12 @@ admin or per operator-registry subject. When exceeded, the endpoint returns
 
 Operator registry entries may also define `session_policy` for admin/owner
 operators. The policy can limit `allowed_workloads`, `max_request_count`,
-`max_decode_steps`, `max_new_tokens`, and a per-operator `rate_limit` /
-`rate_window_seconds`. Policy blocks return `403`, `422`, or `429` with
-`operator_session_policy_*` reasons and append safe `control_plane_blocked`
-events. Policy summaries are safe to expose through `/ready`; plaintext tokens
-and raw prompts are never included.
+`max_decode_steps`, `max_new_tokens`, `max_active_sessions`, and a per-operator
+`rate_limit` / `rate_window_seconds`. Active sessions are queued or leased
+session tasks attributed to that operator subject. Policy blocks return `403`,
+`422`, or `429` with `operator_session_policy_*` reasons and append safe
+`control_plane_blocked` events. Policy summaries are safe to expose through
+`/ready`; plaintext tokens and raw prompts are never included.
 
 Request:
 
