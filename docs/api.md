@@ -21,8 +21,9 @@ invites; the code file still contains the plaintext Miner token and must remain
 private. Bootstrap can also embed `crowdtensor_miner_join_discovery_v1` when
 `--peer-bootstrap` is supplied, allowing the private invite to select the
 P2P-lite discovery route without exposing tokens in public artifacts. The same
-package writes `start_discovery.sh`; run it before `start_coordinator.sh` when
-that discovery route is configured.
+package writes `start_control_plane.sh` to start discovery plus the Coordinator
+together; `start_discovery.sh` and `start_coordinator.sh` remain available for
+manual debugging.
 Run `verify_bootstrap.sh` from a generated `crowdtensor swarm-bootstrap`
 directory before copying stage packages; it wraps
 `crowdtensor swarm-bootstrap-check --check-admission`. That package gate verifies private

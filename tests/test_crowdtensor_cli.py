@@ -1608,6 +1608,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("--invite-code-file miner.join-code.txt", stage0_doc)
         self.assertNotIn(stage0_join_code, stage0_doc)
         self.assertIn("CrowdTensor Swarm Bootstrap", runbook)
+        self.assertIn(str(scripts["start_control_plane"]), runbook)
         self.assertIn(str(scripts["start_discovery"]), runbook)
         self.assertIn(str(scripts["start_coordinator"]), runbook)
         self.assertIn(str(scripts["verify_bootstrap"]), runbook)
@@ -1617,15 +1618,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("miner.join-code.txt", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("verify_bootstrap.sh", report["operator_action"])
         serve_line = report["next_commands"][0]["command_line"]
-        self.assertEqual(serve_line, str(scripts["start_discovery"]))
-        self.assertTrue(report["next_commands"][0]["optional"])
-        self.assertEqual(report["next_commands"][1]["command_line"], str(scripts["start_coordinator"]))
-        self.assertNotIn("CROWDTENSOR_OBSERVER_TOKEN", report["next_commands"][1].get("requires_env", []))
-        self.assertIn(str(coordinator_env_path), report["next_commands"][1]["requires_files"])
-        self.assertEqual(report["next_commands"][2]["command"], [str(scripts["verify_bootstrap"])])
-        self.assertEqual(report["next_commands"][3]["command"], [str(scripts["stage0_join"])])
-        self.assertIn(str(stage0_join_code_path), report["next_commands"][3]["requires_files"])
-        self.assertEqual(report["next_commands"][5]["command_line"], str(scripts["check_generation"]))
+        self.assertEqual(serve_line, str(scripts["start_control_plane"]))
+        self.assertIn(str(coordinator_env_path), report["next_commands"][0]["requires_files"])
+        self.assertEqual(report["next_commands"][1]["command_line"], str(scripts["start_discovery"]))
+        self.assertTrue(report["next_commands"][1]["optional"])
+        self.assertEqual(report["next_commands"][2]["command_line"], str(scripts["start_coordinator"]))
+        self.assertNotIn("CROWDTENSOR_OBSERVER_TOKEN", report["next_commands"][2].get("requires_env", []))
+        self.assertIn(str(coordinator_env_path), report["next_commands"][2]["requires_files"])
+        self.assertEqual(report["next_commands"][3]["command"], [str(scripts["verify_bootstrap"])])
+        self.assertEqual(report["next_commands"][4]["command"], [str(scripts["stage0_join"])])
+        self.assertIn(str(stage0_join_code_path), report["next_commands"][4]["requires_files"])
+        self.assertEqual(report["next_commands"][6]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
     def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:
@@ -1649,6 +1652,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         stage0_invite = json.loads((output_dir / "stage0" / "miner.invite.json").read_text(encoding="utf-8"))
         stage1_invite = json.loads((output_dir / "stage1" / "miner.invite.json").read_text(encoding="utf-8"))
         stage0_join_code = (output_dir / "stage0" / "miner.join-code.txt").read_text(encoding="utf-8").strip()
+        control_plane_script = (output_dir / "start_control_plane.sh").read_text(encoding="utf-8")
         discovery_script = (output_dir / "start_discovery.sh").read_text(encoding="utf-8")
         start_script = (output_dir / "start_coordinator.sh").read_text(encoding="utf-8")
         encoded = json.dumps(report, sort_keys=True)
@@ -1677,9 +1681,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("crowdtensor p2pd", discovery_script)
         self.assertIn("--port '8788'", discovery_script)
         self.assertIn("--swarm-id 'public-swarm'", discovery_script)
+        self.assertIn("start_control_plane", report["scripts"])
         self.assertIn("start_discovery", report["scripts"])
-        self.assertFalse(report["next_commands"][0]["optional"])
-        self.assertEqual(report["next_commands"][0]["command"], [str(output_dir / "start_discovery.sh")])
+        self.assertIn("start_discovery.sh", control_plane_script)
+        self.assertIn("start_coordinator.sh", control_plane_script)
+        self.assertIn("trap cleanup EXIT INT TERM", control_plane_script)
+        self.assertEqual(report["next_commands"][0]["command"], [str(output_dir / "start_control_plane.sh")])
+        self.assertFalse(report["next_commands"][1]["optional"])
+        self.assertEqual(report["next_commands"][1]["command"], [str(output_dir / "start_discovery.sh")])
         self.assertNotIn(stage0_invite["miner_token"], encoded)
         self.assertNotIn(stage0_join_code, encoded)
 
@@ -1698,12 +1707,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(check_report["discovery"]["p2p_backend"], "lite")
         self.assertEqual(check_report["discovery"]["swarm_id"], "public-swarm")
         self.assertTrue(check_report["safety"]["stage_invite_discovery_metadata_ready"])
+        self.assertTrue(check_report["safety"]["start_control_plane_script_ready"])
         self.assertTrue(check_report["safety"]["start_discovery_script_ready"])
         self.assertTrue(
             next(item for item in check_report["checks"] if item["name"] == "stage_invite_discovery_metadata_ready")["ok"]
         )
         self.assertTrue(
             next(item for item in check_report["checks"] if item["name"] == "start_discovery_script_ready")["ok"]
+        )
+        self.assertTrue(
+            next(item for item in check_report["checks"] if item["name"] == "start_control_plane_script_ready")["ok"]
         )
 
     def test_swarm_bootstrap_check_validates_ready_private_package(self) -> None:
