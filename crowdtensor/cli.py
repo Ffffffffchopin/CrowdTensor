@@ -10941,6 +10941,20 @@ def _bootstrap_discovery_summary(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _bootstrap_tunnel_summary(args: argparse.Namespace) -> dict[str, Any]:
+    command = str(getattr(args, "tunnel_command", "") or "").strip()
+    enabled = bool(command)
+    return {
+        "schema": "crowdtensor_bootstrap_tunnel_v1",
+        "enabled": enabled,
+        "command_private_env": "CROWDTENSOR_TUNNEL_COMMAND" if enabled else "",
+        "launches_before_coordinator": enabled,
+        "public_artifact_safe": True,
+        "not_nat_traversal": True,
+        "operator_supplied_tunnel": enabled,
+    }
+
+
 def _stage_invite_discovery_summary(invite: dict[str, Any]) -> dict[str, Any]:
     discovery = invite.get("discovery") if isinstance(invite.get("discovery"), dict) else {}
     enabled = bool(discovery.get("enabled")) if discovery else False
@@ -11077,15 +11091,43 @@ def _bootstrap_discovery_script(args: argparse.Namespace, discovery: dict[str, A
     return "\n".join(lines)
 
 
-def _bootstrap_control_plane_script(discovery: dict[str, Any]) -> str:
+def _bootstrap_tunnel_script(tunnel: dict[str, Any]) -> str:
+    if not tunnel.get("enabled"):
+        return "\n".join([
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "",
+            "echo 'No tunnel or overlay command configured for this bootstrap package.'",
+            "echo 'Rerun crowdtensor swarm-bootstrap with --tunnel-command to let start_control_plane.sh manage one.'",
+            "",
+        ])
+    return "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        '. "$SCRIPT_DIR/private/tunnel.private.env"',
+        ': "${CROWDTENSOR_TUNNEL_COMMAND:?set CROWDTENSOR_TUNNEL_COMMAND in private/tunnel.private.env}"',
+        "",
+        'exec bash -lc "$CROWDTENSOR_TUNNEL_COMMAND"',
+        "",
+    ])
+
+
+def _bootstrap_control_plane_script(discovery: dict[str, Any], tunnel: dict[str, Any]) -> str:
     lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        "TUNNEL_PID=''",
         "DISCOVERY_PID=''",
         "",
         "cleanup() {",
+        '  if [ -n "$TUNNEL_PID" ] && kill -0 "$TUNNEL_PID" >/dev/null 2>&1; then',
+        '    kill "$TUNNEL_PID" >/dev/null 2>&1 || true',
+        '    wait "$TUNNEL_PID" >/dev/null 2>&1 || true',
+        "  fi",
         '  if [ -n "$DISCOVERY_PID" ] && kill -0 "$DISCOVERY_PID" >/dev/null 2>&1; then',
         '    kill "$DISCOVERY_PID" >/dev/null 2>&1 || true',
         '    wait "$DISCOVERY_PID" >/dev/null 2>&1 || true',
@@ -11094,6 +11136,19 @@ def _bootstrap_control_plane_script(discovery: dict[str, Any]) -> str:
         "trap cleanup EXIT INT TERM",
         "",
     ]
+    if tunnel.get("enabled"):
+        lines.extend([
+            '"$SCRIPT_DIR/start_tunnel.sh" &',
+            "TUNNEL_PID=$!",
+            'echo "Started tunnel/overlay command with pid $TUNNEL_PID"',
+            "sleep 1",
+            "",
+        ])
+    else:
+        lines.extend([
+            "echo 'No tunnel or overlay command configured; using the Coordinator URL as provided.'",
+            "",
+        ])
     if discovery.get("enabled"):
         lines.extend([
             '"$SCRIPT_DIR/start_discovery.sh" &',
@@ -11182,6 +11237,7 @@ def _bootstrap_runbook(
         "",
         "```bash",
         shlex.quote(scripts.get("start_control_plane", "")),
+        shlex.quote(scripts.get("start_tunnel", "")),
         shlex.quote(scripts.get("start_discovery", "")),
         shlex.quote(scripts.get("start_coordinator", "")),
         shlex.quote(scripts.get("verify_bootstrap", "")),
@@ -11249,13 +11305,16 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         and remote_access.get("diagnosis_code") == "coordinator_remote_route_required"
     )
     discovery_summary = _bootstrap_discovery_summary(args)
+    tunnel_summary = _bootstrap_tunnel_summary(args)
     operator_registry = output_dir / "operator_registry.json"
     miner_registry = output_dir / "miner_registry.json"
     coordinator_env_path = private_dir / "coordinator.private.env"
     operator_env_path = private_dir / "operator.private.env"
+    tunnel_env_path = private_dir / "tunnel.private.env"
     operator_invite_path = private_dir / f"{_bootstrap_slug(args.operator_id)}.operator.invite.json"
     runbook_path = output_dir / "SWARM_BOOTSTRAP.md"
     start_control_plane_script = output_dir / "start_control_plane.sh"
+    start_tunnel_script = output_dir / "start_tunnel.sh"
     start_discovery_script = output_dir / "start_discovery.sh"
     start_coordinator_script = output_dir / "start_coordinator.sh"
     verify_bootstrap_script = output_dir / "verify_bootstrap.sh"
@@ -11279,6 +11338,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "mode": "swarm-bootstrap",
             "output_dir": str(output_dir),
             "coordinator_url": coordinator_url,
+            "tunnel": tunnel_summary,
             "remote_access": remote_access,
             "registries": {},
             "private_env": {},
@@ -11324,6 +11384,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     _write_private_env(operator_env_path, {
         "CROWDTENSOR_ADMIN_TOKEN": operator_token,
         "CROWDTENSOR_OBSERVER_TOKEN": observer_token,
+    })
+    _write_private_env(tunnel_env_path, {
+        "CROWDTENSOR_TUNNEL_COMMAND": str(getattr(args, "tunnel_command", "") or "").strip(),
     })
     stage_invites: list[dict[str, Any]] = []
     backend = "cuda" if args.backend == "cuda" else "cpu"
@@ -11449,7 +11512,11 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     ]
     _write_executable(
         start_control_plane_script,
-        _bootstrap_control_plane_script(discovery_summary),
+        _bootstrap_control_plane_script(discovery_summary, tunnel_summary),
+    )
+    _write_executable(
+        start_tunnel_script,
+        _bootstrap_tunnel_script(tunnel_summary),
     )
     _write_executable(
         start_discovery_script,
@@ -11481,6 +11548,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     )
     scripts = {
         "start_control_plane": str(start_control_plane_script),
+        "start_tunnel": str(start_tunnel_script),
         "start_discovery": str(start_discovery_script),
         "start_coordinator": str(start_coordinator_script),
         "verify_bootstrap": str(verify_bootstrap_script),
@@ -11492,6 +11560,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     private_env_report = {
         "coordinator": str(coordinator_env_path),
         "operator": str(operator_env_path),
+        "tunnel": str(tunnel_env_path),
     }
     private_invites_report = {
         "operator": str(operator_invite_path),
@@ -11518,6 +11587,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "mode": "swarm-bootstrap",
         "output_dir": str(output_dir),
         "coordinator_url": coordinator_url,
+        "tunnel": tunnel_summary,
         "discovery": discovery_summary,
         "remote_access": remote_access,
         "registries": {
@@ -11539,6 +11609,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             command_entry(
                 "start control plane",
                 [str(start_control_plane_script)],
+            ),
+            command_entry(
+                "start tunnel or overlay",
+                [str(start_tunnel_script)],
             ),
             command_entry(
                 "start discovery",
@@ -11582,43 +11656,52 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[0]["command"] = [str(start_control_plane_script)]
     next_commands[0]["command_line"] = command_line([str(start_control_plane_script)])
     next_commands[0]["requires_files"] = [str(coordinator_env_path)]
+    if tunnel_summary["enabled"]:
+        next_commands[0]["requires_files"].append(str(tunnel_env_path))
     next_commands[0]["script"] = str(start_control_plane_script)
-    next_commands[1]["command"] = [str(start_discovery_script)]
-    next_commands[1]["command_line"] = command_line([str(start_discovery_script)])
-    next_commands[1]["script"] = str(start_discovery_script)
-    next_commands[1]["optional"] = not bool(discovery_summary["enabled"])
-    next_commands[2]["command"] = [str(start_coordinator_script)]
-    next_commands[2]["command_line"] = command_line([str(start_coordinator_script)])
-    next_commands[2]["requires_files"] = [str(coordinator_env_path)]
-    next_commands[2]["script"] = str(start_coordinator_script)
-    next_commands[3]["command"] = [str(verify_bootstrap_script)]
-    next_commands[3]["command_line"] = command_line([str(verify_bootstrap_script)])
-    next_commands[3]["requires_files"] = [
+    next_commands[1]["command"] = [str(start_tunnel_script)]
+    next_commands[1]["command_line"] = command_line([str(start_tunnel_script)])
+    next_commands[1]["script"] = str(start_tunnel_script)
+    next_commands[1]["optional"] = not bool(tunnel_summary["enabled"])
+    if tunnel_summary["enabled"]:
+        next_commands[1]["requires_files"] = [str(tunnel_env_path)]
+    next_commands[2]["command"] = [str(start_discovery_script)]
+    next_commands[2]["command_line"] = command_line([str(start_discovery_script)])
+    next_commands[2]["script"] = str(start_discovery_script)
+    next_commands[2]["optional"] = not bool(discovery_summary["enabled"])
+    next_commands[3]["command"] = [str(start_coordinator_script)]
+    next_commands[3]["command_line"] = command_line([str(start_coordinator_script)])
+    next_commands[3]["requires_files"] = [str(coordinator_env_path)]
+    next_commands[3]["script"] = str(start_coordinator_script)
+    next_commands[4]["command"] = [str(verify_bootstrap_script)]
+    next_commands[4]["command_line"] = command_line([str(verify_bootstrap_script)])
+    next_commands[4]["requires_files"] = [
         str(stage_scripts["stage0"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage0"]),
         str(stage_scripts["stage1"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage1"]),
     ]
-    next_commands[3]["script"] = str(verify_bootstrap_script)
-    next_commands[4]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[4]["command_line"] = command_line([str(stage_scripts["stage0"])])
-    next_commands[4]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[4]["script"] = str(stage_scripts["stage0"])
-    next_commands[5]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[5]["command_line"] = command_line([str(stage_scripts["stage1"])])
-    next_commands[5]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[5]["script"] = str(stage_scripts["stage1"])
-    next_commands[6]["command"] = [str(check_generation_script)]
-    next_commands[6]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[6]["requires_files"] = [str(operator_env_path)]
-    next_commands[6]["script"] = str(check_generation_script)
-    next_commands[7]["command"] = [str(submit_generation_script)]
-    next_commands[7]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[4]["script"] = str(verify_bootstrap_script)
+    next_commands[5]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[5]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[5]["requires_files"] = [str(stage_join_code_files["stage0"])]
+    next_commands[5]["script"] = str(stage_scripts["stage0"])
+    next_commands[6]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[6]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[6]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[6]["script"] = str(stage_scripts["stage1"])
+    next_commands[7]["command"] = [str(check_generation_script)]
+    next_commands[7]["command_line"] = command_line([str(check_generation_script)])
     next_commands[7]["requires_files"] = [str(operator_env_path)]
-    next_commands[7]["script"] = str(submit_generation_script)
+    next_commands[7]["script"] = str(check_generation_script)
+    next_commands[8]["command"] = [str(submit_generation_script)]
+    next_commands[8]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[8]["requires_files"] = [str(operator_env_path)]
+    next_commands[8]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
+        str(getattr(args, "tunnel_command", "") or "").strip(),
         str((operator_invite.get("operator_invite") or {}).get("operator_token") or ""),
         str(operator_invite.get("operator_invite_code") or ""),
         *[
@@ -11856,7 +11939,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "miner_registry": output_dir / "miner_registry.json",
         "coordinator_env": private_dir / "coordinator.private.env",
         "operator_env": private_dir / "operator.private.env",
+        "tunnel_env": private_dir / "tunnel.private.env",
         "start_control_plane_script": output_dir / "start_control_plane.sh",
+        "start_tunnel_script": output_dir / "start_tunnel.sh",
         "start_discovery_script": output_dir / "start_discovery.sh",
         "start_coordinator_script": output_dir / "start_coordinator.sh",
         "verify_bootstrap_script": output_dir / "verify_bootstrap.sh",
@@ -11912,6 +11997,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     private_stage_invites = sorted(private_dir.glob("*.miner.invite.json")) if private_dir.is_dir() else []
     coordinator_env, coordinator_env_error = _parse_bootstrap_env(required_files["coordinator_env"])
     operator_env, operator_env_error = _parse_bootstrap_env(required_files["operator_env"])
+    tunnel_env, tunnel_env_error = _parse_bootstrap_env(required_files["tunnel_env"])
 
     json_errors = [
         f"operator_registry: {operator_registry_error}" if operator_registry_error else "",
@@ -11932,6 +12018,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     env_errors = [
         f"coordinator_env: {coordinator_env_error}" if coordinator_env_error else "",
         f"operator_env: {operator_env_error}" if operator_env_error else "",
+        f"tunnel_env: {tunnel_env_error}" if tunnel_env_error else "",
     ]
     env_errors = [item for item in env_errors if item]
     _bootstrap_check_item(
@@ -11962,6 +12049,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     private_files = [
         required_files["coordinator_env"],
         required_files["operator_env"],
+        required_files["tunnel_env"],
         *operator_invite_files,
         *private_stage_invites,
         required_files["stage0_invite"],
@@ -11980,6 +12068,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     )
     executable_scripts = [
         required_files["start_control_plane_script"],
+        required_files["start_tunnel_script"],
         required_files["start_discovery_script"],
         required_files["start_coordinator_script"],
         required_files["verify_bootstrap_script"],
@@ -12004,6 +12093,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     operator_invite_token = str(operator_invite.get("operator_token") or "")
     stage0_token = str(stage0_invite.get("miner_token") or "")
     stage1_token = str(stage1_invite.get("miner_token") or "")
+    tunnel_command = str(tunnel_env.get("CROWDTENSOR_TUNNEL_COMMAND") or "")
     secret_values = unique_redaction_values([
         operator_token,
         observer_token,
@@ -12013,6 +12103,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         stage1_token,
         str(stage0_invite.get("token_hash") or ""),
         str(stage1_invite.get("token_hash") or ""),
+        tunnel_command,
     ])
 
     coordinator_env_ok = bool(
@@ -12071,6 +12162,24 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         discovery_metadata_ok,
         detail=discovery_metadata_detail,
         diagnosis_code="bootstrap_stage_discovery_metadata_invalid",
+    )
+    tunnel_report = {
+        "schema": "crowdtensor_bootstrap_tunnel_v1",
+        "enabled": bool(tunnel_command),
+        "command_private_env": "CROWDTENSOR_TUNNEL_COMMAND" if tunnel_command else "",
+        "launches_before_coordinator": bool(tunnel_command),
+        "public_artifact_safe": True,
+        "not_nat_traversal": True,
+        "operator_supplied_tunnel": bool(tunnel_command),
+    }
+    tunnel_env_ready = bool(required_files["tunnel_env"].is_file())
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "tunnel_private_env_ready",
+        tunnel_env_ready,
+        detail="private/tunnel.private.env must exist and carry CROWDTENSOR_TUNNEL_COMMAND only when configured",
+        diagnosis_code="bootstrap_tunnel_private_env_missing",
     )
     _bootstrap_check_item(
         checks,
@@ -12139,11 +12248,13 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage0_join_code_text, _ = _read_bootstrap_text(required_files["stage0_join_code"])
     stage1_join_code_text, _ = _read_bootstrap_text(required_files["stage1_join_code"])
     control_plane_script_text, _ = _read_bootstrap_text(required_files["start_control_plane_script"])
+    tunnel_script_text, _ = _read_bootstrap_text(required_files["start_tunnel_script"])
     discovery_script_text, _ = _read_bootstrap_text(required_files["start_discovery_script"])
     coordinator_script_text, _ = _read_bootstrap_text(required_files["start_coordinator_script"])
     verify_script_text, _ = _read_bootstrap_text(required_files["verify_bootstrap_script"])
     public_files = [
         required_files["start_control_plane_script"],
+        required_files["start_tunnel_script"],
         required_files["start_coordinator_script"],
         required_files["start_discovery_script"],
         required_files["verify_bootstrap_script"],
@@ -12204,6 +12315,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     control_plane_script_ready = bool(
         "start_coordinator.sh" in control_plane_script_text
         and (
+            not tunnel_report.get("enabled")
+            or "start_tunnel.sh" in control_plane_script_text
+        )
+        and (
             not discovery_report.get("enabled")
             or "start_discovery.sh" in control_plane_script_text
         )
@@ -12216,6 +12331,27 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         control_plane_script_ready,
         detail="start_control_plane.sh must wrap discovery plus Coordinator startup",
         diagnosis_code="bootstrap_control_plane_script_invalid",
+    )
+    tunnel_script_ready = bool(
+        (
+            not tunnel_report.get("enabled")
+            and "No tunnel or overlay command configured" in tunnel_script_text
+        )
+        or (
+            tunnel_report.get("enabled")
+            and "private/tunnel.private.env" in tunnel_script_text
+            and "CROWDTENSOR_TUNNEL_COMMAND" in tunnel_script_text
+            and 'bash -lc "$CROWDTENSOR_TUNNEL_COMMAND"' in tunnel_script_text
+            and tunnel_command not in tunnel_script_text
+        )
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "start_tunnel_script_ready",
+        tunnel_script_ready,
+        detail="start_tunnel.sh must source private/tunnel.private.env without embedding the tunnel command",
+        diagnosis_code="bootstrap_tunnel_script_invalid",
     )
     discovery_script_ready = bool(
         (
@@ -12319,6 +12455,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "mode": "swarm-bootstrap-check",
         "output_dir": str(output_dir),
         "coordinator_url": coordinator_url,
+        "tunnel": tunnel_report,
         "discovery": discovery_report,
         "remote_access": remote_access,
         "live_preflight": live_preflight,
@@ -12337,7 +12474,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
             "stage_join_code_files_match_invites": join_codes_match_invites,
             "stage_invite_discovery_metadata_ready": discovery_metadata_ok,
+            "tunnel_private_env_ready": tunnel_env_ready,
             "start_control_plane_script_ready": control_plane_script_ready,
+            "start_tunnel_script_ready": tunnel_script_ready,
             "start_discovery_script_ready": discovery_script_ready,
             "verify_bootstrap_script_ready": verify_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
@@ -18868,6 +19007,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     swarm_bootstrap.add_argument("--public-host", default="127.0.0.1")
     swarm_bootstrap.add_argument("--port", type=int, default=8787)
     swarm_bootstrap.add_argument("--expect-remote-miners", action="store_true")
+    swarm_bootstrap.add_argument(
+        "--tunnel-command",
+        default="",
+        help=(
+            "optional private shell command for start_tunnel.sh, e.g. a Cloudflare/ngrok/frp/Tailscale "
+            "command; also set --coordinator-url to the Miner-facing tunnel/VPN URL"
+        ),
+    )
     swarm_bootstrap.add_argument("--peer-bootstrap", default="", help="optional P2P discovery bootstrap URL to embed in private Miner invites")
     swarm_bootstrap.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
     swarm_bootstrap.add_argument("--swarm-id", default="default")
@@ -21263,6 +21410,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             parsed_bootstrap_url = urlparse(args.coordinator_url)
             if parsed_bootstrap_url.scheme not in {"http", "https"} or not parsed_bootstrap_url.hostname:
                 raise SystemExit("--coordinator-url must be a full http(s) URL with a host")
+        if args.tunnel_command and not args.coordinator_url:
+            raise SystemExit("--tunnel-command requires --coordinator-url set to the Miner-facing tunnel/VPN URL")
         if args.max_new_tokens < 1:
             raise SystemExit("--max-new-tokens must be at least 1")
         for name in [

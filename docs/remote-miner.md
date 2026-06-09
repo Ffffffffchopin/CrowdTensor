@@ -8,12 +8,15 @@ For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_control_plane.sh`,
-`start_discovery.sh`, `start_coordinator.sh`, stage `join.sh` files, private `miner.join-code.txt`
-files, `verify_bootstrap.sh`, generation scripts, and `SWARM_BOOTSTRAP.md`.
+optional `start_tunnel.sh`, `start_discovery.sh`, `start_coordinator.sh`, stage `join.sh`
+files, private `miner.join-code.txt` files, `verify_bootstrap.sh`, generation scripts, and `SWARM_BOOTSTRAP.md`.
+If the Coordinator has no directly reachable public address, pass both a Miner-facing
+`--coordinator-url` and a private `--tunnel-command`; the raw tunnel command is
+stored only in `private/tunnel.private.env` and is started by `start_control_plane.sh`.
 Keep the generated operator
 invite and operator env on the operator host, use the coordinator env only for
-the Coordinator process, run `start_control_plane.sh` to start discovery plus
-the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
+the Coordinator process, run `start_control_plane.sh` to start the tunnel,
+discovery, and Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
 and copy only the matching stage directory to each Miner host. Stage `join.sh`
 uses `crowdtensor join --invite-code-file miner.join-code.txt` by default, while
 `miner.invite.json` remains private compatibility material. If bootstrap is run

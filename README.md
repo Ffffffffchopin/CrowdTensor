@@ -437,6 +437,7 @@ stage invites in one local directory:
 crowdtensor swarm-bootstrap \
   --output-dir state/swarm-bootstrap \
   --coordinator-url https://YOUR-TUNNEL.example \
+  --tunnel-command 'cloudflared tunnel --url http://127.0.0.1:8787' \
   --expect-remote-miners
 crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-remote-miners
 ```
@@ -444,11 +445,14 @@ crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-re
 The report lists the local private operator invite, stage0/stage1 Miner invites,
 private `miner.join-code.txt` files, operator/coordinator private env files,
 hashed registries, and copyable discovery / `serve` / `join` / `generate`
-scripts plus `start_control_plane.sh`, `start_discovery.sh`, `verify_bootstrap.sh`, and
-`SWARM_BOOTSTRAP.md`. Keep the operator invite and
+scripts plus `start_control_plane.sh`, optional `start_tunnel.sh`,
+`start_discovery.sh`, `verify_bootstrap.sh`, and `SWARM_BOOTSTRAP.md`.
+When `--tunnel-command` is supplied, the command is written only to
+`private/tunnel.private.env`; public reports and Markdown show the tunnel
+launcher without echoing tunnel tokens or provider command lines. Keep the operator invite and
 operator env on the operator host, use the coordinator env only for
-`start_coordinator.sh`, run `start_control_plane.sh` to start discovery plus
-the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
+`start_coordinator.sh`, run `start_control_plane.sh` to start the tunnel,
+discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
 and send each stage directory only to the matching Miner host. Stage `join.sh`
 defaults to `crowdtensor join --invite-code-file miner.join-code.txt` so the
 Miner host does not need to edit JSON invites. When bootstrap is run with

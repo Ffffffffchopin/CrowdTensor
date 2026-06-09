@@ -90,9 +90,10 @@ contain usable tokens; keep the operator invite on the Coordinator/operator
 host and copy only the matching stage Miner invite to each Miner host.
 Bootstrap also writes executable helper scripts and separate private env files:
 `coordinator.private.env` contains only the observer token verifier for
-`start_coordinator.sh`; `start_control_plane.sh` starts discovery plus the
-Coordinator together; `start_discovery.sh` starts the configured P2P-lite or
-real-P2P discovery daemon when `--peer-bootstrap` is used; and
+`start_coordinator.sh`; optional `private/tunnel.private.env` contains the
+operator-supplied `--tunnel-command` for `start_tunnel.sh`; `start_control_plane.sh`
+starts the tunnel, discovery, and Coordinator together; `start_discovery.sh`
+starts the configured P2P-lite or real-P2P discovery daemon when `--peer-bootstrap` is used; and
 `verify_bootstrap.sh` runs the live no-claim bootstrap admission check.
 `operator.private.env` contains the operator admin token plus observer token for
 operator-side dry-run and submit scripts.
