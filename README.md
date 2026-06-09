@@ -447,7 +447,8 @@ private `miner.join-code.txt` files, operator/coordinator private env files,
 hashed registries, and copyable discovery / `serve` / `join` / `generate`
 scripts plus `start_control_plane.sh`, optional `start_tunnel.sh`,
 `start_discovery.sh`, `verify_bootstrap.sh`, private
-`stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz`, stage `check_join.sh`,
+`stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz`, matching
+`stage0.run-miner.sh` / `stage1.run-miner.sh`, stage `check_join.sh`,
 `support_bundle.sh`, and `SWARM_BOOTSTRAP.md`.
 When `--tunnel-command` is supplied, the command is written only to
 `private/tunnel.private.env`; public reports and Markdown show the tunnel
@@ -455,7 +456,9 @@ launcher without echoing tunnel tokens or provider command lines. Keep the opera
 operator env on the operator host, use the coordinator env only for
 `start_coordinator.sh`, run `start_control_plane.sh` to start the tunnel,
 discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
-and send each private stage archive only to the matching Miner host. Stage
+and send each private stage archive plus matching `stageX.run-miner.sh` only to
+the matching Miner host. The runner safely extracts the archive, runs
+`check_join.sh`, then starts `join.sh`. Stage
 `check_join.sh` verifies Coordinator reachability and token-backed admission
 without starting the Miner; stage `join.sh` then runs the same invite-code path
 with `--run`, so the Miner host does not need to edit JSON invites. If the
@@ -475,7 +478,8 @@ files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
 plaintext tokens before handoff, including `stage_support_bundle_scripts_ready`.
 It also verifies `stage_package_archives_ready` so the operator can copy one
-private tarball per Miner instead of hand-picking files.
+private tarball per Miner instead of hand-picking files, plus
+`stage_archive_runner_scripts_ready` for the matching one-command Miner runner.
 With `--expect-remote-miners`, it also checks
 that both stage invites share a Miner-facing Coordinator URL that is not
 `127.0.0.1` / `localhost`. After the Coordinator is running, add

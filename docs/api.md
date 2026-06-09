@@ -23,7 +23,9 @@ remain private. Stage `support_bundle.sh` writes safe
 `miner_support_bundle.json` diagnostics for route/admission troubleshooting
 without raw join codes or Miner tokens. Bootstrap also writes private
 `stage0.miner-package.tar.gz` and `stage1.miner-package.tar.gz` archives so the
-operator can copy one stage package per remote Miner host. Bootstrap can also embed `crowdtensor_miner_join_discovery_v1` when
+operator can copy one stage package per remote Miner host, plus matching
+`stage0.run-miner.sh` / `stage1.run-miner.sh` runners that safely extract,
+preflight, and start the Miner. Bootstrap can also embed `crowdtensor_miner_join_discovery_v1` when
 `--peer-bootstrap` is supplied, allowing the private invite to select the
 P2P-lite discovery route without exposing tokens in public artifacts. The same
 package writes `start_control_plane.sh` to start discovery plus the Coordinator
@@ -45,7 +47,7 @@ URL consistency, optional `--expect-remote-miners` remote route readiness,
 optional `/ready` checks via `--check-coordinator`, optional token-backed
 no-claim `/tasks/preflight` checks via `--check-admission`, and plaintext token
 leakage, including `stage_support_bundle_scripts_ready` and
-`stage_package_archives_ready`.
+`stage_package_archives_ready` plus `stage_archive_runner_scripts_ready`.
 
 Use `crowdtensor operator-invite` or `scripts/create_operator_invite.py` to
 create hashed operator registry entries. The operator still sends their
