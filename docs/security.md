@@ -92,9 +92,17 @@ safe role metadata only:
       "roles": ["accounting"]
     },
     {
-      "operator_id": "auditor-1",
-      "token": "sha256:AUDITOR_DIGEST",
-      "roles": ["auditor"]
+      "operator_id": "generate-desk",
+      "token": "sha256:GENERATE_DIGEST",
+      "roles": ["admin"],
+      "session_policy": {
+        "allowed_workloads": ["real_llm_sharded_infer"],
+        "max_request_count": 2,
+        "max_decode_steps": 1,
+        "max_new_tokens": 8,
+        "rate_limit": 30,
+        "rate_window_seconds": 60
+      }
     }
   ]
 }
@@ -102,14 +110,19 @@ safe role metadata only:
 
 `accounting` can read `/admin/accounting` and `/admin/settlement`; `auditor`
 can read event/result/stream audit views; `admin` and `owner` can use all admin
-endpoints. `/ready` exposes only `crowdtensor_operator_registry_summary_v1`
-operator IDs, labels, enabled flags, and roles, never plaintext tokens.
+endpoints. Optional `session_policy` values restrict an admin/owner operator's
+`/admin/inference-sessions` workload types, request sizes, token/decode bounds,
+and create rate. `/ready` exposes only
+`crowdtensor_operator_registry_summary_v1` operator IDs, labels, enabled flags,
+roles, and safe session policy limits, never plaintext tokens.
 
 To reduce request abuse on shared Coordinators, start the product Coordinator
 with `--inference-session-rate-limit` plus
 `--inference-session-rate-window-seconds`. The limit applies per legacy admin
 or per operator-registry subject on `/admin/inference-sessions`; blocked creates
-return `429` and append a safe `control_plane_blocked` audit event.
+return `429` and append a safe `control_plane_blocked` audit event. Per-operator
+`session_policy` blocks use the same audit event with
+`operator_session_policy_*` reasons.
 
 Accepted work created by `/admin/inference-sessions` carries the same safe admin
 subject into `/admin/results`, `/admin/accounting`, and `/admin/settlement` as

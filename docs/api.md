@@ -8,7 +8,7 @@ All request and response bodies are JSON unless noted. Miner, observer, legacy a
 
 - `x-crowdtensor-miner-token`: required for Miner task endpoints when `--miner-token` or `--miner-token-registry` is configured.
 - `x-crowdtensor-observer-token`: required for `/state` and `/metrics` when `--observer-token` is configured.
-- `x-crowdtensor-admin-token`: required for admin endpoints. A legacy `--admin-token` has owner-level access. `--operator-token-registry` can instead configure per-operator roles: `owner`, `admin`, `accounting`, and `auditor`.
+- `x-crowdtensor-admin-token`: required for admin endpoints. A legacy `--admin-token` has owner-level access. `--operator-token-registry` can instead configure per-operator roles: `owner`, `admin`, `accounting`, and `auditor`, plus optional safe `session_policy` limits for `/admin/inference-sessions`.
 
 ## Public Endpoints
 
@@ -217,6 +217,14 @@ Operators can protect this endpoint with `--inference-session-rate-limit` and
 admin or per operator-registry subject. When exceeded, the endpoint returns
 `429` with `reason=inference_session_rate_limited` and records a safe
 `control_plane_blocked` audit event without raw prompts or tokens.
+
+Operator registry entries may also define `session_policy` for admin/owner
+operators. The policy can limit `allowed_workloads`, `max_request_count`,
+`max_decode_steps`, `max_new_tokens`, and a per-operator `rate_limit` /
+`rate_window_seconds`. Policy blocks return `403`, `422`, or `429` with
+`operator_session_policy_*` reasons and append safe `control_plane_blocked`
+events. Policy summaries are safe to expose through `/ready`; plaintext tokens
+and raw prompts are never included.
 
 Request:
 

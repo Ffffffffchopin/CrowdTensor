@@ -261,6 +261,14 @@ class CoordinatorApiTests(unittest.TestCase):
                         "enabled": True,
                         "label": "accounting desk",
                         "roles": ["accounting"],
+                        "session_policy": {
+                            "allowed_workloads": ["model-bundle", "external_llm_infer"],
+                            "max_request_count": 2,
+                            "max_decode_steps": 3,
+                            "max_new_tokens": 4,
+                            "rate_limit": 5,
+                            "rate_window_seconds": 60.0,
+                        },
                     },
                     {
                         "operator_id": "audit",
@@ -275,8 +283,14 @@ class CoordinatorApiTests(unittest.TestCase):
 
             self.assertEqual(registry["acct"]["roles"], ["accounting"])
             self.assertEqual(registry["audit"]["roles"], ["auditor"])
+            self.assertEqual(
+                registry["acct"]["session_policy"]["allowed_workloads"],
+                ["external_llm_infer", "model_bundle_infer"],
+            )
+            self.assertEqual(registry["acct"]["session_policy"]["max_request_count"], 2)
             self.assertEqual(summary["schema"], "crowdtensor_operator_registry_summary_v1")
             self.assertEqual(summary["operator_count"], 2)
+            self.assertEqual(summary["operators"][0]["session_policy"]["max_new_tokens"], 4)
             self.assertFalse(summary["plaintext_tokens_public"])
             self.assertNotIn("accounting-token", encoded)
             self.assertNotIn("auditor-token", encoded)
@@ -290,6 +304,9 @@ class CoordinatorApiTests(unittest.TestCase):
                 ("bad-roles.json", {"operators": [{"operator_id": "a", "token": "1", "roles": {"bad": True}}]}),
                 ("unknown-role.json", {"operators": [{"operator_id": "a", "token": "1", "roles": ["root"]}]}),
                 ("bad-hash.json", {"operators": [{"operator_id": "a", "token": "sha256:abc", "roles": ["admin"]}]}),
+                ("bad-session-policy.json", {"operators": [{"operator_id": "a", "token": "1", "roles": ["admin"], "session_policy": []}]}),
+                ("bad-session-policy-limit.json", {"operators": [{"operator_id": "a", "token": "1", "roles": ["admin"], "session_policy": {"max_request_count": -1}}]}),
+                ("bad-session-policy-rate-pair.json", {"operators": [{"operator_id": "a", "token": "1", "roles": ["admin"], "session_policy": {"rate_limit": 1}}]}),
             ]
             for filename, payload in cases:
                 path = base / filename
@@ -1369,6 +1386,115 @@ class CoordinatorApiTests(unittest.TestCase):
             events = admin_events(limit=5, x_crowdtensor_admin_token="owner-b-token")["events"]
             rate_events = [event for event in events if event.get("type") == "control_plane_blocked"]
             self.assertEqual(rate_events[0]["subject"], "operator:owner-a")
+
+    def test_operator_session_policy_limits_admin_inference_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_operator_registry(
+                Path(tmp) / "operators.json",
+                [
+                    {
+                        "operator_id": "limited",
+                        "token": hash_token("limited-token"),
+                        "roles": ["admin"],
+                        "session_policy": {
+                            "allowed_workloads": ["model_bundle_infer"],
+                            "max_request_count": 2,
+                            "max_decode_steps": 1,
+                            "max_new_tokens": 1,
+                            "rate_limit": 1,
+                            "rate_window_seconds": 60.0,
+                        },
+                    },
+                    {
+                        "operator_id": "unlimited",
+                        "token": hash_token("unlimited-token"),
+                        "roles": ["admin"],
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                admin_token="",
+                operator_token_registry=registry_path,
+            )
+            ready = endpoint_for(app, "/ready", "GET")
+            admin_session = endpoint_for(app, "/admin/inference-sessions", "POST")
+            admin_events = endpoint_for(app, "/admin/events", "GET")
+            session_request = request_model(admin_session)
+
+            ready_payload = ready()
+            limited_summary = next(
+                item
+                for item in ready_payload["operator_registry_summary"]["operators"]
+                if item["operator_id"] == "limited"
+            )
+            self.assertEqual(limited_summary["session_policy"]["max_request_count"], 2)
+            self.assertEqual(limited_summary["session_policy"]["allowed_workloads"], ["model_bundle_infer"])
+
+            accepted = admin_session(
+                session_request(request_count=2, workload_type=WORKLOAD_MODEL_BUNDLE_INFER),
+                x_crowdtensor_admin_token="limited-token",
+            )
+            self.assertEqual(accepted["created_by_subject"], "operator:limited")
+
+            with self.assertRaises(HTTPException) as workload_blocked:
+                admin_session(
+                    session_request(request_count=1, workload_type=WORKLOAD_EXTERNAL_LLM_INFER),
+                    x_crowdtensor_admin_token="limited-token",
+                )
+            self.assertEqual(workload_blocked.exception.status_code, 403)
+            self.assertEqual(
+                workload_blocked.exception.detail["reason"],
+                "operator_session_policy_workload_not_allowed",
+            )
+
+            with self.assertRaises(HTTPException) as request_count_blocked:
+                admin_session(
+                    session_request(request_count=3, workload_type=WORKLOAD_MODEL_BUNDLE_INFER),
+                    x_crowdtensor_admin_token="limited-token",
+                )
+            self.assertEqual(request_count_blocked.exception.status_code, 422)
+            self.assertEqual(
+                request_count_blocked.exception.detail["reason"],
+                "operator_session_policy_request_count_exceeded",
+            )
+            self.assertEqual(request_count_blocked.exception.detail["limit"], 2)
+
+            with self.assertRaises(HTTPException) as rate_blocked:
+                admin_session(
+                    session_request(request_count=1, workload_type=WORKLOAD_MODEL_BUNDLE_INFER),
+                    x_crowdtensor_admin_token="limited-token",
+                )
+            self.assertEqual(rate_blocked.exception.status_code, 429)
+            self.assertEqual(rate_blocked.exception.detail["reason"], "operator_session_policy_rate_limited")
+
+            self.assertEqual(
+                admin_session(
+                    session_request(request_count=3, workload_type=WORKLOAD_EXTERNAL_LLM_INFER),
+                    x_crowdtensor_admin_token="unlimited-token",
+                )["created_by_subject"],
+                "operator:unlimited",
+            )
+            events = admin_events(limit=20, x_crowdtensor_admin_token="unlimited-token")["events"]
+            policy_events = [
+                event
+                for event in events
+                if event.get("type") == "control_plane_blocked"
+                and str(event.get("reason", "")).startswith("operator_session_policy_")
+            ]
+            self.assertEqual(
+                [event["reason"] for event in policy_events],
+                [
+                    "operator_session_policy_workload_not_allowed",
+                    "operator_session_policy_request_count_exceeded",
+                    "operator_session_policy_rate_limited",
+                ],
+            )
+            self.assertEqual({event["subject"] for event in policy_events}, {"operator:limited"})
+            self.assertNotIn("limited-token", json.dumps(events, sort_keys=True))
 
     def test_admin_trust_override_blocks_allows_and_events_are_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

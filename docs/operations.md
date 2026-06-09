@@ -664,9 +664,17 @@ For role-scoped operator access, create a private operator registry:
       "roles": ["accounting"]
     },
     {
-      "operator_id": "auditor-1",
-      "token": "sha256:AUDITOR_DIGEST",
-      "roles": ["auditor"]
+      "operator_id": "generate-desk",
+      "token": "sha256:GENERATE_DIGEST",
+      "roles": ["admin"],
+      "session_policy": {
+        "allowed_workloads": ["real_llm_sharded_infer"],
+        "max_request_count": 2,
+        "max_decode_steps": 1,
+        "max_new_tokens": 8,
+        "rate_limit": 30,
+        "rate_window_seconds": 60
+      }
     }
   ]
 }
@@ -700,9 +708,14 @@ The role split is intentionally small: `accounting` can read
 owner-level access for existing scripts. When `crowdtensor serve` is started
 with an operator registry and no explicit `--admin-token` or
 `CROWDTENSOR_ADMIN_TOKEN`, it does not add the local default admin token.
-The optional session create rate limit protects the ordinary `generate` path by
-returning `429` after too many `/admin/inference-sessions` creates by the same
-legacy admin or operator subject in the configured window.
+Operators with `admin` or `owner` roles can also carry an optional
+`session_policy`. It limits `/admin/inference-sessions` creates for that
+operator by workload allowlist, `request_count`, `decode_steps`,
+`max_new_tokens`, and a per-operator create rate window. Policy blocks append a
+safe `control_plane_blocked` audit event and never expose plaintext tokens.
+The global session create rate limit remains available as a Coordinator-wide
+fallback by returning `429` after too many creates by the same legacy admin or
+operator subject in the configured window.
 
 ## Run Miner
 

@@ -52,6 +52,16 @@ OPERATOR_ALLOWED_ROLES = {
     OPERATOR_ROLE_ACCOUNTING,
     OPERATOR_ROLE_AUDITOR,
 }
+OPERATOR_SESSION_POLICY_WORKLOAD_ALIASES = {
+    "model-bundle": "model_bundle_infer",
+    "external-llm": "external_llm_infer",
+    "sharded-model-bundle": "sharded_model_bundle_infer",
+    "sharded": "sharded_model_bundle_infer",
+    "micro-llm-sharded": "micro_llm_sharded_infer",
+    "micro-llm-shard": "micro_llm_sharded_infer",
+    "real-llm-sharded": "real_llm_sharded_infer",
+    "real-llm-shard": "real_llm_sharded_infer",
+}
 
 
 def load_miner_token_registry(path: str | Path | None) -> dict[str, dict[str, Any]]:
@@ -151,18 +161,71 @@ def load_operator_token_registry(path: str | Path | None) -> dict[str, dict[str,
             "enabled": enabled,
             "label": str(label or ""),
             "roles": sorted(roles),
+            "session_policy": _safe_operator_session_policy(
+                entry.get("session_policy"),
+                entry_index=index,
+            ),
         }
     return registry
+
+
+def _safe_operator_session_policy(policy: Any, *, entry_index: int | None = None) -> dict[str, Any]:
+    if policy in (None, {}):
+        return {}
+    prefix = (
+        f"operator token registry entry {entry_index} session_policy"
+        if entry_index is not None
+        else "operator session_policy"
+    )
+    if not isinstance(policy, dict):
+        raise ValueError(f"{prefix} must be an object")
+    allowed_raw = policy.get("allowed_workloads", [])
+    if isinstance(allowed_raw, str):
+        allowed_workloads = [allowed_raw]
+    elif isinstance(allowed_raw, list):
+        allowed_workloads = [str(item) for item in allowed_raw]
+    else:
+        raise ValueError(f"{prefix} allowed_workloads must be a string or list")
+    normalized_workloads = []
+    for workload in allowed_workloads:
+        value = str(workload or "").strip()
+        if not value:
+            continue
+        normalized_workloads.append(OPERATOR_SESSION_POLICY_WORKLOAD_ALIASES.get(value, value))
+
+    def non_negative_int(name: str) -> int:
+        value = int(policy.get(name) or 0)
+        if value < 0:
+            raise ValueError(f"{prefix} {name} must be non-negative")
+        return value
+
+    rate_window_seconds = float(policy.get("rate_window_seconds") or 0.0)
+    if rate_window_seconds < 0:
+        raise ValueError(f"{prefix} rate_window_seconds must be non-negative")
+    rate_limit = non_negative_int("rate_limit")
+    if (rate_limit > 0) != (rate_window_seconds > 0):
+        raise ValueError(f"{prefix} rate_limit and rate_window_seconds must be set together")
+    return {
+        "schema": str(policy.get("schema") or "crowdtensor_operator_session_policy_v1"),
+        "allowed_workloads": sorted(set(normalized_workloads)),
+        "max_request_count": non_negative_int("max_request_count"),
+        "max_decode_steps": non_negative_int("max_decode_steps"),
+        "max_new_tokens": non_negative_int("max_new_tokens"),
+        "rate_limit": rate_limit,
+        "rate_window_seconds": rate_window_seconds,
+    }
 
 
 def operator_registry_summary(registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
     operators: list[dict[str, Any]] = []
     for operator_id, entry in sorted(registry.items()):
+        session_policy = entry.get("session_policy") if isinstance(entry.get("session_policy"), dict) else {}
         operators.append({
             "operator_id": operator_id,
             "enabled": bool(entry.get("enabled")),
             "label": str(entry.get("label") or ""),
             "roles": list(entry.get("roles") or []),
+            "session_policy": dict(session_policy),
         })
     return {
         "schema": "crowdtensor_operator_registry_summary_v1",
@@ -767,6 +830,105 @@ def create_app(
             return "legacy-admin"
         return "unknown"
 
+    def operator_session_policy_for(token: str | None) -> dict[str, Any]:
+        operator_id, _roles = _token_operator_identity(token)
+        if not operator_id:
+            return {}
+        entry = configured_operator_registry.get(operator_id, {})
+        policy = entry.get("session_policy")
+        return dict(policy) if isinstance(policy, dict) else {}
+
+    def _record_operator_session_policy_block(
+        *,
+        subject: str,
+        workload_type: str,
+        reason: str,
+        limit: int = 0,
+        observed_count: int = 0,
+        window_seconds: float = 0.0,
+    ) -> None:
+        store.record_control_plane_blocked(
+            reason=reason,
+            endpoint="/admin/inference-sessions",
+            subject=subject,
+            workload_type=workload_type,
+            window_seconds=window_seconds,
+            limit=limit,
+            observed_count=observed_count,
+        )
+
+    def enforce_operator_session_policy(
+        token: str | None,
+        *,
+        request: InferenceSessionRequest,
+        workload_type: str,
+    ) -> None:
+        policy = operator_session_policy_for(token)
+        if not policy:
+            return
+        subject = admin_subject(token)
+        allowed = {str(item) for item in (policy.get("allowed_workloads") or []) if str(item)}
+        if allowed and workload_type not in allowed:
+            reason = "operator_session_policy_workload_not_allowed"
+            _record_operator_session_policy_block(
+                subject=subject,
+                workload_type=workload_type,
+                reason=reason,
+            )
+            raise HTTPException(status_code=403, detail={"reason": reason})
+
+        checks = [
+            ("max_request_count", int(request.request_count or 0), "operator_session_policy_request_count_exceeded"),
+            ("max_decode_steps", int(request.decode_steps or 0), "operator_session_policy_decode_steps_exceeded"),
+            ("max_new_tokens", int(request.max_new_tokens or 0), "operator_session_policy_max_new_tokens_exceeded"),
+        ]
+        for policy_key, observed, reason in checks:
+            limit = int(policy.get(policy_key) or 0)
+            if limit > 0 and observed > limit:
+                _record_operator_session_policy_block(
+                    subject=subject,
+                    workload_type=workload_type,
+                    reason=reason,
+                    limit=limit,
+                    observed_count=observed,
+                )
+                raise HTTPException(
+                    status_code=422,
+                    detail={"reason": reason, "limit": limit, "observed_count": observed},
+                )
+
+        policy_rate_limit = int(policy.get("rate_limit") or 0)
+        policy_rate_window = float(policy.get("rate_window_seconds") or 0.0)
+        if policy_rate_limit <= 0 or policy_rate_window <= 0:
+            return
+        now = time.monotonic()
+        cutoff = now - policy_rate_window
+        policy_key = f"{subject}:operator-session-policy"
+        with session_create_history_lock:
+            history = [seen for seen in session_create_history.get(policy_key, []) if seen >= cutoff]
+            if len(history) < policy_rate_limit:
+                history.append(now)
+                session_create_history[policy_key] = history
+                return
+            observed_count = len(history)
+        reason = "operator_session_policy_rate_limited"
+        _record_operator_session_policy_block(
+            subject=subject,
+            workload_type=workload_type,
+            reason=reason,
+            window_seconds=policy_rate_window,
+            limit=policy_rate_limit,
+            observed_count=observed_count,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "reason": reason,
+                "window_seconds": policy_rate_window,
+                "limit": policy_rate_limit,
+            },
+        )
+
     def enforce_inference_session_rate_limit(token: str | None, *, workload_type: str) -> None:
         if configured_session_rate_limit <= 0 or configured_session_rate_window_seconds <= 0:
             return
@@ -1108,6 +1270,11 @@ def create_app(
             "real-llm-shard": WORKLOAD_REAL_LLM_SHARDED_INFER,
         }
         workload_type = aliases.get(requested_workload, requested_workload)
+        enforce_operator_session_policy(
+            x_crowdtensor_admin_token,
+            request=request,
+            workload_type=workload_type,
+        )
         enforce_inference_session_rate_limit(
             x_crowdtensor_admin_token,
             workload_type=workload_type,
