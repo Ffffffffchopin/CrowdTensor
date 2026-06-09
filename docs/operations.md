@@ -768,6 +768,10 @@ curl -H 'x-crowdtensor-admin-token: local-admin' \
 ```
 
 `GET /admin/results` is the safest operator view for result traceability. It includes validation, replay audit, model impact, and Miner workload score summaries, but avoids raw lease tokens, idempotency material, full result responses, and tensor deltas.
+For sessions created through `/admin/inference-sessions`, rows include a safe
+`created_by_subject` label such as `legacy-admin` or `operator:<operator_id>`
+so operators can trace usage back to the creating admin subject without
+publishing plaintext operator tokens.
 
 Admin accounting summary:
 
@@ -779,8 +783,10 @@ curl -H 'x-crowdtensor-admin-token: local-admin' \
 `GET /admin/accounting` is the safest operator view for Miner-level usage and
 Beta reward/accounting preparation. It groups safe work units by Miner and
 workload, joins redacted invite policy metadata such as trust tier, quota, and
-claim-rate limits when present, and avoids raw prompts, outputs, token ids,
-activations, lease material, plaintext tokens, and reward account values.
+claim-rate limits when present, carries `created_by_subject` on individual
+session-created rows for chargeback attribution, and avoids raw prompts,
+outputs, token ids, activations, lease material, plaintext tokens, and reward
+account values.
 
 Admin settlement draft:
 
@@ -793,7 +799,9 @@ curl -H 'x-crowdtensor-admin-token: local-admin' \
 operator accounting. It converts safe work units into reward units and optional
 microcredit amounts, joins only redacted invite policy metadata, and always
 reports `draft_only=true` plus `payment_executed=false`. It does not expose
-reward account values and does not perform billing, staking, or payouts.
+reward account values and does not perform billing, staking, or payouts. Rows
+retain `created_by_subject` when the accepted work came from an admin-created
+inference session.
 
 ## Acceptance Checks
 

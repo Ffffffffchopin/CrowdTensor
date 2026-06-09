@@ -110,6 +110,8 @@ Each result row is newest-first by `event_index` and includes safe operator fiel
 
 - `event_index`
 - `task_id`
+- `session_id`
+- `created_by_subject`
 - `status`
 - `accepted`
 - `miner_id`
@@ -128,7 +130,11 @@ Each result row is newest-first by `event_index` and includes safe operator fiel
 - `audit`
 - `miner_workload_score`
 
-The ledger intentionally avoids raw `lease_token`, idempotency keys or hashes, `result_response`, `local_delta`, `adapter_delta`, and `bundle_delta`.
+`created_by_subject` is a safe attribution label such as `legacy-admin` or
+`operator:<operator_id>` for admin-created inference sessions. It is not a
+secret and never contains the plaintext admin/operator token. The ledger
+intentionally avoids raw `lease_token`, idempotency keys or hashes,
+`result_response`, `local_delta`, `adapter_delta`, and `bundle_delta`.
 
 Response:
 
@@ -160,12 +166,13 @@ Query parameters:
 The response includes `miner_accounting_summary_v1` rows and `miner_totals`
 grouped by Miner and workload. Rows expose safe accounting fields such as
 Miner ID, workload, accepted/rejected/leased status, stage, backend, model ID,
-elapsed time, and workload-specific work units. When the Miner came from a
-registry invite, rows include redacted join policy metadata: trust tier, quota
-limit, claim-rate limit, claim-rate window, reward-account presence, and
-read-only workload. The endpoint does not expose raw prompts, generated text,
-token ids, activations, lease material, idempotency keys, plaintext Miner
-tokens, or reward account values.
+session ID, admin-created session subject (`created_by_subject`), elapsed time,
+and workload-specific work units. When the Miner came from a registry invite,
+rows include redacted join policy metadata: trust tier, quota limit,
+claim-rate limit, claim-rate window, reward-account presence, and read-only
+workload. The endpoint does not expose raw prompts, generated text, token ids,
+activations, lease material, idempotency keys, plaintext Miner tokens,
+plaintext admin/operator tokens, or reward account values.
 
 ### `GET /admin/settlement?limit=50`
 
@@ -183,8 +190,9 @@ Query parameters:
 
 The response schema is `miner_settlement_draft_v1`. It includes accepted-only
 `miner_settlement_row_v1` rows, `settlement_totals`, reward units,
-`reward_amount_microcredits`, and redacted join policy metadata when a Miner
-came from a registry invite. It is an operator accounting draft only:
+`reward_amount_microcredits`, safe admin-created session subject attribution
+(`created_by_subject`), and redacted join policy metadata when a Miner came
+from a registry invite. It is an operator accounting draft only:
 `draft_only` is true, `payment_executed` is false, and reward account values are
 never exposed.
 
@@ -219,6 +227,7 @@ Response:
   "task_id": "task-id",
   "status": "queued",
   "workload_type": "model_bundle_infer",
+  "created_by_subject": "operator:owner-a",
   "request_count": 4,
   "task_requirements": {
     "runtime": "python-cli",
@@ -234,7 +243,7 @@ Response:
 }
 ```
 
-After a compatible Miner completes the task, query `GET /admin/results?task_id=<task_id>&workload_type=model_bundle_infer&status=accepted` to retrieve the safe session summary. The ledger row remains read-only: `model_updated=false`, `model_bundle_updated=false`, raw `inference_results`, lease tokens, and idempotency material are not exposed.
+After a compatible Miner completes the task, query `GET /admin/results?task_id=<task_id>&workload_type=model_bundle_infer&status=accepted` to retrieve the safe session summary. The returned session, result ledger row, accounting row, and settlement draft row carry the same `created_by_subject` label for billing or operator chargeback attribution. The ledger row remains read-only: `model_updated=false`, `model_bundle_updated=false`, raw `inference_results`, lease tokens, plaintext operator/admin tokens, and idempotency material are not exposed.
 
 The supported user-facing client for this API is:
 

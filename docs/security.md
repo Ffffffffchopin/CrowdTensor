@@ -111,6 +111,13 @@ with `--inference-session-rate-limit` plus
 or per operator-registry subject on `/admin/inference-sessions`; blocked creates
 return `429` and append a safe `control_plane_blocked` audit event.
 
+Accepted work created by `/admin/inference-sessions` carries the same safe admin
+subject into `/admin/results`, `/admin/accounting`, and `/admin/settlement` as
+`created_by_subject`. Values are labels such as `legacy-admin` or
+`operator:<operator_id>` for audit, chargeback, and draft settlement
+attribution; plaintext admin/operator tokens remain private and are never
+included in those rows.
+
 ## What Is Protected
 
 The current controls reduce accidental public access and keep local demo Miners separated from read-only observers and admins.

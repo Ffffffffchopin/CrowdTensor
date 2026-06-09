@@ -740,6 +740,7 @@ class StateStore:
         required_runtime: str = "python-cli",
         required_backend: str = "cpu",
         required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+        created_by_subject: str = "",
     ) -> dict:
         count = max(1, min(int(request_count), 8))
         scenario = normalize_inference_scenario_id(scenario_id)
@@ -750,13 +751,16 @@ class StateStore:
         if backend != "cpu":
             raise ValueError("read-only inference sessions require backend cpu")
         with self._lock:
+            metadata = self._session_created_by_metadata(created_by_subject)
+            if scenario:
+                metadata["scenario_id"] = scenario
             task_id = self._create_task(
                 required_runtime=runtime,
                 required_backend=backend,
                 required_protocol_version=required_protocol_version,
                 workload_type=WORKLOAD_MODEL_BUNDLE_INFER,
                 inner_steps=count,
-                workload_metadata={"scenario_id": scenario} if scenario else {},
+                workload_metadata=metadata,
             )
             task = self._tasks[task_id]
             return {
@@ -777,6 +781,7 @@ class StateStore:
         required_runtime: str = "python-cli",
         required_backend: str = "cpu",
         required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+        created_by_subject: str = "",
     ) -> dict:
         count = max(1, min(int(request_count), 8))
         runtime = str(required_runtime or "").strip()
@@ -786,13 +791,15 @@ class StateStore:
         if backend != "cpu":
             raise ValueError("read-only external LLM sessions require backend cpu")
         with self._lock:
+            metadata = self._session_created_by_metadata(created_by_subject)
+            metadata["adapter_contract"] = "external_llm_runtime_v1"
             task_id = self._create_task(
                 required_runtime=runtime,
                 required_backend=backend,
                 required_protocol_version=required_protocol_version,
                 workload_type=WORKLOAD_EXTERNAL_LLM_INFER,
                 inner_steps=count,
-                workload_metadata={"adapter_contract": "external_llm_runtime_v1"},
+                workload_metadata=metadata,
             )
             task = self._tasks[task_id]
             return {
@@ -814,6 +821,7 @@ class StateStore:
         required_runtime: str = "python-cli",
         required_backend: str = "cpu",
         required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+        created_by_subject: str = "",
     ) -> dict:
         count = max(1, min(int(request_count), 8))
         scenario = normalize_inference_scenario_id(scenario_id)
@@ -825,18 +833,20 @@ class StateStore:
             raise ValueError("sharded inference sessions require backend cpu")
         with self._lock:
             session_id = new_task_id().replace("task-", "shard-session-", 1)
+            metadata = self._session_created_by_metadata(created_by_subject)
+            metadata.update({
+                "session_id": session_id,
+                "stage_id": 0,
+                "stage_count": 2,
+                "scenario_id": scenario,
+            })
             stage0_id = self._create_task(
                 required_runtime=runtime,
                 required_backend=backend,
                 required_protocol_version=required_protocol_version,
                 workload_type=WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
                 inner_steps=count,
-                workload_metadata={
-                    "session_id": session_id,
-                    "stage_id": 0,
-                    "stage_count": 2,
-                    "scenario_id": scenario,
-                },
+                workload_metadata=metadata,
             )
             task = self._tasks[stage0_id]
             return {
@@ -862,6 +872,7 @@ class StateStore:
         required_runtime: str = "python-cli",
         required_backend: str = "cpu",
         required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+        created_by_subject: str = "",
     ) -> dict:
         count = max(1, min(int(request_count), 8))
         steps = max(1, min(int(decode_steps), 4))
@@ -878,26 +889,28 @@ class StateStore:
                 count = min(count, len(requests))
                 requests = requests[:count]
             session_id = new_task_id().replace("task-", "micro-llm-shard-session-", 1)
-            stage0_id = self._create_task(
-                required_runtime=runtime,
-                required_backend=backend,
-                required_protocol_version=required_protocol_version,
-                workload_type=WORKLOAD_MICRO_LLM_SHARDED_INFER,
-                inner_steps=count,
-                workload_metadata={
-                    "session_id": session_id,
-                    "stage_id": 0,
-                    "stage_count": 2,
-                    "decode_steps": steps,
-                    "requests": requests,
+            metadata = self._session_created_by_metadata(created_by_subject)
+            metadata.update({
+                "session_id": session_id,
+                "stage_id": 0,
+                "stage_count": 2,
+                "decode_steps": steps,
+                "requests": requests,
                 "artifact_schema": micro_model.get("artifact_schema", ""),
                 "artifact_id": micro_model.get("artifact_id", ""),
                 "artifact_version": micro_model.get("artifact_version"),
                 "artifact_hash": micro_transformer_artifact_hash(micro_model),
                 "tokenizer_schema": micro_model.get("tokenizer_schema", ""),
                 "prompt_request_count": len(requests),
-            },
-        )
+            })
+            stage0_id = self._create_task(
+                required_runtime=runtime,
+                required_backend=backend,
+                required_protocol_version=required_protocol_version,
+                workload_type=WORKLOAD_MICRO_LLM_SHARDED_INFER,
+                inner_steps=count,
+                workload_metadata=metadata,
+            )
             task = self._tasks[stage0_id]
             return {
                 "schema": "micro_llm_sharded_session_v1",
@@ -931,6 +944,7 @@ class StateStore:
         llm_backend: str | None = None,
         partition_mode: str | None = None,
         required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+        created_by_subject: str = "",
     ) -> dict:
         count = max(1, min(int(request_count), 4))
         generation_limit = max(1, min(int(max_new_tokens), 32))
@@ -949,30 +963,32 @@ class StateStore:
             prompts = [str(item) for item in (prompt_texts or DEFAULT_REAL_LLM_PROMPTS) if str(item)]
             prompts = prompts[:count] or list(DEFAULT_REAL_LLM_PROMPTS[:count])
             session_id = new_task_id().replace("task-", "real-llm-shard-session-", 1)
+            metadata = self._session_created_by_metadata(created_by_subject)
+            metadata.update({
+                "session_id": session_id,
+                "stage_id": 0,
+                "stage_count": 2,
+                "requests": [],
+                "prompt_texts": prompts,
+                "max_new_tokens": generation_limit,
+                "generation_step": 0,
+                "artifact_schema": artifact.get("schema", ""),
+                "artifact_hash": artifact.get("artifact_hash", ""),
+                "model_id": artifact.get("model_id", self.real_llm_model_id),
+                "backend": artifact.get("backend", "hf_transformers_cpu"),
+                "partition_mode": resolved_partition_mode,
+                "split_index": artifact.get("split_index"),
+                "num_hidden_layers": artifact.get("num_hidden_layers"),
+                "hidden_size": artifact.get("hidden_size"),
+                "real_llm_artifact_ready": True,
+            })
             stage0_id = self._create_task(
                 required_runtime=runtime,
                 required_backend=backend,
                 required_protocol_version=required_protocol_version,
                 workload_type=WORKLOAD_REAL_LLM_SHARDED_INFER,
                 inner_steps=count,
-                workload_metadata={
-                    "session_id": session_id,
-                    "stage_id": 0,
-                    "stage_count": 2,
-                    "requests": [],
-                    "prompt_texts": prompts,
-                    "max_new_tokens": generation_limit,
-                    "generation_step": 0,
-                    "artifact_schema": artifact.get("schema", ""),
-                    "artifact_hash": artifact.get("artifact_hash", ""),
-                    "model_id": artifact.get("model_id", self.real_llm_model_id),
-                    "backend": artifact.get("backend", "hf_transformers_cpu"),
-                    "partition_mode": resolved_partition_mode,
-                    "split_index": artifact.get("split_index"),
-                    "num_hidden_layers": artifact.get("num_hidden_layers"),
-                    "hidden_size": artifact.get("hidden_size"),
-                    "real_llm_artifact_ready": True,
-                },
+                workload_metadata=metadata,
             )
             task = self._tasks[stage0_id]
             return {
@@ -998,6 +1014,10 @@ class StateStore:
                 "prompt_request_count": len(prompts),
                 "task_requirements": self._task_requirements(task),
             }
+
+    def _session_created_by_metadata(self, created_by_subject: str = "") -> dict:
+        subject = str(created_by_subject or "").strip()
+        return {"created_by_subject": subject} if subject else {}
 
     def _real_llm_stage_affinity_key(self, task: dict) -> tuple[str, int] | None:
         if self._workload_type(task) != WORKLOAD_REAL_LLM_SHARDED_INFER:
@@ -2918,6 +2938,7 @@ class StateStore:
 
     def _result_ledger_entry(self, task: dict, workload_scores: dict) -> dict:
         validation = task.get("validation") or {}
+        metadata = task.get("workload_metadata") if isinstance(task.get("workload_metadata"), dict) else {}
         workload_type = self._workload_type(task)
         miner_id = task.get("miner_id") or "anonymous"
         score = workload_scores.get(miner_id, {}).get(workload_type, {})
@@ -2925,8 +2946,9 @@ class StateStore:
         return {
             "event_index": int(task.get("result_event_index") or 0),
             "task_id": task["task_id"],
-            "session_id": (task.get("workload_metadata") or {}).get("session_id"),
-            "parent_task_id": (task.get("workload_metadata") or {}).get("parent_task_id"),
+            "session_id": metadata.get("session_id"),
+            "created_by_subject": metadata.get("created_by_subject", ""),
+            "parent_task_id": metadata.get("parent_task_id"),
             "stage_id": (task.get("validation") or {}).get("stage_id"),
             "stage_count": (task.get("validation") or {}).get("stage_count"),
             "status": task.get("status"),
@@ -2987,6 +3009,7 @@ class StateStore:
             "event_index": int(task.get("result_event_index") or 0),
             "task_id": task.get("task_id"),
             "session_id": metadata.get("session_id"),
+            "created_by_subject": metadata.get("created_by_subject", ""),
             "miner_id": str(miner_id),
             "workload_type": workload_type,
             "accounting_status": accounting_status,
@@ -3072,6 +3095,7 @@ class StateStore:
             "schema": "miner_settlement_row_v1",
             "task_id": row.get("task_id"),
             "session_id": row.get("session_id"),
+            "created_by_subject": row.get("created_by_subject", ""),
             "miner_id": row.get("miner_id"),
             "workload_type": row.get("workload_type"),
             "stage_id": row.get("stage_id"),

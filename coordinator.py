@@ -1106,6 +1106,7 @@ def create_app(
             x_crowdtensor_admin_token,
             workload_type=workload_type,
         )
+        created_by_subject = admin_subject(x_crowdtensor_admin_token)
         try:
             if workload_type == WORKLOAD_MODEL_BUNDLE_INFER:
                 session = store.create_readonly_inference_task(
@@ -1114,6 +1115,7 @@ def create_app(
                     required_runtime=request.runtime,
                     required_backend=request.backend,
                     required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                    created_by_subject=created_by_subject,
                 )
             elif workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
                 session = store.create_readonly_external_llm_task(
@@ -1121,6 +1123,7 @@ def create_app(
                     required_runtime=request.runtime,
                     required_backend=request.backend,
                     required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                    created_by_subject=created_by_subject,
                 )
             elif workload_type == WORKLOAD_SHARDED_MODEL_BUNDLE_INFER:
                 session = store.create_sharded_inference_session(
@@ -1129,6 +1132,7 @@ def create_app(
                     required_runtime=request.runtime,
                     required_backend=request.backend,
                     required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                    created_by_subject=created_by_subject,
                 )
             elif workload_type == WORKLOAD_MICRO_LLM_SHARDED_INFER:
                 session = store.create_micro_llm_sharded_inference_session(
@@ -1142,6 +1146,7 @@ def create_app(
                     required_runtime=request.runtime,
                     required_backend=request.backend,
                     required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                    created_by_subject=created_by_subject,
                 )
             elif workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER:
                 llm_backend = "hf_transformers_cuda" if request.backend == "cuda" else "hf_transformers_cpu"
@@ -1159,6 +1164,7 @@ def create_app(
                     llm_backend=llm_backend,
                     partition_mode=request.partition_mode,
                     required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                    created_by_subject=created_by_subject,
                 )
             else:
                 raise ValueError(
@@ -1177,6 +1183,7 @@ def create_app(
         return {
             **session,
             "workload_type": workload_type,
+            "created_by_subject": created_by_subject,
             "task_id": session.get("task_id") or session.get("stage_1_task_id") or session.get("stage_0_task_id"),
             "result_query": (
                 f"/admin/results?task_id={session.get('task_id') or session.get('stage_1_task_id') or session.get('stage_0_task_id')}"

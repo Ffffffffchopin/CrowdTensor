@@ -997,7 +997,11 @@ class StateStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
 
-            session = store.create_readonly_inference_task(request_count=3, scenario_id="route-baseline")
+            session = store.create_readonly_inference_task(
+                request_count=3,
+                scenario_id="route-baseline",
+                created_by_subject="operator:owner-a",
+            )
             claim = store.claim_task("admin-session-miner", capabilities=self._model_bundle_inference_capabilities())
             inner_result = run_model_bundle_inference(claim["workload_spec"])
             result = store.complete_task(
@@ -1027,7 +1031,17 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(row["validation"]["scenario_id"], "route-baseline")
             self.assertEqual(row["session_metrics"]["request_count"], 3)
             self.assertEqual(row["session_metrics"]["scenario_id"], "route-baseline")
+            self.assertEqual(row["created_by_subject"], "operator:owner-a")
             self.assertFalse(row["model_updated"])
+            accounting = store.miner_accounting_summary(miner_id="admin-session-miner")
+            self.assertEqual(accounting["rows"][0]["created_by_subject"], "operator:owner-a")
+            settlement = store.miner_settlement_draft(
+                miner_id="admin-session-miner",
+                unit_price_microcredits=2,
+            )
+            self.assertEqual(settlement["rows"][0]["created_by_subject"], "operator:owner-a")
+            self.assertEqual(settlement["rows"][0]["reward_unit"], "request")
+            self.assertEqual(settlement["rows"][0]["reward_amount_microcredits"], 6)
 
     def test_create_readonly_external_llm_task_enqueues_cpu_read_only_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

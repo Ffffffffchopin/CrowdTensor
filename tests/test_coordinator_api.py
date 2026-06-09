@@ -1769,6 +1769,96 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertNotIn("lease_token", public_text)
             self.assertNotIn("inference_results", public_text)
 
+    def test_operator_created_inference_session_is_attributed_in_accounting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_operator_registry(
+                Path(tmp) / "operators.json",
+                [
+                    {
+                        "operator_id": "owner-a",
+                        "token": hash_token("owner-token"),
+                        "roles": ["owner"],
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                admin_token="",
+                operator_token_registry=registry_path,
+            )
+            admin_inference = endpoint_for(app, "/admin/inference-sessions", "POST")
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            admin_results = endpoint_for(app, "/admin/results", "GET")
+            admin_accounting = endpoint_for(app, "/admin/accounting", "GET")
+            admin_settlement = endpoint_for(app, "/admin/settlement", "GET")
+            request_type = request_model(admin_inference)
+
+            session = admin_inference(
+                request_type(request_count=2, scenario_id="route-baseline"),
+                x_crowdtensor_admin_token="owner-token",
+            )
+            self.assertEqual(session["created_by_subject"], "operator:owner-a")
+
+            claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="operator-created-session-miner",
+                    capabilities={
+                        "runtime": "python-cli",
+                        "backend": "cpu",
+                        "protocol_version": "runtime_contract_v1",
+                        "supported_workloads": [WORKLOAD_MODEL_BUNDLE_INFER],
+                    },
+                )
+            )
+            inner_result = run_model_bundle_inference(claim["workload_spec"])
+            result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    idempotency_key="operator-created-session-key",
+                    inference_result=inner_result["inference_result"],
+                    inference_results=inner_result["inference_results"],
+                    metrics=inner_result,
+                ),
+            )
+
+            ledger = admin_results(
+                limit=10,
+                status="accepted",
+                task_id=session["task_id"],
+                x_crowdtensor_admin_token="owner-token",
+            )
+            accounting = admin_accounting(
+                limit=10,
+                status="accepted",
+                miner_id="operator-created-session-miner",
+                x_crowdtensor_admin_token="owner-token",
+            )
+            settlement = admin_settlement(
+                limit=10,
+                miner_id="operator-created-session-miner",
+                unit_price_microcredits=5,
+                x_crowdtensor_admin_token="owner-token",
+            )
+            payload = json.dumps(
+                {"ledger": ledger, "accounting": accounting, "settlement": settlement},
+                sort_keys=True,
+            )
+
+            self.assertEqual(ledger["results"][0]["created_by_subject"], "operator:owner-a")
+            self.assertEqual(accounting["rows"][0]["created_by_subject"], "operator:owner-a")
+            self.assertEqual(settlement["rows"][0]["created_by_subject"], "operator:owner-a")
+            self.assertEqual(settlement["rows"][0]["reward_unit"], "request")
+            self.assertEqual(settlement["rows"][0]["reward_amount_microcredits"], 10)
+            self.assertNotIn("owner-token", payload)
+            self.assertNotIn("operator-created-session-key", payload)
+            self.assertNotIn("lease_token", payload)
+
     def test_admin_inference_session_can_enqueue_external_llm_read_only_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(
