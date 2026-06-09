@@ -106,7 +106,9 @@ operator-side dry-run and submit scripts.
 Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its private `miner.join-code.txt`,
-`miner.invite.json`, `check_join.sh`, `support_bundle.sh`, and `join.sh`, to each Miner host. Stage
+`miner.invite.json`, `doctor.sh`, `check_join.sh`, `support_bundle.sh`, and `join.sh`, to each Miner host. Stage
+`doctor.sh` writes `miner_support_bundle.json` and checks admission without
+starting the Miner. Stage
 `check_join.sh` uses `crowdtensor join --invite-code-file miner.join-code.txt`
 with admission checks but without `--run`; stage `join.sh` uses the same private
 join code with `--run`. The join code contains the plaintext Miner token and
@@ -152,6 +154,7 @@ bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
 scripts or public Markdown, including `check_route_script_ready`,
 `operator_status_script_ready`,
+`stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, and
 `stage_package_archives_ready` plus `stage_archive_runner_scripts_ready` and
 `stage_handoff_checksums_ready`. It also checks

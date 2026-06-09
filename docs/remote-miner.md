@@ -9,7 +9,7 @@ emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_control_plane.sh`,
 optional `start_tunnel.sh`, `start_discovery.sh`, `start_coordinator.sh`, stage
-`check_join.sh` / `support_bundle.sh` / `join.sh` files, private `miner.join-code.txt` files,
+`doctor.sh` / `check_join.sh` / `support_bundle.sh` / `join.sh` files, private `miner.join-code.txt` files,
 private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
 matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
@@ -32,9 +32,10 @@ and copy only the matching private stage archive plus `stageX.run-miner.sh` and
 `stageX.handoff.sha256` to each Miner host. The runner verifies the checksum,
 validates and extracts the archive, and supports the recommended first run
 `./stageX.run-miner.sh --doctor`, then `--check-only`, then `--run`. It writes
-diagnostics, runs `check_join.sh`, then starts `join.sh`. Stage `check_join.sh`
-uses the private invite code file to verify Coordinator reachability and
-admission without starting the Miner; stage `join.sh` uses the same path with
+diagnostics, runs `check_join.sh`, then starts `join.sh`. Stage `doctor.sh`
+writes `miner_support_bundle.json` and checks admission without starting the
+Miner. Stage `check_join.sh` uses the private invite code file to verify
+Coordinator reachability and admission without starting the Miner; stage `join.sh` uses the same path with
 `--run`, while `miner.invite.json` remains private compatibility material. When
 route or admission checks fail, stage `support_bundle.sh` writes safe
 `miner_support_bundle.json` diagnostics to share instead of raw
@@ -55,6 +56,7 @@ it emits `crowdtensor_swarm_bootstrap_check_v1` and verifies required files,
 registries, env separation, stage invite Coordinator URL consistency,
 non-local-only remote route readiness via `coordinator_url_remote_route_ready`,
 stage join-code consistency, `stage_check_join_scripts_ready`,
+`stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, `stage_package_archives_ready`,
 `stage_archive_runner_scripts_ready`, `stage_handoff_checksums_ready`, and
 plaintext token leakage in scripts or public Markdown.

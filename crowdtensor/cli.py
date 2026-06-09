@@ -10896,6 +10896,7 @@ def _write_stage_package_archive(stage_dir: Path, archive_path: Path) -> None:
     package_files = [
         "miner.invite.json",
         "miner.join-code.txt",
+        "doctor.sh",
         "check_join.sh",
         "support_bundle.sh",
         "join.sh",
@@ -11093,6 +11094,7 @@ stage = sys.argv[3]
 expected = {{
     f"{{stage}}/miner.invite.json": 0o600,
     f"{{stage}}/miner.join-code.txt": 0o600,
+    f"{{stage}}/doctor.sh": 0o700,
     f"{{stage}}/check_join.sh": 0o700,
     f"{{stage}}/support_bundle.sh": 0o700,
     f"{{stage}}/join.sh": 0o700,
@@ -11135,14 +11137,47 @@ case "$MODE" in
     exec "$STAGE_DIR/support_bundle.sh" "$@"
     ;;
   doctor)
-    echo "Writing $STAGE Miner diagnostic support bundle..."
-    exec "$STAGE_DIR/support_bundle.sh" "$@"
+    exec "$STAGE_DIR/doctor.sh" "$@"
     ;;
   run)
     "$STAGE_DIR/check_join.sh" "$@"
     exec "$STAGE_DIR/join.sh" "$@"
     ;;
 esac
+"""
+
+
+def _bootstrap_stage_doctor_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+JOIN_CODE_FILE="${CROWDTENSOR_MINER_INVITE_CODE_FILE:-$SCRIPT_DIR/miner.join-code.txt}"
+SUPPORT_BUNDLE="$SCRIPT_DIR/support_bundle.sh"
+CHECK_JOIN="$SCRIPT_DIR/check_join.sh"
+
+echo "CrowdTensor Miner doctor"
+echo "This diagnostic writes miner_support_bundle.json and checks admission; it does not start the Miner."
+
+if [ ! -f "$JOIN_CODE_FILE" ]; then
+  echo "missing private Miner join code file: $JOIN_CODE_FILE" >&2
+  exit 1
+fi
+if [ ! -x "$SUPPORT_BUNDLE" ]; then
+  echo "missing executable support bundle helper: $SUPPORT_BUNDLE" >&2
+  exit 1
+fi
+if [ ! -x "$CHECK_JOIN" ]; then
+  echo "missing executable join preflight helper: $CHECK_JOIN" >&2
+  exit 1
+fi
+
+"$SUPPORT_BUNDLE"
+if [ "${CROWDTENSOR_SKIP_JOIN_PREFLIGHT:-0}" = "1" ]; then
+  echo "Skipped Miner admission check because CROWDTENSOR_SKIP_JOIN_PREFLIGHT=1."
+  exit 0
+fi
+exec "$CHECK_JOIN" "$@"
 """
 
 
@@ -11487,6 +11522,7 @@ bundle = {
     "files": {
         "miner_invite": file_entry("miner.invite.json", private=True),
         "miner_join_code": file_entry("miner.join-code.txt", private=True),
+        "doctor": file_entry("doctor.sh", executable=True),
         "check_join": file_entry("check_join.sh", executable=True),
         "support_bundle": file_entry("support_bundle.sh", executable=True),
         "join": file_entry("join.sh", executable=True),
@@ -11514,6 +11550,12 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
         f"# CrowdTensor {stage} Miner Join",
         "",
         "This directory is private. It contains the stage-specific Miner invite and opaque join code.",
+        "",
+        "Run the Miner-side doctor first. It writes a public-safe support bundle and checks admission without starting the Miner:",
+        "",
+        "```bash",
+        "./doctor.sh",
+        "```",
         "",
         "Check the Coordinator route and admission policy without starting the Miner:",
         "",
@@ -11927,10 +11969,12 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("handoff_doctor", "")),
         shlex.quote(scripts.get("operator_status", "")),
+        shlex.quote(scripts.get("stage0_doctor", "")),
         shlex.quote(scripts.get("stage0_check_join", "")),
         shlex.quote(scripts.get("stage0_support_bundle", "")),
         shlex.quote(scripts.get("stage0_join", "")),
         shlex.quote(scripts.get("stage0_run_miner", "")),
+        shlex.quote(scripts.get("stage1_doctor", "")),
         shlex.quote(scripts.get("stage1_check_join", "")),
         shlex.quote(scripts.get("stage1_support_bundle", "")),
         shlex.quote(scripts.get("stage1_join", "")),
@@ -12007,6 +12051,8 @@ def _bootstrap_handoff_summary(
             "discovery": scripts.get("start_discovery", ""),
             "coordinator": scripts.get("start_coordinator", ""),
             "check_route": scripts.get("check_route", ""),
+            "stage0_doctor": scripts.get("stage0_doctor", ""),
+            "stage1_doctor": scripts.get("stage1_doctor", ""),
             "stage0_check_join": scripts.get("stage0_check_join", ""),
             "stage1_check_join": scripts.get("stage1_check_join", ""),
             "stage0_support_bundle": scripts.get("stage0_support_bundle", ""),
@@ -12359,6 +12405,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         serve_command.append("--i-understand-public-bind")
     serve_command.append("--run")
     stage_scripts: dict[str, Path] = {}
+    stage_doctor_scripts: dict[str, Path] = {}
     stage_check_scripts: dict[str, Path] = {}
     stage_support_scripts: dict[str, Path] = {}
     stage_archives: dict[str, Path] = {}
@@ -12379,6 +12426,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         stage_join_code = stage_dir / "miner.join-code.txt"
         stage_join_code.write_text(str(invite.get("join_invite_code") or "").strip() + "\n", encoding="utf-8")
         stage_join_code.chmod(0o600)
+        doctor_script = stage_dir / "doctor.sh"
+        _write_executable(doctor_script, _bootstrap_stage_doctor_script())
         check_join_script = stage_dir / "check_join.sh"
         _write_executable(check_join_script, _bootstrap_stage_check_join_script())
         support_bundle_script = stage_dir / "support_bundle.sh"
@@ -12389,6 +12438,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             _bootstrap_stage_join_markdown(stage=stage, coordinator_url=coordinator_url),
             encoding="utf-8",
         )
+        stage_doctor_scripts[stage] = doctor_script
         stage_check_scripts[stage] = check_join_script
         stage_support_scripts[stage] = support_bundle_script
         stage_scripts[stage] = join_script
@@ -12505,10 +12555,12 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "verify_bootstrap": str(verify_bootstrap_script),
         "handoff_doctor": str(handoff_doctor_script),
         "operator_status": str(operator_status_script),
+        "stage0_doctor": str(stage_doctor_scripts["stage0"]),
         "stage0_check_join": str(stage_check_scripts["stage0"]),
         "stage0_support_bundle": str(stage_support_scripts["stage0"]),
         "stage0_join": str(stage_scripts["stage0"]),
         "stage0_run_miner": str(stage_runner_scripts["stage0"]),
+        "stage1_doctor": str(stage_doctor_scripts["stage1"]),
         "stage1_check_join": str(stage_check_scripts["stage1"]),
         "stage1_support_bundle": str(stage_support_scripts["stage1"]),
         "stage1_join": str(stage_scripts["stage1"]),
@@ -12637,8 +12689,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 "check operator status",
                 [str(operator_status_script)],
             ),
+            command_entry("doctor stage0 Miner host", [str(stage_doctor_scripts["stage0"])]),
             command_entry("check stage0 Miner join", stage_check_commands["stage0"]),
             command_entry("start stage0 Miner", stage_join_commands["stage0"]),
+            command_entry("doctor stage1 Miner host", [str(stage_doctor_scripts["stage1"])]),
             command_entry("check stage1 Miner join", stage_check_commands["stage1"]),
             command_entry("start stage1 Miner", stage_join_commands["stage1"]),
             command_entry("check generation route", dry_run_command),
@@ -12660,7 +12714,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         },
         "operator_action": (
             "Run start_control_plane.sh on the Coordinator host, run check_route.sh, then run verify_bootstrap.sh for live no-claim admission "
-            "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, then run the dry-run generate "
+            "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, run doctor.sh on each Miner host, then run the dry-run generate "
             "preflight and operator_status.sh before submitting generation."
         ),
     }
@@ -12705,30 +12759,38 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[7]["command_line"] = command_line([str(operator_status_script)])
     next_commands[7]["requires_files"] = [str(operator_env_path)]
     next_commands[7]["script"] = str(operator_status_script)
-    next_commands[8]["command"] = [str(stage_check_scripts["stage0"])]
-    next_commands[8]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
+    next_commands[8]["command"] = [str(stage_doctor_scripts["stage0"])]
+    next_commands[8]["command_line"] = command_line([str(stage_doctor_scripts["stage0"])])
     next_commands[8]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[8]["script"] = str(stage_check_scripts["stage0"])
-    next_commands[9]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[9]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[8]["script"] = str(stage_doctor_scripts["stage0"])
+    next_commands[9]["command"] = [str(stage_check_scripts["stage0"])]
+    next_commands[9]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
     next_commands[9]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[9]["script"] = str(stage_scripts["stage0"])
-    next_commands[10]["command"] = [str(stage_check_scripts["stage1"])]
-    next_commands[10]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
-    next_commands[10]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[10]["script"] = str(stage_check_scripts["stage1"])
-    next_commands[11]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[11]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[9]["script"] = str(stage_check_scripts["stage0"])
+    next_commands[10]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[10]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[10]["requires_files"] = [str(stage_join_code_files["stage0"])]
+    next_commands[10]["script"] = str(stage_scripts["stage0"])
+    next_commands[11]["command"] = [str(stage_doctor_scripts["stage1"])]
+    next_commands[11]["command_line"] = command_line([str(stage_doctor_scripts["stage1"])])
     next_commands[11]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[11]["script"] = str(stage_scripts["stage1"])
-    next_commands[12]["command"] = [str(check_generation_script)]
-    next_commands[12]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[12]["requires_files"] = [str(operator_env_path)]
-    next_commands[12]["script"] = str(check_generation_script)
-    next_commands[13]["command"] = [str(submit_generation_script)]
-    next_commands[13]["command_line"] = command_line([str(submit_generation_script)])
-    next_commands[13]["requires_files"] = [str(operator_env_path)]
-    next_commands[13]["script"] = str(submit_generation_script)
+    next_commands[11]["script"] = str(stage_doctor_scripts["stage1"])
+    next_commands[12]["command"] = [str(stage_check_scripts["stage1"])]
+    next_commands[12]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
+    next_commands[12]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[12]["script"] = str(stage_check_scripts["stage1"])
+    next_commands[13]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[13]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[13]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[13]["script"] = str(stage_scripts["stage1"])
+    next_commands[14]["command"] = [str(check_generation_script)]
+    next_commands[14]["command_line"] = command_line([str(check_generation_script)])
+    next_commands[14]["requires_files"] = [str(operator_env_path)]
+    next_commands[14]["script"] = str(check_generation_script)
+    next_commands[15]["command"] = [str(submit_generation_script)]
+    next_commands[15]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[15]["requires_files"] = [str(operator_env_path)]
+    next_commands[15]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -13055,6 +13117,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "runbook": output_dir / "SWARM_BOOTSTRAP.md",
         "stage0_invite": output_dir / "stage0" / "miner.invite.json",
         "stage0_join_code": output_dir / "stage0" / "miner.join-code.txt",
+        "stage0_doctor_script": output_dir / "stage0" / "doctor.sh",
         "stage0_check_join_script": output_dir / "stage0" / "check_join.sh",
         "stage0_support_bundle_script": output_dir / "stage0" / "support_bundle.sh",
         "stage0_join_script": output_dir / "stage0" / "join.sh",
@@ -13064,6 +13127,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "stage0_handoff_checksum": output_dir / "stage0.handoff.sha256",
         "stage1_invite": output_dir / "stage1" / "miner.invite.json",
         "stage1_join_code": output_dir / "stage1" / "miner.join-code.txt",
+        "stage1_doctor_script": output_dir / "stage1" / "doctor.sh",
         "stage1_check_join_script": output_dir / "stage1" / "check_join.sh",
         "stage1_support_bundle_script": output_dir / "stage1" / "support_bundle.sh",
         "stage1_join_script": output_dir / "stage1" / "join.sh",
@@ -13195,9 +13259,11 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["operator_status_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
+        required_files["stage0_doctor_script"],
         required_files["stage0_check_join_script"],
         required_files["stage0_support_bundle_script"],
         required_files["stage0_join_script"],
+        required_files["stage1_doctor_script"],
         required_files["stage1_check_join_script"],
         required_files["stage1_support_bundle_script"],
         required_files["stage1_join_script"],
@@ -13399,6 +13465,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
 
     stage0_script_text, _ = _read_bootstrap_text(required_files["stage0_join_script"])
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
+    stage0_doctor_script_text, _ = _read_bootstrap_text(required_files["stage0_doctor_script"])
+    stage1_doctor_script_text, _ = _read_bootstrap_text(required_files["stage1_doctor_script"])
     stage0_check_script_text, _ = _read_bootstrap_text(required_files["stage0_check_join_script"])
     stage1_check_script_text, _ = _read_bootstrap_text(required_files["stage1_check_join_script"])
     stage0_support_script_text, _ = _read_bootstrap_text(required_files["stage0_support_bundle_script"])
@@ -13439,12 +13507,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["stage_handoff_manifest"],
         required_files["stage0_runner_script"],
         required_files["stage0_handoff_checksum"],
+        required_files["stage0_doctor_script"],
         required_files["stage0_check_join_script"],
         required_files["stage0_support_bundle_script"],
         required_files["stage0_join_script"],
         required_files["stage0_join_doc"],
         required_files["stage1_runner_script"],
         required_files["stage1_handoff_checksum"],
+        required_files["stage1_doctor_script"],
         required_files["stage1_check_join_script"],
         required_files["stage1_support_bundle_script"],
         required_files["stage1_join_script"],
@@ -13462,6 +13532,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     expected_archive_members = {
         "miner.invite.json",
         "miner.join-code.txt",
+        "doctor.sh",
         "check_join.sh",
         "support_bundle.sh",
         "join.sh",
@@ -13485,11 +13556,13 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     archive_modes_ready = bool(
         stage0_archive_modes.get("stage0/miner.invite.json") == "0o600"
         and stage0_archive_modes.get("stage0/miner.join-code.txt") == "0o600"
+        and stage0_archive_modes.get("stage0/doctor.sh") == "0o700"
         and stage0_archive_modes.get("stage0/check_join.sh") == "0o700"
         and stage0_archive_modes.get("stage0/support_bundle.sh") == "0o700"
         and stage0_archive_modes.get("stage0/join.sh") == "0o700"
         and stage1_archive_modes.get("stage1/miner.invite.json") == "0o600"
         and stage1_archive_modes.get("stage1/miner.join-code.txt") == "0o600"
+        and stage1_archive_modes.get("stage1/doctor.sh") == "0o700"
         and stage1_archive_modes.get("stage1/check_join.sh") == "0o700"
         and stage1_archive_modes.get("stage1/support_bundle.sh") == "0o700"
         and stage1_archive_modes.get("stage1/join.sh") == "0o700"
@@ -13562,6 +13635,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage_scripts_reference_operator_env = (
         "operator.private.env" in stage0_script_text
         or "operator.private.env" in stage1_script_text
+        or "operator.private.env" in stage0_doctor_script_text
+        or "operator.private.env" in stage1_doctor_script_text
         or "operator.private.env" in stage0_check_script_text
         or "operator.private.env" in stage1_check_script_text
         or "operator.private.env" in stage0_support_script_text
@@ -13570,6 +13645,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         or "operator.private.env" in stage1_runner_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage1_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage0_doctor_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage1_doctor_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_check_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage1_check_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_support_script_text
@@ -13607,6 +13684,24 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "--run" not in stage0_check_script_text
         and "--run" not in stage1_check_script_text
     )
+    stage_doctor_scripts_ready = (
+        "CrowdTensor Miner doctor" in stage0_doctor_script_text
+        and "CrowdTensor Miner doctor" in stage1_doctor_script_text
+        and "miner_support_bundle.json" in stage0_doctor_script_text
+        and "miner_support_bundle.json" in stage1_doctor_script_text
+        and "support_bundle.sh" in stage0_doctor_script_text
+        and "support_bundle.sh" in stage1_doctor_script_text
+        and "check_join.sh" in stage0_doctor_script_text
+        and "check_join.sh" in stage1_doctor_script_text
+        and "miner.join-code.txt" in stage0_doctor_script_text
+        and "miner.join-code.txt" in stage1_doctor_script_text
+        and "does not start the Miner" in stage0_doctor_script_text
+        and "does not start the Miner" in stage1_doctor_script_text
+        and "CROWDTENSOR_SKIP_JOIN_PREFLIGHT" in stage0_doctor_script_text
+        and "CROWDTENSOR_SKIP_JOIN_PREFLIGHT" in stage1_doctor_script_text
+        and "--run" not in stage0_doctor_script_text
+        and "--run" not in stage1_doctor_script_text
+    )
     stage_support_bundle_scripts_ready = (
         "crowdtensor_miner_stage_support_bundle_v1" in stage0_support_script_text
         and "crowdtensor_miner_stage_support_bundle_v1" in stage1_support_script_text
@@ -13642,6 +13737,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "tarfile.open" in stage1_runner_script_text
         and "stage archive members mismatch" in stage0_runner_script_text
         and "stage archive members mismatch" in stage1_runner_script_text
+        and "doctor.sh" in stage0_runner_script_text
+        and "doctor.sh" in stage1_runner_script_text
         and "check_join.sh" in stage0_runner_script_text
         and "check_join.sh" in stage1_runner_script_text
         and "join.sh" in stage0_runner_script_text
@@ -13664,6 +13761,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         stage_check_join_scripts_ready,
         detail="stage check_join.sh scripts must use private miner.join-code.txt and must not run the Miner",
         diagnosis_code="bootstrap_stage_check_join_script_invalid",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_doctor_scripts_ready",
+        stage_doctor_scripts_ready,
+        detail="stage doctor.sh scripts must collect safe diagnostics and run admission preflight without starting the Miner",
+        diagnosis_code="bootstrap_stage_doctor_script_invalid",
     )
     _bootstrap_check_item(
         checks,
@@ -13909,10 +14014,12 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "verify_bootstrap": str(required_files["verify_bootstrap_script"]),
                 "handoff_doctor": str(required_files["handoff_doctor_script"]),
                 "operator_status": str(required_files["operator_status_script"]),
+                "stage0_doctor": str(required_files["stage0_doctor_script"]),
                 "stage0_check_join": str(required_files["stage0_check_join_script"]),
                 "stage0_support_bundle": str(required_files["stage0_support_bundle_script"]),
                 "stage0_join": str(required_files["stage0_join_script"]),
                 "stage0_run_miner": str(required_files["stage0_runner_script"]),
+                "stage1_doctor": str(required_files["stage1_doctor_script"]),
                 "stage1_check_join": str(required_files["stage1_check_join_script"]),
                 "stage1_support_bundle": str(required_files["stage1_support_bundle_script"]),
                 "stage1_join": str(required_files["stage1_join_script"]),
@@ -13956,6 +14063,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
             "stage_reward_account_metadata_ready": stage_reward_account_metadata_ready,
+            "stage_doctor_scripts_ready": stage_doctor_scripts_ready,
             "stage_check_join_scripts_ready": stage_check_join_scripts_ready,
             "stage_support_bundle_scripts_ready": stage_support_bundle_scripts_ready,
             "stage_archive_runner_scripts_ready": stage_archive_runner_scripts_ready,
