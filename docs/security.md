@@ -257,6 +257,17 @@ account values, raw prompts, outputs, and lease material out of the generated
 JSON and Markdown. It is still draft-only and never executes billing, staking,
 or payouts.
 
+For trust operations, `crowdtensor trust` can read `/state` with an observer
+token to write `crowdtensor_trust_cli_v1` artifacts summarizing automatic
+quarantine, manual trust overrides, effective blocked Miner/workload pairs, and
+blocked-claim audit counters. With `--mode block`, `--mode allow`, or
+`--mode reset`, it calls `/admin/trust-overrides` and requires a legacy admin
+token or an operator token with `owner`/`admin` access. Generated trust reports
+redact admin credentials, observer credentials, raw override reason text, lease
+material, prompts, and outputs. This is a manual abuse-response control, not
+account management, Sybil resistance, staking, slashing, or automatic economic
+penalties.
+
 ## What Is Protected
 
 The current controls reduce accidental public access and keep local demo Miners separated from read-only observers and admins.

@@ -1692,6 +1692,275 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(admin_token, rendered)
         self.assertNotIn(reward_account, rendered)
 
+    def test_operator_trust_reports_state_without_admin_token(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "trust"
+        observer_token = "observer-trust-secret"
+        calls: list[dict[str, object]] = []
+
+        def fake_request(method, base_url, path, payload=None, *, admin_token="", miner_token="", observer_token="", timeout=10.0):
+            calls.append({
+                "method": method,
+                "base_url": base_url,
+                "path": path,
+                "payload": payload,
+                "admin_token": admin_token,
+                "miner_token": miner_token,
+                "observer_token": observer_token,
+                "timeout": timeout,
+            })
+            self.assertEqual(path, "/state")
+            return {
+                "event_index": 12,
+                "miner_workload_scores": {
+                    "bad-miner": {
+                        "cpu_lora_mock": {
+                            "accepted": 1,
+                            "rejected": 2,
+                            "consecutive_rejections": 2,
+                            "score": -3.0,
+                            "avg_staleness": 0.0,
+                            "last_seen_at": 123.0,
+                            "last_rejection_code": "adapter_delta_norm_too_large",
+                            "quarantined": True,
+                        }
+                    }
+                },
+                "quarantined_miners": {
+                    "bad-miner": {
+                        "cpu_lora_mock": {
+                            "score": -3.0,
+                            "rejected": 2,
+                            "consecutive_rejections": 2,
+                            "last_rejection_code": "adapter_delta_norm_too_large",
+                        }
+                    }
+                },
+                "effective_quarantined_miners": {
+                    "bad-miner": {"cpu_lora_mock": {"score": -3.0}}
+                },
+                "manual_blocked_miners": {},
+                "miner_trust_overrides": {},
+                "blocked_claims": 1,
+                "last_blocked_claim": {
+                    "event_index": 11,
+                    "miner_id": "bad-miner",
+                    "capabilities": {"runtime": "python-cli", "private_note": "do-not-copy"},
+                    "blocked_workloads": ["cpu_lora_mock"],
+                    "reason": "miner quarantined for workload",
+                    "queued_task_count": 1,
+                    "compatible_task_count": 0,
+                    "ts": 122.0,
+                },
+                "incompatible_claims": 0,
+            }
+
+        args = cli.parse_args([
+            "trust",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--observer-token",
+            observer_token,
+            "--miner-id",
+            "bad-miner",
+            "--workload-type",
+            "cpu_lora_mock",
+            "--limit",
+            "10",
+            "--http-timeout",
+            "6",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_operator_trust(args)
+
+        saved_json = (output_dir / "trust_summary.json").read_text(encoding="utf-8")
+        saved_md = (output_dir / "trust_summary.md").read_text(encoding="utf-8")
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "crowdtensor_trust_cli_v1")
+        self.assertIn("trust_state_summary_ready", report["diagnosis_codes"])
+        self.assertIn("trust_auto_quarantine_present", report["diagnosis_codes"])
+        self.assertIn("blocked_claim_audit_ready", report["diagnosis_codes"])
+        self.assertEqual(report["trust_summary"]["auto_quarantined_count"], 1)
+        self.assertEqual(report["trust_summary"]["effective_blocked_count"], 1)
+        self.assertEqual(report["trust_summary"]["rows"][0]["status"], "auto_quarantined")
+        self.assertEqual(report["trust_summary"]["last_blocked_claim"]["miner_id"], "bad-miner")
+        self.assertNotIn("capabilities", report["trust_summary"]["last_blocked_claim"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["method"], "GET")
+        self.assertEqual(calls[0]["base_url"], "https://ct.example")
+        self.assertEqual(calls[0]["observer_token"], observer_token)
+        self.assertFalse(report["safety"]["observer_credentials_public"])
+        self.assertFalse(report["safety"]["claim_private_material_public"])
+        self.assertNotIn(observer_token, encoded)
+        self.assertNotIn(observer_token, saved_json)
+        self.assertNotIn(observer_token, saved_md)
+        self.assertNotIn("do-not-copy", encoded)
+        self.assertIn("CrowdTensor Trust Control", saved_md)
+
+        with io.StringIO() as buffer, contextlib.redirect_stdout(buffer):
+            cli.print_operator_trust(report)
+            rendered = buffer.getvalue()
+
+        self.assertIn("CrowdTensor trust", rendered)
+        self.assertIn("auto_quarantined: 1", rendered)
+        self.assertNotIn(observer_token, rendered)
+
+    def test_operator_trust_applies_override_and_redacts_reason(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "trust-override"
+        admin_token = "trust-admin-secret"
+        observer_token = "trust-observer-secret"
+        override_reason = "private incident note"
+        calls: list[dict[str, object]] = []
+
+        def fake_request(method, base_url, path, payload=None, *, admin_token="", miner_token="", observer_token="", timeout=10.0):
+            calls.append({
+                "method": method,
+                "base_url": base_url,
+                "path": path,
+                "payload": payload,
+                "admin_token": admin_token,
+                "miner_token": miner_token,
+                "observer_token": observer_token,
+                "timeout": timeout,
+            })
+            if path == "/admin/trust-overrides":
+                return {
+                    "accepted": True,
+                    "miner_id": "stage0-miner",
+                    "workload_type": "real_llm_sharded_infer",
+                    "mode": "block",
+                    "reason": override_reason,
+                    "event_index": 21,
+                }
+            if path == "/state":
+                return {
+                    "event_index": 21,
+                    "miner_workload_scores": {},
+                    "quarantined_miners": {},
+                    "effective_quarantined_miners": {
+                        "stage0-miner": {
+                            "real_llm_sharded_infer": {
+                                "manual_block": True,
+                                "reason": override_reason,
+                                "event_index": 21,
+                            }
+                        }
+                    },
+                    "manual_blocked_miners": {
+                        "stage0-miner": {
+                            "real_llm_sharded_infer": {
+                                "mode": "block",
+                                "reason": override_reason,
+                                "event_index": 21,
+                            }
+                        }
+                    },
+                    "miner_trust_overrides": {
+                        "stage0-miner": {
+                            "real_llm_sharded_infer": {
+                                "mode": "block",
+                                "reason": override_reason,
+                                "event_index": 21,
+                            }
+                        }
+                    },
+                    "blocked_claims": 0,
+                    "last_blocked_claim": None,
+                    "incompatible_claims": 0,
+                }
+            raise AssertionError(path)
+
+        args = cli.parse_args([
+            "trust",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--admin-token",
+            admin_token,
+            "--observer-token",
+            observer_token,
+            "--miner-id",
+            "stage0-miner",
+            "--workload-type",
+            "real_llm_sharded_infer",
+            "--mode",
+            "block",
+            "--reason",
+            override_reason,
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_operator_trust(args)
+
+        saved_json = (output_dir / "trust_summary.json").read_text(encoding="utf-8")
+        saved_md = (output_dir / "trust_summary.md").read_text(encoding="utf-8")
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("trust_override_applied", report["diagnosis_codes"])
+        self.assertIn("trust_override_block_ready", report["diagnosis_codes"])
+        self.assertIn("trust_manual_blocks_present", report["diagnosis_codes"])
+        self.assertEqual(report["override_response"]["mode"], "block")
+        self.assertTrue(report["override_response"]["reason_present"])
+        self.assertNotIn("reason", report["override_response"])
+        self.assertEqual(report["trust_summary"]["rows"][0]["status"], "manual_blocked")
+        self.assertEqual(calls[0]["method"], "POST")
+        self.assertEqual(calls[0]["path"], "/admin/trust-overrides")
+        self.assertEqual(calls[0]["payload"]["mode"], "block")
+        self.assertEqual(calls[0]["payload"]["reason"], override_reason)
+        self.assertEqual(calls[0]["admin_token"], admin_token)
+        self.assertEqual(calls[1]["method"], "GET")
+        self.assertEqual(calls[1]["observer_token"], observer_token)
+        self.assertFalse(report["safety"]["admin_credentials_public"])
+        self.assertFalse(report["safety"]["override_reason_public"])
+        self.assertNotIn(admin_token, encoded)
+        self.assertNotIn(observer_token, encoded)
+        self.assertNotIn(override_reason, encoded)
+        self.assertNotIn(admin_token, saved_json)
+        self.assertNotIn(observer_token, saved_json)
+        self.assertNotIn(override_reason, saved_json)
+        self.assertNotIn(override_reason, saved_md)
+
+        with io.StringIO() as buffer, contextlib.redirect_stdout(buffer):
+            cli.print_operator_trust(report)
+            rendered = buffer.getvalue()
+
+        self.assertIn("override: accepted=True", rendered)
+        self.assertNotIn(admin_token, rendered)
+        self.assertNotIn(override_reason, rendered)
+
+    def test_operator_trust_requires_admin_token_for_override_before_request(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "trust-missing-token"
+        args = cli.parse_args([
+            "trust",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--miner-id",
+            "stage0-miner",
+            "--workload-type",
+            "real_llm_sharded_infer",
+            "--mode",
+            "allow",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url") as request_mock:
+            report = cli.build_operator_trust(args)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("admin_token_required", report["diagnosis_codes"])
+        request_mock.assert_not_called()
+        self.assertFalse((output_dir / "trust_summary.json").exists())
+
     def test_operator_settlement_requires_token_before_request(self) -> None:
         output_dir = Path(self._tmp_dir()) / "settlement"
         args = cli.parse_args([

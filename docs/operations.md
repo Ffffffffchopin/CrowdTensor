@@ -883,6 +883,44 @@ reward account values, raw prompts, outputs, and lease material out of saved
 artifacts. The report is still draft-only: no billing, staking, payout, or
 automatic settlement is executed.
 
+Operator trust review:
+
+```bash
+crowdtensor trust \
+  --coordinator-url http://127.0.0.1:8787 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --miner-id stage0-miner \
+  --workload-type real_llm_sharded_infer \
+  --output-dir dist/trust
+```
+
+`crowdtensor trust` emits `crowdtensor_trust_cli_v1`, reads `/state`, and writes
+`trust_summary.json` plus `trust_summary.md` with automatic quarantine counts,
+manual allow/block overrides, effective blocked Miner/workload pairs,
+`blocked_claims`, and a safe row view for the selected Miner/workload. It does
+not require an admin token for report-only mode unless the Coordinator protects
+`/state` with an observer token.
+
+Operator trust override:
+
+```bash
+CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} \
+  crowdtensor trust \
+    --coordinator-url http://127.0.0.1:8787 \
+    --miner-id stage0-miner \
+    --workload-type real_llm_sharded_infer \
+    --mode block \
+    --reason "operator review"
+```
+
+Use `--mode allow` to let a named Miner/workload bypass automatic quarantine,
+and `--mode reset` to clear the manual override and return to automatic scoring.
+The override path requires a legacy admin token or an operator token with
+`owner`/`admin` access. Saved artifacts do not include the admin token, observer
+token, raw override reason, lease material, prompts, or outputs. This is a
+manual operator safety control; it is not Sybil resistance, staking, slashing,
+automatic economic penalties, or permissionless trust.
+
 ## Acceptance Checks
 
 First-run Doctor:

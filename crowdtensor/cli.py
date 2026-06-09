@@ -119,6 +119,7 @@ PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
+OPERATOR_TRUST_CLI_SCHEMA = "crowdtensor_trust_cli_v1"
 OPERATOR_SETTLEMENT_CLI_SCHEMA = "crowdtensor_settlement_cli_v1"
 MINER_JOIN_INVITE_SCHEMA = "crowdtensor_miner_join_invite_v1"
 MINER_JOIN_DISCOVERY_SCHEMA = "crowdtensor_miner_join_discovery_v1"
@@ -15598,6 +15599,457 @@ def _redact_reward_account_values(value: Any) -> Any:
     return value
 
 
+def _nested_workload_count(value: Any) -> int:
+    if not isinstance(value, dict):
+        return 0
+    total = 0
+    for workloads in value.values():
+        if isinstance(workloads, dict):
+            total += len(workloads)
+        elif isinstance(workloads, list):
+            total += len(workloads)
+    return total
+
+
+def _trust_override_mode_counts(overrides: Any) -> dict[str, int]:
+    counts = {"allow": 0, "block": 0}
+    if not isinstance(overrides, dict):
+        return counts
+    for workload_overrides in overrides.values():
+        if not isinstance(workload_overrides, dict):
+            continue
+        for override in workload_overrides.values():
+            if not isinstance(override, dict):
+                continue
+            mode = str(override.get("mode") or "")
+            if mode in counts:
+                counts[mode] += 1
+    return counts
+
+
+def _workload_keys_for_miner(mapping: Any, miner_id: str) -> set[str]:
+    if not isinstance(mapping, dict):
+        return set()
+    workloads = mapping.get(miner_id)
+    if isinstance(workloads, dict):
+        return {str(key) for key in workloads.keys()}
+    if isinstance(workloads, list):
+        return {str(key) for key in workloads}
+    return set()
+
+
+def _trust_status_for_row(
+    *,
+    auto_quarantined: bool,
+    effective_blocked: bool,
+    manual_blocked: bool,
+    override_mode: str,
+) -> str:
+    if manual_blocked:
+        return "manual_blocked"
+    if override_mode == "allow":
+        return "manual_allowed"
+    if effective_blocked and auto_quarantined:
+        return "auto_quarantined"
+    if effective_blocked:
+        return "blocked"
+    return "ready"
+
+
+def _safe_trust_override_response(response: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "accepted": bool(response.get("accepted")),
+        "miner_id": response.get("miner_id"),
+        "workload_type": response.get("workload_type"),
+        "mode": response.get("mode"),
+        "event_index": response.get("event_index"),
+        "reason_present": bool(response.get("reason")),
+    }
+
+
+def _safe_last_blocked_claim(claim: Any) -> dict[str, Any]:
+    if not isinstance(claim, dict):
+        return {}
+    return {
+        "event_index": claim.get("event_index"),
+        "miner_id": claim.get("miner_id"),
+        "blocked_workloads": list(claim.get("blocked_workloads") or []),
+        "reason": claim.get("reason"),
+        "queued_task_count": claim.get("queued_task_count"),
+        "compatible_task_count": claim.get("compatible_task_count"),
+        "ts": claim.get("ts"),
+    }
+
+
+def _safe_trust_state_summary(
+    state: dict[str, Any],
+    *,
+    miner_filter: str = "",
+    workload_filter: str = "",
+    limit: int = 50,
+) -> dict[str, Any]:
+    scores = state.get("miner_workload_scores") if isinstance(state.get("miner_workload_scores"), dict) else {}
+    auto_quarantined = state.get("quarantined_miners") if isinstance(state.get("quarantined_miners"), dict) else {}
+    effective = state.get("effective_quarantined_miners") if isinstance(state.get("effective_quarantined_miners"), dict) else {}
+    manual = state.get("manual_blocked_miners") if isinstance(state.get("manual_blocked_miners"), dict) else {}
+    overrides = state.get("miner_trust_overrides") if isinstance(state.get("miner_trust_overrides"), dict) else {}
+    wanted_miner = str(miner_filter or "").strip()
+    wanted_workload = str(workload_filter or "").strip()
+    capped = max(0, int(limit))
+    miner_ids = set(str(miner_id) for miner_id in scores.keys())
+    miner_ids.update(str(miner_id) for miner_id in auto_quarantined.keys())
+    miner_ids.update(str(miner_id) for miner_id in effective.keys())
+    miner_ids.update(str(miner_id) for miner_id in manual.keys())
+    miner_ids.update(str(miner_id) for miner_id in overrides.keys())
+    rows: list[dict[str, Any]] = []
+    total_matching_rows = 0
+    for miner_id in sorted(miner_ids):
+        if wanted_miner and miner_id != wanted_miner:
+            continue
+        workload_ids = set()
+        for mapping in [scores, auto_quarantined, effective, manual, overrides]:
+            workload_ids.update(_workload_keys_for_miner(mapping, miner_id))
+        for workload_type in sorted(workload_ids):
+            if wanted_workload and workload_type != wanted_workload:
+                continue
+            total_matching_rows += 1
+            if len(rows) >= capped:
+                continue
+            score = scores.get(miner_id, {}).get(workload_type)
+            if not isinstance(score, dict):
+                score = {}
+            override = overrides.get(miner_id, {}).get(workload_type)
+            if not isinstance(override, dict):
+                override = {}
+            auto_block = workload_type in _workload_keys_for_miner(auto_quarantined, miner_id)
+            effective_block = workload_type in _workload_keys_for_miner(effective, miner_id)
+            manual_block = workload_type in _workload_keys_for_miner(manual, miner_id)
+            override_mode = str(override.get("mode") or "")
+            rows.append({
+                "miner_id": miner_id,
+                "workload_type": workload_type,
+                "status": _trust_status_for_row(
+                    auto_quarantined=auto_block,
+                    effective_blocked=effective_block,
+                    manual_blocked=manual_block,
+                    override_mode=override_mode,
+                ),
+                "accepted": int(score.get("accepted") or 0),
+                "rejected": int(score.get("rejected") or 0),
+                "consecutive_rejections": int(score.get("consecutive_rejections") or 0),
+                "score": score.get("score", 0.0),
+                "avg_staleness": score.get("avg_staleness", 0.0),
+                "last_seen_at": score.get("last_seen_at"),
+                "last_rejection_code": score.get("last_rejection_code"),
+                "auto_quarantined": auto_block,
+                "effective_blocked": effective_block,
+                "manual_blocked": manual_block,
+                "override_mode": override_mode,
+                "override_reason_present": bool(override.get("reason")),
+                "override_event_index": override.get("event_index"),
+            })
+    override_counts = _trust_override_mode_counts(overrides)
+    return {
+        "schema": "crowdtensor_trust_state_summary_v1",
+        "event_index": state.get("event_index"),
+        "scored_miner_count": len(scores),
+        "auto_quarantined_count": _nested_workload_count(auto_quarantined),
+        "effective_blocked_count": _nested_workload_count(effective),
+        "manual_blocked_count": _nested_workload_count(manual),
+        "trust_override_counts": override_counts,
+        "blocked_claims": int(state.get("blocked_claims") or 0),
+        "incompatible_claims": int(state.get("incompatible_claims") or 0),
+        "last_blocked_claim": _safe_last_blocked_claim(state.get("last_blocked_claim")),
+        "filters": {
+            "miner_id": wanted_miner,
+            "workload_type": wanted_workload,
+            "limit": capped,
+        },
+        "row_count": len(rows),
+        "total_matching_rows": total_matching_rows,
+        "rows": rows,
+        "public_artifact_safe": True,
+    }
+
+
+def render_operator_trust_markdown(report: dict[str, Any]) -> str:
+    summary = report.get("trust_summary") if isinstance(report.get("trust_summary"), dict) else {}
+    filters = report.get("filters") if isinstance(report.get("filters"), dict) else {}
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    override = report.get("override_response") if isinstance(report.get("override_response"), dict) else {}
+    rows = summary.get("rows") if isinstance(summary.get("rows"), list) else []
+    lines = [
+        "# CrowdTensor Trust Control",
+        "",
+        f"- OK: `{bool(report.get('ok'))}`",
+        f"- Coordinator: `{report.get('coordinator_url') or ''}`",
+        f"- Action: `{report.get('action') or ''}`",
+        f"- Rows: `{summary.get('row_count', 0)}` of `{summary.get('total_matching_rows', 0)}`",
+        f"- Auto quarantined pairs: `{summary.get('auto_quarantined_count', 0)}`",
+        f"- Effective blocked pairs: `{summary.get('effective_blocked_count', 0)}`",
+        f"- Manual blocked pairs: `{summary.get('manual_blocked_count', 0)}`",
+        f"- Blocked claims: `{summary.get('blocked_claims', 0)}`",
+        f"- Diagnosis: `{', '.join(str(code) for code in (report.get('diagnosis_codes') or []))}`",
+        "",
+        "## Filters",
+        "",
+    ]
+    for key in ["miner_id", "workload_type", "limit"]:
+        lines.append(f"- `{key}`: `{filters.get(key, '')}`")
+    if override:
+        lines.extend([
+            "",
+            "## Override",
+            "",
+            f"- Accepted: `{bool(override.get('accepted'))}`",
+            f"- Miner: `{override.get('miner_id') or ''}`",
+            f"- Workload: `{override.get('workload_type') or ''}`",
+            f"- Mode: `{override.get('mode') or ''}`",
+            f"- Reason present: `{bool(override.get('reason_present'))}`",
+            f"- Event index: `{override.get('event_index')}`",
+        ])
+    lines.extend([
+        "",
+        "## Rows",
+        "",
+    ])
+    if rows:
+        for row in rows[:20]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                f"- `{row.get('miner_id')}` / `{row.get('workload_type')}`: "
+                f"status=`{row.get('status')}` accepted=`{row.get('accepted', 0)}` "
+                f"rejected=`{row.get('rejected', 0)}` score=`{row.get('score', 0)}` "
+                f"override=`{row.get('override_mode') or 'none'}`"
+            )
+    else:
+        lines.append("- None.")
+    last_blocked = summary.get("last_blocked_claim") if isinstance(summary.get("last_blocked_claim"), dict) else {}
+    if last_blocked:
+        lines.extend([
+            "",
+            "## Last Blocked Claim",
+            "",
+            f"- Miner: `{last_blocked.get('miner_id') or ''}`",
+            f"- Workloads: `{', '.join(str(item) for item in (last_blocked.get('blocked_workloads') or []))}`",
+            f"- Reason: `{last_blocked.get('reason') or ''}`",
+            f"- Event index: `{last_blocked.get('event_index')}`",
+        ])
+    lines.extend([
+        "",
+        "## Safety",
+        "",
+        f"- Public artifact safe: `{bool(report.get('public_artifact_safe'))}`",
+        f"- Admin credentials public: `{bool(safety.get('admin_credentials_public'))}`",
+        f"- Observer credentials public: `{bool(safety.get('observer_credentials_public'))}`",
+        f"- Override reason public: `{bool(safety.get('override_reason_public'))}`",
+        f"- Claim private material public: `{bool(safety.get('claim_private_material_public'))}`",
+        "- This is an operator trust-control artifact; it does not provide Sybil resistance, staking, automatic penalties, or permissionless admission.",
+        "",
+        "## Artifacts",
+        "",
+    ])
+    for name, artifact in sorted(artifacts.items()):
+        if not isinstance(artifact, dict):
+            continue
+        lines.append(f"- `{name}`: path=`{artifact.get('path')}` present=`{artifact.get('present')}`")
+    if not artifacts:
+        lines.append("- None.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_operator_trust(args: argparse.Namespace) -> dict[str, Any]:
+    coordinator_url = str(getattr(args, "coordinator_url", "") or "").strip().rstrip("/")
+    admin_token = str(getattr(args, "admin_token", "") or "")
+    observer_token = str(getattr(args, "observer_token", "") or "")
+    action = str(getattr(args, "mode", "report") or "report").strip().lower()
+    api_mode = "none" if action == "reset" else action
+    output_dir = Path(str(getattr(args, "output_dir", "dist/trust") or "dist/trust"))
+    filters = {
+        "miner_id": str(getattr(args, "miner_id", "") or "").strip(),
+        "workload_type": str(getattr(args, "workload_type", "") or "").strip(),
+        "limit": int(getattr(args, "limit", 50) or 50),
+    }
+    reason = str(getattr(args, "reason", "") or "")
+    report: dict[str, Any] = {
+        "schema": OPERATOR_TRUST_CLI_SCHEMA,
+        "ok": False,
+        "mode": "trust",
+        "action": action,
+        "coordinator_url": coordinator_url,
+        "output_dir": str(output_dir),
+        "filters": filters,
+        "requires_role": "owner_or_admin_for_override",
+        "diagnosis_codes": [],
+        "public_artifact_safe": True,
+        "safety": {
+            "admin_credentials_public": False,
+            "observer_credentials_public": False,
+            "override_reason_public": False,
+            "claim_private_material_public": False,
+            "raw_prompts_public": False,
+            "raw_outputs_public": False,
+            "not_production_trust": True,
+            "not_sybil_resistant": True,
+            "not_staking_or_slashing": True,
+        },
+        "operator_action": "",
+    }
+    if not coordinator_url:
+        report["diagnosis_codes"] = ["coordinator_route_missing"]
+        report["operator_action"] = "Pass --coordinator-url for the Coordinator that exposes /state and /admin/trust-overrides."
+        return sanitize(redact_values(report, [admin_token, observer_token, reason]))
+    if action != "report" and not admin_token:
+        report["diagnosis_codes"] = ["admin_token_required"]
+        report["operator_action"] = "Pass --admin-token or set CROWDTENSOR_ADMIN_TOKEN with an owner/admin operator token for trust overrides."
+        return sanitize(redact_values(report, [admin_token, observer_token, reason]))
+
+    redactions = unique_redaction_values([admin_token, observer_token, reason])
+    state_ready = False
+    override_ready = action == "report"
+    try:
+        if action != "report":
+            override_payload = {
+                "miner_id": filters["miner_id"],
+                "workload_type": filters["workload_type"],
+                "mode": api_mode,
+                "reason": reason,
+            }
+            override_response = request_json_url(
+                "POST",
+                coordinator_url,
+                "/admin/trust-overrides",
+                override_payload,
+                admin_token=admin_token,
+                timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+            )
+            report["override_response"] = _safe_trust_override_response(override_response)
+            override_ready = bool(override_response.get("accepted"))
+            if override_ready:
+                report["diagnosis_codes"].append("trust_override_applied")
+                report["diagnosis_codes"].append(f"trust_override_{action}_ready")
+            else:
+                report["diagnosis_codes"].append("trust_override_rejected")
+        try:
+            state = request_json_url(
+                "GET",
+                coordinator_url,
+                "/state",
+                observer_token=observer_token,
+                timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+            )
+            report["trust_summary"] = _safe_trust_state_summary(
+                state,
+                miner_filter=filters["miner_id"],
+                workload_filter=filters["workload_type"],
+                limit=filters["limit"],
+            )
+            state_ready = True
+            report["diagnosis_codes"].append("trust_state_summary_ready")
+            summary = report["trust_summary"]
+            if int(summary.get("blocked_claims") or 0) > 0:
+                report["diagnosis_codes"].append("blocked_claim_audit_ready")
+            if int(summary.get("auto_quarantined_count") or 0) > 0:
+                report["diagnosis_codes"].append("trust_auto_quarantine_present")
+            if int(summary.get("manual_blocked_count") or 0) > 0:
+                report["diagnosis_codes"].append("trust_manual_blocks_present")
+            if int(summary.get("effective_blocked_count") or 0) > 0:
+                report["diagnosis_codes"].append("trust_effective_blocks_present")
+            else:
+                report["diagnosis_codes"].append("trust_no_effective_blocks")
+            counts = summary.get("trust_override_counts") if isinstance(summary.get("trust_override_counts"), dict) else {}
+            if int(counts.get("allow") or 0) or int(counts.get("block") or 0):
+                report["diagnosis_codes"].append("trust_overrides_present")
+        except Exception as state_exc:
+            report["state_error"] = type(state_exc).__name__
+            report["state_detail"] = redact_text(str(state_exc), redactions)[:200]
+            report["diagnosis_codes"].append("trust_state_summary_unavailable")
+            if isinstance(state_exc, HTTPError) and int(state_exc.code) in {401, 403}:
+                report["diagnosis_codes"].append("observer_token_rejected")
+        report["ok"] = bool((state_ready if action == "report" else override_ready) and report.get("public_artifact_safe"))
+        if report["ok"] and action == "report":
+            report["operator_action"] = "Review trust_summary.md; use --mode block, --mode allow, or --mode reset for workload-scoped manual overrides."
+        elif report["ok"]:
+            report["operator_action"] = "Trust override was accepted; pass --observer-token if state summary is unavailable on protected Coordinators."
+        elif action == "report":
+            report["operator_action"] = "Check Coordinator URL, observer token, and /state reachability."
+        else:
+            report["operator_action"] = "Check Coordinator URL, owner/admin token, and /admin/trust-overrides reachability."
+    except Exception as exc:
+        report.update({
+            "error": type(exc).__name__,
+            "detail": redact_text(str(exc), redactions)[:200],
+            "diagnosis_codes": ["operator_trust_request_failed"],
+            "operator_action": "Check Coordinator URL, owner/admin token, and /admin/trust-overrides reachability.",
+        })
+        if isinstance(exc, HTTPError):
+            report["status_code"] = int(exc.code)
+            if int(exc.code) in {401, 403}:
+                report["diagnosis_codes"] = ["operator_trust_token_rejected"]
+    report["diagnosis_codes"] = sorted(set(str(code) for code in report.get("diagnosis_codes", []) if code))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report["saved_summary"] = {
+        "path": str(output_dir / "trust_summary.json"),
+        "markdown_path": str(output_dir / "trust_summary.md"),
+        "public_artifact_safe": True,
+    }
+    report["artifacts"] = {
+        "trust_summary": {
+            "path": str(output_dir / "trust_summary.json"),
+            "present": True,
+            "kind": "crowdtensor_trust_summary",
+        },
+        "trust_summary_markdown": {
+            "path": str(output_dir / "trust_summary.md"),
+            "present": True,
+            "kind": "crowdtensor_trust_summary_markdown",
+        },
+    }
+    safe_report = sanitize(redact_values(copy.deepcopy(report), redactions))
+    (output_dir / "trust_summary.json").write_text(
+        json.dumps(safe_report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "trust_summary.md").write_text(
+        render_operator_trust_markdown(safe_report),
+        encoding="utf-8",
+    )
+    return safe_report
+
+
+def print_operator_trust(report: dict[str, Any]) -> None:
+    summary = report.get("trust_summary") if isinstance(report.get("trust_summary"), dict) else {}
+    saved = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
+    override = report.get("override_response") if isinstance(report.get("override_response"), dict) else {}
+    print("CrowdTensor trust")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    print(f"  action: {report.get('action')}")
+    print(f"  rows: {summary.get('row_count', 0)}")
+    print(f"  auto_quarantined: {summary.get('auto_quarantined_count', 0)}")
+    print(f"  effective_blocked: {summary.get('effective_blocked_count', 0)}")
+    print(f"  manual_blocked: {summary.get('manual_blocked_count', 0)}")
+    print(f"  blocked_claims: {summary.get('blocked_claims', 0)}")
+    if override:
+        print(
+            "  override: "
+            f"accepted={override.get('accepted')} "
+            f"miner={override.get('miner_id')} "
+            f"workload={override.get('workload_type')} "
+            f"mode={override.get('mode')}"
+        )
+    print(f"  output: {report.get('output_dir')}")
+    if saved:
+        print(f"  saved_summary: {saved.get('path')} markdown={saved.get('markdown_path')}")
+    print(f"  diagnosis: {', '.join(str(code) for code in (report.get('diagnosis_codes') or []))}")
+    if report.get("operator_action"):
+        print(f"  action_required: {report.get('operator_action')}")
+
+
 def render_operator_settlement_markdown(report: dict[str, Any]) -> str:
     settlement = report.get("settlement") if isinstance(report.get("settlement"), dict) else {}
     accounting = report.get("accounting") if isinstance(report.get("accounting"), dict) else {}
@@ -20637,6 +21089,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     operator_invite.add_argument("--invite-file", default="")
     operator_invite.add_argument("--json", action="store_true")
 
+    trust = subparsers.add_parser(
+        "trust",
+        help="Inspect Miner trust/quarantine state or set a workload-scoped override.",
+        description=(
+            "Read /state to write a public-safe trust_summary.json/trust_summary.md report. "
+            "With --mode block, --mode allow, or --mode reset, also call /admin/trust-overrides "
+            "using an owner/admin operator token. Override reasons are sent to the Coordinator "
+            "for audit but are not written into public CLI artifacts."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crowdtensor trust --coordinator-url http://127.0.0.1:8787\n"
+            "  CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} \\\n"
+            "    crowdtensor trust --coordinator-url http://127.0.0.1:8787 \\\n"
+            "      --miner-id stage0-miner --workload-type real_llm_sharded_infer \\\n"
+            "      --mode block --reason 'operator review' --json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    trust.add_argument("--output-dir", default="dist/trust")
+    trust.add_argument("--coordinator-url", default=os.environ.get("CROWDTENSOR_COORDINATOR_URL", ""))
+    trust.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    trust.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
+    trust.add_argument("--mode", choices=["report", "block", "allow", "reset"], default="report")
+    trust.add_argument("--miner-id", default="")
+    trust.add_argument("--workload-type", default="")
+    trust.add_argument("--reason", default="")
+    trust.add_argument("--limit", type=int, default=50)
+    trust.add_argument("--http-timeout", type=float, default=10.0)
+    trust.add_argument("--json", action="store_true")
+
     settlement = subparsers.add_parser(
         "settlement",
         help="Fetch a public-safe Miner settlement draft from a Coordinator.",
@@ -22998,7 +23481,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -23106,6 +23589,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--rate-window-seconds must be non-negative")
         if (args.rate_limit > 0) != (args.rate_window_seconds > 0):
             raise SystemExit("--rate-limit and --rate-window-seconds must be set together")
+    if args.command == "trust":
+        if args.coordinator_url:
+            parsed_trust_url = urlparse(args.coordinator_url)
+            if parsed_trust_url.scheme not in {"http", "https"} or not parsed_trust_url.hostname:
+                raise SystemExit("--coordinator-url must be a full http(s) URL with a host")
+        if args.mode != "report" and (not args.miner_id or not args.workload_type):
+            raise SystemExit("trust --mode block/allow/reset requires --miner-id and --workload-type")
+        if args.limit < 0 or args.limit > 500:
+            raise SystemExit("--limit must be between 0 and 500")
+        if args.http_timeout <= 0:
+            raise SystemExit("--http-timeout must be positive")
     if args.command == "settlement":
         if args.coordinator_url:
             parsed_settlement_url = urlparse(args.coordinator_url)
@@ -24124,6 +24618,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_operator_invite(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "trust":
+        report = build_operator_trust(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_operator_trust(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "settlement":
         report = build_operator_settlement(args)

@@ -126,7 +126,12 @@ Important response fields:
 - `rejected_results`
 - `miner_profiles`
 - `miner_workload_scores`
+- `quarantined_miners`
+- `effective_quarantined_miners`
+- `manual_blocked_miners`
 - `miner_trust_overrides`
+- `blocked_claims`
+- `last_blocked_claim`
 - `task_lanes`
 - `tasks`
 
@@ -272,6 +277,23 @@ admin token or an operator token with `owner`, `admin`, or `accounting` access.
 The CLI is public-safe by default: it redacts the admin token and reward account
 values and remains draft-only with `payment_executed=false`.
 
+The operator-facing trust CLI wraps the safe state view:
+
+```bash
+crowdtensor trust \
+  --coordinator-url http://127.0.0.1:8787 \
+  --miner-id stage0-miner \
+  --workload-type real_llm_sharded_infer
+```
+
+It emits `crowdtensor_trust_cli_v1`, writes `trust_summary.json` and
+`trust_summary.md`, summarizes automatic quarantine, manual block/allow
+overrides, effective blocked Miner/workload pairs, and `blocked_claims`, and
+keeps observer credentials, admin credentials, lease material, raw prompts,
+outputs, and override reason text out of saved artifacts. If the Coordinator
+requires observer auth for `/state`, pass `--observer-token` or set
+`CROWDTENSOR_OBSERVER_TOKEN`.
+
 ### `POST /admin/inference-sessions`
 
 Creates one admin-controlled, read-only `model_bundle_infer` task. Requires `x-crowdtensor-admin-token` with legacy admin, `owner`, or `admin` access.
@@ -377,6 +399,24 @@ Response:
   "event_index": 1
 }
 ```
+
+The supported operator CLI for this endpoint is:
+
+```bash
+CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} \
+  crowdtensor trust \
+    --coordinator-url http://127.0.0.1:8787 \
+    --miner-id miner-1 \
+    --workload-type diloco_train \
+    --mode block \
+    --reason "operator decision"
+```
+
+Use `--mode allow` to bypass an automatic workload quarantine for the named
+Miner/workload, and `--mode reset` to clear the manual override and return to
+automatic scoring. The CLI sends the reason to the Coordinator audit log but
+records only `reason_present` in public artifacts. This is an operator safety
+control, not Sybil resistance, staking, slashing, or permissionless trust.
 
 ## Miner Endpoints
 
