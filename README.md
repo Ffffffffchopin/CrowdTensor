@@ -438,7 +438,7 @@ crowdtensor swarm-bootstrap \
   --output-dir state/swarm-bootstrap \
   --coordinator-url https://YOUR-TUNNEL.example \
   --expect-remote-miners
-crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap
+crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-remote-miners
 ```
 
 The report lists the local private operator invite, stage0/stage1 Miner invites,
@@ -449,7 +449,9 @@ only for `start_coordinator.sh`, and send each stage directory only to the
 matching Miner host. `crowdtensor swarm-bootstrap-check` verifies required
 files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
-plaintext tokens before handoff; this is a setup helper, not a production NAT
+plaintext tokens before handoff. With `--expect-remote-miners`, it also checks
+that both stage invites share a Miner-facing Coordinator URL that is not
+`127.0.0.1` / `localhost`; this is a setup helper, not a production NAT
 traversal or billing system.
 Multi-operator deployments can start the same product Coordinator with
 `crowdtensor serve --operator-token-registry state/operator_registry.json --run`

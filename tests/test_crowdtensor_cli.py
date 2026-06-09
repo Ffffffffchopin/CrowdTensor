@@ -1619,6 +1619,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             "swarm-bootstrap-check",
             "--output-dir",
             str(output_dir),
+            "--expect-remote-miners",
             "--json",
         ])
 
@@ -1633,8 +1634,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["private_files_mode_0600"])
         self.assertTrue(report["safety"]["scripts_mode_0700"])
         self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
+        self.assertTrue(report["safety"]["coordinator_url_remote_route_ready"])
         self.assertTrue(report["safety"]["stage_packages_exclude_operator_material"])
         self.assertFalse(report["safety"]["scripts_embed_plaintext_tokens"])
+        self.assertEqual(report["coordinator_url"], "https://ct.example")
+        self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
+        self.assertTrue(report["remote_access"]["remote_miners_supported"])
         self.assertEqual(report["artifacts"]["stage0_invite"]["mode"], "0o600")
         self.assertNotIn(operator_invite["operator_token"], encoded)
         self.assertNotIn(stage0_invite["miner_token"], encoded)
@@ -1644,6 +1649,7 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_swarm_bootstrap_check(report)
         rendered = stdout.getvalue()
         self.assertIn("CrowdTensor swarm bootstrap check", rendered)
+        self.assertIn("remote_access:", rendered)
         self.assertIn("swarm_bootstrap_package_ready", rendered)
         self.assertNotIn(operator_invite["operator_token"], rendered)
 
@@ -1697,6 +1703,65 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("bootstrap_missing_required_file", report["diagnosis_codes"])
         self.assertIn("bootstrap_private_file_bad_permissions", report["diagnosis_codes"])
         self.assertFalse(report["safety"]["private_files_mode_0600"])
+
+    def test_swarm_bootstrap_check_fails_remote_expected_local_url(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--json",
+        ])
+        cli.build_swarm_bootstrap(bootstrap_args)
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_remote_route_required", report["diagnosis_codes"])
+        self.assertEqual(report["remote_access"]["route_kind"], "local-only")
+        self.assertFalse(report["remote_access"]["remote_miners_supported"])
+        self.assertFalse(report["safety"]["coordinator_url_remote_route_ready"])
+
+    def test_swarm_bootstrap_check_fails_on_stage_url_mismatch(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        cli.build_swarm_bootstrap(bootstrap_args)
+        stage1_path = output_dir / "stage1" / "miner.invite.json"
+        stage1_invite = json.loads(stage1_path.read_text(encoding="utf-8"))
+        stage1_invite["coordinator_url"] = "https://other.example"
+        stage1_path.write_text(json.dumps(stage1_invite, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        stage1_path.chmod(0o600)
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("bootstrap_stage_coordinator_url_mismatch", report["diagnosis_codes"])
+        self.assertNotIn("coordinator_remote_route_required", report["diagnosis_codes"])
+        self.assertFalse(report["safety"]["coordinator_url_remote_route_ready"])
 
     def test_swarm_bootstrap_remote_local_only_fails_without_creating_invites(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"

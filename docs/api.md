@@ -17,7 +17,9 @@ controlled two-stage product swarm. Product `crowdtensor serve` forwards both
 their plaintext invite token in `x-crowdtensor-miner-token`.
 Run `crowdtensor swarm-bootstrap-check` before copying stage packages; it is an
 offline package gate that verifies private file permissions, hashed registries,
-env separation, and plaintext token leakage without contacting the API.
+env separation, stage invite Coordinator URL consistency, optional
+`--expect-remote-miners` remote route readiness, and plaintext token leakage
+without contacting the API.
 
 Use `crowdtensor operator-invite` or `scripts/create_operator_invite.py` to
 create hashed operator registry entries. The operator still sends their

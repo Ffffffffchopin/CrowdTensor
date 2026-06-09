@@ -11682,6 +11682,42 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="stage0 and stage1 Miner invites must carry distinct private tokens",
         diagnosis_code="bootstrap_stage_tokens_not_distinct",
     )
+    stage0_url = str(stage0_invite.get("coordinator_url") or "").strip().rstrip("/")
+    stage1_url = str(stage1_invite.get("coordinator_url") or "").strip().rstrip("/")
+    coordinator_url = stage0_url or stage1_url
+    coordinator_urls_match = bool(stage0_url and stage1_url and stage0_url == stage1_url)
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_invites_share_coordinator_url",
+        coordinator_urls_match,
+        detail=f"stage0={stage0_url} stage1={stage1_url}",
+        diagnosis_code="bootstrap_stage_coordinator_url_mismatch",
+    )
+    remote_access = coordinator_remote_access_summary(
+        coordinator_url,
+        bind_host="127.0.0.1",
+        public_host=(urlparse(coordinator_url).hostname or "") if coordinator_url else "",
+        public_url_explicit=bool(coordinator_url),
+        expect_remote_miners=bool(getattr(args, "expect_remote_miners", False)),
+        source="swarm-bootstrap-check",
+    )
+    remote_route_ready = bool(
+        coordinator_urls_match
+        and (
+            not bool(getattr(args, "expect_remote_miners", False))
+            or remote_access.get("diagnosis_code") != "coordinator_remote_route_required"
+        )
+    )
+    remote_route_diagnosis = "coordinator_remote_route_required" if coordinator_urls_match else ""
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "coordinator_url_remote_route_ready",
+        remote_route_ready,
+        detail=str(remote_access.get("operator_action") or ""),
+        diagnosis_code=remote_route_diagnosis,
+    )
 
     stage0_script_text, _ = _read_bootstrap_text(required_files["stage0_join_script"])
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
@@ -11750,6 +11786,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "ok": ok,
         "mode": "swarm-bootstrap-check",
         "output_dir": str(output_dir),
+        "coordinator_url": coordinator_url,
+        "remote_access": remote_access,
         "artifacts": artifacts,
         "checks": checks,
         "safety": {
@@ -11762,6 +11800,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
+            "coordinator_url_remote_route_ready": remote_route_ready,
             "not_production_billing": True,
             "not_nat_traversal": True,
             "not_large_model_serving": True,
@@ -11780,6 +11819,15 @@ def print_swarm_bootstrap_check(report: dict[str, Any]) -> None:
     print("CrowdTensor swarm bootstrap check")
     print(f"  ok: {report.get('ok')}")
     print(f"  output_dir: {report.get('output_dir')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    if remote_access:
+        print(
+            "  remote_access: "
+            f"route={remote_access.get('route_kind')} "
+            f"remote_miners={remote_access.get('remote_miners_supported')} "
+            f"diagnosis={remote_access.get('diagnosis_code')}"
+        )
     failed = [
         item for item in report.get("checks") or []
         if isinstance(item, dict) and item.get("ok") is not True
@@ -18257,6 +18305,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     swarm_bootstrap_check.add_argument("--output-dir", default="state/swarm-bootstrap")
+    swarm_bootstrap_check.add_argument(
+        "--expect-remote-miners",
+        action="store_true",
+        help="fail when generated Miner invites use a local-only Coordinator URL",
+    )
     swarm_bootstrap_check.add_argument("--json", action="store_true")
 
     join = subparsers.add_parser(

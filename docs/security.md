@@ -81,7 +81,7 @@ crowdtensor swarm-bootstrap \
   --output-dir state/swarm-bootstrap \
   --coordinator-url https://YOUR-TUNNEL.example \
   --expect-remote-miners
-crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap
+crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-remote-miners
 ```
 
 The public report lists local file paths and copyable commands, but not
@@ -99,7 +99,9 @@ to each Miner host.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
-scripts or public Markdown.
+scripts or public Markdown. Add `--expect-remote-miners` when stage packages
+will leave the Coordinator host; local-only invite URLs then fail with
+`coordinator_remote_route_required`.
 When `--expect-remote-miners` is used with a local-only Coordinator URL,
 bootstrap fails before creating registries or invite files.
 
