@@ -424,6 +424,9 @@ crowdtensor generate \
 
 For real multi-machine trials, keep the Coordinator on a trusted network
 boundary, use explicit tokens, and rotate temporary tokens after public demos.
+Multi-operator deployments can start the same product Coordinator with
+`crowdtensor serve --operator-token-registry state/operator_registry.json --run`
+so audit/accounting operators do not need the legacy owner-level admin token.
 
 ## How It Works
 

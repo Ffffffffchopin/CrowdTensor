@@ -1332,6 +1332,61 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("admin-secret", rendered)
         self.assertNotIn("miner-secret", rendered)
 
+    def test_product_serve_forwards_operator_registry_without_default_admin_token(self) -> None:
+        registry_path = str(Path(self._tmp_dir()) / "operator.private.json")
+        args = cli.parse_args([
+            "serve",
+            "--operator-token-registry",
+            registry_path,
+            "--miner-token",
+            "miner-secret",
+            "--json",
+        ])
+
+        command = cli.build_serve_command(args)
+        report = cli.build_product_serve(args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertIn("--operator-token-registry", command)
+        self.assertEqual(command[command.index("--operator-token-registry") + 1], registry_path)
+        self.assertNotIn("--admin-token", command)
+        self.assertNotIn("local-admin", command)
+        self.assertFalse(report["safety"]["legacy_admin_configured"])
+        self.assertTrue(report["safety"]["operator_registry_configured"])
+        self.assertNotIn(registry_path, encoded)
+        self.assertNotIn("miner-secret", encoded)
+        self.assertIn("--operator-token-registry '<redacted>'", report["command_line"])
+        start = report["next_commands"][0]
+        self.assertEqual(
+            start["requires_env"],
+            ["CROWDTENSOR_MINER_TOKEN", "CROWDTENSOR_OPERATOR_TOKEN_REGISTRY", "CROWDTENSOR_OBSERVER_TOKEN"],
+        )
+
+    def test_product_serve_allows_explicit_admin_token_with_operator_registry(self) -> None:
+        registry_path = str(Path(self._tmp_dir()) / "operator.private.json")
+        args = cli.parse_args([
+            "serve",
+            "--operator-token-registry",
+            registry_path,
+            "--admin-token",
+            "break-glass-admin",
+            "--json",
+        ])
+
+        command = cli.build_serve_command(args)
+        report = cli.build_product_serve(args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertIn("--admin-token", command)
+        self.assertEqual(command[command.index("--admin-token") + 1], "break-glass-admin")
+        self.assertTrue(report["safety"]["legacy_admin_configured"])
+        self.assertTrue(report["safety"]["operator_registry_configured"])
+        self.assertNotIn("break-glass-admin", encoded)
+        self.assertNotIn(registry_path, encoded)
+        start = report["next_commands"][0]
+        self.assertIn("CROWDTENSOR_ADMIN_TOKEN", start["requires_env"])
+        self.assertIn("CROWDTENSOR_OPERATOR_TOKEN_REGISTRY", start["requires_env"])
+
     def test_product_serve_public_bind_action(self) -> None:
         args = cli.parse_args([
             "serve",

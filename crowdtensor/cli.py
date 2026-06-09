@@ -134,6 +134,7 @@ SECRET_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
     "CROWDTENSOR_OBSERVER_TOKEN",
     "CROWDTENSOR_ADMIN_TOKEN",
+    "CROWDTENSOR_OPERATOR_TOKEN_REGISTRY",
     "lease_token",
     "idempotency_key",
     "inference_results",
@@ -10119,8 +10120,6 @@ def build_serve_command(args: argparse.Namespace) -> list[str]:
         "0",
         "--task-lane",
         _serve_task_lane(args),
-        "--admin-token",
-        args.admin_token,
         "--real-llm-model-id",
         args.hf_model_id,
         "--real-llm-backend",
@@ -10130,6 +10129,10 @@ def build_serve_command(args: argparse.Namespace) -> list[str]:
         "--lease-seconds",
         str(args.lease_seconds),
     ]
+    if args.admin_token:
+        command.extend(["--admin-token", args.admin_token])
+    if getattr(args, "operator_token_registry", ""):
+        command.extend(["--operator-token-registry", args.operator_token_registry])
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     if args.miner_token:
@@ -10160,6 +10163,8 @@ def _product_cli_serve_command(args: argparse.Namespace, *, include_run: bool = 
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     if args.lease_seconds != 15.0:
         command.extend(["--lease-seconds", str(args.lease_seconds)])
+    if getattr(args, "operator_token_registry", ""):
+        command.extend(["--operator-token-registry", args.operator_token_registry])
     if args.p2p:
         command.append("--p2p")
         if args.p2p_backend != "lite":
@@ -10311,6 +10316,7 @@ def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> lis
         "admin": "CROWDTENSOR_ADMIN_TOKEN",
         "miner": "CROWDTENSOR_MINER_TOKEN",
         "observer": "CROWDTENSOR_OBSERVER_TOKEN",
+        "operator_registry": "CROWDTENSOR_OPERATOR_TOKEN_REGISTRY",
         "peer": "CROWDTENSOR_P2P_PEER_SECRET",
     }
     requirements: list[str] = []
@@ -10325,6 +10331,8 @@ def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> lis
             value = str(getattr(args, "miner_token", "") or "")
         elif name == "observer":
             value = str(getattr(args, "observer_token", "") or "")
+        elif name == "operator_registry":
+            value = str(getattr(args, "operator_token_registry", "") or "")
         elif name == "peer":
             value = str(getattr(args, "peer_secret", "") or "") if getattr(args, "p2p", False) else ""
         if value and env_name not in requirements:
@@ -10333,8 +10341,13 @@ def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> lis
 
 
 def _product_coordinator_start_env_requirements(args: argparse.Namespace) -> list[str]:
-    requirements = _product_env_requirements(args, ["admin", "miner", "observer", "peer"])
-    for env_name in ["CROWDTENSOR_ADMIN_TOKEN", "CROWDTENSOR_OBSERVER_TOKEN"]:
+    requirements = _product_env_requirements(args, ["admin", "miner", "observer", "operator_registry", "peer"])
+    required_admin_or_registry = (
+        "CROWDTENSOR_OPERATOR_TOKEN_REGISTRY"
+        if str(getattr(args, "operator_token_registry", "") or "") and not str(getattr(args, "admin_token", "") or "")
+        else "CROWDTENSOR_ADMIN_TOKEN"
+    )
+    for env_name in [required_admin_or_registry, "CROWDTENSOR_OBSERVER_TOKEN"]:
         if env_name not in requirements:
             requirements.append(env_name)
     return requirements
@@ -10347,6 +10360,7 @@ def _product_serve_next_commands(args: argparse.Namespace, *, coordinator_url: s
         command_entry(
             "start Coordinator",
             _product_cli_serve_command(args, include_run=True),
+            sensitive_flags={"--operator-token-registry"},
             requires_env=_product_coordinator_start_env_requirements(args),
         ),
         command_entry(
@@ -10428,6 +10442,7 @@ def _product_public_bind_next_commands(args: argparse.Namespace) -> list[dict[st
         command_entry(
             "start trusted public Coordinator",
             public_command,
+            sensitive_flags={"--operator-token-registry"},
             requires_env=_product_coordinator_start_env_requirements(args),
         ),
     ]
@@ -10503,7 +10518,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
     public_bind = args.bind_host in {"0.0.0.0", "::"}
     coordinator_url = f"http://{args.public_host}:{args.port}"
     if public_bind and not args.i_understand_public_bind:
-        safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token"})
+        safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token", "--operator-token-registry"})
         return sanitize({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
@@ -10543,7 +10558,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
     else:
         peer = {}
 
-    safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token"})
+    safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token", "--operator-token-registry"})
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": bool(not args.p2p or peer_announce.get("ok")),
@@ -10566,7 +10581,10 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             else []
         ),
         "safety": {
-            "admin_token_from_env_supported": bool(os.environ.get("CROWDTENSOR_ADMIN_TOKEN")),
+            "legacy_admin_from_env": bool(os.environ.get("CROWDTENSOR_ADMIN_TOKEN")),
+            "operator_registry_supported": True,
+            "operator_registry_configured": bool(getattr(args, "operator_token_registry", "")),
+            "legacy_admin_configured": bool(getattr(args, "admin_token", "")),
             "public_bind_explicit": public_bind,
             "not_production": True,
             "p2p_discovery_enabled": bool(args.p2p),
@@ -16551,6 +16569,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     serve.add_argument("--port", type=int, default=8787)
     serve.add_argument("--state-dir", default="state")
     serve.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", "local-admin"))
+    serve.add_argument(
+        "--operator-token-registry",
+        default=os.environ.get("CROWDTENSOR_OPERATOR_TOKEN_REGISTRY", ""),
+        help="private role-scoped operator token registry path for Coordinator admin endpoints",
+    )
     serve.add_argument("--miner-token", default=os.environ.get("CROWDTENSOR_MINER_TOKEN", ""))
     serve.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
     serve.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
@@ -18849,6 +18872,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if args.infer_mode != "existing" and args.dry_run:
             raise SystemExit("infer --dry-run checks existing route preflight; omit --mode or use --mode existing")
     if args.command == "serve":
+        args.admin_token_explicit = _flag_explicit(raw_argv, "--admin-token") or bool(os.environ.get("CROWDTENSOR_ADMIN_TOKEN"))
+        if args.operator_token_registry and not args.admin_token_explicit and args.admin_token == "local-admin":
+            args.admin_token = ""
         if args.port < 1:
             raise SystemExit("--port must be positive")
         if args.ttl_seconds <= 0:

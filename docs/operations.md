@@ -672,7 +672,17 @@ For role-scoped operator access, create a private operator registry:
 }
 ```
 
-Start the Coordinator with:
+Start the product Coordinator with:
+
+```bash
+crowdtensor serve \
+  --operator-token-registry state/operator_registry.json \
+  --miner-token sha256:MINER_DIGEST \
+  --observer-token sha256:OBSERVER_DIGEST \
+  --run
+```
+
+The lower-level Coordinator entrypoint accepts the same registry:
 
 ```bash
 python3 coordinator.py \
@@ -685,7 +695,9 @@ The role split is intentionally small: `accounting` can read
 `/admin/accounting` and `/admin/settlement`; `auditor` can read
 `/admin/events`, `/admin/results`, and `/admin/session-stream`; `admin` and
 `owner` keep full admin access. The legacy `--admin-token` remains supported as
-owner-level access for existing scripts.
+owner-level access for existing scripts. When `crowdtensor serve` is started
+with an operator registry and no explicit `--admin-token` or
+`CROWDTENSOR_ADMIN_TOKEN`, it does not add the local default admin token.
 
 ## Run Miner
 
