@@ -453,6 +453,7 @@ class StateStore:
         miner_id: str | None = None,
         workload_type: str | None = None,
         session_id: str | None = None,
+        created_by_subject: str | None = None,
     ) -> dict:
         capped = min(MAX_EVENT_TAIL_LIMIT, max(0, int(limit)))
         wanted_status = str(status or "any").strip().lower()
@@ -461,6 +462,7 @@ class StateStore:
         wanted_miner = str(miner_id or "").strip()
         wanted_workload = str(workload_type or "").strip()
         wanted_session = str(session_id or "").strip()
+        wanted_subject = str(created_by_subject or "").strip()
         with self._lock:
             rows: list[dict] = []
             for task in self._tasks.values():
@@ -475,6 +477,8 @@ class StateStore:
                     continue
                 if wanted_session and row.get("session_id") != wanted_session:
                     continue
+                if wanted_subject and row.get("created_by_subject") != wanted_subject:
+                    continue
                 rows.append(row)
             rows.sort(key=lambda item: (float(item.get("recorded_at", 0.0)), int(item.get("event_index", 0))), reverse=True)
             return {
@@ -486,6 +490,7 @@ class StateStore:
                 "miner_id": wanted_miner,
                 "workload_type": wanted_workload,
                 "session_id": wanted_session,
+                "created_by_subject": wanted_subject,
                 "miner_totals": self._miner_accounting_totals(rows),
                 "created_by_subject_totals": self._created_by_subject_accounting_totals(rows),
                 "raw_prompts_public": False,
@@ -501,12 +506,14 @@ class StateStore:
         miner_id: str | None = None,
         workload_type: str | None = None,
         session_id: str | None = None,
+        created_by_subject: str | None = None,
         unit_price_microcredits: int = 0,
     ) -> dict:
         capped = min(MAX_EVENT_TAIL_LIMIT, max(0, int(limit)))
         wanted_miner = str(miner_id or "").strip()
         wanted_workload = str(workload_type or "").strip()
         wanted_session = str(session_id or "").strip()
+        wanted_subject = str(created_by_subject or "").strip()
         price = max(0, int(unit_price_microcredits or 0))
         with self._lock:
             accounting_rows: list[dict] = []
@@ -519,6 +526,8 @@ class StateStore:
                 if wanted_workload and row["workload_type"] != wanted_workload:
                     continue
                 if wanted_session and row.get("session_id") != wanted_session:
+                    continue
+                if wanted_subject and row.get("created_by_subject") != wanted_subject:
                     continue
                 accounting_rows.append(row)
             accounting_rows.sort(
@@ -537,6 +546,7 @@ class StateStore:
                 "miner_id": wanted_miner,
                 "workload_type": wanted_workload,
                 "session_id": wanted_session,
+                "created_by_subject": wanted_subject,
                 "unit_price_microcredits": price,
                 "currency": "operator_microcredit_v1",
                 "settlement_totals": self._settlement_totals(settlement_rows),

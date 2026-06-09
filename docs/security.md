@@ -116,8 +116,10 @@ subject into `/admin/results`, `/admin/accounting`, and `/admin/settlement` as
 `created_by_subject`, and accounting/settlement responses also expose
 `created_by_subject_totals` grouped by subject/workload. Values are labels such
 as `legacy-admin` or `operator:<operator_id>` for audit, chargeback, and draft
-settlement attribution; plaintext admin/operator tokens remain private and are
-never included in those rows or totals.
+settlement attribution. The `created_by_subject` query parameter is an exact
+label filter for accounting/settlement export, not a token lookup; plaintext
+admin/operator tokens remain private and are never included in those rows or
+totals.
 
 ## What Is Protected
 

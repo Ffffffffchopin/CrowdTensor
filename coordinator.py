@@ -976,6 +976,7 @@ def create_app(
         miner_id: str = Query(default=""),
         workload_type: str = Query(default=""),
         session_id: str = Query(default=""),
+        created_by_subject: str = Query(default=""),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
         require_admin(x_crowdtensor_admin_token, roles={OPERATOR_ROLE_ACCOUNTING})
@@ -990,6 +991,7 @@ def create_app(
         miner_value = query_value(miner_id, "")
         workload_value = query_value(workload_type, "")
         session_value = query_value(session_id, "")
+        subject_value = query_value(created_by_subject, "")
         try:
             accounting = store.miner_accounting_summary(
                 limit=limit_value,
@@ -997,6 +999,7 @@ def create_app(
                 miner_id=miner_value,
                 workload_type=workload_value,
                 session_id=session_value,
+                created_by_subject=subject_value,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1008,6 +1011,7 @@ def create_app(
         miner_id: str = Query(default=""),
         workload_type: str = Query(default=""),
         session_id: str = Query(default=""),
+        created_by_subject: str = Query(default=""),
         unit_price_microcredits: int = Query(default=0, ge=0),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
@@ -1022,6 +1026,7 @@ def create_app(
         miner_value = query_value(miner_id, "")
         workload_value = query_value(workload_type, "")
         session_value = query_value(session_id, "")
+        subject_value = query_value(created_by_subject, "")
         price_value = query_value(unit_price_microcredits, 0)
         try:
             settlement = store.miner_settlement_draft(
@@ -1029,6 +1034,7 @@ def create_app(
                 miner_id=miner_value,
                 workload_type=workload_value,
                 session_id=session_value,
+                created_by_subject=subject_value,
                 unit_price_microcredits=price_value,
             )
         except ValueError as exc:

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added exact `created_by_subject` filters to `/admin/accounting` and `/admin/settlement`, enabling subject-level usage and draft-settlement exports for safe operator/admin labels without exposing plaintext tokens.
 - Added `created_by_subject_totals` to Miner accounting summaries and settlement drafts, grouping admin-created inference session usage by safe operator/admin subject and workload without assigning ordinary background tasks to an anonymous chargeback bucket.
 - Added safe `created_by_subject` attribution for `/admin/inference-sessions`, carrying `legacy-admin` or `operator:<operator_id>` into result ledger, Miner accounting, and settlement draft rows without exposing plaintext admin/operator tokens.
 - Added Coordinator request-abuse protection for the product generation entrypoint: `--inference-session-rate-limit` plus `--inference-session-rate-window-seconds` limit `/admin/inference-sessions` creates per legacy admin or operator-registry subject, return `429` with `inference_session_rate_limited`, and append safe `control_plane_blocked` audit events. `crowdtensor serve` forwards these options.

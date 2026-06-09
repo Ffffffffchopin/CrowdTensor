@@ -1841,9 +1841,33 @@ class CoordinatorApiTests(unittest.TestCase):
                 miner_id="operator-created-session-miner",
                 x_crowdtensor_admin_token="owner-token",
             )
+            subject_accounting = admin_accounting(
+                limit=10,
+                status="accepted",
+                created_by_subject="operator:owner-a",
+                x_crowdtensor_admin_token="owner-token",
+            )
+            other_subject_accounting = admin_accounting(
+                limit=10,
+                status="accepted",
+                created_by_subject="operator:owner-b",
+                x_crowdtensor_admin_token="owner-token",
+            )
             settlement = admin_settlement(
                 limit=10,
                 miner_id="operator-created-session-miner",
+                unit_price_microcredits=5,
+                x_crowdtensor_admin_token="owner-token",
+            )
+            subject_settlement = admin_settlement(
+                limit=10,
+                created_by_subject="operator:owner-a",
+                unit_price_microcredits=5,
+                x_crowdtensor_admin_token="owner-token",
+            )
+            other_subject_settlement = admin_settlement(
+                limit=10,
+                created_by_subject="operator:owner-b",
                 unit_price_microcredits=5,
                 x_crowdtensor_admin_token="owner-token",
             )
@@ -1858,10 +1882,20 @@ class CoordinatorApiTests(unittest.TestCase):
             account_totals = accounting["created_by_subject_totals"][f"operator:owner-a/{WORKLOAD_MODEL_BUNDLE_INFER}"]
             self.assertEqual(account_totals["accepted"], 1)
             self.assertEqual(account_totals["work_units"]["request_count"], 2)
+            self.assertEqual(subject_accounting["created_by_subject"], "operator:owner-a")
+            self.assertEqual(subject_accounting["row_count"], 1)
+            self.assertEqual(subject_accounting["rows"][0]["task_id"], session["task_id"])
+            self.assertEqual(other_subject_accounting["created_by_subject"], "operator:owner-b")
+            self.assertEqual(other_subject_accounting["row_count"], 0)
             settlement_totals = settlement["created_by_subject_totals"][f"operator:owner-a/{WORKLOAD_MODEL_BUNDLE_INFER}"]
             self.assertEqual(settlement_totals["accepted"], 1)
             self.assertEqual(settlement_totals["reward_units"], 2)
             self.assertEqual(settlement_totals["reward_amount_microcredits"], 10)
+            self.assertEqual(subject_settlement["created_by_subject"], "operator:owner-a")
+            self.assertEqual(subject_settlement["row_count"], 1)
+            self.assertEqual(subject_settlement["rows"][0]["task_id"], session["task_id"])
+            self.assertEqual(other_subject_settlement["created_by_subject"], "operator:owner-b")
+            self.assertEqual(other_subject_settlement["row_count"], 0)
             self.assertEqual(settlement["rows"][0]["reward_unit"], "request")
             self.assertEqual(settlement["rows"][0]["reward_amount_microcredits"], 10)
             self.assertNotIn("owner-token", payload)

@@ -1042,6 +1042,14 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(account_totals["workload_type"], WORKLOAD_MODEL_BUNDLE_INFER)
             self.assertEqual(account_totals["accepted"], 1)
             self.assertEqual(account_totals["work_units"]["request_count"], 3)
+            filtered_accounting = store.miner_accounting_summary(created_by_subject="operator:owner-a")
+            self.assertEqual(filtered_accounting["created_by_subject"], "operator:owner-a")
+            self.assertEqual(filtered_accounting["row_count"], 1)
+            self.assertEqual(filtered_accounting["rows"][0]["task_id"], session["task_id"])
+            self.assertEqual(
+                store.miner_accounting_summary(created_by_subject="operator:owner-b")["row_count"],
+                0,
+            )
             settlement = store.miner_settlement_draft(
                 miner_id="admin-session-miner",
                 unit_price_microcredits=2,
@@ -1055,6 +1063,17 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(settlement_totals["accepted"], 1)
             self.assertEqual(settlement_totals["reward_units"], 3)
             self.assertEqual(settlement_totals["reward_amount_microcredits"], 6)
+            filtered_settlement = store.miner_settlement_draft(
+                created_by_subject="operator:owner-a",
+                unit_price_microcredits=2,
+            )
+            self.assertEqual(filtered_settlement["created_by_subject"], "operator:owner-a")
+            self.assertEqual(filtered_settlement["row_count"], 1)
+            self.assertEqual(filtered_settlement["rows"][0]["task_id"], session["task_id"])
+            self.assertEqual(
+                store.miner_settlement_draft(created_by_subject="operator:owner-b")["row_count"],
+                0,
+            )
 
     def test_create_readonly_external_llm_task_enqueues_cpu_read_only_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

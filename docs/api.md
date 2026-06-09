@@ -162,17 +162,20 @@ Query parameters:
 - `miner_id`: optional exact Miner ID filter
 - `workload_type`: optional exact workload filter
 - `session_id`: optional exact session filter
+- `created_by_subject`: optional exact admin/operator subject filter
 
 The response includes `miner_accounting_summary_v1` rows, `miner_totals`
 grouped by Miner/workload, and `created_by_subject_totals` grouped by
 admin-created session subject/workload. Rows expose safe accounting fields such
 as Miner ID, workload, accepted/rejected/leased status, stage, backend, model
 ID, session ID, admin-created session subject (`created_by_subject`), elapsed
-time, and workload-specific work units. `created_by_subject_totals` only
-includes rows with a non-empty subject, so ordinary background/training tasks
-are not silently charged to an anonymous subject. When the Miner came from a
-registry invite, rows include redacted join policy metadata: trust tier, quota
-limit, claim-rate limit, claim-rate window, reward-account presence, and
+time, and workload-specific work units. The `created_by_subject` query is an
+exact match against safe labels such as `legacy-admin` or
+`operator:<operator_id>`; it is not a token lookup. `created_by_subject_totals`
+only includes rows with a non-empty subject, so ordinary background/training
+tasks are not silently charged to an anonymous subject. When the Miner came
+from a registry invite, rows include redacted join policy metadata: trust tier,
+quota limit, claim-rate limit, claim-rate window, reward-account presence, and
 read-only workload. The endpoint does not expose raw prompts, generated text,
 token ids, activations, lease material, idempotency keys, plaintext Miner
 tokens, plaintext admin/operator tokens, or reward account values.
@@ -189,6 +192,7 @@ Query parameters:
 - `miner_id`: optional exact Miner ID filter
 - `workload_type`: optional exact workload filter
 - `session_id`: optional exact session filter
+- `created_by_subject`: optional exact admin/operator subject filter
 - `unit_price_microcredits`: optional non-negative integer price per reward unit
 
 The response schema is `miner_settlement_draft_v1`. It includes accepted-only
@@ -196,7 +200,8 @@ The response schema is `miner_settlement_draft_v1`. It includes accepted-only
 subject/workload `created_by_subject_totals`, reward units,
 `reward_amount_microcredits`, safe admin-created session subject attribution
 (`created_by_subject`), and redacted join policy metadata when a Miner came
-from a registry invite. Subject totals only include rows with a non-empty
+from a registry invite. The `created_by_subject` query is an exact match
+against safe labels, and subject totals only include rows with a non-empty
 `created_by_subject`. It is an operator accounting draft only:
 `draft_only` is true, `payment_executed` is false, and reward account values are
 never exposed.
