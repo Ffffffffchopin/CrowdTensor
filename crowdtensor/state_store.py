@@ -487,6 +487,7 @@ class StateStore:
                 "workload_type": wanted_workload,
                 "session_id": wanted_session,
                 "miner_totals": self._miner_accounting_totals(rows),
+                "created_by_subject_totals": self._created_by_subject_accounting_totals(rows),
                 "raw_prompts_public": False,
                 "raw_outputs_public": False,
                 "lease_material_public": False,
@@ -539,6 +540,7 @@ class StateStore:
                 "unit_price_microcredits": price,
                 "currency": "operator_microcredit_v1",
                 "settlement_totals": self._settlement_totals(settlement_rows),
+                "created_by_subject_totals": self._created_by_subject_settlement_totals(settlement_rows),
                 "draft_only": True,
                 "payment_executed": False,
                 "reward_accounts_public": False,
@@ -3081,12 +3083,41 @@ class StateStore:
                 item[status] += 1
             if isinstance(row.get("elapsed_ms"), (int, float)):
                 item["elapsed_ms"] = round(float(item["elapsed_ms"]) + float(row["elapsed_ms"]), 6)
-            work_units = row.get("work_units") if isinstance(row.get("work_units"), dict) else {}
-            for unit_key, value in work_units.items():
-                if unit_key == "unit" or not isinstance(value, int):
-                    continue
-                item["work_units"][unit_key] = int(item["work_units"].get(unit_key, 0)) + int(value)
+            self._add_accounting_work_units(item["work_units"], row.get("work_units"))
         return totals
+
+    def _created_by_subject_accounting_totals(self, rows: list[dict]) -> dict:
+        totals: dict[str, dict] = {}
+        for row in rows:
+            subject = str(row.get("created_by_subject") or "").strip()
+            if not subject:
+                continue
+            workload_type = row["workload_type"]
+            key = f"{subject}/{workload_type}"
+            item = totals.setdefault(key, {
+                "created_by_subject": subject,
+                "workload_type": workload_type,
+                "leased": 0,
+                "accepted": 0,
+                "rejected": 0,
+                "elapsed_ms": 0.0,
+                "work_units": {},
+            })
+            status = row.get("accounting_status")
+            if status in {"leased", "accepted", "rejected"}:
+                item[status] += 1
+            if isinstance(row.get("elapsed_ms"), (int, float)):
+                item["elapsed_ms"] = round(float(item["elapsed_ms"]) + float(row["elapsed_ms"]), 6)
+            self._add_accounting_work_units(item["work_units"], row.get("work_units"))
+        return totals
+
+    def _add_accounting_work_units(self, target: dict, work_units: object) -> None:
+        if not isinstance(work_units, dict):
+            return
+        for unit_key, value in work_units.items():
+            if unit_key == "unit" or not isinstance(value, int):
+                continue
+            target[unit_key] = int(target.get(unit_key, 0)) + int(value)
 
     def _settlement_row_from_accounting(self, row: dict, *, unit_price_microcredits: int) -> dict:
         reward_unit, reward_units = self._settlement_reward_units(row.get("work_units") or {})
@@ -3152,6 +3183,30 @@ class StateStore:
                 "currency": "operator_microcredit_v1",
                 "reward_account_present": False,
                 "settlement_status": "policy_not_joined",
+                "payment_executed": False,
+            })
+            item["accepted"] += 1
+            item["reward_units"] += int(row.get("reward_units") or 0)
+            item["reward_amount_microcredits"] += int(row.get("reward_amount_microcredits") or 0)
+        return totals
+
+    def _created_by_subject_settlement_totals(self, rows: list[dict]) -> dict:
+        totals: dict[str, dict] = {}
+        for row in rows:
+            subject = str(row.get("created_by_subject") or "").strip()
+            if not subject:
+                continue
+            workload_type = str(row.get("workload_type") or "")
+            key = f"{subject}/{workload_type}"
+            item = totals.setdefault(key, {
+                "created_by_subject": subject,
+                "workload_type": workload_type,
+                "accepted": 0,
+                "reward_units": 0,
+                "reward_amount_microcredits": 0,
+                "unit_price_microcredits": int(row.get("unit_price_microcredits") or 0),
+                "currency": "operator_microcredit_v1",
+                "draft_only": True,
                 "payment_executed": False,
             })
             item["accepted"] += 1

@@ -113,10 +113,11 @@ return `429` and append a safe `control_plane_blocked` audit event.
 
 Accepted work created by `/admin/inference-sessions` carries the same safe admin
 subject into `/admin/results`, `/admin/accounting`, and `/admin/settlement` as
-`created_by_subject`. Values are labels such as `legacy-admin` or
-`operator:<operator_id>` for audit, chargeback, and draft settlement
-attribution; plaintext admin/operator tokens remain private and are never
-included in those rows.
+`created_by_subject`, and accounting/settlement responses also expose
+`created_by_subject_totals` grouped by subject/workload. Values are labels such
+as `legacy-admin` or `operator:<operator_id>` for audit, chargeback, and draft
+settlement attribution; plaintext admin/operator tokens remain private and are
+never included in those rows or totals.
 
 ## What Is Protected
 

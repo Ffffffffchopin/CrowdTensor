@@ -457,6 +457,7 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(totals["accepted"], 1)
             self.assertEqual(totals["leased"], 1)
             self.assertEqual(totals["work_units"]["inner_steps"], 20)
+            self.assertEqual(summary["created_by_subject_totals"], {})
             self.assertNotIn("accounting-secret", payload)
             self.assertNotIn("lease_token", payload)
             self.assertFalse(summary["lease_material_public"])
@@ -500,6 +501,7 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(totals["accepted"], 1)
             self.assertEqual(totals["reward_units"], 10)
             self.assertEqual(totals["reward_amount_microcredits"], 30)
+            self.assertEqual(draft["created_by_subject_totals"], {})
             self.assertTrue(draft["draft_only"])
             self.assertFalse(draft["payment_executed"])
             self.assertFalse(draft["reward_accounts_public"])
@@ -1035,6 +1037,11 @@ class StateStoreTests(unittest.TestCase):
             self.assertFalse(row["model_updated"])
             accounting = store.miner_accounting_summary(miner_id="admin-session-miner")
             self.assertEqual(accounting["rows"][0]["created_by_subject"], "operator:owner-a")
+            account_totals = accounting["created_by_subject_totals"][f"operator:owner-a/{WORKLOAD_MODEL_BUNDLE_INFER}"]
+            self.assertEqual(account_totals["created_by_subject"], "operator:owner-a")
+            self.assertEqual(account_totals["workload_type"], WORKLOAD_MODEL_BUNDLE_INFER)
+            self.assertEqual(account_totals["accepted"], 1)
+            self.assertEqual(account_totals["work_units"]["request_count"], 3)
             settlement = store.miner_settlement_draft(
                 miner_id="admin-session-miner",
                 unit_price_microcredits=2,
@@ -1042,6 +1049,12 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(settlement["rows"][0]["created_by_subject"], "operator:owner-a")
             self.assertEqual(settlement["rows"][0]["reward_unit"], "request")
             self.assertEqual(settlement["rows"][0]["reward_amount_microcredits"], 6)
+            settlement_totals = settlement["created_by_subject_totals"][f"operator:owner-a/{WORKLOAD_MODEL_BUNDLE_INFER}"]
+            self.assertEqual(settlement_totals["created_by_subject"], "operator:owner-a")
+            self.assertEqual(settlement_totals["workload_type"], WORKLOAD_MODEL_BUNDLE_INFER)
+            self.assertEqual(settlement_totals["accepted"], 1)
+            self.assertEqual(settlement_totals["reward_units"], 3)
+            self.assertEqual(settlement_totals["reward_amount_microcredits"], 6)
 
     def test_create_readonly_external_llm_task_enqueues_cpu_read_only_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

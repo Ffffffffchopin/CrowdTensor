@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `created_by_subject_totals` to Miner accounting summaries and settlement drafts, grouping admin-created inference session usage by safe operator/admin subject and workload without assigning ordinary background tasks to an anonymous chargeback bucket.
 - Added safe `created_by_subject` attribution for `/admin/inference-sessions`, carrying `legacy-admin` or `operator:<operator_id>` into result ledger, Miner accounting, and settlement draft rows without exposing plaintext admin/operator tokens.
 - Added Coordinator request-abuse protection for the product generation entrypoint: `--inference-session-rate-limit` plus `--inference-session-rate-window-seconds` limit `/admin/inference-sessions` creates per legacy admin or operator-registry subject, return `429` with `inference_session_rate_limited`, and append safe `control_plane_blocked` audit events. `crowdtensor serve` forwards these options.
 - Added `--operator-token-registry` / `CROWDTENSOR_OPERATOR_TOKEN_REGISTRY` for role-scoped operator tokens, including the product `crowdtensor serve` path. Legacy `--admin-token` remains owner-level access, while registry roles split read-only audit views (`auditor`), accounting/settlement views (`accounting`), and full control-plane operations (`admin`/`owner`). `/ready` exposes only a redacted `crowdtensor_operator_registry_summary_v1`, and `crowdtensor serve` no longer injects the local default admin token when an operator registry is configured without an explicit legacy admin token.

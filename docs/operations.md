@@ -784,9 +784,9 @@ curl -H 'x-crowdtensor-admin-token: local-admin' \
 Beta reward/accounting preparation. It groups safe work units by Miner and
 workload, joins redacted invite policy metadata such as trust tier, quota, and
 claim-rate limits when present, carries `created_by_subject` on individual
-session-created rows for chargeback attribution, and avoids raw prompts,
-outputs, token ids, activations, lease material, plaintext tokens, and reward
-account values.
+session-created rows plus `created_by_subject_totals` for chargeback
+attribution, and avoids raw prompts, outputs, token ids, activations, lease
+material, plaintext tokens, and reward account values.
 
 Admin settlement draft:
 
@@ -801,7 +801,8 @@ microcredit amounts, joins only redacted invite policy metadata, and always
 reports `draft_only=true` plus `payment_executed=false`. It does not expose
 reward account values and does not perform billing, staking, or payouts. Rows
 retain `created_by_subject` when the accepted work came from an admin-created
-inference session.
+inference session, and `created_by_subject_totals` aggregates those accepted
+rows by subject/workload without including anonymous background tasks.
 
 ## Acceptance Checks
 
