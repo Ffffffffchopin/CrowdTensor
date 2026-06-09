@@ -51,6 +51,8 @@ SAFE_SENSITIVE_NAMED_FIELDS = {
     "tiny_gpt2_multi_token_ready",
     "next_token_redacted",
     "observed_token_counts",
+    "miner_plaintext_tokens_public",
+    "operator_plaintext_token_public",
     "peer_secret_gossiped",
     "plaintext_token_public",
     "registry_plaintext_token_public",

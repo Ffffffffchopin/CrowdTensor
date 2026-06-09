@@ -251,6 +251,7 @@ def check_security_docs(root: Path) -> dict[str, Any]:
         "--operator-token-registry",
         "roles",
         "crowdtensor operator-invite",
+        "crowdtensor swarm-bootstrap",
         "scripts/create_operator_invite.py",
         "crowdtensor_operator_invite_v1",
     ]:
@@ -291,7 +292,9 @@ def check_api_docs(root: Path) -> dict[str, Any]:
         "miner_accounting_summary_v1",
         "miner_settlement_draft_v1",
         "--operator-token-registry",
+        "--miner-token-registry",
         "crowdtensor operator-invite",
+        "crowdtensor swarm-bootstrap",
         "operator_registry_summary",
         "POST /admin/trust-overrides",
         "POST /tasks/claim",
@@ -387,6 +390,8 @@ def check_remote_miner_docs(root: Path) -> dict[str, Any]:
     for fragment in [
         "scripts/create_miner_invite.py",
         "scripts/create_operator_invite.py",
+        "crowdtensor swarm-bootstrap",
+        "crowdtensor_swarm_bootstrap_v1",
         "scripts/remote_miner_join_check.py",
         "scripts/remote_miner_readiness_check.py",
         "model_bundle_lm",

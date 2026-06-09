@@ -1387,6 +1387,27 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN", start["requires_env"])
         self.assertIn("CROWDTENSOR_OPERATOR_TOKEN_REGISTRY", start["requires_env"])
 
+    def test_product_serve_forwards_miner_registry(self) -> None:
+        registry_path = str(Path(self._tmp_dir()) / "miner.private.json")
+        args = cli.parse_args([
+            "serve",
+            "--miner-token-registry",
+            registry_path,
+            "--json",
+        ])
+
+        command = cli.build_serve_command(args)
+        report = cli.build_product_serve(args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertIn("--miner-token-registry", command)
+        self.assertEqual(command[command.index("--miner-token-registry") + 1], registry_path)
+        self.assertTrue(report["safety"]["miner_registry_configured"])
+        self.assertNotIn(registry_path, encoded)
+        self.assertIn("--miner-token-registry '<redacted>'", report["command_line"])
+        start = report["next_commands"][0]
+        self.assertIn("CROWDTENSOR_MINER_TOKEN_REGISTRY", start["requires_env"])
+
     def test_product_serve_forwards_inference_session_rate_limit(self) -> None:
         args = cli.parse_args([
             "serve",
@@ -1496,6 +1517,75 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("roles: admin", rendered)
         self.assertIn("session_policy:", rendered)
         self.assertNotIn("operator-secret", rendered)
+
+    def test_swarm_bootstrap_creates_private_invites_and_copyable_commands(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--max-new-tokens",
+            "8",
+            "--rate-limit",
+            "3",
+            "--rate-window-seconds",
+            "60",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap(args)
+        encoded = json.dumps(report, sort_keys=True)
+        operator_registry = json.loads((output_dir / "operator_registry.json").read_text(encoding="utf-8"))
+        miner_registry = json.loads((output_dir / "miner_registry.json").read_text(encoding="utf-8"))
+        operator_invite = json.loads(Path(report["private_invites"]["operator"]).read_text(encoding="utf-8"))
+        stage0_invite = json.loads(Path(report["private_invites"]["stage0"]).read_text(encoding="utf-8"))
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "crowdtensor_swarm_bootstrap_v1")
+        self.assertIn("swarm_bootstrap_ready", report["diagnosis_codes"])
+        self.assertEqual(report["coordinator_url"], "https://ct.example")
+        self.assertEqual(operator_registry["operators"][0]["operator_id"], "generate-desk")
+        self.assertTrue(operator_registry["operators"][0]["token"].startswith("sha256:"))
+        self.assertEqual(len(miner_registry["miners"]), 2)
+        self.assertTrue(all(item["token"].startswith("sha256:") for item in miner_registry["miners"]))
+        self.assertEqual(stage0_invite["schema"], "crowdtensor_miner_join_invite_v1")
+        self.assertEqual(stage0_invite["stage"], "stage0")
+        self.assertEqual(operator_invite["schema"], "crowdtensor_operator_invite_v1")
+        self.assertIn("operator_token", operator_invite)
+        self.assertNotIn(operator_invite["operator_token"], encoded)
+        self.assertNotIn(stage0_invite["miner_token"], encoded)
+        self.assertFalse(report["safety"]["operator_plaintext_token_public"])
+        self.assertFalse(report["safety"]["miner_plaintext_tokens_public"])
+        serve_line = report["next_commands"][0]["command_line"]
+        self.assertIn("--operator-token-registry", serve_line)
+        self.assertIn(str(output_dir / "operator_registry.json"), serve_line)
+        self.assertIn("--miner-token-registry", serve_line)
+        self.assertIn(str(output_dir / "miner_registry.json"), serve_line)
+        self.assertIn("CROWDTENSOR_OBSERVER_TOKEN", report["next_commands"][0]["requires_env"])
+        self.assertIn("CROWDTENSOR_ADMIN_TOKEN", report["next_commands"][-1]["requires_env"])
+
+    def test_swarm_bootstrap_remote_local_only_fails_without_creating_invites(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["diagnosis_codes"], ["coordinator_remote_route_required"])
+        self.assertEqual(report["registries"], {})
+        self.assertEqual(report["private_invites"], {})
+        self.assertFalse(report["safety"]["registries_created"])
+        self.assertFalse(report["safety"]["private_invites_created"])
+        self.assertFalse(output_dir.exists())
 
     def test_product_serve_public_tunnel_url_guides_remote_miners_without_public_bind(self) -> None:
         args = cli.parse_args([

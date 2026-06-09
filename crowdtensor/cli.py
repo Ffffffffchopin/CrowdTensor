@@ -45,6 +45,7 @@ from crowdtensor.p2p_lite import (
     stable_peer_id,
 )
 from crowdtensor.operator_invite import create_operator_invite
+from create_miner_invite import create_invite as create_miner_invite
 from crowdtensor.real_p2p import (
     DEFAULT_DISCOVERY_BACKEND,
     PROVIDER_RECORD_SCHEMA,
@@ -10257,6 +10258,8 @@ def build_serve_command(args: argparse.Namespace) -> list[str]:
         command.extend(["--admin-token", args.admin_token])
     if getattr(args, "operator_token_registry", ""):
         command.extend(["--operator-token-registry", args.operator_token_registry])
+    if getattr(args, "miner_token_registry", ""):
+        command.extend(["--miner-token-registry", args.miner_token_registry])
     if args.hf_cache_dir:
         command.extend(["--hf-cache-dir", args.hf_cache_dir])
     if args.miner_token:
@@ -10297,6 +10300,8 @@ def _product_cli_serve_command(args: argparse.Namespace, *, include_run: bool = 
         ])
     if getattr(args, "operator_token_registry", ""):
         command.extend(["--operator-token-registry", args.operator_token_registry])
+    if getattr(args, "miner_token_registry", ""):
+        command.extend(["--miner-token-registry", args.miner_token_registry])
     if args.p2p:
         command.append("--p2p")
         if args.p2p_backend != "lite":
@@ -10449,6 +10454,7 @@ def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> lis
         "miner": "CROWDTENSOR_MINER_TOKEN",
         "observer": "CROWDTENSOR_OBSERVER_TOKEN",
         "operator_registry": "CROWDTENSOR_OPERATOR_TOKEN_REGISTRY",
+        "miner_registry": "CROWDTENSOR_MINER_TOKEN_REGISTRY",
         "peer": "CROWDTENSOR_P2P_PEER_SECRET",
     }
     requirements: list[str] = []
@@ -10465,6 +10471,8 @@ def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> lis
             value = str(getattr(args, "observer_token", "") or "")
         elif name == "operator_registry":
             value = str(getattr(args, "operator_token_registry", "") or "")
+        elif name == "miner_registry":
+            value = str(getattr(args, "miner_token_registry", "") or "")
         elif name == "peer":
             value = str(getattr(args, "peer_secret", "") or "") if getattr(args, "p2p", False) else ""
         if value and env_name not in requirements:
@@ -10473,7 +10481,7 @@ def _product_env_requirements(args: argparse.Namespace, names: list[str]) -> lis
 
 
 def _product_coordinator_start_env_requirements(args: argparse.Namespace) -> list[str]:
-    requirements = _product_env_requirements(args, ["admin", "miner", "observer", "operator_registry", "peer"])
+    requirements = _product_env_requirements(args, ["admin", "miner", "observer", "operator_registry", "miner_registry", "peer"])
     required_admin_or_registry = (
         "CROWDTENSOR_OPERATOR_TOKEN_REGISTRY"
         if str(getattr(args, "operator_token_registry", "") or "") and not str(getattr(args, "admin_token", "") or "")
@@ -10492,7 +10500,7 @@ def _product_serve_next_commands(args: argparse.Namespace, *, coordinator_url: s
         command_entry(
             "start Coordinator",
             _product_cli_serve_command(args, include_run=True),
-            sensitive_flags={"--operator-token-registry"},
+            sensitive_flags={"--operator-token-registry", "--miner-token-registry"},
             requires_env=_product_coordinator_start_env_requirements(args),
         ),
         command_entry(
@@ -10574,7 +10582,7 @@ def _product_public_bind_next_commands(args: argparse.Namespace) -> list[dict[st
         command_entry(
             "start trusted public Coordinator",
             public_command,
-            sensitive_flags={"--operator-token-registry"},
+            sensitive_flags={"--operator-token-registry", "--miner-token-registry"},
             requires_env=_product_coordinator_start_env_requirements(args),
         ),
     ]
@@ -10662,7 +10670,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
         and remote_access.get("diagnosis_code") == "coordinator_remote_route_required"
     )
     if public_bind and not args.i_understand_public_bind:
-        safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token", "--operator-token-registry"})
+        safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token", "--operator-token-registry", "--miner-token-registry"})
         return sanitize({
             "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
             "ok": False,
@@ -10704,7 +10712,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
     else:
         peer = {}
 
-    safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token", "--operator-token-registry"})
+    safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token", "--operator-token-registry", "--miner-token-registry"})
     diagnosis_codes = (
         ["coordinator_remote_route_required"]
         if remote_access_blocked
@@ -10736,6 +10744,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             "legacy_admin_from_env": bool(os.environ.get("CROWDTENSOR_ADMIN_TOKEN")),
             "operator_registry_supported": True,
             "operator_registry_configured": bool(getattr(args, "operator_token_registry", "")),
+            "miner_registry_configured": bool(getattr(args, "miner_token_registry", "")),
             "legacy_admin_configured": bool(getattr(args, "admin_token", "")),
             "inference_session_rate_limit_configured": bool(getattr(args, "inference_session_rate_limit", 0) > 0),
             "public_bind_explicit": public_bind,
@@ -10849,6 +10858,259 @@ def print_operator_invite(report: dict[str, Any]) -> None:
     print(f"  command: {report.get('command_line')}")
     if report.get("operator_action"):
         print(f"  action: {report.get('operator_action')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+
+
+def _bootstrap_slug(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip(".-")
+    return slug or "default"
+
+
+def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
+    output_dir = Path(args.output_dir)
+    private_dir = output_dir / "private"
+    coordinator_url = str(args.coordinator_url or "").strip().rstrip("/")
+    if not coordinator_url:
+        scheme = "https" if args.public_host not in {"127.0.0.1", "localhost", "::1"} else "http"
+        coordinator_url = f"{scheme}://{args.public_host}:{args.port}"
+    remote_access = coordinator_remote_access_summary(
+        coordinator_url,
+        bind_host=args.bind_host,
+        public_host=args.public_host,
+        public_url_explicit=bool(str(args.coordinator_url or "")),
+        expect_remote_miners=bool(args.expect_remote_miners),
+        source="swarm-bootstrap",
+    )
+    remote_access_blocked = bool(
+        args.expect_remote_miners
+        and remote_access.get("diagnosis_code") == "coordinator_remote_route_required"
+    )
+    operator_registry = output_dir / "operator_registry.json"
+    miner_registry = output_dir / "miner_registry.json"
+    operator_invite_path = private_dir / f"{_bootstrap_slug(args.operator_id)}.operator.invite.json"
+    safety = {
+        "private_invites_local_only": True,
+        "operator_plaintext_token_public": False,
+        "miner_plaintext_tokens_public": False,
+        "registries_store_hashed_tokens": True,
+        "not_production_billing": True,
+        "not_nat_traversal": True,
+        "not_large_model_serving": True,
+    }
+    if remote_access_blocked:
+        return sanitize({
+            "schema": "crowdtensor_swarm_bootstrap_v1",
+            "ok": False,
+            "mode": "swarm-bootstrap",
+            "output_dir": str(output_dir),
+            "coordinator_url": coordinator_url,
+            "remote_access": remote_access,
+            "registries": {},
+            "private_invites": {},
+            "operator": {},
+            "miners": [],
+            "next_commands": [],
+            "diagnosis_codes": ["coordinator_remote_route_required"],
+            "safety": {
+                **safety,
+                "registries_created": False,
+                "private_invites_created": False,
+            },
+            "operator_action": "Set --coordinator-url to a public HTTPS, tunnel, VPN, reverse-proxy, or LAN URL before creating or sharing Miner invites.",
+        })
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    private_dir.mkdir(parents=True, exist_ok=True)
+    operator_invite = create_operator_invite(
+        registry_path=operator_registry,
+        operator_id=args.operator_id,
+        roles=["admin"],
+        label="swarm generation operator",
+        replace=args.replace,
+        allowed_workloads=["real-llm-sharded"],
+        max_new_tokens=args.max_new_tokens,
+        max_active_sessions=args.max_active_sessions,
+        max_total_sessions=args.max_total_sessions,
+        rate_limit=args.rate_limit,
+        rate_window_seconds=args.rate_window_seconds,
+        invite_file=operator_invite_path,
+    )
+    stage_invites: list[dict[str, Any]] = []
+    backend = "cuda" if args.backend == "cuda" else "cpu"
+    for stage in ["stage0", "stage1"]:
+        miner_id = f"{args.miner_id_prefix}-{stage}"
+        invite_file = private_dir / f"{_bootstrap_slug(miner_id)}.miner.invite.json"
+        invite = create_miner_invite(
+            registry_path=miner_registry,
+            miner_id=miner_id,
+            coordinator_url=coordinator_url,
+            label=f"swarm {stage} miner",
+            replace=args.replace,
+            stage=stage,
+            backend=backend,
+            hf_model_id=args.hf_model_id,
+            max_tasks=args.max_tasks,
+            max_runtime_seconds=args.max_runtime_seconds,
+            trust_tier=args.trust_tier,
+            quota_task_limit=args.quota_task_limit,
+            claim_rate_limit=args.claim_rate_limit,
+            claim_rate_window_seconds=args.claim_rate_window_seconds,
+            reward_account="",
+            invite_file=invite_file,
+        )
+        stage_invites.append(invite)
+    serve_command = [
+        "crowdtensor",
+        "serve",
+        "--profile",
+        "gpu-generation" if backend == "cuda" else "cpu-real-llm",
+        "--bind-host",
+        args.bind_host,
+        "--public-host",
+        args.public_host,
+        "--coordinator-public-url",
+        coordinator_url,
+        "--port",
+        str(args.port),
+        "--state-dir",
+        str(output_dir / "state"),
+        "--operator-token-registry",
+        str(operator_registry),
+        "--miner-token-registry",
+        str(miner_registry),
+        "--hf-model-id",
+        args.hf_model_id,
+        "--inference-session-rate-limit",
+        str(args.rate_limit),
+        "--inference-session-rate-window-seconds",
+        str(args.rate_window_seconds),
+    ]
+    if args.expect_remote_miners:
+        serve_command.append("--expect-remote-miners")
+    if args.bind_host in {"0.0.0.0", "::"}:
+        serve_command.append("--i-understand-public-bind")
+    serve_command.append("--run")
+    join_commands = [
+        ["crowdtensor", "join", "--invite-file", str(invite["invite_file"]), "--check-admission", "--expect-remote-coordinator", "--run"]
+        for invite in stage_invites
+    ]
+    dry_run_command = [
+        "crowdtensor",
+        "generate",
+        "--coordinator-url",
+        coordinator_url,
+        "--prompt",
+        "CrowdTensor routes small models across home compute",
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--dry-run",
+    ]
+    generate_command = [
+        "crowdtensor",
+        "generate",
+        "--coordinator-url",
+        coordinator_url,
+        "--prompt",
+        "CrowdTensor routes small models across home compute",
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+    ]
+    report = {
+        "schema": "crowdtensor_swarm_bootstrap_v1",
+        "ok": True,
+        "mode": "swarm-bootstrap",
+        "output_dir": str(output_dir),
+        "coordinator_url": coordinator_url,
+        "remote_access": remote_access,
+        "registries": {
+            "operator_registry": str(operator_registry),
+            "miner_registry": str(miner_registry),
+        },
+        "private_invites": {
+            "operator": str(operator_invite_path),
+            "stage0": str(stage_invites[0]["invite_file"]),
+            "stage1": str(stage_invites[1]["invite_file"]),
+        },
+        "operator": {
+            "operator_id": operator_invite["operator_id"],
+            "roles": operator_invite["roles"],
+            "session_policy": operator_invite["session_policy"],
+        },
+        "miners": [
+            {
+                "miner_id": invite["miner_id"],
+                "stage": (invite.get("join_invite") or {}).get("stage"),
+                "backend": (invite.get("join_invite") or {}).get("backend"),
+                "hf_model_id": (invite.get("join_invite") or {}).get("hf_model_id"),
+                "invite_file": invite["invite_file"],
+            }
+            for invite in stage_invites
+        ],
+        "next_commands": [
+            command_entry(
+                "start Coordinator",
+                serve_command,
+                requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
+            ),
+            command_entry("start stage0 Miner", join_commands[0]),
+            command_entry("start stage1 Miner", join_commands[1]),
+            command_entry("check generation route", dry_run_command, requires_env=["CROWDTENSOR_OBSERVER_TOKEN"]),
+            command_entry("submit generation with operator invite token", generate_command, requires_env=["CROWDTENSOR_ADMIN_TOKEN"]),
+        ],
+        "diagnosis_codes": ["swarm_bootstrap_ready", str(remote_access.get("diagnosis_code") or "")],
+        "safety": {
+            **safety,
+            "registries_created": True,
+            "private_invites_created": True,
+        },
+        "operator_action": (
+            "Start the Coordinator with the generated registry paths, copy each private Miner invite only to its Miner host, "
+            "then run the dry-run generate preflight before submitting generation."
+        ),
+    }
+    return sanitize(redact_values(report, [
+        str((operator_invite.get("env") or {}).get("CROWDTENSOR_ADMIN_TOKEN") or ""),
+        str((operator_invite.get("operator_invite") or {}).get("operator_token") or ""),
+        str(operator_invite.get("operator_invite_code") or ""),
+        *[
+            str((invite.get("env") or {}).get("CROWDTENSOR_MINER_TOKEN") or "")
+            for invite in stage_invites
+        ],
+        *[
+            str(invite.get("join_invite_code") or "")
+            for invite in stage_invites
+        ],
+    ]))
+
+
+def print_swarm_bootstrap(report: dict[str, Any]) -> None:
+    print("CrowdTensor swarm bootstrap")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  output_dir: {report.get('output_dir')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    if remote_access:
+        print(
+            "  remote_access: "
+            f"route={remote_access.get('route_kind')} "
+            f"remote_miners={remote_access.get('remote_miners_supported')} "
+            f"diagnosis={remote_access.get('diagnosis_code')}"
+        )
+    registries = report.get("registries") if isinstance(report.get("registries"), dict) else {}
+    print(f"  operator_registry: {registries.get('operator_registry')}")
+    print(f"  miner_registry: {registries.get('miner_registry')}")
+    private_invites = report.get("private_invites") if isinstance(report.get("private_invites"), dict) else {}
+    print(f"  operator_invite: {private_invites.get('operator')}")
+    print(f"  stage0_invite: {private_invites.get('stage0')}")
+    print(f"  stage1_invite: {private_invites.get('stage1')}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
+    for index, item in enumerate(report.get("next_commands") or [], start=1):
+        if isinstance(item, dict) and item.get("command_line"):
+            requires_env = item.get("requires_env") if isinstance(item.get("requires_env"), list) else []
+            suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
+            rendered_command = human_next_command_line(item, str(item.get("command_line") or ""))
+            print(f"  next[{index}] {item.get('label')}: {rendered_command}{suffix}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
@@ -17213,6 +17475,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=os.environ.get("CROWDTENSOR_OPERATOR_TOKEN_REGISTRY", ""),
         help="private role-scoped operator token registry path for Coordinator admin endpoints",
     )
+    serve.add_argument(
+        "--miner-token-registry",
+        default=os.environ.get("CROWDTENSOR_MINER_TOKEN_REGISTRY", ""),
+        help="private per-Miner token registry path for token-backed Miner admission",
+    )
     serve.add_argument("--miner-token", default=os.environ.get("CROWDTENSOR_MINER_TOKEN", ""))
     serve.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
     serve.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
@@ -17268,6 +17535,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     operator_invite.add_argument("--rate-window-seconds", type=float, default=0.0)
     operator_invite.add_argument("--invite-file", default="")
     operator_invite.add_argument("--json", action="store_true")
+
+    swarm_bootstrap = subparsers.add_parser(
+        "swarm-bootstrap",
+        help="Prepare private operator and Miner invites for a two-stage swarm.",
+        description=(
+            "Create a local private bootstrap directory containing an operator registry, Miner registry, "
+            "operator invite, stage0/stage1 Miner invites, and copyable serve/join/generate commands. "
+            "This does not start processes or prove generation."
+        ),
+    )
+    swarm_bootstrap.add_argument("--output-dir", default="state/swarm-bootstrap")
+    swarm_bootstrap.add_argument("--coordinator-url", default="")
+    swarm_bootstrap.add_argument("--bind-host", default="127.0.0.1")
+    swarm_bootstrap.add_argument("--public-host", default="127.0.0.1")
+    swarm_bootstrap.add_argument("--port", type=int, default=8787)
+    swarm_bootstrap.add_argument("--expect-remote-miners", action="store_true")
+    swarm_bootstrap.add_argument("--operator-id", default="generate-desk")
+    swarm_bootstrap.add_argument("--miner-id-prefix", default="swarm-miner")
+    swarm_bootstrap.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    swarm_bootstrap.add_argument("--hf-model-id", default="sshleifer/tiny-gpt2")
+    swarm_bootstrap.add_argument("--max-new-tokens", type=int, default=8)
+    swarm_bootstrap.add_argument("--max-active-sessions", type=int, default=4)
+    swarm_bootstrap.add_argument("--max-total-sessions", type=int, default=100)
+    swarm_bootstrap.add_argument("--rate-limit", type=int, default=30)
+    swarm_bootstrap.add_argument("--rate-window-seconds", type=float, default=60.0)
+    swarm_bootstrap.add_argument("--max-tasks", type=int, default=0)
+    swarm_bootstrap.add_argument("--max-runtime-seconds", type=float, default=0.0)
+    swarm_bootstrap.add_argument("--trust-tier", default="new")
+    swarm_bootstrap.add_argument("--quota-task-limit", type=int, default=0)
+    swarm_bootstrap.add_argument("--claim-rate-limit", type=int, default=0)
+    swarm_bootstrap.add_argument("--claim-rate-window-seconds", type=float, default=0.0)
+    swarm_bootstrap.add_argument("--replace", action="store_true")
+    swarm_bootstrap.add_argument("--json", action="store_true")
 
     join = subparsers.add_parser(
         "join",
@@ -19498,7 +19798,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "swarm-bootstrap", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -19606,6 +19906,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--rate-window-seconds must be non-negative")
         if (args.rate_limit > 0) != (args.rate_window_seconds > 0):
             raise SystemExit("--rate-limit and --rate-window-seconds must be set together")
+    if args.command == "swarm-bootstrap":
+        if args.port < 1:
+            raise SystemExit("--port must be positive")
+        if args.coordinator_url:
+            parsed_bootstrap_url = urlparse(args.coordinator_url)
+            if parsed_bootstrap_url.scheme not in {"http", "https"} or not parsed_bootstrap_url.hostname:
+                raise SystemExit("--coordinator-url must be a full http(s) URL with a host")
+        if args.max_new_tokens < 1:
+            raise SystemExit("--max-new-tokens must be at least 1")
+        for name in [
+            "max_active_sessions",
+            "max_total_sessions",
+            "rate_limit",
+            "max_tasks",
+            "quota_task_limit",
+            "claim_rate_limit",
+        ]:
+            if getattr(args, name) < 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be non-negative")
+        for name in ["rate_window_seconds", "max_runtime_seconds", "claim_rate_window_seconds"]:
+            if getattr(args, name) < 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be non-negative")
+        if (args.rate_limit > 0) != (args.rate_window_seconds > 0):
+            raise SystemExit("--rate-limit and --rate-window-seconds must be set together")
+        if (args.claim_rate_limit > 0) != (args.claim_rate_window_seconds > 0):
+            raise SystemExit("--claim-rate-limit and --claim-rate-window-seconds must be set together")
     if args.command == "join":
         if args.http_timeout <= 0:
             raise SystemExit("--http-timeout must be positive")
@@ -20575,6 +20901,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_operator_invite(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "swarm-bootstrap":
+        report = build_swarm_bootstrap(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_swarm_bootstrap(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "join":
         report = build_product_join(args)

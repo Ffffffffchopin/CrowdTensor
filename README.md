@@ -430,6 +430,20 @@ VPN, or reverse proxy provides the Miner-facing URL. Start the Coordinator with
 to keep local binding separate from the URL that remote Miners should join, and
 use `crowdtensor join --expect-remote-coordinator` on Miner hosts to catch
 accidental `127.0.0.1` or `localhost` invites before running.
+For the shortest private setup package, generate the Coordinator registries and
+stage invites in one local directory:
+
+```bash
+crowdtensor swarm-bootstrap \
+  --output-dir state/swarm-bootstrap \
+  --coordinator-url https://YOUR-TUNNEL.example \
+  --expect-remote-miners
+```
+
+The report lists the local private operator invite, stage0/stage1 Miner invites,
+hashed registries, and copyable `serve` / `join` / `generate` commands. Keep the
+private invite files local or send each Miner invite only to the matching Miner
+host; this is a setup helper, not a production NAT traversal or billing system.
 Multi-operator deployments can start the same product Coordinator with
 `crowdtensor serve --operator-token-registry state/operator_registry.json --run`
 so audit/accounting operators do not need the legacy owner-level admin token.

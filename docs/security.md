@@ -73,6 +73,23 @@ python3 scripts/create_miner_invite.py \
 
 The invite output prints the plaintext token once for the remote Miner, while the registry stores only the `sha256:` verifier plus safe policy metadata. Positive `claim_rate_limit` / `claim_rate_window_seconds` values rate-limit claim events for that registered Miner before it can lease more work. See [Remote Miner Onboarding](remote-miner.md).
 
+For the product two-stage path, `crowdtensor swarm-bootstrap` creates both
+private registries and stage-specific Miner invites in one local directory:
+
+```bash
+crowdtensor swarm-bootstrap \
+  --output-dir state/swarm-bootstrap \
+  --coordinator-url https://YOUR-TUNNEL.example \
+  --expect-remote-miners
+```
+
+The public report lists local file paths and copyable commands, but not
+plaintext operator or Miner tokens. The generated private invite files do
+contain usable tokens; keep the operator invite on the Coordinator/operator
+host and copy only the matching stage Miner invite to each Miner host.
+When `--expect-remote-miners` is used with a local-only Coordinator URL,
+bootstrap fails before creating registries or invite files.
+
 **Observer token**
 
 `--observer-token` or `CROWDTENSOR_OBSERVER_TOKEN` protects read-only `/state` and `/metrics`. `/health`, `/version`, and `/ready` remain public for process health checks and non-sensitive runtime profile checks.
