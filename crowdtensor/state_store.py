@@ -458,6 +458,61 @@ class StateStore:
                 "public_artifact_safe": True,
             }
 
+    def miner_settlement_draft(
+        self,
+        *,
+        limit: int = 50,
+        miner_id: str | None = None,
+        workload_type: str | None = None,
+        session_id: str | None = None,
+        unit_price_microcredits: int = 0,
+    ) -> dict:
+        capped = min(MAX_EVENT_TAIL_LIMIT, max(0, int(limit)))
+        wanted_miner = str(miner_id or "").strip()
+        wanted_workload = str(workload_type or "").strip()
+        wanted_session = str(session_id or "").strip()
+        price = max(0, int(unit_price_microcredits or 0))
+        with self._lock:
+            accounting_rows: list[dict] = []
+            for task in self._tasks.values():
+                row = self._miner_accounting_row(task)
+                if not row or row.get("accounting_status") != "accepted":
+                    continue
+                if wanted_miner and row["miner_id"] != wanted_miner:
+                    continue
+                if wanted_workload and row["workload_type"] != wanted_workload:
+                    continue
+                if wanted_session and row.get("session_id") != wanted_session:
+                    continue
+                accounting_rows.append(row)
+            accounting_rows.sort(
+                key=lambda item: (float(item.get("recorded_at", 0.0)), int(item.get("event_index", 0))),
+                reverse=True,
+            )
+            settlement_rows = [
+                self._settlement_row_from_accounting(row, unit_price_microcredits=price)
+                for row in accounting_rows
+            ]
+            return {
+                "schema": "miner_settlement_draft_v1",
+                "rows": settlement_rows[:capped],
+                "row_count": len(settlement_rows),
+                "limit": capped,
+                "miner_id": wanted_miner,
+                "workload_type": wanted_workload,
+                "session_id": wanted_session,
+                "unit_price_microcredits": price,
+                "currency": "operator_microcredit_v1",
+                "settlement_totals": self._settlement_totals(settlement_rows),
+                "draft_only": True,
+                "payment_executed": False,
+                "reward_accounts_public": False,
+                "raw_prompts_public": False,
+                "raw_outputs_public": False,
+                "lease_material_public": False,
+                "public_artifact_safe": True,
+            }
+
     def heartbeat(
         self,
         task_id: str,
@@ -2973,6 +3028,76 @@ class StateStore:
                 if unit_key == "unit" or not isinstance(value, int):
                     continue
                 item["work_units"][unit_key] = int(item["work_units"].get(unit_key, 0)) + int(value)
+        return totals
+
+    def _settlement_row_from_accounting(self, row: dict, *, unit_price_microcredits: int) -> dict:
+        reward_unit, reward_units = self._settlement_reward_units(row.get("work_units") or {})
+        amount = int(reward_units) * int(unit_price_microcredits)
+        return {
+            "schema": "miner_settlement_row_v1",
+            "task_id": row.get("task_id"),
+            "session_id": row.get("session_id"),
+            "miner_id": row.get("miner_id"),
+            "workload_type": row.get("workload_type"),
+            "stage_id": row.get("stage_id"),
+            "backend": row.get("backend"),
+            "model_id": row.get("model_id"),
+            "accepted": True,
+            "accounting_event_index": int(row.get("event_index") or 0),
+            "recorded_at": float(row.get("recorded_at") or 0.0),
+            "reward_unit": reward_unit,
+            "reward_units": int(reward_units),
+            "unit_price_microcredits": int(unit_price_microcredits),
+            "reward_amount_microcredits": amount,
+            "work_units": json.loads(json.dumps(row.get("work_units") or {})),
+            "reward_account_present": False,
+            "settlement_status": "policy_not_joined",
+            "draft_only": True,
+            "payment_executed": False,
+            "raw_payload_public": False,
+        }
+
+    def _settlement_reward_units(self, work_units: dict) -> tuple[str, int]:
+        unit = str(work_units.get("unit") or "work_unit")
+        if unit == "generated_token_or_stage_row":
+            generated = int(work_units.get("generated_token_count") or 0)
+            if generated > 0:
+                return "generated_token", generated
+            activations = int(work_units.get("activation_count") or 0)
+            if activations > 0:
+                return "activation_row", activations
+            return "stage_row", 1
+        if unit == "request":
+            return "request", max(0, int(work_units.get("request_count") or 0))
+        if unit == "stage_task":
+            return "stage_row", max(0, int(work_units.get("stage_rows") or 0))
+        if unit == "inner_step":
+            return "inner_step", max(0, int(work_units.get("inner_steps") or 0))
+        ignored = {"unit", "generation_step", "max_new_tokens"}
+        fallback = sum(int(value) for key, value in work_units.items() if key not in ignored and isinstance(value, int))
+        return unit, max(0, fallback)
+
+    def _settlement_totals(self, rows: list[dict]) -> dict:
+        totals: dict[str, dict] = {}
+        for row in rows:
+            miner_id = str(row.get("miner_id") or "")
+            workload_type = str(row.get("workload_type") or "")
+            key = f"{miner_id}/{workload_type}"
+            item = totals.setdefault(key, {
+                "miner_id": miner_id,
+                "workload_type": workload_type,
+                "accepted": 0,
+                "reward_units": 0,
+                "reward_amount_microcredits": 0,
+                "unit_price_microcredits": int(row.get("unit_price_microcredits") or 0),
+                "currency": "operator_microcredit_v1",
+                "reward_account_present": False,
+                "settlement_status": "policy_not_joined",
+                "payment_executed": False,
+            })
+            item["accepted"] += 1
+            item["reward_units"] += int(row.get("reward_units") or 0)
+            item["reward_amount_microcredits"] += int(row.get("reward_amount_microcredits") or 0)
         return totals
 
     def _validation_summary(self, validation: dict, *, workload_type: str = "") -> dict:

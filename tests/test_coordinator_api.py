@@ -1397,6 +1397,97 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertNotIn("accounting-api-secret", payload)
             self.assertNotIn("lease_token", payload)
 
+    def test_admin_settlement_reports_safe_payable_draft_with_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_registry(
+                Path(tmp) / "miners.json",
+                [
+                    {
+                        "miner_id": "settlement-api-miner",
+                        "token": hash_token("registered-token"),
+                        "join_policy": {
+                            "stage": "both",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "trust_tier": "probation",
+                            "quota_task_limit": 2,
+                            "claim_rate_limit": 1,
+                            "claim_rate_window_seconds": 30.0,
+                            "reward_account": "acct-secret",
+                            "read_only_workload": "diloco_train",
+                        },
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                admin_token="secret",
+                miner_token_registry=registry_path,
+            )
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            admin_settlement = endpoint_for(app, "/admin/settlement", "GET")
+            claim = claim_task(
+                request_model(claim_task)(miner_id="settlement-api-miner"),
+                x_crowdtensor_miner_token="registered-token",
+            )
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="settlement-api-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+            result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    idempotency_key="settlement-api-secret",
+                    local_delta=inner_result["local_delta"],
+                    metrics={**inner_result, "elapsed_ms": 12.0},
+                ),
+                x_crowdtensor_miner_token="registered-token",
+            )
+
+            with self.assertRaises(HTTPException) as bad_token:
+                admin_settlement(limit=10, x_crowdtensor_admin_token="bad")
+            self.assertEqual(bad_token.exception.status_code, 403)
+
+            settlement = admin_settlement(
+                limit=10,
+                miner_id="settlement-api-miner",
+                workload_type="diloco_train",
+                unit_price_microcredits=4,
+                x_crowdtensor_admin_token="secret",
+            )
+            payload = json.dumps(settlement, sort_keys=True)
+
+            self.assertEqual(settlement["schema"], "miner_settlement_draft_v1")
+            self.assertEqual(settlement["row_count"], 1)
+            self.assertTrue(settlement["draft_only"])
+            self.assertFalse(settlement["payment_executed"])
+            self.assertFalse(settlement["reward_accounts_public"])
+            row = settlement["rows"][0]
+            self.assertEqual(row["miner_id"], "settlement-api-miner")
+            self.assertEqual(row["reward_unit"], "inner_step")
+            self.assertEqual(row["reward_units"], 10)
+            self.assertEqual(row["reward_amount_microcredits"], 40)
+            self.assertEqual(row["settlement_status"], "payable_draft")
+            self.assertTrue(row["reward_account_present"])
+            self.assertEqual(row["join_policy"]["trust_tier"], "probation")
+            self.assertEqual(row["join_policy"]["claim_rate_limit"], 1)
+            totals = settlement["settlement_totals"]["settlement-api-miner/diloco_train"]
+            self.assertEqual(totals["accepted"], 1)
+            self.assertEqual(totals["reward_amount_microcredits"], 40)
+            self.assertEqual(totals["settlement_status"], "payable_draft")
+            self.assertTrue(totals["reward_account_present"])
+            self.assertNotIn("acct-secret", payload)
+            self.assertNotIn("settlement-api-secret", payload)
+            self.assertNotIn("lease_token", payload)
+
     def test_admin_inference_session_enqueues_read_only_task_and_filters_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(

@@ -164,6 +164,26 @@ read-only workload. The endpoint does not expose raw prompts, generated text,
 token ids, activations, lease material, idempotency keys, plaintext Miner
 tokens, or reward account values.
 
+### `GET /admin/settlement?limit=50`
+
+Returns a draft-only Miner settlement summary. Requires
+`x-crowdtensor-admin-token`.
+
+Query parameters:
+
+- `limit`: `0..500`, default `50`
+- `miner_id`: optional exact Miner ID filter
+- `workload_type`: optional exact workload filter
+- `session_id`: optional exact session filter
+- `unit_price_microcredits`: optional non-negative integer price per reward unit
+
+The response schema is `miner_settlement_draft_v1`. It includes accepted-only
+`miner_settlement_row_v1` rows, `settlement_totals`, reward units,
+`reward_amount_microcredits`, and redacted join policy metadata when a Miner
+came from a registry invite. It is an operator accounting draft only:
+`draft_only` is true, `payment_executed` is false, and reward account values are
+never exposed.
+
 ### `POST /admin/inference-sessions`
 
 Creates one admin-controlled, read-only `model_bundle_infer` task. Requires `x-crowdtensor-admin-token`.

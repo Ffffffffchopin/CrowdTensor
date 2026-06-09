@@ -268,6 +268,47 @@ def apply_accounting_policy_summary(accounting: dict[str, Any], registry: dict[s
     return payload
 
 
+def _safe_settlement_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
+    reward_account_present = bool(
+        policy.get("reward_account_present")
+        or str(policy.get("reward_account") or "").strip()
+    )
+    return {
+        "trust_tier": str(policy.get("trust_tier") or "new"),
+        "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+        "claim_rate_limit": int(policy.get("claim_rate_limit") or 0),
+        "claim_rate_window_seconds": float(policy.get("claim_rate_window_seconds") or 0.0),
+        "reward_account_present": reward_account_present,
+        "read_only_workload": str(policy.get("read_only_workload") or ""),
+    }
+
+
+def apply_settlement_policy_summary(settlement: dict[str, Any], registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    payload = json.loads(json.dumps(settlement))
+    for row in payload.get("rows", []):
+        if not isinstance(row, dict):
+            continue
+        policy = miner_join_policy_for(str(row.get("miner_id") or ""), registry)
+        if not policy:
+            continue
+        summary = _safe_settlement_policy_summary(policy)
+        row["join_policy"] = summary
+        row["reward_account_present"] = bool(summary["reward_account_present"])
+        row["settlement_status"] = "payable_draft" if row["reward_account_present"] else "missing_reward_account"
+    for item in payload.get("settlement_totals", {}).values():
+        if not isinstance(item, dict):
+            continue
+        policy = miner_join_policy_for(str(item.get("miner_id") or ""), registry)
+        if not policy:
+            continue
+        summary = _safe_settlement_policy_summary(policy)
+        item["join_policy"] = summary
+        item["reward_account_present"] = bool(summary["reward_account_present"])
+        item["settlement_status"] = "payable_draft" if item["reward_account_present"] else "missing_reward_account"
+    payload["registry_policy_joined"] = bool(registry)
+    return payload
+
+
 def _metric_value(value: Any) -> str:
     if isinstance(value, bool):
         return "1" if value else "0"
@@ -781,6 +822,39 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return apply_accounting_policy_summary(accounting, configured_miner_registry)
+
+    @app.get("/admin/settlement")
+    def admin_settlement(
+        limit: int = Query(default=50, ge=0, le=500),
+        miner_id: str = Query(default=""),
+        workload_type: str = Query(default=""),
+        session_id: str = Query(default=""),
+        unit_price_microcredits: int = Query(default=0, ge=0),
+        x_crowdtensor_admin_token: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(x_crowdtensor_admin_token)
+
+        def query_value(value, default):
+            if hasattr(value, "default"):
+                value = value.default
+            return default if value is None else value
+
+        limit_value = query_value(limit, 50)
+        miner_value = query_value(miner_id, "")
+        workload_value = query_value(workload_type, "")
+        session_value = query_value(session_id, "")
+        price_value = query_value(unit_price_microcredits, 0)
+        try:
+            settlement = store.miner_settlement_draft(
+                limit=limit_value,
+                miner_id=miner_value,
+                workload_type=workload_value,
+                session_id=session_value,
+                unit_price_microcredits=price_value,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return apply_settlement_policy_summary(settlement, configured_miner_registry)
 
     @app.get("/admin/session-stream")
     def admin_session_stream(

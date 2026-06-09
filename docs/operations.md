@@ -729,6 +729,19 @@ workload, joins redacted invite policy metadata such as trust tier, quota, and
 claim-rate limits when present, and avoids raw prompts, outputs, token ids,
 activations, lease material, plaintext tokens, and reward account values.
 
+Admin settlement draft:
+
+```bash
+curl -H 'x-crowdtensor-admin-token: local-admin' \
+  'http://127.0.0.1:8787/admin/settlement?unit_price_microcredits=1&limit=20'
+```
+
+`GET /admin/settlement` is an accepted-result-only settlement draft for Beta
+operator accounting. It converts safe work units into reward units and optional
+microcredit amounts, joins only redacted invite policy metadata, and always
+reports `draft_only=true` plus `payment_executed=false`. It does not expose
+reward account values and does not perform billing, staking, or payouts.
+
 ## Acceptance Checks
 
 First-run Doctor:

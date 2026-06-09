@@ -461,6 +461,51 @@ class StateStoreTests(unittest.TestCase):
             self.assertNotIn("lease_token", payload)
             self.assertFalse(summary["lease_material_public"])
 
+    def test_miner_settlement_draft_uses_accepted_safe_work_units(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=2)
+            accepted_claim = store.claim_task("settlement-miner")
+            inner_result = run_inner_loop(
+                accepted_claim["weights"],
+                task_id=accepted_claim["task_id"],
+                miner_id="settlement-miner",
+                model_version=accepted_claim["model_version"],
+                inner_steps=accepted_claim["inner_steps"],
+            )
+            store.complete_task(
+                accepted_claim["task_id"],
+                lease_token=accepted_claim["lease_token"],
+                attempt=accepted_claim["attempt"],
+                idempotency_key="settlement-secret",
+                local_delta=inner_result["local_delta"],
+                metrics={**inner_result, "elapsed_ms": 10.5},
+            )
+            store.claim_task("settlement-miner")
+
+            draft = store.miner_settlement_draft(
+                miner_id="settlement-miner",
+                unit_price_microcredits=3,
+            )
+            payload = json.dumps(draft, sort_keys=True)
+
+            self.assertEqual(draft["schema"], "miner_settlement_draft_v1")
+            self.assertEqual(draft["row_count"], 1)
+            row = draft["rows"][0]
+            self.assertEqual(row["schema"], "miner_settlement_row_v1")
+            self.assertEqual(row["reward_unit"], "inner_step")
+            self.assertEqual(row["reward_units"], 10)
+            self.assertEqual(row["reward_amount_microcredits"], 30)
+            self.assertEqual(row["settlement_status"], "policy_not_joined")
+            totals = draft["settlement_totals"]["settlement-miner/diloco_train"]
+            self.assertEqual(totals["accepted"], 1)
+            self.assertEqual(totals["reward_units"], 10)
+            self.assertEqual(totals["reward_amount_microcredits"], 30)
+            self.assertTrue(draft["draft_only"])
+            self.assertFalse(draft["payment_executed"])
+            self.assertFalse(draft["reward_accounts_public"])
+            self.assertNotIn("settlement-secret", payload)
+            self.assertNotIn("lease_token", payload)
+
     def test_sign_compressed_result_updates_model_and_ledger_safely(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = StateStore(

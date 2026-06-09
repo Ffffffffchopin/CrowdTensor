@@ -34,9 +34,9 @@ Hivemind-level large-model serving.
 
 - Shorten the two-machine setup path.
 - Improve join packs for non-expert Miner operators.
-- Extend private Miner join policy enforcement, claim-rate limits, and
-  accounting rows into reward summaries, settlement exports, and
-  operator-visible trust state.
+- Extend private Miner join policy enforcement, claim-rate limits, accounting
+  rows, and draft reward summaries into settlement exports and operator-visible
+  trust state.
 - Make logs, diagnosis codes, and support bundles easier to read.
 - Keep printed next commands copyable while surfacing tokens and peer secrets
   as environment requirements rather than report contents.
