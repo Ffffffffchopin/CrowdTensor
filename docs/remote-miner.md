@@ -20,7 +20,11 @@ it emits `crowdtensor_swarm_bootstrap_check_v1` and verifies required files,
 `0600` private env/invite permissions, `0700` helper scripts, hashed registries,
 env separation, stage invite Coordinator URL consistency, non-local-only remote
 route readiness via `coordinator_url_remote_route_ready`, and plaintext token
-leakage in scripts or public Markdown.
+leakage in scripts or public Markdown. After starting the Coordinator, rerun
+the same command with `--check-coordinator` to call `/ready` and match both
+stage invites against the redacted registry policy, or `--check-admission` to
+also call token-backed `/tasks/preflight` for both stage invites without
+claiming tasks. A clean live check reports `swarm_bootstrap_live_preflight_ready`.
 Bootstrap is not NAT traversal.
 
 For a local maintainer check of the CPU inference Beta path before involving a second machine, run:

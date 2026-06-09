@@ -101,7 +101,9 @@ bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
 scripts or public Markdown. Add `--expect-remote-miners` when stage packages
 will leave the Coordinator host; local-only invite URLs then fail with
-`coordinator_remote_route_required`.
+`coordinator_remote_route_required`. After the Coordinator starts, add
+`--check-coordinator` or `--check-admission`; the latter calls token-backed
+`/tasks/preflight` for both stage invites and must report no task claim.
 When `--expect-remote-miners` is used with a local-only Coordinator URL,
 bootstrap fails before creating registries or invite files.
 

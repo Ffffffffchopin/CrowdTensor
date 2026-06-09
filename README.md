@@ -451,8 +451,10 @@ files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
 plaintext tokens before handoff. With `--expect-remote-miners`, it also checks
 that both stage invites share a Miner-facing Coordinator URL that is not
-`127.0.0.1` / `localhost`; this is a setup helper, not a production NAT
-traversal or billing system.
+`127.0.0.1` / `localhost`. After the Coordinator is running, add
+`--check-coordinator` or `--check-admission` to call `/ready` and token-backed
+`/tasks/preflight` for both stage invites without claiming tasks; this is a
+setup helper, not a production NAT traversal or billing system.
 Multi-operator deployments can start the same product Coordinator with
 `crowdtensor serve --operator-token-registry state/operator_registry.json --run`
 so audit/accounting operators do not need the legacy owner-level admin token.

@@ -1650,6 +1650,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("CrowdTensor swarm bootstrap check", rendered)
         self.assertIn("remote_access:", rendered)
+        self.assertIn("live_preflight: checked=False", rendered)
         self.assertIn("swarm_bootstrap_package_ready", rendered)
         self.assertNotIn(operator_invite["operator_token"], rendered)
 
@@ -1762,6 +1763,145 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("bootstrap_stage_coordinator_url_mismatch", report["diagnosis_codes"])
         self.assertNotIn("coordinator_remote_route_required", report["diagnosis_codes"])
         self.assertFalse(report["safety"]["coordinator_url_remote_route_ready"])
+
+    def test_swarm_bootstrap_check_live_coordinator_and_admission_preflight(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://coord.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        cli.build_swarm_bootstrap(bootstrap_args)
+        stage0_invite = json.loads((output_dir / "stage0" / "miner.invite.json").read_text(encoding="utf-8"))
+        stage1_invite = json.loads((output_dir / "stage1" / "miner.invite.json").read_text(encoding="utf-8"))
+        ready_payload = {
+            "ok": True,
+            "service": "crowdtensord",
+            "version": "0.1.0",
+            "protocol_version": "runtime_contract_v1",
+            "auth": {"miner_registry_configured": True},
+            "task_lanes": [{"workload_type": "real_llm_sharded_infer"}],
+            "miner_policy_summary": {
+                "schema": "crowdtensor_miner_registry_policy_summary_v1",
+                "miner_count": 2,
+                "policy_count": 2,
+                "miners": [
+                    {
+                        "miner_id": stage0_invite["miner_id"],
+                        "enabled": True,
+                        "policy": {
+                            "stage": "stage0",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "quota_task_limit": 0,
+                            "claim_rate_limit": 0,
+                            "claim_rate_window_seconds": 0.0,
+                            "reward_account_present": False,
+                            "read_only_workload": "real_llm_sharded_infer",
+                            "not_production": True,
+                        },
+                    },
+                    {
+                        "miner_id": stage1_invite["miner_id"],
+                        "enabled": True,
+                        "policy": {
+                            "stage": "stage1",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "quota_task_limit": 0,
+                            "claim_rate_limit": 0,
+                            "claim_rate_window_seconds": 0.0,
+                            "reward_account_present": False,
+                            "read_only_workload": "real_llm_sharded_infer",
+                            "not_production": True,
+                        },
+                    },
+                ],
+            },
+        }
+        admission_payload = {
+            "schema": "crowdtensor_miner_admission_preflight_v1",
+            "ok": True,
+            "reason": "",
+            "would_status_code": 200,
+            "policy_configured": True,
+            "claim_attempted": False,
+            "task_claimed": False,
+            "policy_limits": {"quota_task_limit": 0, "claim_rate_limit": 0, "claim_rate_window_seconds": 0.0},
+            "usage": {"claim_count": 0},
+            "rate_usage": {"claim_count": 0},
+            "scoped_capabilities": {},
+        }
+        calls: list[tuple] = []
+
+        def fake_request(method: str, base_url: str, path: str, payload: dict | None = None, **kwargs: object) -> dict:
+            calls.append((method, base_url, path, payload, kwargs))
+            if path == "/ready":
+                return ready_payload
+            if path == "/tasks/preflight":
+                return admission_payload
+            raise AssertionError(path)
+
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--check-admission",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_swarm_bootstrap_check(check_args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("swarm_bootstrap_live_preflight_ready", report["diagnosis_codes"])
+        self.assertIn("join_admission_ready", report["diagnosis_codes"])
+        self.assertTrue(report["live_preflight"]["checked"])
+        self.assertTrue(report["live_preflight"]["admission_checked"])
+        self.assertTrue(report["live_preflight"]["stages"]["stage0"]["admission_preflight"]["ok"])
+        self.assertFalse(report["live_preflight"]["claim_attempted"])
+        self.assertFalse(report["live_preflight"]["task_claimed"])
+        self.assertEqual([call[2] for call in calls], ["/ready", "/tasks/preflight", "/ready", "/tasks/preflight"])
+        self.assertEqual(calls[1][4]["miner_token"], stage0_invite["miner_token"])
+        self.assertEqual(calls[3][4]["miner_token"], stage1_invite["miner_token"])
+        self.assertNotIn(stage0_invite["miner_token"], encoded)
+        self.assertNotIn(stage1_invite["miner_token"], encoded)
+
+    def test_swarm_bootstrap_check_live_preflight_blocks_unreachable_coordinator(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://coord.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        cli.build_swarm_bootstrap(bootstrap_args)
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--check-coordinator",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("join_coordinator_unreachable", report["diagnosis_codes"])
+        self.assertIn("bootstrap_live_preflight_failed", report["diagnosis_codes"])
+        self.assertFalse(report["live_preflight"]["stages"]["stage0"]["ok"])
+        self.assertFalse(report["safety"]["live_preflight_ready"])
 
     def test_swarm_bootstrap_remote_local_only_fails_without_creating_invites(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"

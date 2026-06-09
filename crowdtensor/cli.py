@@ -11472,6 +11472,93 @@ def _token_present_in_files(token: str, files: list[Path]) -> bool:
     return False
 
 
+def _bootstrap_join_args_from_invite(invite: dict[str, Any], *, http_timeout: float) -> argparse.Namespace:
+    return argparse.Namespace(
+        miner_id=str(invite.get("miner_id") or ""),
+        miner_token=str(invite.get("miner_token") or ""),
+        stage=str(invite.get("stage") or "both"),
+        backend=str(invite.get("backend") or "cpu"),
+        hf_model_id=str(invite.get("hf_model_id") or "sshleifer/tiny-gpt2"),
+        http_timeout=float(http_timeout or 5.0),
+    )
+
+
+def _bootstrap_live_preflight(
+    coordinator_url: str,
+    invites: dict[str, dict[str, Any]],
+    *,
+    check_coordinator: bool,
+    check_admission: bool,
+    http_timeout: float,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "schema": "crowdtensor_swarm_bootstrap_live_preflight_v1",
+        "checked": bool(check_coordinator or check_admission),
+        "coordinator_checked": bool(check_coordinator or check_admission),
+        "admission_checked": bool(check_admission),
+        "ok": None,
+        "stages": {},
+        "diagnosis_codes": [],
+        "claim_attempted": False,
+        "task_claimed": False,
+    }
+    if not result["checked"]:
+        result["ok"] = True
+        result["diagnosis_codes"] = ["bootstrap_live_preflight_skipped"]
+        return result
+    if not coordinator_url:
+        result["ok"] = False
+        result["diagnosis_codes"] = ["coordinator_route_missing"]
+        return result
+    all_ok = True
+    codes: list[str] = []
+    for stage in ["stage0", "stage1"]:
+        invite = invites.get(stage) if isinstance(invites.get(stage), dict) else {}
+        args = _bootstrap_join_args_from_invite(invite, http_timeout=http_timeout)
+        coordinator_preflight = _product_join_coordinator_preflight(
+            coordinator_url,
+            timeout=http_timeout,
+            invite_summary={
+                "miner_id": str(invite.get("miner_id") or ""),
+                "stage": str(invite.get("stage") or ""),
+                "backend": str(invite.get("backend") or ""),
+                "hf_model_id": str(invite.get("hf_model_id") or ""),
+                "policy": invite.get("policy") if isinstance(invite.get("policy"), dict) else {},
+            },
+        )
+        if check_admission and coordinator_preflight.get("ok"):
+            admission_preflight = _product_join_admission_preflight(coordinator_url, args)
+            coordinator_preflight["admission_preflight"] = admission_preflight
+            coordinator_preflight["ok"] = bool(admission_preflight.get("ok"))
+            if not admission_preflight.get("ok"):
+                coordinator_preflight["diagnosis_code"] = str(
+                    admission_preflight.get("diagnosis_code") or "join_admission_blocked"
+                )
+        stage_ok = bool(coordinator_preflight.get("ok"))
+        all_ok = all_ok and stage_ok
+        stage_code = str(coordinator_preflight.get("diagnosis_code") or "")
+        if stage_code:
+            codes.append(stage_code)
+        match = coordinator_preflight.get("invite_policy_match")
+        if isinstance(match, dict):
+            match_code = str(match.get("diagnosis_code") or "")
+            if match_code:
+                codes.append(match_code)
+        admission = coordinator_preflight.get("admission_preflight")
+        if isinstance(admission, dict):
+            admission_code = str(admission.get("diagnosis_code") or "")
+            if admission_code:
+                codes.append(admission_code)
+            result["claim_attempted"] = bool(result["claim_attempted"] or admission.get("claim_attempted"))
+            result["task_claimed"] = bool(result["task_claimed"] or admission.get("task_claimed"))
+        result["stages"][stage] = coordinator_preflight
+    if all_ok:
+        codes.append("swarm_bootstrap_live_preflight_ready")
+    result["ok"] = all_ok
+    result["diagnosis_codes"] = sorted(set(code for code in codes if code))
+    return result
+
+
 def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir)
     private_dir = output_dir / "private"
@@ -11718,6 +11805,23 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail=str(remote_access.get("operator_action") or ""),
         diagnosis_code=remote_route_diagnosis,
     )
+    live_preflight = _bootstrap_live_preflight(
+        coordinator_url,
+        {"stage0": stage0_invite, "stage1": stage1_invite},
+        check_coordinator=bool(getattr(args, "check_coordinator", False)),
+        check_admission=bool(getattr(args, "check_admission", False)),
+        http_timeout=float(getattr(args, "http_timeout", 5.0) or 5.0),
+    )
+    if live_preflight.get("checked"):
+        diagnosis_codes.extend(str(code) for code in (live_preflight.get("diagnosis_codes") or []) if code)
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "live_coordinator_preflight_ready",
+        bool(not live_preflight.get("checked") or live_preflight.get("ok")),
+        detail="checked=" + str(live_preflight.get("checked")),
+        diagnosis_code="bootstrap_live_preflight_failed" if live_preflight.get("checked") else "",
+    )
 
     stage0_script_text, _ = _read_bootstrap_text(required_files["stage0_join_script"])
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
@@ -11788,6 +11892,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "output_dir": str(output_dir),
         "coordinator_url": coordinator_url,
         "remote_access": remote_access,
+        "live_preflight": live_preflight,
         "artifacts": artifacts,
         "checks": checks,
         "safety": {
@@ -11801,6 +11906,11 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
             "coordinator_url_remote_route_ready": remote_route_ready,
+            "live_preflight_ready": (
+                bool(live_preflight.get("ok")) if live_preflight.get("checked") else None
+            ),
+            "live_preflight_claim_attempted": bool(live_preflight.get("claim_attempted")),
+            "live_preflight_task_claimed": bool(live_preflight.get("task_claimed")),
             "not_production_billing": True,
             "not_nat_traversal": True,
             "not_large_model_serving": True,
@@ -11827,6 +11937,16 @@ def print_swarm_bootstrap_check(report: dict[str, Any]) -> None:
             f"route={remote_access.get('route_kind')} "
             f"remote_miners={remote_access.get('remote_miners_supported')} "
             f"diagnosis={remote_access.get('diagnosis_code')}"
+        )
+    live_preflight = report.get("live_preflight") if isinstance(report.get("live_preflight"), dict) else {}
+    if live_preflight:
+        print(
+            "  live_preflight: "
+            f"checked={live_preflight.get('checked')} "
+            f"ok={live_preflight.get('ok')} "
+            f"admission={live_preflight.get('admission_checked')} "
+            f"claim_attempted={live_preflight.get('claim_attempted')} "
+            f"task_claimed={live_preflight.get('task_claimed')}"
         )
     failed = [
         item for item in report.get("checks") or []
@@ -18310,6 +18430,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="fail when generated Miner invites use a local-only Coordinator URL",
     )
+    swarm_bootstrap_check.add_argument(
+        "--check-coordinator",
+        action="store_true",
+        help="call the generated Coordinator URL /ready and match both stage invites against its redacted registry policy",
+    )
+    swarm_bootstrap_check.add_argument(
+        "--check-admission",
+        action="store_true",
+        help="also call token-backed /tasks/preflight for both stage invites without claiming tasks",
+    )
+    swarm_bootstrap_check.add_argument("--http-timeout", type=float, default=5.0)
     swarm_bootstrap_check.add_argument("--json", action="store_true")
 
     join = subparsers.add_parser(
@@ -20675,6 +20806,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--rate-limit and --rate-window-seconds must be set together")
         if (args.claim_rate_limit > 0) != (args.claim_rate_window_seconds > 0):
             raise SystemExit("--claim-rate-limit and --claim-rate-window-seconds must be set together")
+    if args.command == "swarm-bootstrap-check":
+        if args.http_timeout <= 0:
+            raise SystemExit("--http-timeout must be positive")
+        if args.check_admission:
+            args.check_coordinator = True
     if args.command == "join":
         if args.http_timeout <= 0:
             raise SystemExit("--http-timeout must be positive")
