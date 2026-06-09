@@ -3952,6 +3952,35 @@ class CrowdTensorCliTests(unittest.TestCase):
                 {"workload_type": "real_llm_sharded_infer"},
                 {"workload_type": "model_bundle_infer"},
             ],
+            "miner_policy_summary": {
+                "schema": "crowdtensor_miner_registry_policy_summary_v1",
+                "miner_count": 1,
+                "policy_count": 1,
+                "miners": [
+                    {
+                        "miner_id": "invited-stage0",
+                        "enabled": True,
+                        "label": "probation-stage0",
+                        "policy": {
+                            "schema": "crowdtensor_miner_join_policy_v1",
+                            "coordinator_url_present": True,
+                            "stage": "stage0",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "trust_tier": "probation",
+                            "quota_task_limit": 0,
+                            "claim_rate_limit": 0,
+                            "claim_rate_window_seconds": 0.0,
+                            "reward_account_present": False,
+                            "read_only_workload": "real_llm_sharded_infer",
+                            "not_production": True,
+                        },
+                    },
+                ],
+                "plaintext_tokens_public": False,
+                "reward_accounts_public": False,
+                "public_artifact_safe": True,
+            },
         }
         args = cli.parse_args([
             "join",
@@ -3971,6 +4000,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["runtime_provenance"]["live_preflight_ready"])
         self.assertTrue(report["coordinator_preflight"]["ok"])
         self.assertEqual(report["coordinator_preflight"]["service"], "crowdtensord")
+        self.assertTrue(report["coordinator_preflight"]["invite_policy_match"]["ok"])
+        self.assertIn("join_invite_policy_match_ready", report["diagnosis_codes"])
         self.assertEqual(
             report["coordinator_preflight"]["task_lane_workloads"],
             ["model_bundle_infer", "real_llm_sharded_infer"],
@@ -3984,8 +4015,141 @@ class CrowdTensorCliTests(unittest.TestCase):
             cli.print_product_join(report)
         rendered = stdout.getvalue()
         self.assertIn("coordinator_preflight: checked=True ok=True", rendered)
+        self.assertIn("invite_policy_match: checked=True ok=True miner_seen=True enabled=True mismatches=none", rendered)
         self.assertIn("workloads=model_bundle_infer,real_llm_sharded_infer", rendered)
         self.assertNotIn("invite-secret", rendered)
+
+    def test_product_join_invite_check_coordinator_blocks_missing_registry_entry(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        invite_path = output_dir / "miner.invite.json"
+        invite_path.write_text(json.dumps({
+            "schema": "crowdtensor_miner_join_invite_v1",
+            "coordinator_url": "https://coord.example",
+            "miner_id": "missing-stage0",
+            "stage": "stage0",
+            "backend": "cpu",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "miner_token": "invite-secret",
+            "token_hash": "sha256:" + "d" * 64,
+            "policy": {
+                "schema": "crowdtensor_miner_join_policy_v1",
+                "trust_tier": "probation",
+                "read_only_workload": "real_llm_sharded_infer",
+                "not_production": True,
+            },
+        }), encoding="utf-8")
+        ready_payload = {
+            "ok": True,
+            "service": "crowdtensord",
+            "auth": {"miner_registry_configured": True},
+            "task_lanes": [{"workload_type": "real_llm_sharded_infer"}],
+            "miner_policy_summary": {
+                "schema": "crowdtensor_miner_registry_policy_summary_v1",
+                "miner_count": 1,
+                "policy_count": 1,
+                "miners": [
+                    {
+                        "miner_id": "other-stage0",
+                        "enabled": True,
+                        "policy": {
+                            "stage": "stage0",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "read_only_workload": "real_llm_sharded_infer",
+                            "not_production": True,
+                        },
+                    },
+                ],
+            },
+        }
+        args = cli.parse_args([
+            "join",
+            "--invite-file",
+            str(invite_path),
+            "--check-coordinator",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", return_value=ready_payload):
+            report = cli.build_product_join(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertFalse(report["ok"], report)
+        self.assertIn("join_invite_policy_miner_missing", report["diagnosis_codes"])
+        self.assertFalse(report["coordinator_preflight"]["invite_policy_match"]["miner_seen"])
+        self.assertIn("not in its registry", report["operator_action"])
+        self.assertFalse(report["runtime_provenance"]["route_ready"])
+        self.assertEqual(report["evidence_scope"]["level"], "join-route-blocked")
+        self.assertNotIn("invite-secret", encoded)
+
+    def test_product_join_invite_check_coordinator_blocks_policy_mismatch(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        invite_path = output_dir / "miner.invite.json"
+        invite_path.write_text(json.dumps({
+            "schema": "crowdtensor_miner_join_invite_v1",
+            "coordinator_url": "https://coord.example",
+            "miner_id": "invited-stage0",
+            "stage": "stage0",
+            "backend": "cuda",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "miner_token": "invite-secret",
+            "token_hash": "sha256:" + "e" * 64,
+            "policy": {
+                "schema": "crowdtensor_miner_join_policy_v1",
+                "quota_task_limit": 5,
+                "claim_rate_limit": 2,
+                "claim_rate_window_seconds": 60,
+                "read_only_workload": "real_llm_sharded_infer",
+                "not_production": True,
+            },
+        }), encoding="utf-8")
+        ready_payload = {
+            "ok": True,
+            "service": "crowdtensord",
+            "auth": {"miner_registry_configured": True},
+            "task_lanes": [{"workload_type": "real_llm_sharded_infer"}],
+            "miner_policy_summary": {
+                "schema": "crowdtensor_miner_registry_policy_summary_v1",
+                "miner_count": 1,
+                "policy_count": 1,
+                "miners": [
+                    {
+                        "miner_id": "invited-stage0",
+                        "enabled": True,
+                        "policy": {
+                            "stage": "stage1",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "quota_task_limit": 5,
+                            "claim_rate_limit": 2,
+                            "claim_rate_window_seconds": 60.0,
+                            "reward_account_present": False,
+                            "read_only_workload": "real_llm_sharded_infer",
+                            "not_production": True,
+                        },
+                    },
+                ],
+            },
+        }
+        args = cli.parse_args([
+            "join",
+            "--invite-file",
+            str(invite_path),
+            "--check-coordinator",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", return_value=ready_payload):
+            report = cli.build_product_join(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("join_invite_policy_mismatch", report["diagnosis_codes"])
+        self.assertEqual(
+            report["coordinator_preflight"]["invite_policy_match"]["mismatches"],
+            ["stage", "backend"],
+        )
+        self.assertIn("does not match this invite", report["operator_action"])
+        self.assertFalse(report["runtime_provenance"]["route_ready"])
 
     def test_product_join_check_coordinator_unreachable_blocks_before_run(self) -> None:
         args = cli.parse_args([

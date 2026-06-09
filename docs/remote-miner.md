@@ -60,10 +60,16 @@ crowdtensor join --invite-file stage0-gpu-1.invite.json --check-coordinator --js
 ```
 
 The preflight calls only the public `/ready` endpoint. It does not send the
-Miner token, does not claim work, and does not submit a generation request. A
-blocked report with `join_coordinator_unreachable` means the Coordinator entry
-URL, DNS, firewall, VPN, tunnel, or reverse proxy must be fixed before the
-Miner can join. After the preflight is ready, run:
+Miner token, does not claim work, and does not submit a generation request. When
+an invite is used, it also compares the invite's Miner ID, stage, backend, model,
+read-only workload, quota, and claim-rate metadata with the Coordinator's
+redacted `miner_policy_summary`. A blocked report with
+`join_coordinator_unreachable` means the Coordinator entry URL, DNS, firewall,
+VPN, tunnel, or reverse proxy must be fixed before the Miner can join.
+`join_invite_policy_miner_missing` or `join_invite_policy_mismatch` means the
+Coordinator did not load the matching `miner_registry.json`, loaded an older
+registry, or the invite was generated for a different Coordinator. After the
+preflight is ready, run:
 
 ```bash
 crowdtensor join --invite-file stage0-gpu-1.invite.json --run

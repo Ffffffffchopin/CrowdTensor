@@ -10726,7 +10726,58 @@ def resolve_coordinator_from_discovery(
     return "", peer_list, payload
 
 
-def _product_join_coordinator_preflight(coordinator_url: str, *, timeout: float = 5.0) -> dict[str, Any]:
+def _product_join_invite_policy_match(invite_summary: dict[str, Any], ready_payload: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "schema": "crowdtensor_join_invite_policy_match_v1",
+        "checked": bool(invite_summary),
+        "ok": False,
+        "miner_id": str(invite_summary.get("miner_id") or ""),
+        "policy_public": True,
+    }
+    if not invite_summary:
+        result["diagnosis_code"] = "join_invite_policy_not_checked"
+        return result
+    summary = ready_payload.get("miner_policy_summary") if isinstance(ready_payload.get("miner_policy_summary"), dict) else {}
+    miners = summary.get("miners") if isinstance(summary.get("miners"), list) else []
+    miner_id = str(invite_summary.get("miner_id") or "")
+    entry = next(
+        (item for item in miners if isinstance(item, dict) and str(item.get("miner_id") or "") == miner_id),
+        None,
+    )
+    result["registry_configured"] = bool((ready_payload.get("auth") or {}).get("miner_registry_configured")) if isinstance(ready_payload.get("auth"), dict) else False
+    result["policy_count"] = int(summary.get("policy_count") or 0) if isinstance(summary, dict) else 0
+    result["miner_seen"] = bool(entry)
+    if not entry:
+        result["diagnosis_code"] = "join_invite_policy_miner_missing"
+        return result
+    policy = entry.get("policy") if isinstance(entry.get("policy"), dict) else {}
+    invite_policy = invite_summary.get("policy") if isinstance(invite_summary.get("policy"), dict) else {}
+    comparisons = {
+        "stage": str(policy.get("stage") or "") == str(invite_summary.get("stage") or ""),
+        "backend": str(policy.get("backend") or "") == str(invite_summary.get("backend") or ""),
+        "hf_model_id": str(policy.get("hf_model_id") or "") == str(invite_summary.get("hf_model_id") or ""),
+        "read_only_workload": str(policy.get("read_only_workload") or "") == str(invite_policy.get("read_only_workload") or ""),
+        "quota_task_limit": int(policy.get("quota_task_limit") or 0) == int(invite_policy.get("quota_task_limit") or 0),
+        "claim_rate_limit": int(policy.get("claim_rate_limit") or 0) == int(invite_policy.get("claim_rate_limit") or 0),
+        "claim_rate_window_seconds": float(policy.get("claim_rate_window_seconds") or 0.0) == float(invite_policy.get("claim_rate_window_seconds") or 0.0),
+        "reward_account_present": bool(policy.get("reward_account_present")) == bool(invite_policy.get("reward_account_present")),
+        "not_production": bool(policy.get("not_production", True)) == bool(invite_policy.get("not_production", True)),
+    }
+    result["enabled"] = bool(entry.get("enabled"))
+    result["label_present"] = bool(str(entry.get("label") or ""))
+    result["comparisons"] = comparisons
+    result["mismatches"] = [key for key, matched in comparisons.items() if not matched]
+    result["ok"] = bool(result["enabled"] and not result["mismatches"])
+    result["diagnosis_code"] = "join_invite_policy_match_ready" if result["ok"] else "join_invite_policy_mismatch"
+    return result
+
+
+def _product_join_coordinator_preflight(
+    coordinator_url: str,
+    *,
+    timeout: float = 5.0,
+    invite_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     base_url = str(coordinator_url or "").strip().rstrip("/")
     result: dict[str, Any] = {
         "schema": "crowdtensor_join_coordinator_preflight_v1",
@@ -10772,6 +10823,16 @@ def _product_join_coordinator_preflight(coordinator_url: str, *, timeout: float 
         },
         "diagnosis_code": "join_coordinator_ready" if payload.get("ok") else "join_coordinator_not_ready",
     })
+    if invite_summary:
+        match = _product_join_invite_policy_match(invite_summary, payload)
+        result["invite_policy_match"] = match
+        if result["ok"]:
+            result["ok"] = bool(match.get("ok"))
+            result["diagnosis_code"] = (
+                "join_coordinator_ready"
+                if match.get("ok")
+                else str(match.get("diagnosis_code") or "join_invite_policy_mismatch")
+            )
     return result
 
 
@@ -10784,6 +10845,8 @@ def _product_join_runtime_provenance(report: dict[str, Any], args: argparse.Name
         and "coordinator_route_missing" not in codes
         and "join_coordinator_unreachable" not in codes
         and "join_coordinator_not_ready" not in codes
+        and "join_invite_policy_miner_missing" not in codes
+        and "join_invite_policy_mismatch" not in codes
     )
     if coordinator_url:
         coordinator_scope = "local-loopback" if is_loopback_coordinator_url(coordinator_url) else "external-existing"
@@ -11074,7 +11137,11 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
     ready = bool(not args.p2p or peer_announce.get("ok"))
     coordinator_preflight: dict[str, Any] = {}
     if bool(getattr(args, "check_coordinator", False)):
-        coordinator_preflight = _product_join_coordinator_preflight(coordinator_url, timeout=args.http_timeout)
+        coordinator_preflight = _product_join_coordinator_preflight(
+            coordinator_url,
+            timeout=args.http_timeout,
+            invite_summary=invite_summary,
+        )
         ready = bool(ready and coordinator_preflight.get("ok"))
     safe_command = redacted_command(command, {"--miner-token", "--peer-secret"})
     diagnosis_codes = ["join_command_ready"] + (
@@ -11086,6 +11153,11 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         preflight_code = str(coordinator_preflight.get("diagnosis_code") or "")
         if preflight_code:
             diagnosis_codes.append(preflight_code)
+        match = coordinator_preflight.get("invite_policy_match")
+        if isinstance(match, dict):
+            match_code = str(match.get("diagnosis_code") or "")
+            if match_code and match_code not in diagnosis_codes:
+                diagnosis_codes.append(match_code)
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": ready,
@@ -11126,6 +11198,11 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             preflight_code = str(coordinator_preflight.get("diagnosis_code") or "")
             if preflight_code:
                 report["diagnosis_codes"].append(preflight_code)
+            match = coordinator_preflight.get("invite_policy_match")
+            if isinstance(match, dict):
+                match_code = str(match.get("diagnosis_code") or "")
+                if match_code and match_code not in report["diagnosis_codes"]:
+                    report["diagnosis_codes"].append(match_code)
         report["operator_action"] = _product_join_operator_action(report)
         if not args.run:
             report = _finalize_product_join_report(report, args)
@@ -11155,6 +11232,10 @@ def _product_join_operator_action(report: dict[str, Any]) -> str:
         return "Coordinator /ready is unreachable; check the URL, DNS, firewall, VPN, tunnel, or public reverse proxy before running this Miner."
     if "join_coordinator_not_ready" in codes:
         return "Coordinator /ready responded but is not ready; inspect the Coordinator logs and task-lane configuration before running this Miner."
+    if "join_invite_policy_miner_missing" in codes:
+        return "Coordinator is reachable but this Miner invite is not in its registry; load the matching miner_registry.json or regenerate the invite for this Coordinator."
+    if "join_invite_policy_mismatch" in codes:
+        return "Coordinator is reachable but its redacted Miner policy does not match this invite; regenerate the invite or restart the Coordinator with the matching registry."
     if "p2p_stage_miner_announce_failed" in codes or "real_p2p_stage_miner_announce_failed" in codes:
         return "Check the P2P discovery daemon and --peer-secret, then rerun join --p2p so this stage is visible to generate --dry-run."
     if report.get("ok"):
@@ -13228,6 +13309,7 @@ def print_product_join(report: dict[str, Any]) -> None:
     preflight = report.get("coordinator_preflight") if isinstance(report.get("coordinator_preflight"), dict) else {}
     if preflight:
         workloads = preflight.get("task_lane_workloads") if isinstance(preflight.get("task_lane_workloads"), list) else []
+        match = preflight.get("invite_policy_match") if isinstance(preflight.get("invite_policy_match"), dict) else {}
         print(
             "  coordinator_preflight: "
             f"checked={preflight.get('checked')} "
@@ -13237,6 +13319,17 @@ def print_product_join(report: dict[str, Any]) -> None:
             f"workloads={','.join(str(item) for item in workloads) if workloads else 'none'} "
             f"diagnosis={preflight.get('diagnosis_code')}"
         )
+        if match:
+            mismatches = match.get("mismatches") if isinstance(match.get("mismatches"), list) else []
+            print(
+                "  invite_policy_match: "
+                f"checked={match.get('checked')} "
+                f"ok={match.get('ok')} "
+                f"miner_seen={match.get('miner_seen')} "
+                f"enabled={match.get('enabled')} "
+                f"mismatches={','.join(str(item) for item in mismatches) if mismatches else 'none'} "
+                f"diagnosis={match.get('diagnosis_code')}"
+            )
     if report.get("printed_only"):
         print(f"  command: {report.get('command_line') or command_line(report.get('command') or [])}")
     if report.get("returncode") is not None:
