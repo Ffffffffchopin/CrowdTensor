@@ -6,6 +6,7 @@ import argparse
 import base64
 import binascii
 import copy
+import hashlib
 import ipaddress
 import json
 import os
@@ -10903,14 +10904,99 @@ def _write_stage_package_archive(stage_dir: Path, archive_path: Path) -> None:
     archive_path.chmod(0o600)
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_stage_handoff_checksum_file(
+    *,
+    stage: str,
+    archive_path: Path,
+    runner_path: Path,
+    checksum_path: Path,
+) -> dict[str, Any]:
+    archive_hash = _file_sha256(archive_path)
+    runner_hash = _file_sha256(runner_path)
+    checksum_path.write_text(
+        f"{archive_hash}  {archive_path.name}\n"
+        f"{runner_hash}  {runner_path.name}\n",
+        encoding="utf-8",
+    )
+    checksum_path.chmod(0o644)
+    return {
+        "stage": stage,
+        "checksum_file": str(checksum_path),
+        "archive_file": str(archive_path),
+        "archive_basename": archive_path.name,
+        "archive_sha256": archive_hash,
+        "archive_bytes": archive_path.stat().st_size,
+        "runner_file": str(runner_path),
+        "runner_basename": runner_path.name,
+        "runner_sha256": runner_hash,
+        "runner_bytes": runner_path.stat().st_size,
+        "verify_command": f"sha256sum -c {checksum_path.name}",
+        "run_command": f"./{runner_path.name} --run",
+        "raw_tokens_public": False,
+        "contains_private_package_hashes": True,
+        "share_with_matching_miner_only": True,
+    }
+
+
+def _write_stage_handoff_manifest(
+    manifest_path: Path,
+    stage_checksum_reports: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    manifest = {
+        "schema": "crowdtensor_stage_handoff_manifest_v1",
+        "stages": {
+            stage: {
+                "copy_files": [
+                    str(report.get("archive_basename") or ""),
+                    str(report.get("runner_basename") or ""),
+                    Path(str(report.get("checksum_file") or "")).name,
+                ],
+                "archive": {
+                    "file": str(report.get("archive_basename") or ""),
+                    "sha256": str(report.get("archive_sha256") or ""),
+                    "bytes": int(report.get("archive_bytes") or 0),
+                },
+                "runner": {
+                    "file": str(report.get("runner_basename") or ""),
+                    "sha256": str(report.get("runner_sha256") or ""),
+                    "bytes": int(report.get("runner_bytes") or 0),
+                },
+                "checksum_file": Path(str(report.get("checksum_file") or "")).name,
+                "verify_command": str(report.get("verify_command") or ""),
+                "run_command": str(report.get("run_command") or ""),
+            }
+            for stage, report in sorted(stage_checksum_reports.items())
+        },
+        "raw_tokens_public": False,
+        "raw_invite_codes_public": False,
+        "contains_private_package_hashes": True,
+        "share_with_matching_miner_only": True,
+        "not_nat_traversal": True,
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path.chmod(0o644)
+    return manifest
+
+
 def _bootstrap_stage_archive_runner_script(stage: str) -> str:
     archive_name = f"{stage}.miner-package.tar.gz"
+    checksum_name = f"{stage}.handoff.sha256"
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${{BASH_SOURCE[0]}}")" && pwd)"
 STAGE="{stage}"
 ARCHIVE="${{CROWDTENSOR_STAGE_PACKAGE_ARCHIVE:-$SCRIPT_DIR/{archive_name}}}"
+CHECKSUM="${{CROWDTENSOR_STAGE_PACKAGE_CHECKSUM:-$SCRIPT_DIR/{checksum_name}}}"
+RUNNER="$SCRIPT_DIR/{stage}.run-miner.sh"
 DEST="${{CROWDTENSOR_STAGE_PACKAGE_DEST:-$SCRIPT_DIR}}"
 MODE="run"
 
@@ -10946,6 +11032,29 @@ esac
 if [ ! -f "$ARCHIVE" ]; then
   echo "missing stage package archive: $ARCHIVE" >&2
   exit 1
+fi
+
+if [ "${{CROWDTENSOR_SKIP_STAGE_PACKAGE_CHECKSUM:-0}}" != "1" ]; then
+  if [ ! -f "$CHECKSUM" ]; then
+    echo "missing stage handoff checksum: $CHECKSUM" >&2
+    exit 1
+  fi
+  if [ ! -f "$RUNNER" ]; then
+    echo "missing stage runner for checksum verification: $RUNNER" >&2
+    exit 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "sha256sum is required to verify $CHECKSUM" >&2
+    exit 1
+  fi
+  ARCHIVE_DIR="$(CDPATH= cd -- "$(dirname -- "$ARCHIVE")" && pwd)"
+  CHECKSUM_DIR="$(CDPATH= cd -- "$(dirname -- "$CHECKSUM")" && pwd)"
+  if [ "$ARCHIVE_DIR" != "$CHECKSUM_DIR" ] || [ "$SCRIPT_DIR" != "$CHECKSUM_DIR" ]; then
+    echo "stage archive, runner, and checksum must be in the same directory for automatic verification" >&2
+    exit 1
+  fi
+  CHECKSUM_BASE="$(basename -- "$CHECKSUM")"
+  (cd "$CHECKSUM_DIR" && sha256sum -c "$CHECKSUM_BASE")
 fi
 
 PYTHON_BIN="${{PYTHON:-}}"
@@ -11649,6 +11758,8 @@ def _bootstrap_handoff_summary(
     private_invites: dict[str, str],
     stage_package_dirs: dict[str, str],
     stage_package_archives: dict[str, str] | None = None,
+    stage_handoff_checksums: dict[str, str] | None = None,
+    stage_handoff_manifest: str = "",
     live_preflight: dict[str, Any] | None = None,
     offline_package_ready: bool | None = None,
 ) -> dict[str, Any]:
@@ -11667,6 +11778,18 @@ def _bootstrap_handoff_summary(
         blockers.append("run_verify_bootstrap_live_preflight")
     elif not live_ready:
         blockers.append("fix_live_preflight")
+    archive_paths = stage_package_archives or {}
+    checksum_paths = stage_handoff_checksums or {}
+    handoff_files_to_copy = {
+        stage: [
+            path for path in [
+                archive_paths.get(stage, ""),
+                scripts.get(f"{stage}_run_miner", ""),
+                checksum_paths.get(stage, ""),
+            ] if path
+        ]
+        for stage in sorted(set(stage_package_dirs) | set(archive_paths) | set(checksum_paths))
+    }
     return {
         "schema": "crowdtensor_bootstrap_handoff_v1",
         "coordinator_url": coordinator_url,
@@ -11692,7 +11815,11 @@ def _bootstrap_handoff_summary(
         },
         "verify_before_handoff": scripts.get("verify_bootstrap", ""),
         "stage_packages_to_copy": stage_package_dirs,
-        "stage_package_archives_to_copy": stage_package_archives or {},
+        "stage_package_archives_to_copy": archive_paths,
+        "stage_handoff_checksum_files": checksum_paths,
+        "stage_handoff_manifest": stage_handoff_manifest,
+        "stage_handoff_files_to_copy": handoff_files_to_copy,
+        "checksum_verification_required": bool(checksum_paths),
         "operator_host_private_files": [
             private_env.get("operator", ""),
             private_invites.get("operator", ""),
@@ -11921,6 +12048,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     stage_support_scripts: dict[str, Path] = {}
     stage_archives: dict[str, Path] = {}
     stage_runner_scripts: dict[str, Path] = {}
+    stage_checksum_files: dict[str, Path] = {}
+    stage_checksum_reports: dict[str, dict[str, Any]] = {}
     stage_join_code_files: dict[str, Path] = {}
     stage_check_commands: dict[str, list[str]] = {}
     stage_join_commands: dict[str, list[str]] = {}
@@ -11955,6 +12084,14 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         stage_runner_script = output_dir / f"{stage}.run-miner.sh"
         _write_executable(stage_runner_script, _bootstrap_stage_archive_runner_script(stage))
         stage_runner_scripts[stage] = stage_runner_script
+        stage_checksum_file = output_dir / f"{stage}.handoff.sha256"
+        stage_checksum_reports[stage] = _write_stage_handoff_checksum_file(
+            stage=stage,
+            archive_path=stage_archive,
+            runner_path=stage_runner_script,
+            checksum_path=stage_checksum_file,
+        )
+        stage_checksum_files[stage] = stage_checksum_file
         stage_check_commands[stage] = [
             "crowdtensor",
             "join",
@@ -12064,6 +12201,15 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "stage0": str(stage_archives["stage0"]),
         "stage1": str(stage_archives["stage1"]),
     }
+    stage_handoff_checksums = {
+        "stage0": str(stage_checksum_files["stage0"]),
+        "stage1": str(stage_checksum_files["stage1"]),
+    }
+    stage_handoff_manifest_path = output_dir / "stage_handoff_manifest.json"
+    stage_handoff_manifest = _write_stage_handoff_manifest(
+        stage_handoff_manifest_path,
+        stage_checksum_reports,
+    )
     private_join_codes_report = {
         "stage0": str(stage_join_code_files["stage0"]),
         "stage1": str(stage_join_code_files["stage1"]),
@@ -12095,6 +12241,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "private_invites": private_invites_report,
         "private_join_codes": private_join_codes_report,
         "stage_package_archives": stage_package_archives,
+        "stage_handoff_checksums": stage_handoff_checksums,
+        "stage_handoff_manifest": str(stage_handoff_manifest_path),
+        "stage_handoff": stage_handoff_manifest,
         "scripts": scripts,
         "runbook": str(runbook_path),
         "bootstrap_handoff": _bootstrap_handoff_summary(
@@ -12107,6 +12256,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             private_invites=private_invites_report,
             stage_package_dirs=stage_package_dirs,
             stage_package_archives=stage_package_archives,
+            stage_handoff_checksums=stage_handoff_checksums,
+            stage_handoff_manifest=str(stage_handoff_manifest_path),
             offline_package_ready=True,
         ),
         "operator": {
@@ -12156,12 +12307,13 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "private_invites_created": True,
             "private_join_code_files_created": True,
             "stage_package_archives_created": True,
+            "stage_handoff_checksums_created": True,
             "scripts_created": True,
             "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
             "Run start_control_plane.sh on the Coordinator host, run verify_bootstrap.sh for live no-claim admission "
-            "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh to the matching Miner host, then run the dry-run generate "
+            "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, then run the dry-run generate "
             "preflight before submitting generation."
         ),
     }
@@ -12335,6 +12487,45 @@ def _read_stage_package_archive(path: Path, stage: str) -> tuple[set[str], dict[
     return names, modes, ""
 
 
+def _read_stage_handoff_checksum(
+    checksum_path: Path,
+    expected_files: list[Path],
+) -> tuple[bool, str, dict[str, str]]:
+    if not checksum_path.is_file():
+        return False, "missing", {}
+    text, error = _read_bootstrap_text(checksum_path)
+    if error:
+        return False, error, {}
+    entries: dict[str, str] = {}
+    errors: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) != 2:
+            errors.append(f"invalid line: {line}")
+            continue
+        digest, filename = parts
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            errors.append(f"invalid sha256 for {filename}")
+            continue
+        entries[filename] = digest
+    expected_names = {path.name for path in expected_files}
+    if set(entries) != expected_names:
+        missing = sorted(expected_names - set(entries))
+        extra = sorted(set(entries) - expected_names)
+        errors.append(f"checksum filenames mismatch missing={missing} extra={extra}")
+    for path in expected_files:
+        if not path.is_file():
+            errors.append(f"missing file: {path.name}")
+            continue
+        expected = entries.get(path.name)
+        if expected and _file_sha256(path) != expected:
+            errors.append(f"sha256 mismatch: {path.name}")
+    return not errors, "; ".join(errors), entries
+
+
 def _parse_bootstrap_env(path: Path) -> tuple[dict[str, str], str]:
     text, error = _read_bootstrap_text(path)
     if error:
@@ -12505,6 +12696,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "stage0_join_doc": output_dir / "stage0" / "MINER_JOIN.md",
         "stage0_package_archive": output_dir / "stage0.miner-package.tar.gz",
         "stage0_runner_script": output_dir / "stage0.run-miner.sh",
+        "stage0_handoff_checksum": output_dir / "stage0.handoff.sha256",
         "stage1_invite": output_dir / "stage1" / "miner.invite.json",
         "stage1_join_code": output_dir / "stage1" / "miner.join-code.txt",
         "stage1_check_join_script": output_dir / "stage1" / "check_join.sh",
@@ -12513,6 +12705,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "stage1_join_doc": output_dir / "stage1" / "MINER_JOIN.md",
         "stage1_package_archive": output_dir / "stage1.miner-package.tar.gz",
         "stage1_runner_script": output_dir / "stage1.run-miner.sh",
+        "stage1_handoff_checksum": output_dir / "stage1.handoff.sha256",
+        "stage_handoff_manifest": output_dir / "stage_handoff_manifest.json",
     }
     artifacts = {
         name: {
@@ -12816,6 +13010,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage1_support_script_text, _ = _read_bootstrap_text(required_files["stage1_support_bundle_script"])
     stage0_runner_script_text, _ = _read_bootstrap_text(required_files["stage0_runner_script"])
     stage1_runner_script_text, _ = _read_bootstrap_text(required_files["stage1_runner_script"])
+    stage_handoff_manifest, stage_handoff_manifest_error = _load_bootstrap_json(required_files["stage_handoff_manifest"])
     stage0_join_code_text, _ = _read_bootstrap_text(required_files["stage0_join_code"])
     stage1_join_code_text, _ = _read_bootstrap_text(required_files["stage1_join_code"])
     stage0_archive_names, stage0_archive_modes, stage0_archive_error = _read_stage_package_archive(
@@ -12840,12 +13035,15 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["runbook"],
+        required_files["stage_handoff_manifest"],
         required_files["stage0_runner_script"],
+        required_files["stage0_handoff_checksum"],
         required_files["stage0_check_join_script"],
         required_files["stage0_support_bundle_script"],
         required_files["stage0_join_script"],
         required_files["stage0_join_doc"],
         required_files["stage1_runner_script"],
+        required_files["stage1_handoff_checksum"],
         required_files["stage1_check_join_script"],
         required_files["stage1_support_bundle_script"],
         required_files["stage1_join_script"],
@@ -12912,6 +13110,54 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         ),
         diagnosis_code="bootstrap_stage_package_archive_invalid",
     )
+    stage0_checksum_ok, stage0_checksum_detail, stage0_checksum_entries = _read_stage_handoff_checksum(
+        required_files["stage0_handoff_checksum"],
+        [
+            required_files["stage0_package_archive"],
+            required_files["stage0_runner_script"],
+        ],
+    )
+    stage1_checksum_ok, stage1_checksum_detail, stage1_checksum_entries = _read_stage_handoff_checksum(
+        required_files["stage1_handoff_checksum"],
+        [
+            required_files["stage1_package_archive"],
+            required_files["stage1_runner_script"],
+        ],
+    )
+    manifest_stages = stage_handoff_manifest.get("stages") if isinstance(stage_handoff_manifest.get("stages"), dict) else {}
+    stage_handoff_manifest_ready = bool(
+        not stage_handoff_manifest_error
+        and stage_handoff_manifest.get("schema") == "crowdtensor_stage_handoff_manifest_v1"
+        and set(manifest_stages) == {"stage0", "stage1"}
+        and manifest_stages.get("stage0", {}).get("checksum_file") == "stage0.handoff.sha256"
+        and manifest_stages.get("stage1", {}).get("checksum_file") == "stage1.handoff.sha256"
+        and manifest_stages.get("stage0", {}).get("archive", {}).get("sha256") == stage0_checksum_entries.get("stage0.miner-package.tar.gz")
+        and manifest_stages.get("stage1", {}).get("archive", {}).get("sha256") == stage1_checksum_entries.get("stage1.miner-package.tar.gz")
+        and manifest_stages.get("stage0", {}).get("runner", {}).get("sha256") == stage0_checksum_entries.get("stage0.run-miner.sh")
+        and manifest_stages.get("stage1", {}).get("runner", {}).get("sha256") == stage1_checksum_entries.get("stage1.run-miner.sh")
+        and stage_handoff_manifest.get("raw_tokens_public") is False
+        and stage_handoff_manifest.get("raw_invite_codes_public") is False
+    )
+    stage_handoff_checksums_ready = bool(
+        stage0_checksum_ok
+        and stage1_checksum_ok
+        and stage_handoff_manifest_ready
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_handoff_checksums_ready",
+        stage_handoff_checksums_ready,
+        detail=(
+            "; ".join(item for item in [
+                f"stage0: {stage0_checksum_detail}" if stage0_checksum_detail else "",
+                f"stage1: {stage1_checksum_detail}" if stage1_checksum_detail else "",
+                f"manifest: {stage_handoff_manifest_error}" if stage_handoff_manifest_error else "",
+            ] if item)
+            or "stage handoff checksums match archives, runners, and manifest"
+        ),
+        diagnosis_code="bootstrap_stage_handoff_checksum_invalid",
+    )
     stage_scripts_reference_operator_env = (
         "operator.private.env" in stage0_script_text
         or "operator.private.env" in stage1_script_text
@@ -12967,6 +13213,12 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage_archive_runner_scripts_ready = (
         "stage0.miner-package.tar.gz" in stage0_runner_script_text
         and "stage1.miner-package.tar.gz" in stage1_runner_script_text
+        and "stage0.handoff.sha256" in stage0_runner_script_text
+        and "stage1.handoff.sha256" in stage1_runner_script_text
+        and "sha256sum -c" in stage0_runner_script_text
+        and "sha256sum -c" in stage1_runner_script_text
+        and "same directory for automatic verification" in stage0_runner_script_text
+        and "same directory for automatic verification" in stage1_runner_script_text
         and "tarfile.open" in stage0_runner_script_text
         and "tarfile.open" in stage1_runner_script_text
         and "stage archive members mismatch" in stage0_runner_script_text
@@ -13148,11 +13400,11 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     if ok:
         diagnosis_codes.append("swarm_bootstrap_package_ready")
     if ok and live_preflight.get("checked"):
-        operator_action = "Live bootstrap preflight is ready; copy only stage0/ or stage1/ to the matching Miner host."
+        operator_action = "Live bootstrap preflight is ready; copy each stage archive, runner, and handoff checksum to the matching Miner host."
     elif ok:
         operator_action = (
-            "Offline package is ready; start the Coordinator and run verify_bootstrap.sh before copying stage0/ or "
-            "stage1/ to the matching Miner host."
+            "Offline package is ready; start the Coordinator and run verify_bootstrap.sh before copying each stage archive, "
+            "runner, and handoff checksum to the matching Miner host."
         )
     else:
         operator_action = "Fix the failed bootstrap package checks before copying stage packages or starting the Coordinator."
@@ -13204,6 +13456,11 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "stage0": str(required_files["stage0_package_archive"]),
                 "stage1": str(required_files["stage1_package_archive"]),
             },
+            stage_handoff_checksums={
+                "stage0": str(required_files["stage0_handoff_checksum"]),
+                "stage1": str(required_files["stage1_handoff_checksum"]),
+            },
+            stage_handoff_manifest=str(required_files["stage_handoff_manifest"]),
             live_preflight=live_preflight,
             offline_package_ready=ok,
         ),
@@ -13221,6 +13478,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "stage_check_join_scripts_ready": stage_check_join_scripts_ready,
             "stage_support_bundle_scripts_ready": stage_support_bundle_scripts_ready,
             "stage_archive_runner_scripts_ready": stage_archive_runner_scripts_ready,
+            "stage_handoff_checksums_ready": stage_handoff_checksums_ready,
             "stage_join_scripts_use_invite_code_file": stage_scripts_use_join_code_file,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
             "stage_join_code_files_match_invites": join_codes_match_invites,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -1549,6 +1550,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         stage1_join_code_path = Path(report["private_join_codes"]["stage1"])
         stage0_archive_path = Path(report["stage_package_archives"]["stage0"])
         stage1_archive_path = Path(report["stage_package_archives"]["stage1"])
+        stage0_checksum_path = Path(report["stage_handoff_checksums"]["stage0"])
+        stage1_checksum_path = Path(report["stage_handoff_checksums"]["stage1"])
+        stage_handoff_manifest_path = Path(report["stage_handoff_manifest"])
         coordinator_env = coordinator_env_path.read_text(encoding="utf-8")
         operator_env = operator_env_path.read_text(encoding="utf-8")
         operator_invite = json.loads(Path(report["private_invites"]["operator"]).read_text(encoding="utf-8"))
@@ -1580,6 +1584,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(stage1_join_code_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(stage0_archive_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(stage1_archive_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(stage0_checksum_path.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(stage1_checksum_path.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(stage_handoff_manifest_path.stat().st_mode & 0o777, 0o644)
         self.assertIn("CROWDTENSOR_OBSERVER_TOKEN='sha256:", coordinator_env)
         self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN", coordinator_env)
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN=", operator_env)
@@ -1598,6 +1605,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["safety"]["miner_plaintext_tokens_public"])
         self.assertTrue(report["safety"]["private_join_code_files_created"])
         self.assertTrue(report["safety"]["stage_package_archives_created"])
+        self.assertTrue(report["safety"]["stage_handoff_checksums_created"])
         handoff = report["bootstrap_handoff"]
         self.assertEqual(handoff["schema"], "crowdtensor_bootstrap_handoff_v1")
         self.assertTrue(handoff["remote_miners_ready"])
@@ -1609,6 +1617,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(handoff["verify_before_handoff"], str(scripts["verify_bootstrap"]))
         self.assertEqual(handoff["stage_packages_to_copy"]["stage0"], str(output_dir / "stage0"))
         self.assertEqual(handoff["stage_package_archives_to_copy"]["stage0"], str(stage0_archive_path))
+        self.assertEqual(handoff["stage_handoff_checksum_files"]["stage0"], str(stage0_checksum_path))
+        self.assertEqual(handoff["stage_handoff_manifest"], str(stage_handoff_manifest_path))
+        self.assertEqual(
+            handoff["stage_handoff_files_to_copy"]["stage0"],
+            [str(stage0_archive_path), str(scripts["stage0_run_miner"]), str(stage0_checksum_path)],
+        )
+        self.assertTrue(handoff["checksum_verification_required"])
         self.assertTrue(handoff["copy_stage_archives_preferred"])
         self.assertFalse(handoff["copy_only_stage_directories"])
         self.assertEqual(handoff["manual_launchers"]["stage0_check_join"], str(scripts["stage0_check_join"]))
@@ -1620,6 +1635,26 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(str(coordinator_env_path), handoff["coordinator_host_private_files"])
         self.assertIn(str(operator_env_path), handoff["operator_host_private_files"])
         self.assertNotIn(stage0_join_code, encoded)
+        self.assertEqual(report["stage_handoff"]["schema"], "crowdtensor_stage_handoff_manifest_v1")
+        self.assertFalse(report["stage_handoff"]["raw_tokens_public"])
+        self.assertFalse(report["stage_handoff"]["raw_invite_codes_public"])
+        self.assertEqual(report["stage_handoff"]["stages"]["stage0"]["checksum_file"], "stage0.handoff.sha256")
+        self.assertEqual(
+            report["stage_handoff"]["stages"]["stage0"]["copy_files"],
+            ["stage0.miner-package.tar.gz", "stage0.run-miner.sh", "stage0.handoff.sha256"],
+        )
+        stage0_checksum_lines = stage0_checksum_path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(stage0_checksum_lines), 2)
+        expected_archive_hash = hashlib.sha256(stage0_archive_path.read_bytes()).hexdigest()
+        expected_runner_hash = hashlib.sha256(scripts["stage0_run_miner"].read_bytes()).hexdigest()
+        self.assertIn(f"{expected_archive_hash}  stage0.miner-package.tar.gz", stage0_checksum_lines)
+        self.assertIn(f"{expected_runner_hash}  stage0.run-miner.sh", stage0_checksum_lines)
+        self.assertEqual(report["stage_handoff"]["stages"]["stage0"]["archive"]["sha256"], expected_archive_hash)
+        self.assertEqual(report["stage_handoff"]["stages"]["stage0"]["runner"]["sha256"], expected_runner_hash)
+        self.assertNotIn(stage0_invite["miner_token"], stage0_checksum_path.read_text(encoding="utf-8"))
+        self.assertNotIn(stage0_join_code, stage0_checksum_path.read_text(encoding="utf-8"))
+        self.assertNotIn(stage0_invite["miner_token"], stage_handoff_manifest_path.read_text(encoding="utf-8"))
+        self.assertNotIn(stage0_join_code, stage_handoff_manifest_path.read_text(encoding="utf-8"))
         with tarfile.open(stage0_archive_path, "r:gz") as tar:
             archive_members = {member.name: member for member in tar.getmembers()}
         self.assertIn("stage0/miner.invite.json", archive_members)
@@ -1669,6 +1704,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("crowdtensor_miner_stage_support_bundle_v1", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
         self.assertIn("miner_support_bundle.json", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
         self.assertIn("stage0.miner-package.tar.gz", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
+        self.assertIn("stage0.handoff.sha256", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
+        self.assertIn("sha256sum -c", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("stage archive members mismatch", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("check_join.sh", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("join.sh", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
@@ -1908,11 +1945,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["artifacts"]["stage0_join_code"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["stage0_support_bundle_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["stage0_package_archive"]["mode"], "0o600")
+        self.assertEqual(report["artifacts"]["stage0_handoff_checksum"]["mode"], "0o644")
+        self.assertEqual(report["artifacts"]["stage_handoff_manifest"]["mode"], "0o644")
         self.assertTrue(report["safety"]["verify_bootstrap_script_ready"])
         self.assertTrue(report["safety"]["stage_join_scripts_use_invite_code_file"])
         self.assertTrue(report["safety"]["stage_check_join_scripts_ready"])
         self.assertTrue(report["safety"]["stage_support_bundle_scripts_ready"])
         self.assertTrue(report["safety"]["stage_archive_runner_scripts_ready"])
+        self.assertTrue(report["safety"]["stage_handoff_checksums_ready"])
         self.assertTrue(report["safety"]["stage_package_archives_ready"])
         self.assertTrue(report["safety"]["stage_join_code_files_match_invites"])
         self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
@@ -1922,6 +1962,21 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["coordinator_url"], "https://ct.example")
         self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
         self.assertTrue(report["remote_access"]["remote_miners_supported"])
+        self.assertTrue(
+            next(item for item in report["checks"] if item["name"] == "stage_handoff_checksums_ready")["ok"]
+        )
+        self.assertEqual(
+            report["bootstrap_handoff"]["stage_handoff_checksum_files"]["stage0"],
+            str(output_dir / "stage0.handoff.sha256"),
+        )
+        self.assertEqual(
+            report["bootstrap_handoff"]["stage_handoff_files_to_copy"]["stage0"],
+            [
+                str(output_dir / "stage0.miner-package.tar.gz"),
+                str(output_dir / "stage0.run-miner.sh"),
+                str(output_dir / "stage0.handoff.sha256"),
+            ],
+        )
         self.assertEqual(report["artifacts"]["stage0_invite"]["mode"], "0o600")
         self.assertNotIn(operator_invite["operator_token"], encoded)
         self.assertNotIn(stage0_invite["miner_token"], encoded)
@@ -2001,11 +2056,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         stage0_join_code = (output_dir / "stage0" / "miner.join-code.txt").read_text(encoding="utf-8").strip()
         source_archive = Path(report["stage_package_archives"]["stage0"])
         source_runner = Path(report["scripts"]["stage0_run_miner"])
+        source_checksum = Path(report["stage_handoff_checksums"]["stage0"])
         miner_host_dir.mkdir(parents=True, exist_ok=True)
         archive = miner_host_dir / source_archive.name
         runner = miner_host_dir / source_runner.name
+        checksum = miner_host_dir / source_checksum.name
         shutil.copy2(source_archive, archive)
         shutil.copy2(source_runner, runner)
+        shutil.copy2(source_checksum, checksum)
         runner.chmod(0o700)
 
         extracted = subprocess.run(
@@ -2015,6 +2073,8 @@ class CrowdTensorCliTests(unittest.TestCase):
             text=True,
             check=True,
         )
+        self.assertIn("stage0.miner-package.tar.gz: OK", extracted.stdout)
+        self.assertIn("stage0.run-miner.sh: OK", extracted.stdout)
         self.assertIn("Extracted stage0 package", extracted.stdout)
         self.assertTrue((miner_host_dir / "stage0" / "miner.join-code.txt").is_file())
         self.assertEqual((miner_host_dir / "stage0" / "miner.join-code.txt").stat().st_mode & 0o777, 0o600)
