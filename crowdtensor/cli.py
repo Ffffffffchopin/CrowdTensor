@@ -44,6 +44,7 @@ from crowdtensor.p2p_lite import (
     sign_peer_announcement,
     stable_peer_id,
 )
+from crowdtensor.auth import hash_token
 from crowdtensor.operator_invite import create_operator_invite
 from create_miner_invite import create_invite as create_miner_invite
 from crowdtensor.real_p2p import (
@@ -10866,6 +10867,21 @@ def _bootstrap_slug(value: str) -> str:
     return slug or "default"
 
 
+def _quote_env_value(value: str) -> str:
+    return "'" + str(value).replace("'", "'\"'\"'") + "'"
+
+
+def _write_private_env(path: Path, values: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"export {key}={_quote_env_value(value)}" for key, value in sorted(values.items()) if value]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+
+
+def _source_env_command(env_path: Path, command: list[str]) -> str:
+    return f". {shlex.quote(str(env_path))} && {command_line(command)}"
+
+
 def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir)
     private_dir = output_dir / "private"
@@ -10887,8 +10903,12 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     )
     operator_registry = output_dir / "operator_registry.json"
     miner_registry = output_dir / "miner_registry.json"
+    coordinator_env_path = private_dir / "coordinator.private.env"
+    operator_env_path = private_dir / "operator.private.env"
     operator_invite_path = private_dir / f"{_bootstrap_slug(args.operator_id)}.operator.invite.json"
     safety = {
+        "operator_env_local_only": True,
+        "coordinator_env_excludes_operator_credentials": True,
         "private_invites_local_only": True,
         "operator_plaintext_token_public": False,
         "miner_plaintext_tokens_public": False,
@@ -10906,6 +10926,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "coordinator_url": coordinator_url,
             "remote_access": remote_access,
             "registries": {},
+            "private_env": {},
             "private_invites": {},
             "operator": {},
             "miners": [],
@@ -10914,6 +10935,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "safety": {
                 **safety,
                 "registries_created": False,
+                "private_env_files_created": False,
                 "private_invites_created": False,
             },
             "operator_action": "Set --coordinator-url to a public HTTPS, tunnel, VPN, reverse-proxy, or LAN URL before creating or sharing Miner invites.",
@@ -10935,6 +10957,15 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         rate_window_seconds=args.rate_window_seconds,
         invite_file=operator_invite_path,
     )
+    operator_token = str((operator_invite.get("env") or {}).get("CROWDTENSOR_ADMIN_TOKEN") or "")
+    observer_token = os.urandom(24).hex()
+    _write_private_env(coordinator_env_path, {
+        "CROWDTENSOR_OBSERVER_TOKEN": hash_token(observer_token),
+    })
+    _write_private_env(operator_env_path, {
+        "CROWDTENSOR_ADMIN_TOKEN": operator_token,
+        "CROWDTENSOR_OBSERVER_TOKEN": observer_token,
+    })
     stage_invites: list[dict[str, Any]] = []
     backend = "cuda" if args.backend == "cuda" else "cpu"
     for stage in ["stage0", "stage1"]:
@@ -11026,6 +11057,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "operator_registry": str(operator_registry),
             "miner_registry": str(miner_registry),
         },
+        "private_env": {
+            "coordinator": str(coordinator_env_path),
+            "operator": str(operator_env_path),
+        },
         "private_invites": {
             "operator": str(operator_invite_path),
             "stage0": str(stage_invites[0]["invite_file"]),
@@ -11050,17 +11085,17 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             command_entry(
                 "start Coordinator",
                 serve_command,
-                requires_env=["CROWDTENSOR_OBSERVER_TOKEN"],
             ),
             command_entry("start stage0 Miner", join_commands[0]),
             command_entry("start stage1 Miner", join_commands[1]),
-            command_entry("check generation route", dry_run_command, requires_env=["CROWDTENSOR_OBSERVER_TOKEN"]),
-            command_entry("submit generation with operator invite token", generate_command, requires_env=["CROWDTENSOR_ADMIN_TOKEN"]),
+            command_entry("check generation route", dry_run_command),
+            command_entry("submit generation with operator invite token", generate_command),
         ],
         "diagnosis_codes": ["swarm_bootstrap_ready", str(remote_access.get("diagnosis_code") or "")],
         "safety": {
             **safety,
             "registries_created": True,
+            "private_env_files_created": True,
             "private_invites_created": True,
         },
         "operator_action": (
@@ -11068,8 +11103,16 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "then run the dry-run generate preflight before submitting generation."
         ),
     }
+    next_commands = report["next_commands"]
+    next_commands[0]["command_line"] = _source_env_command(coordinator_env_path, serve_command)
+    next_commands[0]["requires_files"] = [str(coordinator_env_path)]
+    next_commands[3]["command_line"] = _source_env_command(operator_env_path, dry_run_command)
+    next_commands[3]["requires_files"] = [str(operator_env_path)]
+    next_commands[4]["command_line"] = _source_env_command(operator_env_path, generate_command)
+    next_commands[4]["requires_files"] = [str(operator_env_path)]
     return sanitize(redact_values(report, [
-        str((operator_invite.get("env") or {}).get("CROWDTENSOR_ADMIN_TOKEN") or ""),
+        operator_token,
+        observer_token,
         str((operator_invite.get("operator_invite") or {}).get("operator_token") or ""),
         str(operator_invite.get("operator_invite_code") or ""),
         *[

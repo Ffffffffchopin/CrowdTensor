@@ -6,14 +6,15 @@ Use HTTPS, a VPN, or a private network for any remote demo. Miner tokens are sen
 
 For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
-private Miner registry, one operator invite, and stage0/stage1 Miner invites,
-then prints the `serve`, `join --invite-file --check-admission`, and
-`generate --dry-run` commands. Keep the generated operator invite on the
-Coordinator/operator host and copy only the matching Miner invite to each Miner
-host. The Coordinator URL still must be reachable by public HTTPS, VPN, trusted
-LAN, or tunnel; with `--expect-remote-miners`, bootstrap fails before creating
-registry or invite files when the URL is local-only. Bootstrap is not NAT
-traversal.
+private Miner registry, coordinator/operator private env files, one operator
+invite, and stage0/stage1 Miner invites, then prints env-sourced `serve`,
+`join --invite-file --check-admission`, and `generate --dry-run` commands. Keep
+the generated operator invite and operator env on the operator host, use the
+coordinator env only for the Coordinator process, and copy only the matching
+Miner invite to each Miner host. The Coordinator URL still must be reachable by
+public HTTPS, VPN, trusted LAN, or tunnel; with `--expect-remote-miners`,
+bootstrap fails before creating registry or invite files when the URL is
+local-only. Bootstrap is not NAT traversal.
 
 For a local maintainer check of the CPU inference Beta path before involving a second machine, run:
 

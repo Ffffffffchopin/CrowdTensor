@@ -87,6 +87,12 @@ The public report lists local file paths and copyable commands, but not
 plaintext operator or Miner tokens. The generated private invite files do
 contain usable tokens; keep the operator invite on the Coordinator/operator
 host and copy only the matching stage Miner invite to each Miner host.
+Bootstrap also writes separate private env files: `coordinator.private.env`
+contains only the observer token verifier for the Coordinator process, while
+`operator.private.env` contains the operator admin token plus observer token
+for operator-side dry-run and submit commands. Do not source the operator env
+into the Coordinator process unless you intentionally want to enable the legacy
+owner-level admin token path.
 When `--expect-remote-miners` is used with a local-only Coordinator URL,
 bootstrap fails before creating registries or invite files.
 

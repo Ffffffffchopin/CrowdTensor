@@ -10,11 +10,11 @@ All request and response bodies are JSON unless noted. Miner, observer, legacy a
 - `x-crowdtensor-observer-token`: required for `/state` and `/metrics` when `--observer-token` is configured.
 - `x-crowdtensor-admin-token`: required for admin endpoints. A legacy `--admin-token` has owner-level access. `--operator-token-registry` can instead configure per-operator roles: `owner`, `admin`, `accounting`, and `auditor`, plus optional safe `session_policy` limits for `/admin/inference-sessions`.
 
-Use `crowdtensor swarm-bootstrap` to create a private operator registry and
-per-stage Miner registry for a controlled two-stage product swarm. Product
-`crowdtensor serve` forwards both `--operator-token-registry` and
-`--miner-token-registry`; Miners still send their plaintext invite token in
-`x-crowdtensor-miner-token`.
+Use `crowdtensor swarm-bootstrap` to create private operator and per-stage
+Miner registries plus separated coordinator/operator private env files for a
+controlled two-stage product swarm. Product `crowdtensor serve` forwards both
+`--operator-token-registry` and `--miner-token-registry`; Miners still send
+their plaintext invite token in `x-crowdtensor-miner-token`.
 
 Use `crowdtensor operator-invite` or `scripts/create_operator_invite.py` to
 create hashed operator registry entries. The operator still sends their
