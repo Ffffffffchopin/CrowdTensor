@@ -101,6 +101,7 @@ safe role metadata only:
         "max_decode_steps": 1,
         "max_new_tokens": 8,
         "max_active_sessions": 4,
+        "max_total_sessions": 100,
         "rate_limit": 30,
         "rate_window_seconds": 60
       }
@@ -113,7 +114,8 @@ safe role metadata only:
 can read event/result/stream audit views; `admin` and `owner` can use all admin
 endpoints. Optional `session_policy` values restrict an admin/owner operator's
 `/admin/inference-sessions` workload types, request sizes, token/decode bounds,
-active queued/leased sessions, and create rate. `/ready` exposes only
+active queued/leased sessions, cumulative session quota, and create rate.
+`/ready` exposes only
 `crowdtensor_operator_registry_summary_v1` operator IDs, labels, enabled flags,
 roles, and safe session policy limits, never plaintext tokens.
 

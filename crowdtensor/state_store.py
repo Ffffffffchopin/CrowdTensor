@@ -379,14 +379,34 @@ class StateStore:
         created_by_subject: str | None = None,
         workload_type: str | None = None,
     ) -> dict:
+        usage = self.inference_session_usage(
+            created_by_subject=created_by_subject,
+            workload_type=workload_type,
+        )
+        return {
+            "schema": "active_inference_session_count_v1",
+            "created_by_subject": usage["created_by_subject"],
+            "workload_type": usage["workload_type"],
+            "active_count": usage["active_count"],
+            "active_by_workload": usage["active_by_workload"],
+        }
+
+    def inference_session_usage(
+        self,
+        *,
+        created_by_subject: str | None = None,
+        workload_type: str | None = None,
+    ) -> dict:
         wanted_subject = str(created_by_subject or "").strip()
         wanted_workload = str(workload_type or "").strip()
         with self._lock:
-            count = 0
+            total_count = 0
+            active_count = 0
+            completed_count = 0
+            rejected_count = 0
+            total_by_workload: dict[str, int] = {}
             by_workload: dict[str, int] = {}
             for task in self._tasks.values():
-                if task.get("status") not in {STATUS_QUEUED, STATUS_LEASED}:
-                    continue
                 metadata = task.get("workload_metadata") if isinstance(task.get("workload_metadata"), dict) else {}
                 subject = str(metadata.get("created_by_subject") or "").strip()
                 if wanted_subject and subject != wanted_subject:
@@ -396,13 +416,25 @@ class StateStore:
                     continue
                 if not subject:
                     continue
-                count += 1
-                by_workload[workload] = int(by_workload.get(workload, 0)) + 1
+                status = task.get("status")
+                total_count += 1
+                total_by_workload[workload] = int(total_by_workload.get(workload, 0)) + 1
+                if status in {STATUS_QUEUED, STATUS_LEASED}:
+                    active_count += 1
+                    by_workload[workload] = int(by_workload.get(workload, 0)) + 1
+                elif status == STATUS_COMPLETED:
+                    completed_count += 1
+                elif status == STATUS_REJECTED:
+                    rejected_count += 1
             return {
-                "schema": "active_inference_session_count_v1",
+                "schema": "inference_session_usage_v1",
                 "created_by_subject": wanted_subject,
                 "workload_type": wanted_workload,
-                "active_count": count,
+                "total_count": total_count,
+                "active_count": active_count,
+                "completed_count": completed_count,
+                "rejected_count": rejected_count,
+                "total_by_workload": total_by_workload,
                 "active_by_workload": by_workload,
             }
 

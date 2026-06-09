@@ -1031,6 +1031,12 @@ class StateStoreTests(unittest.TestCase):
                 store.active_inference_session_count(created_by_subject="operator:owner-a")["active_count"],
                 0,
             )
+            usage = store.inference_session_usage(created_by_subject="operator:owner-a")
+            self.assertEqual(usage["schema"], "inference_session_usage_v1")
+            self.assertEqual(usage["total_count"], 1)
+            self.assertEqual(usage["active_count"], 0)
+            self.assertEqual(usage["completed_count"], 1)
+            self.assertEqual(usage["total_by_workload"][WORKLOAD_MODEL_BUNDLE_INFER], 1)
             self.assertEqual(claim["workload_type"], WORKLOAD_MODEL_BUNDLE_INFER)
             self.assertEqual(claim["workload_spec"]["request_count"], 3)
             self.assertEqual(claim["workload_spec"]["scenario_id"], "route-baseline")

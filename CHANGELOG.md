@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `max_total_sessions` to operator `session_policy`, enforcing cumulative per-operator session quotas across completed and active `/admin/inference-sessions` work with safe `operator_session_policy_total_sessions_exceeded` audit events.
 - Added `max_active_sessions` to operator `session_policy`, blocking new `/admin/inference-sessions` creates when an operator already has too many queued/leased session tasks and recording safe `operator_session_policy_active_sessions_exceeded` audit events.
 - Added optional operator `session_policy` limits in `--operator-token-registry` for `/admin/inference-sessions`, including workload allowlists, request/decode/token caps, per-operator create rate limits, safe `/ready` summaries, and `operator_session_policy_*` audit blocks without exposing plaintext tokens or prompts.
 - Added exact `created_by_subject` filters to `/admin/accounting` and `/admin/settlement`, enabling subject-level usage and draft-settlement exports for safe operator/admin labels without exposing plaintext tokens.

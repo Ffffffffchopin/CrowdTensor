@@ -673,6 +673,7 @@ For role-scoped operator access, create a private operator registry:
         "max_decode_steps": 1,
         "max_new_tokens": 8,
         "max_active_sessions": 4,
+        "max_total_sessions": 100,
         "rate_limit": 30,
         "rate_window_seconds": 60
       }
@@ -712,9 +713,9 @@ with an operator registry and no explicit `--admin-token` or
 Operators with `admin` or `owner` roles can also carry an optional
 `session_policy`. It limits `/admin/inference-sessions` creates for that
 operator by workload allowlist, `request_count`, `decode_steps`,
-`max_new_tokens`, active queued/leased session count, and a per-operator create
-rate window. Policy blocks append a safe `control_plane_blocked` audit event
-and never expose plaintext tokens.
+`max_new_tokens`, active queued/leased session count, cumulative session count,
+and a per-operator create rate window. Policy blocks append a safe
+`control_plane_blocked` audit event and never expose plaintext tokens.
 The global session create rate limit remains available as a Coordinator-wide
 fallback by returning `429` after too many creates by the same legacy admin or
 operator subject in the configured window.

@@ -267,6 +267,7 @@ class CoordinatorApiTests(unittest.TestCase):
                             "max_decode_steps": 3,
                             "max_new_tokens": 4,
                             "max_active_sessions": 6,
+                            "max_total_sessions": 7,
                             "rate_limit": 5,
                             "rate_window_seconds": 60.0,
                         },
@@ -290,6 +291,7 @@ class CoordinatorApiTests(unittest.TestCase):
             )
             self.assertEqual(registry["acct"]["session_policy"]["max_request_count"], 2)
             self.assertEqual(registry["acct"]["session_policy"]["max_active_sessions"], 6)
+            self.assertEqual(registry["acct"]["session_policy"]["max_total_sessions"], 7)
             self.assertEqual(summary["schema"], "crowdtensor_operator_registry_summary_v1")
             self.assertEqual(summary["operator_count"], 2)
             self.assertEqual(summary["operators"][0]["session_policy"]["max_new_tokens"], 4)
@@ -1423,6 +1425,15 @@ class CoordinatorApiTests(unittest.TestCase):
                             "rate_window_seconds": 60.0,
                         },
                     },
+                    {
+                        "operator_id": "quota-limited",
+                        "token": hash_token("quota-token"),
+                        "roles": ["admin"],
+                        "session_policy": {
+                            "allowed_workloads": ["model_bundle_infer"],
+                            "max_total_sessions": 1,
+                        },
+                    },
                 ],
             )
             app = create_app(
@@ -1504,6 +1515,24 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertEqual(rate_blocked.exception.status_code, 429)
             self.assertEqual(rate_blocked.exception.detail["reason"], "operator_session_policy_rate_limited")
 
+            quota_session = admin_session(
+                session_request(request_count=1, workload_type=WORKLOAD_MODEL_BUNDLE_INFER),
+                x_crowdtensor_admin_token="quota-token",
+            )
+            self.assertEqual(quota_session["created_by_subject"], "operator:quota-limited")
+            with self.assertRaises(HTTPException) as quota_blocked:
+                admin_session(
+                    session_request(request_count=1, workload_type=WORKLOAD_MODEL_BUNDLE_INFER),
+                    x_crowdtensor_admin_token="quota-token",
+                )
+            self.assertEqual(quota_blocked.exception.status_code, 429)
+            self.assertEqual(
+                quota_blocked.exception.detail["reason"],
+                "operator_session_policy_total_sessions_exceeded",
+            )
+            self.assertEqual(quota_blocked.exception.detail["limit"], 1)
+            self.assertEqual(quota_blocked.exception.detail["observed_count"], 1)
+
             self.assertEqual(
                 admin_session(
                     session_request(request_count=3, workload_type=WORKLOAD_EXTERNAL_LLM_INFER),
@@ -1525,14 +1554,16 @@ class CoordinatorApiTests(unittest.TestCase):
                     "operator_session_policy_workload_not_allowed",
                     "operator_session_policy_request_count_exceeded",
                     "operator_session_policy_rate_limited",
+                    "operator_session_policy_total_sessions_exceeded",
                 ],
             )
             self.assertEqual(
                 {event["subject"] for event in policy_events},
-                {"operator:limited", "operator:rate-limited"},
+                {"operator:limited", "operator:rate-limited", "operator:quota-limited"},
             )
             self.assertNotIn("limited-token", json.dumps(events, sort_keys=True))
             self.assertNotIn("rate-token", json.dumps(events, sort_keys=True))
+            self.assertNotIn("quota-token", json.dumps(events, sort_keys=True))
 
     def test_admin_trust_override_blocks_allows_and_events_are_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
