@@ -1834,6 +1834,79 @@ class CrowdTensorCliTests(unittest.TestCase):
             next(item for item in check_report["checks"] if item["name"] == "start_control_plane_script_ready")["ok"]
         )
 
+    def test_swarm_bootstrap_keeps_stage_reward_accounts_private(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        stage0_reward_account = "acct-stage0-private"
+        stage1_reward_account = "acct-stage1-private"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--stage0-reward-account",
+            stage0_reward_account,
+            "--stage1-reward-account",
+            stage1_reward_account,
+            "--quota-task-limit",
+            "9",
+            "--claim-rate-limit",
+            "2",
+            "--claim-rate-window-seconds",
+            "60",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap(args)
+        encoded = json.dumps(report, sort_keys=True)
+        miner_registry = json.loads((output_dir / "miner_registry.json").read_text(encoding="utf-8"))
+        stage0_invite = json.loads((output_dir / "stage0" / "miner.invite.json").read_text(encoding="utf-8"))
+        stage1_invite = json.loads((output_dir / "stage1" / "miner.invite.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(report["ok"], report)
+        self.assertNotIn(stage0_reward_account, encoded)
+        self.assertNotIn(stage1_reward_account, encoded)
+        self.assertEqual(stage0_invite["policy"]["reward_account"], stage0_reward_account)
+        self.assertEqual(stage1_invite["policy"]["reward_account"], stage1_reward_account)
+        policies_by_stage = {
+            item["join_policy"]["stage"]: item["join_policy"]
+            for item in miner_registry["miners"]
+        }
+        self.assertEqual(policies_by_stage["stage0"]["reward_account"], stage0_reward_account)
+        self.assertEqual(policies_by_stage["stage1"]["reward_account"], stage1_reward_account)
+        self.assertTrue(all(item["join_policy"]["reward_account_present"] for item in report["miners"]))
+        self.assertTrue(all(item["join_policy"]["quota_task_limit"] == 9 for item in report["miners"]))
+        self.assertTrue(all(item["join_policy"]["claim_rate_limit"] == 2 for item in report["miners"]))
+        self.assertTrue(all(item["join_policy"]["claim_rate_window_seconds"] == 60.0 for item in report["miners"]))
+
+        check_args = cli.parse_args(["swarm-bootstrap-check", "--output-dir", str(output_dir), "--json"])
+        check_report = cli.build_swarm_bootstrap_check(check_args)
+        check_text = json.dumps(check_report, sort_keys=True)
+
+        self.assertTrue(check_report["ok"], check_report)
+        self.assertTrue(check_report["safety"]["stage_reward_account_metadata_ready"])
+        self.assertTrue(
+            next(item for item in check_report["checks"] if item["name"] == "stage_reward_account_metadata_ready")["ok"]
+        )
+        self.assertNotIn(stage0_reward_account, check_text)
+        self.assertNotIn(stage1_reward_account, check_text)
+
+        doctor_args = cli.parse_args(["swarm-handoff-doctor", "--output-dir", str(output_dir), "--json"])
+        doctor_report = cli.build_swarm_handoff_doctor(doctor_args)
+        doctor_text = json.dumps(doctor_report, sort_keys=True)
+
+        self.assertTrue(doctor_report["ok"], doctor_report)
+        self.assertNotIn(stage0_reward_account, doctor_text)
+        self.assertNotIn(stage1_reward_account, doctor_text)
+        self.assertNotIn(stage0_reward_account, (output_dir / "handoff_doctor.md").read_text(encoding="utf-8"))
+
+        with (output_dir / "SWARM_BOOTSTRAP.md").open("a", encoding="utf-8") as handle:
+            handle.write(f"\nDo not publish {stage0_reward_account}\n")
+        leaked_report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertFalse(leaked_report["ok"], leaked_report)
+        self.assertIn("bootstrap_token_leak_detected", leaked_report["diagnosis_codes"])
+
     def test_swarm_bootstrap_can_manage_private_tunnel_command(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"
         tunnel_command = "cloudflared tunnel --url http://127.0.0.1:8787 --token super-secret-tunnel-token"

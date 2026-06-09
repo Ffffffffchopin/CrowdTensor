@@ -111,6 +111,7 @@ python scripts/create_miner_invite.py \
   --quota-task-limit 25 \
   --claim-rate-limit 4 \
   --claim-rate-window-seconds 60 \
+  --reward-account acct-stage0-private \
   --invite-file dist/public-swarm/stage0-gpu-1.invite.json \
   --json
 ```
@@ -167,6 +168,11 @@ token verifier plus `join_policy` metadata. `/ready` exposes a redacted
 `miner_policy_summary` with the invited stage, backend, trust tier, quota limit,
 claim-rate limit, claim-rate window, and reward-account presence, but never the
 plaintext token or reward account.
+For the higher-level two-stage bootstrap path, `crowdtensor swarm-bootstrap`
+also accepts `--stage0-reward-account` and `--stage1-reward-account` to bind
+private Beta accounting metadata to the generated stage invites while keeping
+public bootstrap, check, support, and handoff reports limited to
+reward-account presence.
 At claim time, the Coordinator enforces the invite's workload, stage, backend,
 and model scope before the Miner can lease work; blocked claims are recorded in
 the normal `blocked_claims` audit counters. A positive `quota_task_limit`

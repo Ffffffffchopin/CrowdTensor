@@ -12098,6 +12098,7 @@ def _swarm_bootstrap_miner_summaries(
     summaries: list[dict[str, Any]] = []
     for invite in stage_invites:
         join_invite = invite.get("join_invite") if isinstance(invite.get("join_invite"), dict) else {}
+        policy = join_invite.get("policy") if isinstance(join_invite.get("policy"), dict) else {}
         stage = str(join_invite.get("stage") or "")
         discovery = join_invite.get("discovery") if isinstance(join_invite.get("discovery"), dict) else {}
         summaries.append({
@@ -12105,6 +12106,16 @@ def _swarm_bootstrap_miner_summaries(
             "stage": stage,
             "backend": join_invite.get("backend"),
             "hf_model_id": join_invite.get("hf_model_id"),
+            "join_policy": {
+                "schema": policy.get("schema") or "crowdtensor_miner_join_policy_v1",
+                "trust_tier": str(policy.get("trust_tier") or "new"),
+                "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+                "claim_rate_limit": int(policy.get("claim_rate_limit") or 0),
+                "claim_rate_window_seconds": float(policy.get("claim_rate_window_seconds") or 0.0),
+                "reward_account_present": bool(policy.get("reward_account")),
+                "read_only_workload": str(policy.get("read_only_workload") or "real_llm_sharded_infer"),
+                "not_production": policy.get("not_production", True) is not False,
+            },
             "discovery": {
                 "enabled": bool(discovery.get("enabled")),
                 "route_preference": str(discovery.get("route_preference") or ""),
@@ -12228,6 +12239,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     for stage in ["stage0", "stage1"]:
         miner_id = f"{args.miner_id_prefix}-{stage}"
         invite_file = private_dir / f"{_bootstrap_slug(miner_id)}.miner.invite.json"
+        reward_account = str(getattr(args, f"{stage}_reward_account", "") or "").strip()
         invite = create_miner_invite(
             registry_path=miner_registry,
             miner_id=miner_id,
@@ -12243,7 +12255,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             quota_task_limit=args.quota_task_limit,
             claim_rate_limit=args.claim_rate_limit,
             claim_rate_window_seconds=args.claim_rate_window_seconds,
-            reward_account="",
+            reward_account=reward_account,
             invite_file=invite_file,
             peer_bootstrap=discovery_summary["peer_bootstrap"],
             p2p_backend=discovery_summary["p2p_backend"] or "lite",
@@ -12646,6 +12658,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         ],
         *[
             str(invite.get("join_invite_code") or "")
+            for invite in stage_invites
+        ],
+        *[
+            str((((invite.get("join_invite") or {}).get("policy") or {}).get("reward_account")) or "")
             for invite in stage_invites
         ],
     ]))
@@ -13118,6 +13134,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage0_token = str(stage0_invite.get("miner_token") or "")
     stage1_token = str(stage1_invite.get("miner_token") or "")
     tunnel_command = str(tunnel_env.get("CROWDTENSOR_TUNNEL_COMMAND") or "")
+    stage0_policy = stage0_invite.get("policy") if isinstance(stage0_invite.get("policy"), dict) else {}
+    stage1_policy = stage1_invite.get("policy") if isinstance(stage1_invite.get("policy"), dict) else {}
+    stage0_reward_account = str(stage0_policy.get("reward_account") or "")
+    stage1_reward_account = str(stage1_policy.get("reward_account") or "")
     secret_values = unique_redaction_values([
         operator_token,
         observer_token,
@@ -13128,6 +13148,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         str(stage0_invite.get("token_hash") or ""),
         str(stage1_invite.get("token_hash") or ""),
         tunnel_command,
+        stage0_reward_account,
+        stage1_reward_account,
     ])
 
     coordinator_env_ok = bool(
@@ -13212,6 +13234,27 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         bool(stage0_token and stage1_token and stage0_token != stage1_token),
         detail="stage0 and stage1 Miner invites must carry distinct private tokens",
         diagnosis_code="bootstrap_stage_tokens_not_distinct",
+    )
+    miner_entries = miner_registry.get("miners") if isinstance(miner_registry.get("miners"), list) else []
+    policy_by_stage = {}
+    for entry in miner_entries:
+        if not isinstance(entry, dict):
+            continue
+        policy = entry.get("join_policy") if isinstance(entry.get("join_policy"), dict) else {}
+        stage = str(policy.get("stage") or "")
+        if stage:
+            policy_by_stage[stage] = policy
+    stage_reward_account_metadata_ready = bool(
+        (policy_by_stage.get("stage0") or {}).get("reward_account") == stage0_reward_account
+        and (policy_by_stage.get("stage1") or {}).get("reward_account") == stage1_reward_account
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_reward_account_metadata_ready",
+        stage_reward_account_metadata_ready,
+        detail="private stage invites and miner registry must agree on reward-account metadata",
+        diagnosis_code="bootstrap_stage_reward_account_metadata_invalid",
     )
     stage0_url = str(stage0_invite.get("coordinator_url") or "").strip().rstrip("/")
     stage1_url = str(stage1_invite.get("coordinator_url") or "").strip().rstrip("/")
@@ -13779,6 +13822,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "registries_store_hashed_tokens": _all_registry_tokens_hashed(operator_registry, "operators") and _all_registry_tokens_hashed(miner_registry, "miners"),
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
+            "stage_reward_account_metadata_ready": stage_reward_account_metadata_ready,
             "stage_check_join_scripts_ready": stage_check_join_scripts_ready,
             "stage_support_bundle_scripts_ready": stage_support_bundle_scripts_ready,
             "stage_archive_runner_scripts_ready": stage_archive_runner_scripts_ready,
@@ -20375,6 +20419,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     swarm_bootstrap.add_argument("--quota-task-limit", type=int, default=0)
     swarm_bootstrap.add_argument("--claim-rate-limit", type=int, default=0)
     swarm_bootstrap.add_argument("--claim-rate-window-seconds", type=float, default=0.0)
+    swarm_bootstrap.add_argument(
+        "--stage0-reward-account",
+        default="",
+        help="optional private Beta accounting destination metadata for the stage0 Miner invite",
+    )
+    swarm_bootstrap.add_argument(
+        "--stage1-reward-account",
+        default="",
+        help="optional private Beta accounting destination metadata for the stage1 Miner invite",
+    )
     swarm_bootstrap.add_argument("--replace", action="store_true")
     swarm_bootstrap.add_argument("--json", action="store_true")
 

@@ -80,6 +80,8 @@ private registries and stage-specific Miner invites in one local directory:
 crowdtensor swarm-bootstrap \
   --output-dir state/swarm-bootstrap \
   --coordinator-url https://YOUR-TUNNEL.example \
+  --stage0-reward-account acct-stage0-private \
+  --stage1-reward-account acct-stage1-private \
   --expect-remote-miners
 crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-remote-miners
 ```
@@ -87,7 +89,11 @@ crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-re
 The public report lists local file paths and copyable commands, but not
 plaintext operator or Miner tokens. The generated private invite files do
 contain usable tokens; keep the operator invite on the Coordinator/operator
-host and copy only the matching stage Miner invite to each Miner host.
+host and copy only the matching stage Miner invite to each Miner host. Optional
+`--stage0-reward-account` and `--stage1-reward-account` values are private Beta
+accounting metadata written into the matching Miner invite and hashed registry;
+public reports, bootstrap checks, and handoff doctor reports expose only
+reward-account presence and must not expose the account values.
 Bootstrap also writes executable helper scripts and separate private env files:
 `coordinator.private.env` contains only the observer token verifier for
 `start_coordinator.sh`; optional `private/tunnel.private.env` contains the
@@ -137,7 +143,10 @@ bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
 scripts or public Markdown, including `stage_support_bundle_scripts_ready` and
 `stage_package_archives_ready` plus `stage_archive_runner_scripts_ready` and
-`stage_handoff_checksums_ready`. Add `--expect-remote-miners` when stage packages
+`stage_handoff_checksums_ready`. It also checks
+`stage_reward_account_metadata_ready` so private stage invites and the private
+Miner registry agree on reward-account metadata without publishing those
+values. Add `--expect-remote-miners` when stage packages
 will leave the Coordinator host; local-only invite URLs then fail with
 `coordinator_remote_route_required`. After the Coordinator starts, add
 `--check-coordinator` or `--check-admission`; the latter calls token-backed
