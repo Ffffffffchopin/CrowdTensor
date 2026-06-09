@@ -56,19 +56,22 @@ Copy only the generated `*.invite.json` file to the Miner host. Before running
 the Miner, check that the Coordinator URL is reachable from that host:
 
 ```bash
-crowdtensor join --invite-file stage0-gpu-1.invite.json --check-coordinator --json
+crowdtensor join --invite-file stage0-gpu-1.invite.json --check-admission --json
 ```
 
-The preflight calls only the public `/ready` endpoint. It does not send the
-Miner token, does not claim work, and does not submit a generation request. When
-an invite is used, it also compares the invite's Miner ID, stage, backend, model,
-read-only workload, quota, and claim-rate metadata with the Coordinator's
-redacted `miner_policy_summary`. A blocked report with
-`join_coordinator_unreachable` means the Coordinator entry URL, DNS, firewall,
-VPN, tunnel, or reverse proxy must be fixed before the Miner can join.
+The preflight first calls the public `/ready` endpoint without sending the Miner
+token, compares the invite's Miner ID, stage, backend, model, read-only workload,
+quota, and claim-rate metadata with the Coordinator's redacted
+`miner_policy_summary`, and then calls token-backed `/tasks/preflight` without
+claiming work. It does not lease a task and does not submit a generation
+request. A blocked report with `join_coordinator_unreachable` means the
+Coordinator entry URL, DNS, firewall, VPN, tunnel, or reverse proxy must be
+fixed before the Miner can join.
 `join_invite_policy_miner_missing` or `join_invite_policy_mismatch` means the
 Coordinator did not load the matching `miner_registry.json`, loaded an older
-registry, or the invite was generated for a different Coordinator. After the
+registry, or the invite was generated for a different Coordinator.
+`join_admission_token_rejected` or `join_policy_*` means the token or advertised
+stage/backend/model/capability would be rejected by claim-time policy. After the
 preflight is ready, run:
 
 ```bash

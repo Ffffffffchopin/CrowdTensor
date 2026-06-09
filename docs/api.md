@@ -314,6 +314,48 @@ Response:
 
 ## Miner Endpoints
 
+### `POST /tasks/preflight`
+
+Checks Miner admission without claiming work. If Miner auth is configured, pass
+`x-crowdtensor-miner-token`. The endpoint reuses the claim-time Miner token,
+per-Miner registry, join-policy, quota, and claim-rate checks, but it does not
+lease a task, create a claim event, or record a blocked-claim event.
+
+Request:
+
+```json
+{
+  "miner_id": "miner-1",
+  "capabilities": {
+    "runtime": "python-cli",
+    "backend": "cpu",
+    "protocol_version": "runtime_contract_v1",
+    "supported_workloads": ["real_llm_sharded_infer"]
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "schema": "crowdtensor_miner_admission_preflight_v1",
+  "ok": true,
+  "miner_id": "miner-1",
+  "policy_configured": true,
+  "reason": "",
+  "would_status_code": 200,
+  "claim_attempted": false,
+  "task_claimed": false,
+  "token_public": false
+}
+```
+
+If the token is invalid, the endpoint returns `401`. If policy would reject the
+Miner, `ok=false` and `reason` is the same `join_policy_*` reason claim would
+return, such as `join_policy_stage_mismatch`, `join_policy_quota_exhausted`, or
+`join_policy_rate_limited`.
+
 ### `POST /tasks/claim`
 
 Claims the oldest queued task that matches the Miner capabilities. If Miner auth is configured, pass `x-crowdtensor-miner-token`.

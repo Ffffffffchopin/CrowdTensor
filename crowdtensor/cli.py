@@ -179,6 +179,7 @@ def request_json_url(
     payload: dict[str, Any] | None = None,
     *,
     admin_token: str = "",
+    miner_token: str = "",
     observer_token: str = "",
     timeout: float = 10.0,
 ) -> dict[str, Any]:
@@ -186,6 +187,8 @@ def request_json_url(
     headers = {"content-type": "application/json"}
     if admin_token:
         headers["x-crowdtensor-admin-token"] = admin_token
+    if miner_token:
+        headers["x-crowdtensor-miner-token"] = miner_token
     if observer_token:
         headers["x-crowdtensor-observer-token"] = observer_token
     request = Request(f"{base_url.rstrip('/')}{path}", data=body, headers=headers, method=method)
@@ -10772,6 +10775,92 @@ def _product_join_invite_policy_match(invite_summary: dict[str, Any], ready_payl
     return result
 
 
+def _product_join_capabilities_for_admission(args: argparse.Namespace) -> dict[str, Any]:
+    stage_capabilities = _p2p_stage_capabilities(backend=args.backend, stage=args.stage)
+    runtime_backend = "hf_transformers_cuda" if args.backend == "cuda" else "hf_transformers_cpu"
+    return {
+        "runtime": "python-cli",
+        "backend": args.backend,
+        "protocol_version": "runtime_contract_v1",
+        "supported_workloads": ["real_llm_sharded_infer"],
+        "real_llm_runtime": {
+            "adapter_kind": runtime_backend,
+            "model_id": args.hf_model_id,
+            "stage_role": args.stage,
+            "partition_mode": "stage-local",
+        },
+        "real_llm_sharded_stage_role": args.stage,
+        "real_llm_sharded_stage_capabilities": stage_capabilities,
+    }
+
+
+def _product_join_admission_preflight(coordinator_url: str, args: argparse.Namespace) -> dict[str, Any]:
+    base_url = str(coordinator_url or "").strip().rstrip("/")
+    result: dict[str, Any] = {
+        "schema": "crowdtensor_join_admission_preflight_v1",
+        "checked": bool(base_url),
+        "ok": False,
+        "miner_id": str(getattr(args, "miner_id", "") or ""),
+        "miner_auth_sent": False,
+        "claim_attempted": False,
+        "task_claimed": False,
+    }
+    if not base_url:
+        result["diagnosis_code"] = "coordinator_route_missing"
+        return result
+    token = str(getattr(args, "miner_token", "") or "")
+    if not token:
+        result["diagnosis_code"] = "join_admission_token_missing"
+        return result
+    payload = {
+        "miner_id": str(getattr(args, "miner_id", "") or ""),
+        "capabilities": _product_join_capabilities_for_admission(args),
+    }
+    try:
+        response = request_json_url(
+            "POST",
+            base_url,
+            "/tasks/preflight",
+            payload,
+            admin_token="",
+            miner_token=token,
+            observer_token="",
+            timeout=float(getattr(args, "http_timeout", 5.0) or 5.0),
+        )
+    except HTTPError as exc:
+        result.update({
+            "status_code": int(exc.code),
+            "error": type(exc).__name__,
+            "detail": str(exc)[:200],
+            "miner_auth_sent": True,
+            "diagnosis_code": "join_admission_token_rejected" if int(exc.code) == 401 else "join_admission_preflight_failed",
+        })
+        return result
+    except Exception as exc:
+        result.update({
+            "error": type(exc).__name__,
+            "detail": str(exc)[:200],
+            "miner_auth_sent": True,
+            "diagnosis_code": "join_admission_unreachable",
+        })
+        return result
+    result.update({
+        "ok": bool(response.get("ok")),
+        "miner_auth_sent": True,
+        "reason": str(response.get("reason") or ""),
+        "would_status_code": int(response.get("would_status_code") or 0),
+        "policy_configured": bool(response.get("policy_configured")),
+        "policy_limits": response.get("policy_limits") if isinstance(response.get("policy_limits"), dict) else {},
+        "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
+        "rate_usage": response.get("rate_usage") if isinstance(response.get("rate_usage"), dict) else {},
+        "scoped_capabilities": response.get("scoped_capabilities") if isinstance(response.get("scoped_capabilities"), dict) else {},
+        "claim_attempted": bool(response.get("claim_attempted")),
+        "task_claimed": bool(response.get("task_claimed")),
+        "diagnosis_code": "join_admission_ready" if response.get("ok") else str(response.get("reason") or "join_admission_blocked"),
+    })
+    return result
+
+
 def _product_join_coordinator_preflight(
     coordinator_url: str,
     *,
@@ -10847,6 +10936,12 @@ def _product_join_runtime_provenance(report: dict[str, Any], args: argparse.Name
         and "join_coordinator_not_ready" not in codes
         and "join_invite_policy_miner_missing" not in codes
         and "join_invite_policy_mismatch" not in codes
+        and "join_admission_token_missing" not in codes
+        and "join_admission_token_rejected" not in codes
+        and "join_admission_unreachable" not in codes
+        and "join_admission_preflight_failed" not in codes
+        and "join_admission_blocked" not in codes
+        and not any(str(code).startswith("join_policy_") for code in codes)
     )
     if coordinator_url:
         coordinator_scope = "local-loopback" if is_loopback_coordinator_url(coordinator_url) else "external-existing"
@@ -11136,12 +11231,20 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
     command = build_join_command(args, coordinator_url=coordinator_url)
     ready = bool(not args.p2p or peer_announce.get("ok"))
     coordinator_preflight: dict[str, Any] = {}
-    if bool(getattr(args, "check_coordinator", False)):
+    if bool(getattr(args, "check_coordinator", False) or getattr(args, "check_admission", False)):
         coordinator_preflight = _product_join_coordinator_preflight(
             coordinator_url,
             timeout=args.http_timeout,
             invite_summary=invite_summary,
         )
+        if bool(getattr(args, "check_admission", False)) and coordinator_preflight.get("ok"):
+            admission_preflight = _product_join_admission_preflight(coordinator_url, args)
+            coordinator_preflight["admission_preflight"] = admission_preflight
+            coordinator_preflight["ok"] = bool(admission_preflight.get("ok"))
+            if not admission_preflight.get("ok"):
+                coordinator_preflight["diagnosis_code"] = str(
+                    admission_preflight.get("diagnosis_code") or "join_admission_blocked"
+                )
         ready = bool(ready and coordinator_preflight.get("ok"))
     safe_command = redacted_command(command, {"--miner-token", "--peer-secret"})
     diagnosis_codes = ["join_command_ready"] + (
@@ -11158,6 +11261,11 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             match_code = str(match.get("diagnosis_code") or "")
             if match_code and match_code not in diagnosis_codes:
                 diagnosis_codes.append(match_code)
+        admission = coordinator_preflight.get("admission_preflight")
+        if isinstance(admission, dict):
+            admission_code = str(admission.get("diagnosis_code") or "")
+            if admission_code and admission_code not in diagnosis_codes:
+                diagnosis_codes.append(admission_code)
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": ready,
@@ -11203,6 +11311,11 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
                 match_code = str(match.get("diagnosis_code") or "")
                 if match_code and match_code not in report["diagnosis_codes"]:
                     report["diagnosis_codes"].append(match_code)
+            admission = coordinator_preflight.get("admission_preflight")
+            if isinstance(admission, dict):
+                admission_code = str(admission.get("diagnosis_code") or "")
+                if admission_code and admission_code not in report["diagnosis_codes"]:
+                    report["diagnosis_codes"].append(admission_code)
         report["operator_action"] = _product_join_operator_action(report)
         if not args.run:
             report = _finalize_product_join_report(report, args)
@@ -11236,6 +11349,15 @@ def _product_join_operator_action(report: dict[str, Any]) -> str:
         return "Coordinator is reachable but this Miner invite is not in its registry; load the matching miner_registry.json or regenerate the invite for this Coordinator."
     if "join_invite_policy_mismatch" in codes:
         return "Coordinator is reachable but its redacted Miner policy does not match this invite; regenerate the invite or restart the Coordinator with the matching registry."
+    if "join_admission_token_missing" in codes:
+        return "Admission preflight needs a Miner token; use an invite file/code or set CROWDTENSOR_MINER_TOKEN before rerunning --check-admission."
+    if "join_admission_token_rejected" in codes:
+        return "Coordinator rejected this Miner token during admission preflight; rotate/regenerate the invite or load the matching registry before running this Miner."
+    if "join_admission_unreachable" in codes or "join_admission_preflight_failed" in codes:
+        return "Coordinator /tasks/preflight failed; check Coordinator reachability and Miner auth before running this Miner."
+    for code in sorted(codes):
+        if code.startswith("join_policy_"):
+            return f"Coordinator admission policy would reject this Miner with {code}; fix the invite, stage/backend/model, quota, or claim-rate settings before running."
     if "p2p_stage_miner_announce_failed" in codes or "real_p2p_stage_miner_announce_failed" in codes:
         return "Check the P2P discovery daemon and --peer-secret, then rerun join --p2p so this stage is visible to generate --dry-run."
     if report.get("ok"):
@@ -13329,6 +13451,19 @@ def print_product_join(report: dict[str, Any]) -> None:
                 f"enabled={match.get('enabled')} "
                 f"mismatches={','.join(str(item) for item in mismatches) if mismatches else 'none'} "
                 f"diagnosis={match.get('diagnosis_code')}"
+            )
+        admission = preflight.get("admission_preflight") if isinstance(preflight.get("admission_preflight"), dict) else {}
+        if admission:
+            print(
+                "  admission_preflight: "
+                f"checked={admission.get('checked')} "
+                f"ok={admission.get('ok')} "
+                f"miner_auth_sent={admission.get('miner_auth_sent')} "
+                f"reason={admission.get('reason') or 'none'} "
+                f"would_status={admission.get('would_status_code', 0)} "
+                f"claim_attempted={admission.get('claim_attempted')} "
+                f"task_claimed={admission.get('task_claimed')} "
+                f"diagnosis={admission.get('diagnosis_code')}"
             )
     if report.get("printed_only"):
         print(f"  command: {report.get('command_line') or command_line(report.get('command') or [])}")
@@ -16847,6 +16982,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--check-coordinator",
         action="store_true",
         help="probe Coordinator /ready before printing or running the Miner command; useful for public/VPN/tunnel join invites",
+    )
+    join.add_argument(
+        "--check-admission",
+        action="store_true",
+        help="also call token-backed /tasks/preflight without claiming work; implies --check-coordinator",
     )
     join.add_argument("--run", action="store_true")
     join.add_argument("--json", action="store_true")

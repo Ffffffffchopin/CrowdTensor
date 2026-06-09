@@ -1033,6 +1033,84 @@ def create_app(
             return
         raise HTTPException(status_code=401, detail="invalid miner token")
 
+    def miner_admission_preflight(request: ClaimRequest) -> dict[str, Any]:
+        scoped_capabilities, policy_block_reason = enforce_miner_join_policy(
+            miner_id=request.miner_id,
+            capabilities=request.capabilities,
+            registry=configured_miner_registry,
+        )
+        policy = miner_join_policy_for(request.miner_id, configured_miner_registry)
+        read_only_workload = str(policy.get("read_only_workload") or WORKLOAD_REAL_LLM_SHARDED_INFER) if policy else ""
+        quota_task_limit = int(policy.get("quota_task_limit") or 0) if policy else 0
+        claim_rate_limit = int(policy.get("claim_rate_limit") or 0) if policy else 0
+        claim_rate_window_seconds = float(policy.get("claim_rate_window_seconds") or 0.0) if policy else 0.0
+        usage = store.miner_claim_usage(request.miner_id)
+        rate_usage = (
+            store.miner_claim_rate_usage(
+                request.miner_id,
+                window_seconds=claim_rate_window_seconds,
+            )
+            if claim_rate_limit > 0 and claim_rate_window_seconds > 0
+            else {}
+        )
+        quota_exhausted = bool(quota_task_limit > 0 and int(usage.get("claim_count") or 0) >= quota_task_limit)
+        rate_limited = bool(claim_rate_limit > 0 and int(rate_usage.get("claim_count") or 0) >= claim_rate_limit)
+        reason = ""
+        status_code = 200
+        if policy_block_reason:
+            reason = policy_block_reason
+            status_code = 503
+        elif quota_exhausted:
+            reason = "join_policy_quota_exhausted"
+            status_code = 503
+        elif rate_limited:
+            reason = "join_policy_rate_limited"
+            status_code = 429
+        return {
+            "schema": "crowdtensor_miner_admission_preflight_v1",
+            "_scoped_capabilities": scoped_capabilities,
+            "ok": not bool(reason),
+            "miner_id": str(request.miner_id or ""),
+            "policy_configured": bool(policy),
+            "reason": reason,
+            "would_status_code": status_code,
+            "read_only_workload": read_only_workload,
+            "scoped_capabilities": {
+                "runtime": str(scoped_capabilities.get("runtime") or ""),
+                "backend": str(scoped_capabilities.get("backend") or ""),
+                "supported_workloads": list(scoped_capabilities.get("supported_workloads") or []),
+                "real_llm_sharded_stage_role": str(scoped_capabilities.get("real_llm_sharded_stage_role") or ""),
+                "real_llm_sharded_stage_capabilities": list(scoped_capabilities.get("real_llm_sharded_stage_capabilities") or []),
+                "real_llm_runtime": dict(scoped_capabilities.get("real_llm_runtime") or {}),
+            },
+            "policy_limits": {
+                "quota_task_limit": quota_task_limit,
+                "claim_rate_limit": claim_rate_limit,
+                "claim_rate_window_seconds": claim_rate_window_seconds,
+            },
+            "usage": {
+                "claim_count": int(usage.get("claim_count") or 0),
+                "leased": int(usage.get("leased") or 0),
+                "accepted": int(usage.get("accepted") or 0),
+                "rejected": int(usage.get("rejected") or 0),
+            },
+            "rate_usage": {
+                "claim_count": int(rate_usage.get("claim_count") or 0),
+                "window_seconds": float(rate_usage.get("window_seconds") or 0.0),
+            },
+            "claim_attempted": False,
+            "task_claimed": False,
+            "token_public": False,
+            "public_artifact_safe": True,
+        }
+
+    def public_miner_admission_preflight(preflight: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in preflight.items()
+            if not str(key).startswith("_")
+        }
+
     def require_observer(token: str | None) -> None:
         if not configured_observer_token:
             return
@@ -1425,12 +1503,14 @@ def create_app(
         x_crowdtensor_miner_token: str | None = Header(default=None),
     ) -> dict:
         require_claim_miner(request.miner_id, x_crowdtensor_miner_token)
-        scoped_capabilities, policy_block_reason = enforce_miner_join_policy(
-            miner_id=request.miner_id,
-            capabilities=request.capabilities,
-            registry=configured_miner_registry,
-        )
-        if policy_block_reason:
+        preflight = miner_admission_preflight(request)
+        if preflight.get("reason") in {
+            "join_policy_workload_not_advertised",
+            "join_policy_backend_mismatch",
+            "join_policy_model_mismatch",
+            "join_policy_stage_mismatch",
+        }:
+            policy_block_reason = str(preflight.get("reason") or "")
             store.record_claim_blocked(
                 request.miner_id,
                 capabilities=request.capabilities,
@@ -1438,10 +1518,11 @@ def create_app(
                 blocked_workloads=[WORKLOAD_REAL_LLM_SHARDED_INFER],
             )
             raise HTTPException(status_code=503, detail=policy_block_reason)
+        scoped_capabilities = dict(preflight.get("_scoped_capabilities") or {})
         policy = miner_join_policy_for(request.miner_id, configured_miner_registry)
-        quota_task_limit = int(policy.get("quota_task_limit") or 0) if policy else 0
+        quota_task_limit = int((preflight.get("policy_limits") or {}).get("quota_task_limit") or 0)
         if quota_task_limit > 0:
-            usage = store.miner_claim_usage(request.miner_id)
+            usage = preflight.get("usage") if isinstance(preflight.get("usage"), dict) else {}
             if int(usage.get("claim_count") or 0) >= quota_task_limit:
                 reason = "join_policy_quota_exhausted"
                 store.record_claim_blocked(
@@ -1451,13 +1532,10 @@ def create_app(
                     blocked_workloads=[str(policy.get("read_only_workload") or WORKLOAD_REAL_LLM_SHARDED_INFER)],
                 )
                 raise HTTPException(status_code=503, detail=reason)
-        claim_rate_limit = int(policy.get("claim_rate_limit") or 0) if policy else 0
-        claim_rate_window_seconds = float(policy.get("claim_rate_window_seconds") or 0.0) if policy else 0.0
+        claim_rate_limit = int((preflight.get("policy_limits") or {}).get("claim_rate_limit") or 0)
+        claim_rate_window_seconds = float((preflight.get("policy_limits") or {}).get("claim_rate_window_seconds") or 0.0)
         if claim_rate_limit > 0 and claim_rate_window_seconds > 0:
-            usage = store.miner_claim_rate_usage(
-                request.miner_id,
-                window_seconds=claim_rate_window_seconds,
-            )
+            usage = preflight.get("rate_usage") if isinstance(preflight.get("rate_usage"), dict) else {}
             if int(usage.get("claim_count") or 0) >= claim_rate_limit:
                 reason = "join_policy_rate_limited"
                 store.record_claim_blocked(
@@ -1472,6 +1550,15 @@ def create_app(
             return store.claim_task(request.miner_id, capabilities=scoped_capabilities)
         except NoTaskAvailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/tasks/preflight")
+    def preflight_task(
+        request: ClaimRequest,
+        x_crowdtensor_miner_token: str | None = Header(default=None),
+    ) -> dict:
+        require_claim_miner(request.miner_id, x_crowdtensor_miner_token)
+        preflight = miner_admission_preflight(request)
+        return public_miner_admission_preflight(preflight)
 
     @app.post("/tasks/{task_id}/heartbeat")
     def heartbeat(

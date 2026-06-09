@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added token-backed Miner admission preflight with `POST /tasks/preflight` and `crowdtensor join --check-admission`, verifying Miner auth, join policy, quota, claim-rate, stage/backend/model capability, and safe claim readiness without leasing a task or recording blocked-claim events.
 - Extended `crowdtensor join --check-coordinator` for invite joins to compare the invite against `/ready` redacted `miner_policy_summary`, surfacing `join_invite_policy_miner_missing` and `join_invite_policy_mismatch` before a Miner sends its token or claims work.
 - Added `crowdtensor join --check-coordinator`, a safe `/ready` preflight for direct URL or invite-based Miner joins that reports Coordinator reachability, task-lane summaries, and `join_coordinator_unreachable` diagnostics without sending Miner tokens or claiming work.
 - Added `max_total_sessions` to operator `session_policy`, enforcing cumulative per-operator session quotas across completed and active `/admin/inference-sessions` work with safe `operator_session_policy_total_sessions_exceeded` audit events.

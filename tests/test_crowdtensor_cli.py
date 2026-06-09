@@ -4151,6 +4151,182 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("does not match this invite", report["operator_action"])
         self.assertFalse(report["runtime_provenance"]["route_ready"])
 
+    def test_product_join_check_admission_calls_token_preflight_without_leaking_token(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        invite_path = output_dir / "miner.invite.json"
+        invite_path.write_text(json.dumps({
+            "schema": "crowdtensor_miner_join_invite_v1",
+            "coordinator_url": "https://coord.example",
+            "miner_id": "invited-stage0",
+            "stage": "stage0",
+            "backend": "cpu",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "miner_token": "invite-secret",
+            "token_hash": "sha256:" + "f" * 64,
+            "policy": {
+                "schema": "crowdtensor_miner_join_policy_v1",
+                "read_only_workload": "real_llm_sharded_infer",
+                "not_production": True,
+            },
+        }), encoding="utf-8")
+        ready_payload = {
+            "ok": True,
+            "service": "crowdtensord",
+            "auth": {"miner_registry_configured": True},
+            "task_lanes": [{"workload_type": "real_llm_sharded_infer"}],
+            "miner_policy_summary": {
+                "schema": "crowdtensor_miner_registry_policy_summary_v1",
+                "miner_count": 1,
+                "policy_count": 1,
+                "miners": [
+                    {
+                        "miner_id": "invited-stage0",
+                        "enabled": True,
+                        "policy": {
+                            "stage": "stage0",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "quota_task_limit": 0,
+                            "claim_rate_limit": 0,
+                            "claim_rate_window_seconds": 0.0,
+                            "reward_account_present": False,
+                            "read_only_workload": "real_llm_sharded_infer",
+                            "not_production": True,
+                        },
+                    },
+                ],
+            },
+        }
+        admission_payload = {
+            "schema": "crowdtensor_miner_admission_preflight_v1",
+            "ok": True,
+            "miner_id": "invited-stage0",
+            "policy_configured": True,
+            "reason": "",
+            "would_status_code": 200,
+            "policy_limits": {"quota_task_limit": 0, "claim_rate_limit": 0, "claim_rate_window_seconds": 0.0},
+            "usage": {"claim_count": 0, "leased": 0, "accepted": 0, "rejected": 0},
+            "rate_usage": {"claim_count": 0, "window_seconds": 0.0},
+            "scoped_capabilities": {
+                "runtime": "python-cli",
+                "backend": "cpu",
+                "supported_workloads": ["real_llm_sharded_infer"],
+                "real_llm_sharded_stage_role": "stage0",
+                "real_llm_sharded_stage_capabilities": ["real_llm_sharded_stage0"],
+                "real_llm_runtime": {"adapter_kind": "hf_transformers_cpu", "model_id": "sshleifer/tiny-gpt2"},
+            },
+            "claim_attempted": False,
+            "task_claimed": False,
+            "token_public": False,
+        }
+        calls: list[tuple] = []
+
+        def fake_request(method: str, base_url: str, path: str, payload: dict | None = None, **kwargs: object) -> dict:
+            calls.append((method, base_url, path, payload, kwargs))
+            if path == "/ready":
+                return ready_payload
+            if path == "/tasks/preflight":
+                return admission_payload
+            raise AssertionError(path)
+
+        args = cli.parse_args([
+            "join",
+            "--invite-file",
+            str(invite_path),
+            "--check-admission",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_join(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertTrue(report["ok"], report)
+        self.assertIn("join_admission_ready", report["diagnosis_codes"])
+        self.assertTrue(report["coordinator_preflight"]["admission_preflight"]["ok"])
+        self.assertFalse(report["coordinator_preflight"]["admission_preflight"]["claim_attempted"])
+        self.assertFalse(report["coordinator_preflight"]["admission_preflight"]["task_claimed"])
+        self.assertTrue(report["runtime_provenance"]["live_preflight_checked"])
+        self.assertTrue(report["runtime_provenance"]["live_preflight_ready"])
+        self.assertEqual(calls[0][2], "/ready")
+        self.assertEqual(calls[1][2], "/tasks/preflight")
+        self.assertEqual(calls[1][4]["miner_token"], "invite-secret")
+        self.assertEqual(calls[1][3]["miner_id"], "invited-stage0")
+        self.assertEqual(calls[1][3]["capabilities"]["real_llm_sharded_stage_capabilities"], ["real_llm_sharded_stage0"])
+        self.assertNotIn("invite-secret", encoded)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_join(report)
+        rendered = stdout.getvalue()
+        self.assertIn("admission_preflight: checked=True ok=True miner_auth_sent=True reason=none", rendered)
+        self.assertNotIn("invite-secret", rendered)
+
+    def test_product_join_check_admission_blocks_policy_reject(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--backend",
+            "cuda",
+            "--miner-token",
+            "miner-secret",
+            "--check-admission",
+            "--json",
+        ])
+        ready_payload = {"ok": True, "service": "crowdtensord", "auth": {"miner_registry_configured": True}, "task_lanes": []}
+        admission_payload = {
+            "schema": "crowdtensor_miner_admission_preflight_v1",
+            "ok": False,
+            "miner_id": "stage0-miner",
+            "reason": "join_policy_stage_mismatch",
+            "would_status_code": 503,
+            "policy_configured": True,
+            "claim_attempted": False,
+            "task_claimed": False,
+            "scoped_capabilities": {},
+        }
+
+        def fake_request(method: str, base_url: str, path: str, payload: dict | None = None, **kwargs: object) -> dict:
+            return ready_payload if path == "/ready" else admission_payload
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_product_join(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertFalse(report["ok"], report)
+        self.assertIn("join_policy_stage_mismatch", report["diagnosis_codes"])
+        self.assertEqual(report["coordinator_preflight"]["admission_preflight"]["reason"], "join_policy_stage_mismatch")
+        self.assertFalse(report["runtime_provenance"]["route_ready"])
+        self.assertIn("would reject this Miner", report["operator_action"])
+        self.assertNotIn("miner-secret", encoded)
+
+    def test_product_join_check_admission_requires_token(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--check-admission",
+            "--json",
+        ])
+        ready_payload = {"ok": True, "service": "crowdtensord", "auth": {"miner_registry_configured": True}, "task_lanes": []}
+
+        with patch.object(cli, "request_json_url", return_value=ready_payload):
+            report = cli.build_product_join(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("join_admission_token_missing", report["diagnosis_codes"])
+        self.assertFalse(report["coordinator_preflight"]["admission_preflight"]["miner_auth_sent"])
+        self.assertIn("Miner token", report["operator_action"])
+
     def test_product_join_check_coordinator_unreachable_blocks_before_run(self) -> None:
         args = cli.parse_args([
             "join",

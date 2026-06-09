@@ -10,11 +10,14 @@ Token configuration values can be plaintext for local demos or hashed token veri
 
 `--miner-token` or `CROWDTENSOR_MINER_TOKEN` protects:
 
+- `POST /tasks/preflight`
 - `POST /tasks/claim`
 - `POST /tasks/{task_id}/heartbeat`
 - `POST /tasks/{task_id}/result`
 
 Python Miners pass it with `--miner-token` or `CROWDTENSOR_MINER_TOKEN`.
+`/tasks/preflight` verifies the token and claim-time admission policy without
+leasing work or recording a blocked claim.
 
 Generate a hashed token verifier:
 
