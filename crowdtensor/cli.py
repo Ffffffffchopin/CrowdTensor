@@ -10726,16 +10726,73 @@ def resolve_coordinator_from_discovery(
     return "", peer_list, payload
 
 
+def _product_join_coordinator_preflight(coordinator_url: str, *, timeout: float = 5.0) -> dict[str, Any]:
+    base_url = str(coordinator_url or "").strip().rstrip("/")
+    result: dict[str, Any] = {
+        "schema": "crowdtensor_join_coordinator_preflight_v1",
+        "checked": bool(base_url),
+        "ok": False,
+        "coordinator_url_present": bool(base_url),
+        "public_ready_endpoint": "/ready",
+    }
+    if not base_url:
+        result["diagnosis_code"] = "coordinator_route_missing"
+        return result
+    try:
+        payload = request_json_url("GET", base_url, "/ready", timeout=timeout)
+    except Exception as exc:
+        result.update({
+            "error": type(exc).__name__,
+            "detail": str(exc)[:200],
+            "diagnosis_code": "join_coordinator_unreachable",
+        })
+        if isinstance(exc, HTTPError):
+            result["status_code"] = int(exc.code)
+        return result
+    auth = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
+    lanes = payload.get("task_lanes") if isinstance(payload.get("task_lanes"), list) else []
+    workloads = sorted({
+        str(lane.get("workload_type") or lane.get("workload") or "").strip()
+        for lane in lanes
+        if isinstance(lane, dict) and str(lane.get("workload_type") or lane.get("workload") or "").strip()
+    })
+    result.update({
+        "ok": bool(payload.get("ok")),
+        "service": str(payload.get("service") or ""),
+        "version": str(payload.get("version") or ""),
+        "protocol_version": str(payload.get("protocol_version") or ""),
+        "task_lane_count": len(lanes),
+        "task_lane_workloads": workloads,
+        "auth": {
+            "miner_required": bool(auth.get("miner_required")),
+            "observer_required": bool(auth.get("observer_required")),
+            "admin_configured": bool(auth.get("admin_configured")),
+            "miner_registry_configured": bool(auth.get("miner_registry_configured")),
+            "operator_registry_configured": bool(auth.get("operator_registry_configured")),
+        },
+        "diagnosis_code": "join_coordinator_ready" if payload.get("ok") else "join_coordinator_not_ready",
+    })
+    return result
+
+
 def _product_join_runtime_provenance(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     coordinator_url = str(report.get("coordinator_url") or "")
-    route_ready = bool(coordinator_url and "coordinator_route_missing" not in set(report.get("diagnosis_codes") or []))
+    codes = set(report.get("diagnosis_codes") or [])
+    route_ready = bool(
+        coordinator_url
+        and "coordinator_route_missing" not in codes
+        and "join_coordinator_unreachable" not in codes
+        and "join_coordinator_not_ready" not in codes
+    )
     if coordinator_url:
         coordinator_scope = "local-loopback" if is_loopback_coordinator_url(coordinator_url) else "external-existing"
     elif p2p.get("enabled"):
         coordinator_scope = "missing"
     else:
         coordinator_scope = "missing"
+    preflight = report.get("coordinator_preflight") if isinstance(report.get("coordinator_preflight"), dict) else {}
+    preflight_checked = bool(preflight.get("checked"))
     return {
         "schema": PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA,
         "proof_level": "join-route",
@@ -10750,8 +10807,8 @@ def _product_join_runtime_provenance(report: dict[str, Any], args: argparse.Name
         "p2p_enabled": bool(p2p.get("enabled")),
         "p2p_backend": str(p2p.get("backend") or ""),
         "p2p_peer_count": _safe_int(report.get("peer_count")),
-        "live_preflight_checked": False,
-        "live_preflight_ready": None,
+        "live_preflight_checked": preflight_checked,
+        "live_preflight_ready": bool(preflight.get("ok")) if preflight_checked else None,
         "stage_preflight_checked": False,
         "stage_preflight_ready": None,
         "ready_to_submit_label": "",
@@ -11015,7 +11072,20 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         peer = {}
     command = build_join_command(args, coordinator_url=coordinator_url)
     ready = bool(not args.p2p or peer_announce.get("ok"))
+    coordinator_preflight: dict[str, Any] = {}
+    if bool(getattr(args, "check_coordinator", False)):
+        coordinator_preflight = _product_join_coordinator_preflight(coordinator_url, timeout=args.http_timeout)
+        ready = bool(ready and coordinator_preflight.get("ok"))
     safe_command = redacted_command(command, {"--miner-token", "--peer-secret"})
+    diagnosis_codes = ["join_command_ready"] + (
+        [("real_p2p_stage_miner_announce_ready" if p2p_backend == "real" else "p2p_stage_miner_announce_ready")]
+        if args.p2p and peer_announce.get("ok")
+        else []
+    ) + (["join_invite_applied"] if invite_summary else [])
+    if coordinator_preflight:
+        preflight_code = str(coordinator_preflight.get("diagnosis_code") or "")
+        if preflight_code:
+            diagnosis_codes.append(preflight_code)
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": ready,
@@ -11035,11 +11105,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
         "command_line": command_line(safe_command),
         "next_commands": _product_join_next_commands(args, coordinator_url=coordinator_url),
         "printed_only": not args.run,
-        "diagnosis_codes": ["join_command_ready"] + (
-            [("real_p2p_stage_miner_announce_ready" if p2p_backend == "real" else "p2p_stage_miner_announce_ready")]
-            if args.p2p and peer_announce.get("ok")
-            else []
-        ) + (["join_invite_applied"] if invite_summary else []),
+        "diagnosis_codes": diagnosis_codes,
         "safety": {
             "tokens_redacted_in_report": True,
             "invite_token_redacted": bool(invite_summary),
@@ -11050,10 +11116,16 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
     }
     if invite_summary:
         report["join_invite"] = invite_summary
+    if coordinator_preflight:
+        report["coordinator_preflight"] = coordinator_preflight
     if args.p2p and not peer_announce.get("ok"):
         report["diagnosis_codes"] = [
             "real_p2p_stage_miner_announce_failed" if p2p_backend == "real" else "p2p_stage_miner_announce_failed"
         ]
+        if coordinator_preflight:
+            preflight_code = str(coordinator_preflight.get("diagnosis_code") or "")
+            if preflight_code:
+                report["diagnosis_codes"].append(preflight_code)
         report["operator_action"] = _product_join_operator_action(report)
         if not args.run:
             report = _finalize_product_join_report(report, args)
@@ -11079,6 +11151,10 @@ def _product_join_operator_action(report: dict[str, Any]) -> str:
         return "Start the matching P2P discovery daemon from next_commands, or use a direct --coordinator-url."
     if "coordinator_route_missing" in codes:
         return "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery."
+    if "join_coordinator_unreachable" in codes:
+        return "Coordinator /ready is unreachable; check the URL, DNS, firewall, VPN, tunnel, or public reverse proxy before running this Miner."
+    if "join_coordinator_not_ready" in codes:
+        return "Coordinator /ready responded but is not ready; inspect the Coordinator logs and task-lane configuration before running this Miner."
     if "p2p_stage_miner_announce_failed" in codes or "real_p2p_stage_miner_announce_failed" in codes:
         return "Check the P2P discovery daemon and --peer-secret, then rerun join --p2p so this stage is visible to generate --dry-run."
     if report.get("ok"):
@@ -13148,6 +13224,18 @@ def print_product_join(report: dict[str, Any]) -> None:
             f"backend={p2p.get('backend')} "
             f"announced={announce.get('ok')} "
             f"stage_caps={','.join(str(item) for item in caps) if caps else 'none'}"
+        )
+    preflight = report.get("coordinator_preflight") if isinstance(report.get("coordinator_preflight"), dict) else {}
+    if preflight:
+        workloads = preflight.get("task_lane_workloads") if isinstance(preflight.get("task_lane_workloads"), list) else []
+        print(
+            "  coordinator_preflight: "
+            f"checked={preflight.get('checked')} "
+            f"ok={preflight.get('ok')} "
+            f"service={preflight.get('service') or 'unknown'} "
+            f"lanes={preflight.get('task_lane_count', 0)} "
+            f"workloads={','.join(str(item) for item in workloads) if workloads else 'none'} "
+            f"diagnosis={preflight.get('diagnosis_code')}"
         )
     if report.get("printed_only"):
         print(f"  command: {report.get('command_line') or command_line(report.get('command') or [])}")
@@ -16662,6 +16750,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     join.add_argument("--retry-max-sleep", type=float, default=2.0)
     join.add_argument("--idle-sleep", type=float, default=2.0)
     join.add_argument("--http-timeout", type=float, default=5.0)
+    join.add_argument(
+        "--check-coordinator",
+        action="store_true",
+        help="probe Coordinator /ready before printing or running the Miner command; useful for public/VPN/tunnel join invites",
+    )
     join.add_argument("--run", action="store_true")
     join.add_argument("--json", action="store_true")
 

@@ -52,7 +52,18 @@ python scripts/create_miner_invite.py \
   --json
 ```
 
-Copy only the generated `*.invite.json` file to the Miner host, then run:
+Copy only the generated `*.invite.json` file to the Miner host. Before running
+the Miner, check that the Coordinator URL is reachable from that host:
+
+```bash
+crowdtensor join --invite-file stage0-gpu-1.invite.json --check-coordinator --json
+```
+
+The preflight calls only the public `/ready` endpoint. It does not send the
+Miner token, does not claim work, and does not submit a generation request. A
+blocked report with `join_coordinator_unreachable` means the Coordinator entry
+URL, DNS, firewall, VPN, tunnel, or reverse proxy must be fixed before the
+Miner can join. After the preflight is ready, run:
 
 ```bash
 crowdtensor join --invite-file stage0-gpu-1.invite.json --run

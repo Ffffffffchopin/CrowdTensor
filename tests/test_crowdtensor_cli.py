@@ -3917,6 +3917,101 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(command[command.index("--max-tasks") + 1], "2")
         self.assertEqual(command[command.index("--max-runtime-seconds") + 1], "60.0")
 
+    def test_product_join_invite_check_coordinator_reads_ready_without_leaking_token(self) -> None:
+        output_dir = Path(self._tmp_dir())
+        invite_path = output_dir / "miner.invite.json"
+        invite_path.write_text(json.dumps({
+            "schema": "crowdtensor_miner_join_invite_v1",
+            "coordinator_url": "https://coord.example",
+            "miner_id": "invited-stage0",
+            "stage": "stage0",
+            "backend": "cpu",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "miner_token": "invite-secret",
+            "token_hash": "sha256:" + "c" * 64,
+            "policy": {
+                "schema": "crowdtensor_miner_join_policy_v1",
+                "trust_tier": "probation",
+                "read_only_workload": "real_llm_sharded_infer",
+                "not_production": True,
+            },
+        }), encoding="utf-8")
+        ready_payload = {
+            "ok": True,
+            "service": "crowdtensord",
+            "version": "0.1.0",
+            "protocol_version": "runtime_contract_v1",
+            "auth": {
+                "miner_required": True,
+                "observer_required": True,
+                "admin_configured": True,
+                "miner_registry_configured": True,
+                "operator_registry_configured": False,
+            },
+            "task_lanes": [
+                {"workload_type": "real_llm_sharded_infer"},
+                {"workload_type": "model_bundle_infer"},
+            ],
+        }
+        args = cli.parse_args([
+            "join",
+            "--invite-file",
+            str(invite_path),
+            "--check-coordinator",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", return_value=ready_payload) as requested:
+            report = cli.build_product_join(args)
+
+        encoded = json.dumps(report, sort_keys=True)
+        self.assertTrue(report["ok"], report)
+        self.assertIn("join_coordinator_ready", report["diagnosis_codes"])
+        self.assertTrue(report["runtime_provenance"]["live_preflight_checked"])
+        self.assertTrue(report["runtime_provenance"]["live_preflight_ready"])
+        self.assertTrue(report["coordinator_preflight"]["ok"])
+        self.assertEqual(report["coordinator_preflight"]["service"], "crowdtensord")
+        self.assertEqual(
+            report["coordinator_preflight"]["task_lane_workloads"],
+            ["model_bundle_infer", "real_llm_sharded_infer"],
+        )
+        self.assertTrue(report["coordinator_preflight"]["auth"]["miner_required"])
+        requested.assert_called_once_with("GET", "https://coord.example", "/ready", timeout=5.0)
+        self.assertNotIn("invite-secret", encoded)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_join(report)
+        rendered = stdout.getvalue()
+        self.assertIn("coordinator_preflight: checked=True ok=True", rendered)
+        self.assertIn("workloads=model_bundle_infer,real_llm_sharded_infer", rendered)
+        self.assertNotIn("invite-secret", rendered)
+
+    def test_product_join_check_coordinator_unreachable_blocks_before_run(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--coordinator-url",
+            "https://coord.example",
+            "--miner-id",
+            "stage0-miner",
+            "--stage",
+            "stage0",
+            "--check-coordinator",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=OSError("offline")):
+            report = cli.build_product_join(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("join_coordinator_unreachable", report["diagnosis_codes"])
+        self.assertEqual(report["coordinator_preflight"]["error"], "OSError")
+        self.assertIn("firewall", report["operator_action"])
+        self.assertFalse(report["runtime_provenance"]["route_ready"])
+        self.assertTrue(report["runtime_provenance"]["live_preflight_checked"])
+        self.assertFalse(report["runtime_provenance"]["live_preflight_ready"])
+        self.assertEqual(report["evidence_scope"]["level"], "join-route-blocked")
+
     def test_product_join_accepts_invite_code_and_redacts_token(self) -> None:
         invite = {
             "schema": "crowdtensor_miner_join_invite_v1",
