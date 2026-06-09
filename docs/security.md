@@ -102,7 +102,14 @@ Bootstrap also writes executable helper scripts and separate private env files:
 `crowdtensor-miner`, supports `--dry-run`, `CROWDTENSOR_INSTALL_SPEC`, and
 `CROWDTENSOR_INSTALL_SOURCE`, and does not read `operator.private.env`, stage
 invites, join-code files, or start services; generated Coordinator/Operator
-scripts prefer that venv when present; optional `private/tunnel.private.env` contains the
+scripts prefer that venv when present; `operator_quickstart.sh` is the
+recommended Operator host launcher and still avoids embedding private tokens or
+join codes: it optionally runs `install_operator.sh`, starts
+`start_control_plane.sh` in the background, writes `run/control_plane.pid` and
+`logs/control_plane.log`, waits through `check_route.sh --check-ready`, and
+runs `ready_for_handoff.sh`. Operators can tune it with
+`CROWDTENSOR_QUICKSTART_WAIT_SECONDS` or skip installation with
+`CROWDTENSOR_QUICKSTART_SKIP_INSTALL=1`. Optional `private/tunnel.private.env` contains the
 operator-supplied `--tunnel-command` for `start_tunnel.sh`; `tunnel_doctor.sh`
 wraps `crowdtensor swarm-tunnel-doctor` and emits
 `crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the
@@ -149,7 +156,8 @@ P2P-lite discovery without hand-written route flags; this is still not NAT
 traversal.
 The public-safe `bootstrap_handoff` summary may be shared with operators: it
 reports route readiness, the recommended launcher, and
-`one_command_handoff_check` / `ready_to_copy_stage_packages` without exposing plaintext operator tokens,
+`one_command_handoff_check`, `manual_launchers.operator_quickstart`, and
+`ready_to_copy_stage_packages` without exposing plaintext operator tokens,
 Miner tokens, join codes, or tunnel commands. Treat false
 `ready_to_copy_stage_packages` as a stop signal until live admission preflight
 passes. `handoff_doctor.sh` / `crowdtensor swarm-handoff-doctor` writes
@@ -178,6 +186,7 @@ scripts or public Markdown, including `check_route_script_ready`,
 `ready_for_handoff_script_ready`,
 `operator_status_script_ready`,
 `operator_install_script_ready`,
+`operator_quickstart_script_ready`,
 `operator_scripts_use_operator_venv`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,

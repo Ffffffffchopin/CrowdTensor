@@ -35,7 +35,13 @@ Bootstrap also writes `install_operator.sh`, which creates
 `CROWDTENSOR_INSTALL_SPEC` / `CROWDTENSOR_INSTALL_SOURCE` overrides. It does
 not read `operator.private.env`, stage invites, or join-code files, and it does
 not start services. Coordinator and Operator-side helper scripts prefer that
-venv when present.
+venv when present. `operator_quickstart.sh` is the recommended Operator host
+entry point: it installs the runtime when needed, starts `start_control_plane.sh`
+in the background, writes `run/control_plane.pid` and `logs/control_plane.log`,
+waits for `check_route.sh --check-ready`, and then runs
+`ready_for_handoff.sh`. `CROWDTENSOR_QUICKSTART_WAIT_SECONDS` controls the route
+wait and `CROWDTENSOR_QUICKSTART_SKIP_INSTALL=1` skips the installer when the
+runtime is already managed externally.
 Bootstrap also writes private
 `stage0.miner-package.tar.gz` and `stage1.miner-package.tar.gz` archives so the
 operator can copy one stage package per remote Miner host, plus matching
@@ -58,7 +64,9 @@ without printing the command in public artifacts. It also writes
 `tunnel_doctor.sh`, which wraps `crowdtensor swarm-tunnel-doctor` and emits
 `crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the
 private tunnel env, provider binary, control-plane launcher, and Miner-facing
-URL without starting a tunnel. `ready_for_handoff.sh` chains
+URL without starting a tunnel. `operator_quickstart.sh` is the one-command
+install/start/route/handoff path for ordinary Operator hosts, while
+`ready_for_handoff.sh` chains
 `tunnel_doctor.sh`, `check_route.sh --check-ready`, `verify_bootstrap.sh`, and
 `handoff_doctor.sh` as the one-command operator gate after the control plane is
 running. `start_discovery.sh` and `start_coordinator.sh` remain available for
@@ -74,16 +82,21 @@ Coordinator so operators can check `/ready`, `/state`, accounting, and
 settlement status without copying credentials into public scripts.
 Both bootstrap and bootstrap-check reports include
 `bootstrap_handoff.remote_miners_ready`, `recommended_launcher`,
-`verify_before_handoff`, `one_command_handoff_check`, and
+`verify_before_handoff`, `one_command_handoff_check`,
+`manual_launchers.operator_quickstart`, and
 `ready_to_copy_stage_packages` so operators can
 tell whether the package is only generated or has passed the live no-claim
 preflight required before copying stage directories. `crowdtensor swarm-handoff-doctor`
 and generated `handoff_doctor.sh` emit
 `crowdtensor_swarm_handoff_doctor_v1`, `handoff_doctor.json`, and
 `handoff_doctor.md` with blockers and exact stage files to copy.
-Run `ready_for_handoff.sh` from a generated `crowdtensor swarm-bootstrap`
-directory before copying stage packages; it wraps the tunnel doctor, route
-check, live no-claim admission preflight, and handoff doctor. The underlying
+Run `operator_quickstart.sh` from a generated `crowdtensor swarm-bootstrap`
+directory for the default Operator path; it installs the local runtime if
+needed, starts the control plane in the background, waits for the route to be
+ready, and then runs the handoff gate. Run `ready_for_handoff.sh` separately
+before copying stage packages when the control plane is already running; it
+wraps the tunnel doctor, route check, live no-claim admission preflight, and
+handoff doctor. The underlying
 `crowdtensor swarm-bootstrap-check` package gate verifies private
 file permissions, hashed registries, env separation, stage invite Coordinator
 URL consistency, optional `--expect-remote-miners` remote route readiness,
@@ -94,6 +107,7 @@ leakage, including `check_route_script_ready`,
 `ready_for_handoff_script_ready`,
 `operator_status_script_ready`,
 `operator_install_script_ready`,
+`operator_quickstart_script_ready`,
 `operator_scripts_use_operator_venv`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,

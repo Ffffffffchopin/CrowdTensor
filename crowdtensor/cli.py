@@ -12058,10 +12058,15 @@ def _bootstrap_control_plane_script(discovery: dict[str, Any], tunnel: dict[str,
         "set -euo pipefail",
         "",
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        "COORDINATOR_PID=''",
         "TUNNEL_PID=''",
         "DISCOVERY_PID=''",
         "",
         "cleanup() {",
+        '  if [ -n "$COORDINATOR_PID" ] && kill -0 "$COORDINATOR_PID" >/dev/null 2>&1; then',
+        '    kill "$COORDINATOR_PID" >/dev/null 2>&1 || true',
+        '    wait "$COORDINATOR_PID" >/dev/null 2>&1 || true',
+        "  fi",
         '  if [ -n "$TUNNEL_PID" ] && kill -0 "$TUNNEL_PID" >/dev/null 2>&1; then',
         '    kill "$TUNNEL_PID" >/dev/null 2>&1 || true',
         '    wait "$TUNNEL_PID" >/dev/null 2>&1 || true',
@@ -12101,10 +12106,98 @@ def _bootstrap_control_plane_script(discovery: dict[str, Any], tunnel: dict[str,
             "",
         ])
     lines.extend([
-        'exec "$SCRIPT_DIR/start_coordinator.sh" "$@"',
+        '"$SCRIPT_DIR/start_coordinator.sh" "$@" &',
+        "COORDINATOR_PID=$!",
+        'echo "Started Coordinator with pid $COORDINATOR_PID"',
+        'wait "$COORDINATOR_PID"',
         "",
     ])
     return "\n".join(lines)
+
+
+def _bootstrap_operator_quickstart_script() -> str:
+    return "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        'OPERATOR_VENV_BIN="${CROWDTENSOR_OPERATOR_VENV:-$SCRIPT_DIR/.crowdtensor-operator-venv}/bin"',
+        'if [ -d "$OPERATOR_VENV_BIN" ]; then',
+        '  export PATH="$OPERATOR_VENV_BIN:$PATH"',
+        "fi",
+        "",
+        'RUN_DIR="$SCRIPT_DIR/run"',
+        'LOG_DIR="$SCRIPT_DIR/logs"',
+        'PID_FILE="$RUN_DIR/control_plane.pid"',
+        'LOG_FILE="$LOG_DIR/control_plane.log"',
+        'WAIT_SECONDS="${CROWDTENSOR_QUICKSTART_WAIT_SECONDS:-90}"',
+        'SKIP_INSTALL="${CROWDTENSOR_QUICKSTART_SKIP_INSTALL:-0}"',
+        "",
+        "command_exists() {",
+        '  command -v "$1" >/dev/null 2>&1',
+        "}",
+        "",
+        "runtime_ready() {",
+        "  command_exists crowdtensor && command_exists crowdtensord && command_exists crowdtensor-miner",
+        "}",
+        "",
+        "refresh_operator_path() {",
+        '  OPERATOR_VENV_BIN="${CROWDTENSOR_OPERATOR_VENV:-$SCRIPT_DIR/.crowdtensor-operator-venv}/bin"',
+        '  if [ -d "$OPERATOR_VENV_BIN" ]; then',
+        '    export PATH="$OPERATOR_VENV_BIN:$PATH"',
+        "  fi",
+        "}",
+        "",
+        "mkdir -p \"$RUN_DIR\" \"$LOG_DIR\"",
+        "",
+        "echo 'CrowdTensor Operator quickstart: preparing runtime'",
+        'if [ "$SKIP_INSTALL" != "1" ] && ! runtime_ready; then',
+        '  "$SCRIPT_DIR/install_operator.sh"',
+        "  refresh_operator_path",
+        "fi",
+        "",
+        'if [ -f "$PID_FILE" ]; then',
+        '  EXISTING_PID="$(cat "$PID_FILE" 2>/dev/null || true)"',
+        '  if [ -n "$EXISTING_PID" ] && kill -0 "$EXISTING_PID" >/dev/null 2>&1; then',
+        '    echo "CrowdTensor Operator quickstart: control plane already running with pid $EXISTING_PID"',
+        "  else",
+        '    rm -f "$PID_FILE"',
+        "  fi",
+        "fi",
+        "",
+        'if [ ! -f "$PID_FILE" ]; then',
+        "  echo 'CrowdTensor Operator quickstart: starting control plane in background'",
+        '  nohup "$SCRIPT_DIR/start_control_plane.sh" >"$LOG_FILE" 2>&1 &',
+        '  echo "$!" >"$PID_FILE"',
+        '  echo "CrowdTensor Operator quickstart: control plane pid $(cat "$PID_FILE"), log $LOG_FILE"',
+        "  sleep 2",
+        "fi",
+        "",
+        "echo 'CrowdTensor Operator quickstart: waiting for Coordinator route readiness'",
+        "ROUTE_READY=0",
+        "DEADLINE=$((SECONDS + WAIT_SECONDS))",
+        'while [ "$SECONDS" -le "$DEADLINE" ]; do',
+        '  if "$SCRIPT_DIR/check_route.sh" --check-ready >/dev/null 2>&1; then',
+        "    ROUTE_READY=1",
+        "    break",
+        "  fi",
+        "  sleep 2",
+        "done",
+        "",
+        'if [ "$ROUTE_READY" != "1" ]; then',
+        "  echo 'CrowdTensor Operator quickstart: Coordinator route did not become ready in time'",
+        '  "$SCRIPT_DIR/check_route.sh" --check-ready || true',
+        '  echo "Inspect $LOG_FILE for control-plane startup logs."',
+        "  exit 1",
+        "fi",
+        "",
+        "echo 'CrowdTensor Operator quickstart: running ready-for-handoff gate'",
+        '"$SCRIPT_DIR/ready_for_handoff.sh"',
+        "",
+        "echo 'CrowdTensor Operator quickstart: ready for Miner handoff'",
+        'echo "Stop the control plane with: kill $(cat "$PID_FILE")"',
+        "",
+    ])
 
 
 def _bootstrap_generate_script(*, coordinator_url: str, max_new_tokens: int, dry_run: bool) -> str:
@@ -12262,6 +12355,7 @@ def _bootstrap_runbook(
         "## Run",
         "",
         "```bash",
+        shlex.quote(scripts.get("operator_quickstart", "")),
         shlex.quote(scripts.get("operator_install", "")),
         shlex.quote(scripts.get("start_control_plane", "")),
         shlex.quote(scripts.get("start_tunnel", "")),
@@ -12358,6 +12452,7 @@ def _bootstrap_handoff_summary(
             "tunnel": scripts.get("start_tunnel", ""),
             "tunnel_doctor": scripts.get("tunnel_doctor", ""),
             "operator_install": scripts.get("operator_install", ""),
+            "operator_quickstart": scripts.get("operator_quickstart", ""),
             "discovery": scripts.get("start_discovery", ""),
             "coordinator": scripts.get("start_coordinator", ""),
             "check_route": scripts.get("check_route", ""),
@@ -12844,6 +12939,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     operator_invite_path = private_dir / f"{_bootstrap_slug(args.operator_id)}.operator.invite.json"
     runbook_path = output_dir / "SWARM_BOOTSTRAP.md"
     operator_install_script = output_dir / "install_operator.sh"
+    operator_quickstart_script = output_dir / "operator_quickstart.sh"
     start_control_plane_script = output_dir / "start_control_plane.sh"
     start_tunnel_script = output_dir / "start_tunnel.sh"
     tunnel_doctor_script = output_dir / "tunnel_doctor.sh"
@@ -13101,6 +13197,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         _bootstrap_operator_install_script(),
     )
     _write_executable(
+        operator_quickstart_script,
+        _bootstrap_operator_quickstart_script(),
+    )
+    _write_executable(
         start_control_plane_script,
         _bootstrap_control_plane_script(discovery_summary, tunnel_summary),
     )
@@ -13161,6 +13261,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     )
     scripts = {
         "operator_install": str(operator_install_script),
+        "operator_quickstart": str(operator_quickstart_script),
         "start_control_plane": str(start_control_plane_script),
         "start_tunnel": str(start_tunnel_script),
         "tunnel_doctor": str(tunnel_doctor_script),
@@ -13271,6 +13372,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "miners": _swarm_bootstrap_miner_summaries(stage_invites, stage_join_code_files),
         "next_commands": [
             command_entry(
+                "run Operator quickstart",
+                [str(operator_quickstart_script)],
+            ),
+            command_entry(
                 "install Operator and Coordinator runtime",
                 [str(operator_install_script)],
             ),
@@ -13340,6 +13445,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "stage_package_archives_created": True,
             "stage_handoff_checksums_created": True,
             "operator_install_script_created": True,
+            "operator_quickstart_script_created": True,
             "tunnel_doctor_script_created": True,
             "check_route_script_created": True,
             "ready_for_handoff_script_created": True,
@@ -13348,114 +13454,122 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
-            "If CrowdTensor is not installed on the Coordinator host, run install_operator.sh first. Then run start_control_plane.sh on the Coordinator host, then run ready_for_handoff.sh to check the tunnel/route, /ready endpoint, and live no-claim admission "
+            "Run operator_quickstart.sh on the Coordinator host for the one-command install/start/route/handoff gate. For manual operation, run install_operator.sh first if CrowdTensor is not installed, then start_control_plane.sh, then ready_for_handoff.sh to check the tunnel/route, /ready endpoint, and live no-claim admission "
             "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, ask each Miner to run stageX.run-miner.sh --setup and --start, then run the dry-run generate "
             "preflight and operator_status.sh before submitting generation."
         ),
     }
     next_commands = report["next_commands"]
-    next_commands[0]["command"] = [str(operator_install_script)]
-    next_commands[0]["command_line"] = command_line([str(operator_install_script)])
-    next_commands[0]["script"] = str(operator_install_script)
-    next_commands[0]["optional"] = True
-    next_commands[1]["command"] = [str(start_control_plane_script)]
-    next_commands[1]["command_line"] = command_line([str(start_control_plane_script)])
-    next_commands[1]["requires_files"] = [str(coordinator_env_path)]
+    next_commands[0]["command"] = [str(operator_quickstart_script)]
+    next_commands[0]["command_line"] = command_line([str(operator_quickstart_script)])
+    next_commands[0]["requires_files"] = [str(coordinator_env_path), str(operator_env_path)]
     if tunnel_summary["enabled"]:
-        next_commands[1]["requires_files"].append(str(tunnel_env_path))
-    next_commands[1]["script"] = str(start_control_plane_script)
-    next_commands[2]["command"] = [str(start_tunnel_script)]
-    next_commands[2]["command_line"] = command_line([str(start_tunnel_script)])
-    next_commands[2]["script"] = str(start_tunnel_script)
-    next_commands[2]["optional"] = not bool(tunnel_summary["enabled"])
+        next_commands[0]["requires_files"].append(str(tunnel_env_path))
+    next_commands[0]["script"] = str(operator_quickstart_script)
+    next_commands[1]["command"] = [str(operator_install_script)]
+    next_commands[1]["command_line"] = command_line([str(operator_install_script)])
+    next_commands[1]["script"] = str(operator_install_script)
+    next_commands[1]["optional"] = True
+    next_commands[2]["command"] = [str(start_control_plane_script)]
+    next_commands[2]["command_line"] = command_line([str(start_control_plane_script)])
+    next_commands[2]["requires_files"] = [str(coordinator_env_path)]
     if tunnel_summary["enabled"]:
-        next_commands[2]["requires_files"] = [str(tunnel_env_path)]
-    next_commands[3]["command"] = [str(tunnel_doctor_script)]
-    next_commands[3]["command_line"] = command_line([str(tunnel_doctor_script)])
-    next_commands[3]["script"] = str(tunnel_doctor_script)
-    next_commands[3]["requires_files"] = [str(tunnel_env_path)]
+        next_commands[2]["requires_files"].append(str(tunnel_env_path))
+    next_commands[2]["script"] = str(start_control_plane_script)
+    next_commands[3]["command"] = [str(start_tunnel_script)]
+    next_commands[3]["command_line"] = command_line([str(start_tunnel_script)])
+    next_commands[3]["script"] = str(start_tunnel_script)
     next_commands[3]["optional"] = not bool(tunnel_summary["enabled"])
-    next_commands[4]["command"] = [str(start_discovery_script)]
-    next_commands[4]["command_line"] = command_line([str(start_discovery_script)])
-    next_commands[4]["script"] = str(start_discovery_script)
-    next_commands[4]["optional"] = not bool(discovery_summary["enabled"])
-    next_commands[5]["command"] = [str(start_coordinator_script)]
-    next_commands[5]["command_line"] = command_line([str(start_coordinator_script)])
-    next_commands[5]["requires_files"] = [str(coordinator_env_path)]
-    next_commands[5]["script"] = str(start_coordinator_script)
-    next_commands[6]["command"] = [str(check_route_script)]
-    next_commands[6]["command_line"] = command_line([str(check_route_script)])
-    next_commands[6]["script"] = str(check_route_script)
-    next_commands[7]["command"] = [str(verify_bootstrap_script)]
-    next_commands[7]["command_line"] = command_line([str(verify_bootstrap_script)])
-    next_commands[7]["requires_files"] = [
+    if tunnel_summary["enabled"]:
+        next_commands[3]["requires_files"] = [str(tunnel_env_path)]
+    next_commands[4]["command"] = [str(tunnel_doctor_script)]
+    next_commands[4]["command_line"] = command_line([str(tunnel_doctor_script)])
+    next_commands[4]["script"] = str(tunnel_doctor_script)
+    next_commands[4]["requires_files"] = [str(tunnel_env_path)]
+    next_commands[4]["optional"] = not bool(tunnel_summary["enabled"])
+    next_commands[5]["command"] = [str(start_discovery_script)]
+    next_commands[5]["command_line"] = command_line([str(start_discovery_script)])
+    next_commands[5]["script"] = str(start_discovery_script)
+    next_commands[5]["optional"] = not bool(discovery_summary["enabled"])
+    next_commands[6]["command"] = [str(start_coordinator_script)]
+    next_commands[6]["command_line"] = command_line([str(start_coordinator_script)])
+    next_commands[6]["requires_files"] = [str(coordinator_env_path)]
+    next_commands[6]["script"] = str(start_coordinator_script)
+    next_commands[7]["command"] = [str(check_route_script)]
+    next_commands[7]["command_line"] = command_line([str(check_route_script)])
+    next_commands[7]["script"] = str(check_route_script)
+    next_commands[8]["command"] = [str(verify_bootstrap_script)]
+    next_commands[8]["command_line"] = command_line([str(verify_bootstrap_script)])
+    next_commands[8]["requires_files"] = [
         str(stage_scripts["stage0"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage0"]),
         str(stage_scripts["stage1"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage1"]),
     ]
-    next_commands[7]["script"] = str(verify_bootstrap_script)
-    next_commands[8]["command"] = [str(handoff_doctor_script)]
-    next_commands[8]["command_line"] = command_line([str(handoff_doctor_script)])
-    next_commands[8]["requires_files"] = next_commands[7]["requires_files"]
-    next_commands[8]["script"] = str(handoff_doctor_script)
-    next_commands[9]["command"] = [str(ready_for_handoff_script)]
-    next_commands[9]["command_line"] = command_line([str(ready_for_handoff_script)])
-    next_commands[9]["requires_files"] = list(next_commands[7]["requires_files"])
-    next_commands[9]["script"] = str(ready_for_handoff_script)
-    next_commands[9]["requires_running"] = ["control_plane"]
-    next_commands[10]["command"] = [str(operator_status_script)]
-    next_commands[10]["command_line"] = command_line([str(operator_status_script)])
-    next_commands[10]["requires_files"] = [str(operator_env_path)]
-    next_commands[10]["script"] = str(operator_status_script)
-    next_commands[11]["command"] = [str(stage_runner_scripts["stage0"]), "--setup"]
-    next_commands[11]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--setup"])
-    next_commands[11]["requires_files"] = [
+    next_commands[8]["script"] = str(verify_bootstrap_script)
+    next_commands[9]["command"] = [str(handoff_doctor_script)]
+    next_commands[9]["command_line"] = command_line([str(handoff_doctor_script)])
+    next_commands[9]["requires_files"] = next_commands[8]["requires_files"]
+    next_commands[9]["script"] = str(handoff_doctor_script)
+    next_commands[10]["command"] = [str(ready_for_handoff_script)]
+    next_commands[10]["command_line"] = command_line([str(ready_for_handoff_script)])
+    next_commands[10]["requires_files"] = list(next_commands[8]["requires_files"])
+    next_commands[10]["script"] = str(ready_for_handoff_script)
+    next_commands[10]["requires_running"] = ["control_plane"]
+    next_commands[11]["command"] = [str(operator_status_script)]
+    next_commands[11]["command_line"] = command_line([str(operator_status_script)])
+    next_commands[11]["requires_files"] = [str(operator_env_path)]
+    next_commands[11]["script"] = str(operator_status_script)
+    next_commands[12]["command"] = [str(stage_runner_scripts["stage0"]), "--setup"]
+    next_commands[12]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--setup"])
+    next_commands[12]["requires_files"] = [
         str(stage_archives["stage0"]),
         str(stage_runner_scripts["stage0"]),
         str(stage_checksum_files["stage0"]),
     ]
-    next_commands[11]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[12]["command"] = [str(stage_runner_scripts["stage0"]), "--start"]
-    next_commands[12]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--start"])
-    next_commands[12]["requires_files"] = next_commands[11]["requires_files"]
     next_commands[12]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[13]["command"] = [str(stage_runner_scripts["stage0"]), "--install", "--dry-run"]
-    next_commands[13]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--install", "--dry-run"])
-    next_commands[13]["requires_files"] = next_commands[11]["requires_files"]
+    next_commands[13]["command"] = [str(stage_runner_scripts["stage0"]), "--start"]
+    next_commands[13]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--start"])
+    next_commands[13]["requires_files"] = next_commands[12]["requires_files"]
     next_commands[13]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[14]["command"] = [str(stage_runner_scripts["stage0"]), "--doctor"]
-    next_commands[14]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--doctor"])
-    next_commands[14]["requires_files"] = next_commands[11]["requires_files"]
+    next_commands[14]["command"] = [str(stage_runner_scripts["stage0"]), "--install", "--dry-run"]
+    next_commands[14]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--install", "--dry-run"])
+    next_commands[14]["requires_files"] = next_commands[12]["requires_files"]
     next_commands[14]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[15]["command"] = [str(stage_runner_scripts["stage1"]), "--setup"]
-    next_commands[15]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--setup"])
-    next_commands[15]["requires_files"] = [
+    next_commands[15]["command"] = [str(stage_runner_scripts["stage0"]), "--doctor"]
+    next_commands[15]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--doctor"])
+    next_commands[15]["requires_files"] = next_commands[12]["requires_files"]
+    next_commands[15]["script"] = str(stage_runner_scripts["stage0"])
+    next_commands[16]["command"] = [str(stage_runner_scripts["stage1"]), "--setup"]
+    next_commands[16]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--setup"])
+    next_commands[16]["requires_files"] = [
         str(stage_archives["stage1"]),
         str(stage_runner_scripts["stage1"]),
         str(stage_checksum_files["stage1"]),
     ]
-    next_commands[15]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[16]["command"] = [str(stage_runner_scripts["stage1"]), "--start"]
-    next_commands[16]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--start"])
-    next_commands[16]["requires_files"] = next_commands[15]["requires_files"]
     next_commands[16]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[17]["command"] = [str(stage_runner_scripts["stage1"]), "--install", "--dry-run"]
-    next_commands[17]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--install", "--dry-run"])
-    next_commands[17]["requires_files"] = next_commands[15]["requires_files"]
+    next_commands[17]["command"] = [str(stage_runner_scripts["stage1"]), "--start"]
+    next_commands[17]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--start"])
+    next_commands[17]["requires_files"] = next_commands[16]["requires_files"]
     next_commands[17]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[18]["command"] = [str(stage_runner_scripts["stage1"]), "--doctor"]
-    next_commands[18]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--doctor"])
-    next_commands[18]["requires_files"] = next_commands[15]["requires_files"]
+    next_commands[18]["command"] = [str(stage_runner_scripts["stage1"]), "--install", "--dry-run"]
+    next_commands[18]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--install", "--dry-run"])
+    next_commands[18]["requires_files"] = next_commands[16]["requires_files"]
     next_commands[18]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[19]["command"] = [str(check_generation_script)]
-    next_commands[19]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[19]["requires_files"] = [str(operator_env_path)]
-    next_commands[19]["script"] = str(check_generation_script)
-    next_commands[20]["command"] = [str(submit_generation_script)]
-    next_commands[20]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[19]["command"] = [str(stage_runner_scripts["stage1"]), "--doctor"]
+    next_commands[19]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--doctor"])
+    next_commands[19]["requires_files"] = next_commands[16]["requires_files"]
+    next_commands[19]["script"] = str(stage_runner_scripts["stage1"])
+    next_commands[20]["command"] = [str(check_generation_script)]
+    next_commands[20]["command_line"] = command_line([str(check_generation_script)])
     next_commands[20]["requires_files"] = [str(operator_env_path)]
-    next_commands[20]["script"] = str(submit_generation_script)
+    next_commands[20]["script"] = str(check_generation_script)
+    next_commands[20]["requires_running"] = ["control_plane", "stage0_miner", "stage1_miner"]
+    next_commands[21]["command"] = [str(submit_generation_script)]
+    next_commands[21]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[21]["requires_files"] = [str(operator_env_path)]
+    next_commands[21]["script"] = str(submit_generation_script)
+    next_commands[21]["requires_running"] = ["control_plane", "stage0_miner", "stage1_miner"]
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -13771,6 +13885,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "operator_env": private_dir / "operator.private.env",
         "tunnel_env": private_dir / "tunnel.private.env",
         "operator_install_script": output_dir / "install_operator.sh",
+        "operator_quickstart_script": output_dir / "operator_quickstart.sh",
         "start_control_plane_script": output_dir / "start_control_plane.sh",
         "start_tunnel_script": output_dir / "start_tunnel.sh",
         "tunnel_doctor_script": output_dir / "tunnel_doctor.sh",
@@ -13921,6 +14036,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     )
     executable_scripts = [
         required_files["operator_install_script"],
+        required_files["operator_quickstart_script"],
         required_files["start_control_plane_script"],
         required_files["start_tunnel_script"],
         required_files["tunnel_doctor_script"],
@@ -14163,6 +14279,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "stage1",
     )
     operator_install_script_text, _ = _read_bootstrap_text(required_files["operator_install_script"])
+    operator_quickstart_script_text, _ = _read_bootstrap_text(required_files["operator_quickstart_script"])
     control_plane_script_text, _ = _read_bootstrap_text(required_files["start_control_plane_script"])
     tunnel_script_text, _ = _read_bootstrap_text(required_files["start_tunnel_script"])
     tunnel_doctor_script_text, _ = _read_bootstrap_text(required_files["tunnel_doctor_script"])
@@ -14177,6 +14294,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     submit_generation_script_text, _ = _read_bootstrap_text(required_files["submit_generation_script"])
     public_files = [
         required_files["operator_install_script"],
+        required_files["operator_quickstart_script"],
         required_files["start_control_plane_script"],
         required_files["start_tunnel_script"],
         required_files["tunnel_doctor_script"],
@@ -14568,8 +14686,33 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="install_operator.sh must create a local Operator/Coordinator virtualenv without reading private invite material or starting services",
         diagnosis_code="bootstrap_operator_install_script_invalid",
     )
+    operator_quickstart_script_ready = (
+        "CrowdTensor Operator quickstart" in operator_quickstart_script_text
+        and "install_operator.sh" in operator_quickstart_script_text
+        and "start_control_plane.sh" in operator_quickstart_script_text
+        and "check_route.sh" in operator_quickstart_script_text
+        and "--check-ready" in operator_quickstart_script_text
+        and "ready_for_handoff.sh" in operator_quickstart_script_text
+        and "control_plane.pid" in operator_quickstart_script_text
+        and "control_plane.log" in operator_quickstart_script_text
+        and "CROWDTENSOR_QUICKSTART_WAIT_SECONDS" in operator_quickstart_script_text
+        and "CROWDTENSOR_QUICKSTART_SKIP_INSTALL" in operator_quickstart_script_text
+        and ".crowdtensor-operator-venv" in operator_quickstart_script_text
+        and "operator.private.env" not in operator_quickstart_script_text
+        and "miner.join-code.txt" not in operator_quickstart_script_text
+        and "crowdtensor join" not in operator_quickstart_script_text
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_quickstart_script_ready",
+        operator_quickstart_script_ready,
+        detail="operator_quickstart.sh must provide a one-command install/start/route/handoff gate without embedding private material",
+        diagnosis_code="bootstrap_operator_quickstart_script_invalid",
+    )
     operator_path_prelude_ready = (
         ".crowdtensor-operator-venv" in coordinator_script_text
+        and ".crowdtensor-operator-venv" in operator_quickstart_script_text
         and ".crowdtensor-operator-venv" in discovery_script_text
         and ".crowdtensor-operator-venv" in tunnel_doctor_script_text
         and ".crowdtensor-operator-venv" in check_route_script_text
@@ -14602,6 +14745,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     )
     control_plane_script_ready = bool(
         "start_coordinator.sh" in control_plane_script_text
+        and "COORDINATOR_PID" in control_plane_script_text
+        and 'wait "$COORDINATOR_PID"' in control_plane_script_text
         and (
             not tunnel_report.get("enabled")
             or "start_tunnel.sh" in control_plane_script_text
@@ -14850,6 +14995,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             scripts={
                 "start_control_plane": str(required_files["start_control_plane_script"]),
                 "operator_install": str(required_files["operator_install_script"]),
+                "operator_quickstart": str(required_files["operator_quickstart_script"]),
                 "start_tunnel": str(required_files["start_tunnel_script"]),
                 "tunnel_doctor": str(required_files["tunnel_doctor_script"]),
                 "start_discovery": str(required_files["start_discovery_script"]),
@@ -14917,6 +15063,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "stage_archive_runner_scripts_ready": stage_archive_runner_scripts_ready,
             "stage_setup_start_runner_ready": stage_setup_start_runner_ready,
             "operator_install_script_ready": operator_install_script_ready,
+            "operator_quickstart_script_ready": operator_quickstart_script_ready,
             "operator_scripts_use_operator_venv": operator_path_prelude_ready,
             "stage_handoff_checksums_ready": stage_handoff_checksums_ready,
             "stage_join_scripts_use_invite_code_file": stage_scripts_use_join_code_file,

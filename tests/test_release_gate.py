@@ -183,6 +183,8 @@ class ReleaseGateTests(unittest.TestCase):
         details = failed_details(report, "security_docs")
         self.assertTrue(any("sha256:" in detail for detail in details))
         self.assertTrue(any("--operator-token-registry" in detail for detail in details))
+        self.assertTrue(any("operator_quickstart.sh" in detail for detail in details))
+        self.assertTrue(any("operator_quickstart_script_ready" in detail for detail in details))
 
     def test_readiness_docs_must_describe_public_profile_endpoints(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
@@ -206,6 +208,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(any("POST /tasks/claim" in detail for detail in details))
         self.assertTrue(any("GET /admin/settlement" in detail for detail in details))
         self.assertTrue(any("operator_registry_summary" in detail for detail in details))
+        self.assertTrue(any("operator_quickstart.sh" in detail for detail in details))
+        self.assertTrue(any("CROWDTENSOR_QUICKSTART_WAIT_SECONDS" in detail for detail in details))
 
     def test_miner_resilience_docs_must_describe_retry_controls(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))
@@ -255,6 +259,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         details = failed_details(report, "remote_miner_docs")
         self.assertTrue(any("scripts/create_miner_invite.py" in detail for detail in details))
+        self.assertTrue(any("operator_quickstart.sh" in detail for detail in details))
+        self.assertTrue(any("manual_launchers.operator_quickstart" in detail for detail in details))
 
     def test_security_preflight_docs_must_describe_preflight_gate(self) -> None:
         tmp_root = copy_release_fixture(Path(self._tmp_dir()))

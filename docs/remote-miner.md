@@ -8,7 +8,7 @@ For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_control_plane.sh`,
-`install_operator.sh`, optional `start_tunnel.sh`, `tunnel_doctor.sh`, `start_discovery.sh`,
+`install_operator.sh`, `operator_quickstart.sh`, optional `start_tunnel.sh`, `tunnel_doctor.sh`, `start_discovery.sh`,
 `start_coordinator.sh`, stage
 `install.sh` / `doctor.sh` / `check_join.sh` / `support_bundle.sh` / `join.sh` files, private `miner.join-code.txt` files,
 private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
@@ -29,16 +29,20 @@ control-plane launcher, and Miner-facing URL without starting the tunnel.
 emits public-safe `join_options`, `recommended_join_option`, and
 `recommended_setup_command` templates for public HTTPS/reverse-proxy, tunnel,
 VPN/LAN, or explicit port-forwarding before any Miner package is shared.
-Keep the generated operator
-invite and operator env on the operator host, use the coordinator env only for
-the Coordinator process, run `install_operator.sh` first when `crowdtensor`,
-`crowdtensord`, or `crowdtensor-miner` is not already installed on the
-Coordinator host, then run `start_control_plane.sh` to start the tunnel,
-discovery, and Coordinator together, then run `ready_for_handoff.sh` after the
-Coordinator starts to chain `tunnel_doctor.sh`, `check_route.sh --check-ready`,
-`verify_bootstrap.sh`, and `handoff_doctor.sh`. You can still run
-`verify_bootstrap.sh` and `check_route.sh` separately to confirm the advertised
-Coordinator URL and live no-claim admission path,
+Keep the generated operator invite and operator env on the operator host, use
+the coordinator env only for the Coordinator process, and run
+`operator_quickstart.sh` as the recommended Operator path. It runs
+`install_operator.sh` when `crowdtensor`, `crowdtensord`, or
+`crowdtensor-miner` is missing, starts `start_control_plane.sh` in the
+background, writes `run/control_plane.pid` and `logs/control_plane.log`, waits
+for `check_route.sh --check-ready`, and then runs `ready_for_handoff.sh` to
+chain `tunnel_doctor.sh`, `verify_bootstrap.sh`, and `handoff_doctor.sh`.
+`CROWDTENSOR_QUICKSTART_WAIT_SECONDS` adjusts the route wait and
+`CROWDTENSOR_QUICKSTART_SKIP_INSTALL=1` skips installation for externally
+managed runtimes. You can still run `install_operator.sh`,
+`start_control_plane.sh`, `ready_for_handoff.sh`, `verify_bootstrap.sh`, and
+`check_route.sh` separately to debug the advertised Coordinator URL and live
+no-claim admission path,
 run `operator_status.sh` on the operator host for read-only Coordinator,
 trust, accounting, and settlement status,
 and copy only the matching private stage archive plus `stageX.run-miner.sh` and
@@ -83,6 +87,7 @@ stage join-code consistency, `stage_check_join_scripts_ready`,
 `stage_archive_runner_scripts_ready`, `stage_setup_start_runner_ready`,
 `stage_handoff_checksums_ready`, `tunnel_doctor_script_ready`,
 `ready_for_handoff_script_ready`, `operator_install_script_ready`,
+`operator_quickstart_script_ready`,
 `operator_scripts_use_operator_venv`, and
 plaintext token leakage in scripts or public Markdown.
 After starting the Coordinator, rerun the same command with `--check-coordinator`
