@@ -110,7 +110,11 @@ join codes: it optionally runs `install_operator.sh`, starts
 runs `ready_for_handoff.sh`. Operators can tune it with
 `CROWDTENSOR_QUICKSTART_WAIT_SECONDS` or skip installation with
 `CROWDTENSOR_QUICKSTART_SKIP_INSTALL=1`. Optional `private/tunnel.private.env` contains the
-operator-supplied `--tunnel-command` for `start_tunnel.sh`; `tunnel_doctor.sh`
+operator-supplied `--tunnel-command` or generated `--tunnel-provider` command
+template for `start_tunnel.sh`; `--tunnel-provider ngrok` and
+`--tunnel-provider cloudflare-token` only write private command templates and
+do not create third-party tunnel accounts, domains, or ingress rules;
+`tunnel_doctor.sh`
 wraps `crowdtensor swarm-tunnel-doctor` and emits
 `crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the
 private tunnel env, provider binary, control-plane launcher, and Miner-facing

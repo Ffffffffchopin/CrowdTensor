@@ -3087,6 +3087,94 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(tunnel_command, json.dumps(check_report, sort_keys=True))
         self.assertNotIn("super-secret-tunnel-token", json.dumps(check_report, sort_keys=True))
 
+    def test_swarm_bootstrap_can_generate_private_tunnel_provider_template(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct-tunnel.example",
+            "--tunnel-provider",
+            "cloudflare-token",
+            "--tunnel-token-env",
+            "CT_CLOUDFLARE_TOKEN",
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap(args)
+        encoded = json.dumps(report, sort_keys=True)
+        tunnel_env_path = Path(report["private_env"]["tunnel"])
+        tunnel_env = tunnel_env_path.read_text(encoding="utf-8")
+        generated_command = 'cloudflared tunnel run --token "${CT_CLOUDFLARE_TOKEN:?set CT_CLOUDFLARE_TOKEN}"'
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["tunnel"]["enabled"])
+        self.assertFalse(report["tunnel"]["operator_supplied_tunnel"])
+        self.assertEqual(report["tunnel"]["template"]["provider"], "cloudflare-token")
+        self.assertTrue(report["tunnel"]["template"]["requires_provider_account"])
+        self.assertTrue(report["tunnel"]["template"]["requires_secret"])
+        self.assertEqual(report["tunnel"]["template"]["secret_env"], "<redacted>")
+        self.assertEqual(report["tunnel"]["template"]["provider_ingress_must_route_to"], "http://127.0.0.1:8787")
+        self.assertIn(generated_command, tunnel_env)
+        self.assertNotIn(generated_command, encoded)
+        self.assertNotIn("CT_CLOUDFLARE_TOKEN", encoded)
+        self.assertTrue(report["bootstrap_handoff"]["tunnel_configured"])
+        self.assertEqual(report["bootstrap_handoff"]["route_handoff"]["recommended_join_option"], "operator_tunnel")
+
+        doctor_args = cli.parse_args([
+            "swarm-tunnel-doctor",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+        with patch.object(cli.shutil, "which", return_value="/usr/bin/cloudflared"):
+            doctor_report = cli.build_swarm_tunnel_doctor(doctor_args)
+
+        self.assertTrue(doctor_report["ok"], doctor_report)
+        self.assertEqual(doctor_report["tunnel"]["provider_hint"], "cloudflare_tunnel")
+        self.assertNotIn(generated_command, json.dumps(doctor_report, sort_keys=True))
+
+    def test_swarm_bootstrap_can_generate_ngrok_tunnel_provider_template(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct-reserved.ngrok.app",
+            "--tunnel-provider",
+            "ngrok",
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap(args)
+        tunnel_env = Path(report["private_env"]["tunnel"]).read_text(encoding="utf-8")
+        generated_command = "ngrok http 8787 --url https://ct-reserved.ngrok.app"
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["tunnel"]["template"]["provider"], "ngrok")
+        self.assertEqual(report["tunnel"]["template"]["provider_resource"], "ct-reserved.ngrok.app")
+        self.assertIn(generated_command, tunnel_env)
+        self.assertNotIn(generated_command, json.dumps(report, sort_keys=True))
+
+    def test_swarm_bootstrap_rejects_conflicting_tunnel_command_and_provider(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            cli.parse_args([
+                "swarm-bootstrap",
+                "--coordinator-url",
+                "https://ct.example",
+                "--tunnel-command",
+                "ngrok http 8787",
+                "--tunnel-provider",
+                "ngrok",
+            ])
+
+        self.assertIn("mutually exclusive", str(ctx.exception))
+
     def test_swarm_bootstrap_human_output_includes_handoff_summary(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"
         args = cli.parse_args([

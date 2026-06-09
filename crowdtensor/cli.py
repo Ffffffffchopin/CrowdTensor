@@ -11895,7 +11895,7 @@ def _bootstrap_discovery_summary(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _bootstrap_tunnel_summary(args: argparse.Namespace) -> dict[str, Any]:
-    command = str(getattr(args, "tunnel_command", "") or "").strip()
+    command, template = _resolve_bootstrap_tunnel_command(args)
     enabled = bool(command)
     return {
         "schema": "crowdtensor_bootstrap_tunnel_v1",
@@ -11904,8 +11904,69 @@ def _bootstrap_tunnel_summary(args: argparse.Namespace) -> dict[str, Any]:
         "launches_before_coordinator": enabled,
         "public_artifact_safe": True,
         "not_nat_traversal": True,
-        "operator_supplied_tunnel": enabled,
+        "operator_supplied_tunnel": bool(str(getattr(args, "tunnel_command", "") or "").strip()),
+        "template": template,
     }
+
+
+def _bootstrap_tunnel_upstream(args: argparse.Namespace) -> str:
+    bind_host = str(getattr(args, "bind_host", "") or "127.0.0.1")
+    if bind_host in {"0.0.0.0", "::"}:
+        bind_host = "127.0.0.1"
+    port = int(getattr(args, "port", 8787) or 8787)
+    return f"http://{bind_host}:{port}"
+
+
+def _bootstrap_tunnel_template_command(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+    provider = str(getattr(args, "tunnel_provider", "") or "").strip()
+    upstream = _bootstrap_tunnel_upstream(args)
+    coordinator_host = ""
+    if str(getattr(args, "coordinator_url", "") or "").strip():
+        coordinator_host = str(urlparse(str(args.coordinator_url)).hostname or "")
+    template: dict[str, Any] = {
+        "schema": "crowdtensor_bootstrap_tunnel_template_v1",
+        "enabled": bool(provider),
+        "provider": provider,
+        "local_upstream_url": upstream,
+        "requires_provider_account": False,
+        "requires_secret": False,
+        "secret_env": "",
+        "operator_supplied_command": False,
+        "public_artifact_safe": True,
+    }
+    if not provider:
+        return "", template
+    if provider == "ngrok":
+        template["requires_provider_account"] = True
+        template["provider_resource"] = coordinator_host
+        coordinator_url = str(getattr(args, "coordinator_url", "") or "").strip().rstrip("/")
+        return f"ngrok http {int(getattr(args, 'port', 8787) or 8787)} --url {shlex.quote(coordinator_url)}", template
+    if provider == "cloudflare-token":
+        token_env = str(getattr(args, "tunnel_token_env", "") or "CLOUDFLARED_TUNNEL_TOKEN").strip() or "CLOUDFLARED_TUNNEL_TOKEN"
+        template["requires_provider_account"] = True
+        template["requires_secret"] = True
+        template["secret_env"] = token_env
+        template["provider_ingress_must_route_to"] = upstream
+        return f"cloudflared tunnel run --token \"${{{token_env}:?set {token_env}}}\"", template
+    raise SystemExit(f"unsupported tunnel provider: {provider}")
+
+
+def _resolve_bootstrap_tunnel_command(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+    explicit = str(getattr(args, "tunnel_command", "") or "").strip()
+    if explicit:
+        provider = _tunnel_provider_hint(explicit)
+        return explicit, {
+            "schema": "crowdtensor_bootstrap_tunnel_template_v1",
+            "enabled": True,
+            "provider": provider or "custom",
+            "local_upstream_url": "",
+            "requires_provider_account": False,
+            "requires_secret": False,
+            "secret_env": "",
+            "operator_supplied_command": True,
+            "public_artifact_safe": True,
+        }
+    return _bootstrap_tunnel_template_command(args)
 
 
 def _stage_invite_discovery_summary(invite: dict[str, Any]) -> dict[str, Any]:
@@ -13026,6 +13087,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     )
     discovery_summary = _bootstrap_discovery_summary(args)
     tunnel_summary = _bootstrap_tunnel_summary(args)
+    tunnel_command, _tunnel_template = _resolve_bootstrap_tunnel_command(args)
     operator_registry = output_dir / "operator_registry.json"
     miner_registry = output_dir / "miner_registry.json"
     coordinator_env_path = private_dir / "coordinator.private.env"
@@ -13119,7 +13181,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "CROWDTENSOR_OBSERVER_TOKEN": observer_token,
     })
     _write_private_env(tunnel_env_path, {
-        "CROWDTENSOR_TUNNEL_COMMAND": str(getattr(args, "tunnel_command", "") or "").strip(),
+        "CROWDTENSOR_TUNNEL_COMMAND": tunnel_command,
     })
     stage_invites: list[dict[str, Any]] = []
     backend = "cuda" if args.backend == "cuda" else "cpu"
@@ -13680,6 +13742,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         operator_token,
         observer_token,
         str(getattr(args, "tunnel_command", "") or "").strip(),
+        tunnel_command,
         str((operator_invite.get("operator_invite") or {}).get("operator_token") or ""),
         str(operator_invite.get("operator_invite_code") or ""),
         *[
@@ -23296,6 +23359,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "command; also set --coordinator-url to the Miner-facing tunnel/VPN URL"
         ),
     )
+    swarm_bootstrap.add_argument(
+        "--tunnel-provider",
+        choices=["ngrok", "cloudflare-token"],
+        default="",
+        help=(
+            "generate a managed tunnel command template from --coordinator-url instead of writing "
+            "--tunnel-command manually; the command is stored only in private/tunnel.private.env"
+        ),
+    )
+    swarm_bootstrap.add_argument(
+        "--tunnel-token-env",
+        default="CLOUDFLARED_TUNNEL_TOKEN",
+        help="environment variable referenced by the cloudflare-token tunnel template",
+    )
     swarm_bootstrap.add_argument("--peer-bootstrap", default="", help="optional P2P discovery bootstrap URL to embed in private Miner invites")
     swarm_bootstrap.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
     swarm_bootstrap.add_argument("--swarm-id", default="default")
@@ -25775,8 +25852,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             parsed_bootstrap_url = urlparse(args.coordinator_url)
             if parsed_bootstrap_url.scheme not in {"http", "https"} or not parsed_bootstrap_url.hostname:
                 raise SystemExit("--coordinator-url must be a full http(s) URL with a host")
-        if args.tunnel_command and not args.coordinator_url:
-            raise SystemExit("--tunnel-command requires --coordinator-url set to the Miner-facing tunnel/VPN URL")
+        if args.tunnel_command and args.tunnel_provider:
+            raise SystemExit("--tunnel-command and --tunnel-provider are mutually exclusive")
+        if (args.tunnel_command or args.tunnel_provider) and not args.coordinator_url:
+            raise SystemExit("--tunnel-command/--tunnel-provider requires --coordinator-url set to the Miner-facing tunnel/VPN URL")
+        if args.tunnel_provider == "ngrok" and urlparse(args.coordinator_url).scheme != "https":
+            raise SystemExit("--tunnel-provider ngrok requires an https --coordinator-url with a reserved ngrok domain")
+        if args.tunnel_provider == "cloudflare-token" and not str(args.tunnel_token_env or "").strip():
+            raise SystemExit("--tunnel-token-env must name the environment variable used by the Cloudflare tunnel token")
         if args.max_new_tokens < 1:
             raise SystemExit("--max-new-tokens must be at least 1")
         for name in [

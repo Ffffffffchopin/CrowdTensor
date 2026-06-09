@@ -21,6 +21,14 @@ matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
 `--coordinator-url` and a private `--tunnel-command`; the raw tunnel command is
 stored only in `private/tunnel.private.env` and is started by `start_control_plane.sh`.
+For common static tunnel setups, `--tunnel-provider ngrok` can generate an
+`ngrok http <port> --url <coordinator-url>` command from the Miner-facing
+`--coordinator-url`, while `--tunnel-provider cloudflare-token` generates a
+`cloudflared tunnel run --token "$..."` command that references
+`--tunnel-token-env` and expects the Cloudflare tunnel ingress to already route
+to the local Coordinator upstream. These provider templates are only private
+command generation; they do not register domains, create tunnel accounts, or
+make quick/random tunnel URLs safe for Miner invites.
 Run `tunnel_doctor.sh` or `crowdtensor swarm-tunnel-doctor --output-dir ...
 --expect-remote-miners` first to emit `crowdtensor_swarm_tunnel_doctor_v1` and
 `tunnel_doctor.json` checks for the private tunnel env, provider binary,
