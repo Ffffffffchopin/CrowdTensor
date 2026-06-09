@@ -10916,6 +10916,219 @@ exec crowdtensor join \\
 """
 
 
+def _bootstrap_stage_support_bundle_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+OUT="${1:-${CROWDTENSOR_MINER_SUPPORT_BUNDLE:-$SCRIPT_DIR/miner_support_bundle.json}}"
+PYTHON_BIN="${PYTHON:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  else
+    PYTHON_BIN="python"
+  fi
+fi
+
+"$PYTHON_BIN" - "$SCRIPT_DIR" "$OUT" <<'PY'
+import json
+import os
+import stat
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+script_dir = Path(sys.argv[1])
+out_path = Path(sys.argv[2])
+invite_path = script_dir / "miner.invite.json"
+join_code_path = script_dir / "miner.join-code.txt"
+check_join_path = script_dir / "check_join.sh"
+
+
+def read_text(path):
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def load_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"_error": str(exc)}
+
+
+invite = load_json(invite_path)
+if not isinstance(invite, dict):
+    invite = {"_error": "invite is not an object"}
+
+miner_token = str(invite.get("miner_token") or "")
+join_code = read_text(join_code_path).strip()
+redaction_values = [value for value in [miner_token, join_code] if value]
+
+
+def redact(value):
+    if isinstance(value, dict):
+        redacted = {}
+        for key, child in value.items():
+            lower_key = str(key).lower()
+            if (
+                lower_key in {"miner_token", "join_invite_code", "token", "secret", "token_hash"}
+                or lower_key.endswith("_token")
+                or lower_key.endswith("_token_hash")
+            ):
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = redact(child)
+        return redacted
+    if isinstance(value, list):
+        return [redact(item) for item in value]
+    if isinstance(value, str):
+        result = value
+        for secret in redaction_values:
+            result = result.replace(secret, "<redacted>")
+        return result
+    return value
+
+
+def file_entry(name, executable=False, private=False):
+    path = script_dir / name
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError:
+        return {
+            "name": name,
+            "present": False,
+            "mode": "",
+            "expected_private": private,
+            "expected_executable": executable,
+            "ok": False,
+        }
+    mode_text = oct(mode)
+    return {
+        "name": name,
+        "present": path.is_file(),
+        "mode": mode_text,
+        "expected_private": private,
+        "expected_executable": executable,
+        "ok": bool(
+            path.is_file()
+            and (not private or mode == 0o600)
+            and (not executable or mode == 0o700)
+        ),
+    }
+
+
+safe_invite = {
+    "schema": invite.get("schema"),
+    "miner_id": invite.get("miner_id"),
+    "coordinator_url": invite.get("coordinator_url"),
+    "stage": invite.get("stage"),
+    "backend": invite.get("backend"),
+    "hf_model_id": invite.get("hf_model_id"),
+    "trust_tier": invite.get("trust_tier"),
+    "quota_task_limit": invite.get("quota_task_limit"),
+    "claim_rate_limit": invite.get("claim_rate_limit"),
+    "claim_rate_window_seconds": invite.get("claim_rate_window_seconds"),
+    "max_tasks": invite.get("max_tasks"),
+    "max_runtime_seconds": invite.get("max_runtime_seconds"),
+    "discovery": invite.get("discovery") if isinstance(invite.get("discovery"), dict) else {},
+    "miner_token_present": bool(miner_token),
+}
+if "_error" in invite:
+    safe_invite["error"] = invite["_error"]
+
+
+def run_preflight():
+    if os.environ.get("CROWDTENSOR_SKIP_JOIN_PREFLIGHT") == "1":
+        return {
+            "checked": False,
+            "skipped": True,
+            "reason": "CROWDTENSOR_SKIP_JOIN_PREFLIGHT=1",
+            "ok": None,
+        }
+    if not check_join_path.is_file():
+        return {
+            "checked": False,
+            "skipped": False,
+            "ok": False,
+            "diagnosis_code": "check_join_script_missing",
+        }
+    try:
+        timeout = float(os.environ.get("CROWDTENSOR_JOIN_PREFLIGHT_TIMEOUT", "15"))
+    except ValueError:
+        timeout = 15.0
+    started = time.time()
+    try:
+        completed = subprocess.run(
+            [str(check_join_path), "--json"],
+            cwd=str(script_dir),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "checked": True,
+            "skipped": False,
+            "ok": False,
+            "timed_out": True,
+            "timeout_seconds": timeout,
+            "stdout_preview": redact((exc.stdout or "")[:800]),
+            "stderr_preview": redact((exc.stderr or "")[:800]),
+        }
+    stdout = completed.stdout or ""
+    stderr = completed.stderr or ""
+    parsed = None
+    try:
+        parsed = json.loads(stdout) if stdout.strip() else None
+    except json.JSONDecodeError:
+        parsed = None
+    return {
+        "checked": True,
+        "skipped": False,
+        "ok": completed.returncode == 0,
+        "returncode": completed.returncode,
+        "duration_seconds": round(time.time() - started, 3),
+        "parsed_json": redact(parsed) if isinstance(parsed, dict) else None,
+        "stdout_preview": redact(stdout[:800]) if not isinstance(parsed, dict) else "",
+        "stderr_preview": redact(stderr[:800]),
+    }
+
+
+bundle = {
+    "schema": "crowdtensor_miner_stage_support_bundle_v1",
+    "created_at_epoch_seconds": int(time.time()),
+    "package_dir_name": script_dir.name,
+    "invite": redact(safe_invite),
+    "files": {
+        "miner_invite": file_entry("miner.invite.json", private=True),
+        "miner_join_code": file_entry("miner.join-code.txt", private=True),
+        "check_join": file_entry("check_join.sh", executable=True),
+        "join": file_entry("join.sh", executable=True),
+        "miner_join_doc": file_entry("MINER_JOIN.md"),
+    },
+    "join_code_file_present": join_code_path.is_file(),
+    "join_code_length": len(join_code),
+    "raw_join_code_public": False,
+    "raw_miner_token_public": False,
+    "public_artifact_safe": True,
+    "preflight": run_preflight(),
+    "operator_action": "Share this support bundle instead of miner.join-code.txt, miner.invite.json, shell history, or raw state files.",
+}
+
+out_path.parent.mkdir(parents=True, exist_ok=True)
+out_path.write_text(json.dumps(redact(bundle), indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+print(f"Wrote {out_path}")
+PY
+"""
+
+
 def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
     return "\n".join([
         f"# CrowdTensor {stage} Miner Join",
@@ -10926,6 +11139,12 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
         "",
         "```bash",
         "./check_join.sh",
+        "```",
+        "",
+        "If the check fails, collect a safe support bundle for the operator:",
+        "",
+        "```bash",
+        "./support_bundle.sh",
         "```",
         "",
         "Run:",
@@ -10942,7 +11161,7 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
         "",
         f"Coordinator URL: `{coordinator_url}`",
         "",
-        "Keep `miner.join-code.txt` and `miner.invite.json` private. Copy only this stage package to the matching Miner host.",
+        "Keep `miner.join-code.txt` and `miner.invite.json` private. Share `miner_support_bundle.json` instead of raw invite files when troubleshooting.",
         "",
     ])
 
@@ -11263,8 +11482,10 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("start_coordinator", "")),
         shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("stage0_check_join", "")),
+        shlex.quote(scripts.get("stage0_support_bundle", "")),
         shlex.quote(scripts.get("stage0_join", "")),
         shlex.quote(scripts.get("stage1_check_join", "")),
+        shlex.quote(scripts.get("stage1_support_bundle", "")),
         shlex.quote(scripts.get("stage1_join", "")),
         shlex.quote(scripts.get("check_generation", "")),
         shlex.quote(scripts.get("submit_generation", "")),
@@ -11324,6 +11545,8 @@ def _bootstrap_handoff_summary(
             "coordinator": scripts.get("start_coordinator", ""),
             "stage0_check_join": scripts.get("stage0_check_join", ""),
             "stage1_check_join": scripts.get("stage1_check_join", ""),
+            "stage0_support_bundle": scripts.get("stage0_support_bundle", ""),
+            "stage1_support_bundle": scripts.get("stage1_support_bundle", ""),
             "stage0_join": scripts.get("stage0_join", ""),
             "stage1_join": scripts.get("stage1_join", ""),
         },
@@ -11553,6 +11776,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     serve_command.append("--run")
     stage_scripts: dict[str, Path] = {}
     stage_check_scripts: dict[str, Path] = {}
+    stage_support_scripts: dict[str, Path] = {}
     stage_join_code_files: dict[str, Path] = {}
     stage_check_commands: dict[str, list[str]] = {}
     stage_join_commands: dict[str, list[str]] = {}
@@ -11569,6 +11793,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         stage_join_code.chmod(0o600)
         check_join_script = stage_dir / "check_join.sh"
         _write_executable(check_join_script, _bootstrap_stage_check_join_script())
+        support_bundle_script = stage_dir / "support_bundle.sh"
+        _write_executable(support_bundle_script, _bootstrap_stage_support_bundle_script())
         join_script = stage_dir / "join.sh"
         _write_executable(join_script, _bootstrap_stage_join_script())
         (stage_dir / "MINER_JOIN.md").write_text(
@@ -11576,6 +11802,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             encoding="utf-8",
         )
         stage_check_scripts[stage] = check_join_script
+        stage_support_scripts[stage] = support_bundle_script
         stage_scripts[stage] = join_script
         stage_join_code_files[stage] = stage_join_code
         stage_check_commands[stage] = [
@@ -11659,8 +11886,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "start_coordinator": str(start_coordinator_script),
         "verify_bootstrap": str(verify_bootstrap_script),
         "stage0_check_join": str(stage_check_scripts["stage0"]),
+        "stage0_support_bundle": str(stage_support_scripts["stage0"]),
         "stage0_join": str(stage_scripts["stage0"]),
         "stage1_check_join": str(stage_check_scripts["stage1"]),
+        "stage1_support_bundle": str(stage_support_scripts["stage1"]),
         "stage1_join": str(stage_scripts["stage1"]),
         "check_generation": str(check_generation_script),
         "submit_generation": str(submit_generation_script),
@@ -12095,11 +12324,13 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "stage0_invite": output_dir / "stage0" / "miner.invite.json",
         "stage0_join_code": output_dir / "stage0" / "miner.join-code.txt",
         "stage0_check_join_script": output_dir / "stage0" / "check_join.sh",
+        "stage0_support_bundle_script": output_dir / "stage0" / "support_bundle.sh",
         "stage0_join_script": output_dir / "stage0" / "join.sh",
         "stage0_join_doc": output_dir / "stage0" / "MINER_JOIN.md",
         "stage1_invite": output_dir / "stage1" / "miner.invite.json",
         "stage1_join_code": output_dir / "stage1" / "miner.join-code.txt",
         "stage1_check_join_script": output_dir / "stage1" / "check_join.sh",
+        "stage1_support_bundle_script": output_dir / "stage1" / "support_bundle.sh",
         "stage1_join_script": output_dir / "stage1" / "join.sh",
         "stage1_join_doc": output_dir / "stage1" / "MINER_JOIN.md",
     }
@@ -12221,8 +12452,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["stage0_check_join_script"],
+        required_files["stage0_support_bundle_script"],
         required_files["stage0_join_script"],
         required_files["stage1_check_join_script"],
+        required_files["stage1_support_bundle_script"],
         required_files["stage1_join_script"],
     ]
     bad_script_modes = [f"{path}:{_mode_string(path)}" for path in executable_scripts if path.exists() and not _has_mode(path, 0o700)]
@@ -12395,6 +12628,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
     stage0_check_script_text, _ = _read_bootstrap_text(required_files["stage0_check_join_script"])
     stage1_check_script_text, _ = _read_bootstrap_text(required_files["stage1_check_join_script"])
+    stage0_support_script_text, _ = _read_bootstrap_text(required_files["stage0_support_bundle_script"])
+    stage1_support_script_text, _ = _read_bootstrap_text(required_files["stage1_support_bundle_script"])
     stage0_join_code_text, _ = _read_bootstrap_text(required_files["stage0_join_code"])
     stage1_join_code_text, _ = _read_bootstrap_text(required_files["stage1_join_code"])
     control_plane_script_text, _ = _read_bootstrap_text(required_files["start_control_plane_script"])
@@ -12412,9 +12647,11 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["submit_generation_script"],
         required_files["runbook"],
         required_files["stage0_check_join_script"],
+        required_files["stage0_support_bundle_script"],
         required_files["stage0_join_script"],
         required_files["stage0_join_doc"],
         required_files["stage1_check_join_script"],
+        required_files["stage1_support_bundle_script"],
         required_files["stage1_join_script"],
         required_files["stage1_join_doc"],
     ]
@@ -12432,10 +12669,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         or "operator.private.env" in stage1_script_text
         or "operator.private.env" in stage0_check_script_text
         or "operator.private.env" in stage1_check_script_text
+        or "operator.private.env" in stage0_support_script_text
+        or "operator.private.env" in stage1_support_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage1_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage0_check_script_text
         or "CROWDTENSOR_ADMIN_TOKEN" in stage1_check_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage0_support_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage1_support_script_text
     )
     _bootstrap_check_item(
         checks,
@@ -12459,6 +12700,18 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "--run" not in stage0_check_script_text
         and "--run" not in stage1_check_script_text
     )
+    stage_support_bundle_scripts_ready = (
+        "crowdtensor_miner_stage_support_bundle_v1" in stage0_support_script_text
+        and "crowdtensor_miner_stage_support_bundle_v1" in stage1_support_script_text
+        and "miner_support_bundle.json" in stage0_support_script_text
+        and "miner_support_bundle.json" in stage1_support_script_text
+        and "check_join.sh" in stage0_support_script_text
+        and "check_join.sh" in stage1_support_script_text
+        and "raw_join_code_public" in stage0_support_script_text
+        and "raw_join_code_public" in stage1_support_script_text
+        and "raw_miner_token_public" in stage0_support_script_text
+        and "raw_miner_token_public" in stage1_support_script_text
+    )
     _bootstrap_check_item(
         checks,
         diagnosis_codes,
@@ -12474,6 +12727,14 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         stage_check_join_scripts_ready,
         detail="stage check_join.sh scripts must use private miner.join-code.txt and must not run the Miner",
         diagnosis_code="bootstrap_stage_check_join_script_invalid",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_support_bundle_scripts_ready",
+        stage_support_bundle_scripts_ready,
+        detail="stage support_bundle.sh scripts must write safe miner_support_bundle.json diagnostics",
+        diagnosis_code="bootstrap_stage_support_bundle_script_invalid",
     )
     coordinator_script_admin_reference = "operator.private.env" in coordinator_script_text or "CROWDTENSOR_ADMIN_TOKEN" in coordinator_script_text
     _bootstrap_check_item(
@@ -12643,8 +12904,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "start_coordinator": str(required_files["start_coordinator_script"]),
                 "verify_bootstrap": str(required_files["verify_bootstrap_script"]),
                 "stage0_check_join": str(required_files["stage0_check_join_script"]),
+                "stage0_support_bundle": str(required_files["stage0_support_bundle_script"]),
                 "stage0_join": str(required_files["stage0_join_script"]),
                 "stage1_check_join": str(required_files["stage1_check_join_script"]),
+                "stage1_support_bundle": str(required_files["stage1_support_bundle_script"]),
                 "stage1_join": str(required_files["stage1_join_script"]),
             },
             private_env={
@@ -12676,6 +12939,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
             "stage_check_join_scripts_ready": stage_check_join_scripts_ready,
+            "stage_support_bundle_scripts_ready": stage_support_bundle_scripts_ready,
             "stage_join_scripts_use_invite_code_file": stage_scripts_use_join_code_file,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
             "stage_join_code_files_match_invites": join_codes_match_invites,

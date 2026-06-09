@@ -1603,6 +1603,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(handoff["stage_packages_to_copy"]["stage0"], str(output_dir / "stage0"))
         self.assertEqual(handoff["manual_launchers"]["stage0_check_join"], str(scripts["stage0_check_join"]))
         self.assertEqual(handoff["manual_launchers"]["stage1_check_join"], str(scripts["stage1_check_join"]))
+        self.assertEqual(handoff["manual_launchers"]["stage0_support_bundle"], str(scripts["stage0_support_bundle"]))
+        self.assertEqual(handoff["manual_launchers"]["stage1_support_bundle"], str(scripts["stage1_support_bundle"]))
         self.assertIn(str(coordinator_env_path), handoff["coordinator_host_private_files"])
         self.assertIn(str(operator_env_path), handoff["operator_host_private_files"])
         self.assertNotIn(stage0_join_code, encoded)
@@ -1616,6 +1618,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue((output_dir / "stage0" / "miner.invite.json").is_file())
         self.assertTrue((output_dir / "stage0" / "miner.join-code.txt").is_file())
         self.assertTrue((output_dir / "stage0" / "check_join.sh").is_file())
+        self.assertTrue((output_dir / "stage0" / "support_bundle.sh").is_file())
         self.assertTrue((output_dir / "stage0" / "MINER_JOIN.md").is_file())
         self.assertEqual(
             json.loads(base64.urlsafe_b64decode(stage0_join_code.encode("ascii")).decode("utf-8")),
@@ -1624,6 +1627,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         stage0_doc = (output_dir / "stage0" / "MINER_JOIN.md").read_text(encoding="utf-8")
         self.assertIn("--invite-code-file miner.join-code.txt", stage0_doc)
         self.assertIn("./check_join.sh", stage0_doc)
+        self.assertIn("./support_bundle.sh", stage0_doc)
+        self.assertIn("miner_support_bundle.json", stage0_doc)
         self.assertNotIn(stage0_join_code, stage0_doc)
         self.assertIn("CrowdTensor Swarm Bootstrap", runbook)
         self.assertIn(str(scripts["start_control_plane"]), runbook)
@@ -1637,6 +1642,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("--invite-code-file", scripts["stage0_check_join"].read_text(encoding="utf-8"))
         self.assertIn("miner.join-code.txt", scripts["stage0_check_join"].read_text(encoding="utf-8"))
         self.assertNotIn("--run", scripts["stage0_check_join"].read_text(encoding="utf-8"))
+        self.assertIn("crowdtensor_miner_stage_support_bundle_v1", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
+        self.assertIn("miner_support_bundle.json", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
         self.assertIn("--invite-code-file", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("miner.join-code.txt", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("verify_bootstrap.sh", report["operator_action"])
@@ -1871,8 +1878,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["scripts_mode_0700"])
         self.assertEqual(report["artifacts"]["verify_bootstrap_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["stage0_join_code"]["mode"], "0o600")
+        self.assertEqual(report["artifacts"]["stage0_support_bundle_script"]["mode"], "0o700")
         self.assertTrue(report["safety"]["verify_bootstrap_script_ready"])
         self.assertTrue(report["safety"]["stage_join_scripts_use_invite_code_file"])
+        self.assertTrue(report["safety"]["stage_check_join_scripts_ready"])
+        self.assertTrue(report["safety"]["stage_support_bundle_scripts_ready"])
         self.assertTrue(report["safety"]["stage_join_code_files_match_invites"])
         self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
         self.assertTrue(report["safety"]["coordinator_url_remote_route_ready"])
@@ -1894,6 +1904,54 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("live_preflight: checked=False", rendered)
         self.assertIn("swarm_bootstrap_package_ready", rendered)
         self.assertNotIn(operator_invite["operator_token"], rendered)
+
+    def test_swarm_bootstrap_stage_support_bundle_redacts_private_join_material(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        report = cli.build_swarm_bootstrap(args)
+        stage0_invite = json.loads((output_dir / "stage0" / "miner.invite.json").read_text(encoding="utf-8"))
+        stage0_join_code = (output_dir / "stage0" / "miner.join-code.txt").read_text(encoding="utf-8").strip()
+        support_script = Path(report["scripts"]["stage0_support_bundle"])
+
+        env = os.environ.copy()
+        env["CROWDTENSOR_SKIP_JOIN_PREFLIGHT"] = "1"
+        completed = subprocess.run(
+            [str(support_script)],
+            cwd=str(support_script.parent),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        bundle_path = output_dir / "stage0" / "miner_support_bundle.json"
+        bundle_text = bundle_path.read_text(encoding="utf-8")
+        bundle = json.loads(bundle_text)
+
+        self.assertIn("miner_support_bundle.json", completed.stdout)
+        self.assertEqual(bundle["schema"], "crowdtensor_miner_stage_support_bundle_v1")
+        self.assertTrue(bundle["public_artifact_safe"])
+        self.assertFalse(bundle["raw_join_code_public"])
+        self.assertFalse(bundle["raw_miner_token_public"])
+        self.assertEqual(bundle["invite"]["stage"], "stage0")
+        self.assertEqual(bundle["invite"]["coordinator_url"], "https://ct.example")
+        self.assertTrue(bundle["invite"]["miner_token_present"])
+        self.assertTrue(bundle["files"]["miner_invite"]["ok"])
+        self.assertTrue(bundle["files"]["miner_join_code"]["ok"])
+        self.assertTrue(bundle["files"]["check_join"]["ok"])
+        self.assertTrue(bundle["files"]["join"]["ok"])
+        self.assertFalse(bundle["preflight"]["checked"])
+        self.assertTrue(bundle["preflight"]["skipped"])
+        self.assertNotIn(stage0_invite["miner_token"], bundle_text)
+        self.assertNotIn(stage0_join_code, bundle_text)
+        self.assertNotIn("miner_token\":", bundle_text)
 
     def test_swarm_bootstrap_check_fails_on_broken_verify_script(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"

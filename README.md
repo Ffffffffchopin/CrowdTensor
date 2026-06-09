@@ -446,8 +446,8 @@ The report lists the local private operator invite, stage0/stage1 Miner invites,
 private `miner.join-code.txt` files, operator/coordinator private env files,
 hashed registries, and copyable discovery / `serve` / `join` / `generate`
 scripts plus `start_control_plane.sh`, optional `start_tunnel.sh`,
-`start_discovery.sh`, `verify_bootstrap.sh`, stage `check_join.sh`, and
-`SWARM_BOOTSTRAP.md`.
+`start_discovery.sh`, `verify_bootstrap.sh`, stage `check_join.sh`,
+`support_bundle.sh`, and `SWARM_BOOTSTRAP.md`.
 When `--tunnel-command` is supplied, the command is written only to
 `private/tunnel.private.env`; public reports and Markdown show the tunnel
 launcher without echoing tunnel tokens or provider command lines. Keep the operator invite and
@@ -457,7 +457,10 @@ discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coo
 and send each stage directory only to the matching Miner host. Stage
 `check_join.sh` verifies Coordinator reachability and token-backed admission
 without starting the Miner; stage `join.sh` then runs the same invite-code path
-with `--run`, so the Miner host does not need to edit JSON invites. When bootstrap is run with
+with `--run`, so the Miner host does not need to edit JSON invites. If the
+preflight fails, stage `support_bundle.sh` writes public-safe
+`miner_support_bundle.json` diagnostics without raw `miner.join-code.txt` or
+`miner_token` values. When bootstrap is run with
 `--peer-bootstrap`, the private invite also carries
 `crowdtensor_miner_join_discovery_v1`, so `join --invite-code-file` can enable
 P2P-lite discovery and resolve the Coordinator without the Miner user
@@ -469,7 +472,8 @@ live `verify_bootstrap.sh` / `--check-admission` preflight passes.
 `crowdtensor swarm-bootstrap-check` verifies required
 files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
-plaintext tokens before handoff. With `--expect-remote-miners`, it also checks
+plaintext tokens before handoff, including `stage_support_bundle_scripts_ready`.
+With `--expect-remote-miners`, it also checks
 that both stage invites share a Miner-facing Coordinator URL that is not
 `127.0.0.1` / `localhost`. After the Coordinator is running, add
 `--check-coordinator` or `--check-admission` to call `/ready` and token-backed

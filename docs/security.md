@@ -100,11 +100,13 @@ operator-side dry-run and submit scripts.
 Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its private `miner.join-code.txt`,
-`miner.invite.json`, `check_join.sh`, and `join.sh`, to each Miner host. Stage
+`miner.invite.json`, `check_join.sh`, `support_bundle.sh`, and `join.sh`, to each Miner host. Stage
 `check_join.sh` uses `crowdtensor join --invite-code-file miner.join-code.txt`
 with admission checks but without `--run`; stage `join.sh` uses the same private
 join code with `--run`. The join code contains the plaintext Miner token and
-must be treated as private. If
+must be treated as private. Stage `support_bundle.sh` writes
+`miner_support_bundle.json` with file and preflight diagnostics while keeping raw
+join codes and Miner tokens out of the shareable report. If
 `crowdtensor swarm-bootstrap` is run with `--peer-bootstrap`, that private
 invite also contains `crowdtensor_miner_join_discovery_v1` so the Miner can use
 P2P-lite discovery without hand-written route flags; this is still not NAT
@@ -118,7 +120,7 @@ passes.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
-scripts or public Markdown. Add `--expect-remote-miners` when stage packages
+scripts or public Markdown, including `stage_support_bundle_scripts_ready`. Add `--expect-remote-miners` when stage packages
 will leave the Coordinator host; local-only invite URLs then fail with
 `coordinator_remote_route_required`. After the Coordinator starts, add
 `--check-coordinator` or `--check-admission`; the latter calls token-backed
