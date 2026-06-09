@@ -1563,6 +1563,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("operator_token", operator_invite)
         self.assertEqual(coordinator_env_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(operator_env_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(Path(report["private_invites"]["operator"]).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(Path(report["private_invites"]["stage0"]).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(Path(report["private_invites"]["stage1"]).stat().st_mode & 0o777, 0o600)
+        self.assertEqual((output_dir / "stage0" / "miner.invite.json").stat().st_mode & 0o777, 0o600)
         self.assertIn("CROWDTENSOR_OBSERVER_TOKEN='sha256:", coordinator_env)
         self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN", coordinator_env)
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN=", operator_env)
@@ -1596,6 +1600,103 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["next_commands"][1]["command"], [str(scripts["stage0_join"])])
         self.assertEqual(report["next_commands"][3]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
+
+    def test_swarm_bootstrap_check_validates_ready_private_package(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        bootstrap_report = cli.build_swarm_bootstrap(bootstrap_args)
+        operator_invite = json.loads(Path(bootstrap_report["private_invites"]["operator"]).read_text(encoding="utf-8"))
+        stage0_invite = json.loads((output_dir / "stage0" / "miner.invite.json").read_text(encoding="utf-8"))
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap_check(check_args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "crowdtensor_swarm_bootstrap_check_v1")
+        self.assertIn("swarm_bootstrap_package_ready", report["diagnosis_codes"])
+        self.assertGreaterEqual(len(report["checks"]), 12)
+        self.assertTrue(all(check["ok"] for check in report["checks"]))
+        self.assertTrue(report["safety"]["private_files_mode_0600"])
+        self.assertTrue(report["safety"]["scripts_mode_0700"])
+        self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
+        self.assertTrue(report["safety"]["stage_packages_exclude_operator_material"])
+        self.assertFalse(report["safety"]["scripts_embed_plaintext_tokens"])
+        self.assertEqual(report["artifacts"]["stage0_invite"]["mode"], "0o600")
+        self.assertNotIn(operator_invite["operator_token"], encoded)
+        self.assertNotIn(stage0_invite["miner_token"], encoded)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_swarm_bootstrap_check(report)
+        rendered = stdout.getvalue()
+        self.assertIn("CrowdTensor swarm bootstrap check", rendered)
+        self.assertIn("swarm_bootstrap_package_ready", rendered)
+        self.assertNotIn(operator_invite["operator_token"], rendered)
+
+    def test_swarm_bootstrap_check_fails_on_public_token_leak(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        bootstrap_report = cli.build_swarm_bootstrap(bootstrap_args)
+        operator_invite = json.loads(Path(bootstrap_report["private_invites"]["operator"]).read_text(encoding="utf-8"))
+        start_script = Path(bootstrap_report["scripts"]["start_coordinator"])
+        start_script.write_text(
+            start_script.read_text(encoding="utf-8") + f"\n# leaked {operator_invite['operator_token']}\n",
+            encoding="utf-8",
+        )
+        check_args = cli.parse_args(["swarm-bootstrap-check", "--output-dir", str(output_dir), "--json"])
+
+        report = cli.build_swarm_bootstrap_check(check_args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("bootstrap_token_leak_detected", report["diagnosis_codes"])
+        self.assertTrue(report["safety"]["scripts_embed_plaintext_tokens"])
+        self.assertNotIn(operator_invite["operator_token"], encoded)
+
+    def test_swarm_bootstrap_check_fails_on_missing_or_bad_private_file(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        cli.build_swarm_bootstrap(bootstrap_args)
+        (output_dir / "stage1" / "join.sh").unlink()
+        (output_dir / "stage0" / "miner.invite.json").chmod(0o644)
+        check_args = cli.parse_args(["swarm-bootstrap-check", "--output-dir", str(output_dir), "--json"])
+
+        report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("bootstrap_missing_required_file", report["diagnosis_codes"])
+        self.assertIn("bootstrap_private_file_bad_permissions", report["diagnosis_codes"])
+        self.assertFalse(report["safety"]["private_files_mode_0600"])
 
     def test_swarm_bootstrap_remote_local_only_fails_without_creating_invites(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"

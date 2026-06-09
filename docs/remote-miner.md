@@ -14,7 +14,12 @@ coordinator env only for the Coordinator process, and copy only the matching
 stage directory to each Miner host. The Coordinator URL still must be reachable
 by public HTTPS, VPN, trusted LAN, or tunnel; with `--expect-remote-miners`,
 bootstrap fails before creating registry or invite files when the URL is
-local-only. Bootstrap is not NAT traversal.
+local-only. Before copying stage packages, run
+`crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap`; it emits
+`crowdtensor_swarm_bootstrap_check_v1` and verifies required files, `0600`
+private env/invite permissions, `0700` helper scripts, hashed registries, env
+separation, and plaintext token leakage in scripts or public Markdown.
+Bootstrap is not NAT traversal.
 
 For a local maintainer check of the CPU inference Beta path before involving a second machine, run:
 

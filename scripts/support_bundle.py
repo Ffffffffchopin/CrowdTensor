@@ -53,6 +53,7 @@ SAFE_SENSITIVE_NAMED_FIELDS = {
     "observed_token_counts",
     "miner_plaintext_tokens_public",
     "operator_plaintext_token_public",
+    "scripts_embed_plaintext_tokens",
     "peer_secret_gossiped",
     "plaintext_token_public",
     "registry_plaintext_token_public",

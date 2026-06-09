@@ -81,6 +81,7 @@ crowdtensor swarm-bootstrap \
   --output-dir state/swarm-bootstrap \
   --coordinator-url https://YOUR-TUNNEL.example \
   --expect-remote-miners
+crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap
 ```
 
 The public report lists local file paths and copyable commands, but not
@@ -95,6 +96,10 @@ Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its `miner.invite.json` and `join.sh`,
 to each Miner host.
+Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
+bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
+registries, Coordinator/operator env separation, and plaintext token leakage in
+scripts or public Markdown.
 When `--expect-remote-miners` is used with a local-only Coordinator URL,
 bootstrap fails before creating registries or invite files.
 

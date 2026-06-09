@@ -11099,6 +11099,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         rate_window_seconds=args.rate_window_seconds,
         invite_file=operator_invite_path,
     )
+    operator_invite_path.chmod(0o600)
     operator_token = str((operator_invite.get("env") or {}).get("CROWDTENSOR_ADMIN_TOKEN") or "")
     observer_token = os.urandom(24).hex()
     _write_private_env(coordinator_env_path, {
@@ -11131,6 +11132,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             reward_account="",
             invite_file=invite_file,
         )
+        invite_file.chmod(0o600)
         stage_invites.append(invite)
     serve_command = [
         "crowdtensor",
@@ -11175,6 +11177,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         source_invite = Path(str(invite["invite_file"]))
         stage_invite = stage_dir / "miner.invite.json"
         stage_invite.write_text(source_invite.read_text(encoding="utf-8"), encoding="utf-8")
+        stage_invite.chmod(0o600)
         join_script = stage_dir / "join.sh"
         _write_executable(join_script, _bootstrap_stage_join_script())
         (stage_dir / "MINER_JOIN.md").write_text(
@@ -11368,6 +11371,424 @@ def print_swarm_bootstrap(report: dict[str, Any]) -> None:
             suffix = f"  # requires {', '.join(str(name) for name in requires_env)}" if requires_env else ""
             rendered_command = human_next_command_line(item, str(item.get("command_line") or ""))
             print(f"  next[{index}] {item.get('label')}: {rendered_command}{suffix}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+
+
+def _bootstrap_check_item(
+    checks: list[dict[str, Any]],
+    diagnosis_codes: list[str],
+    name: str,
+    ok: bool,
+    *,
+    detail: str = "",
+    diagnosis_code: str = "",
+) -> None:
+    item: dict[str, Any] = {"name": name, "ok": bool(ok)}
+    if detail:
+        item["detail"] = detail
+    if diagnosis_code and not ok:
+        item["diagnosis_code"] = diagnosis_code
+    checks.append(item)
+    if not ok and diagnosis_code:
+        diagnosis_codes.append(diagnosis_code)
+
+
+def _load_bootstrap_json(path: Path) -> tuple[dict[str, Any], str]:
+    if not path.is_file():
+        return {}, "missing"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, str(exc)
+    if not isinstance(payload, dict):
+        return {}, "not a JSON object"
+    return payload, ""
+
+
+def _read_bootstrap_text(path: Path) -> tuple[str, str]:
+    if not path.is_file():
+        return "", "missing"
+    try:
+        return path.read_text(encoding="utf-8"), ""
+    except OSError as exc:
+        return "", str(exc)
+
+
+def _parse_bootstrap_env(path: Path) -> tuple[dict[str, str], str]:
+    text, error = _read_bootstrap_text(path)
+    if error:
+        return {}, error
+    values: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        raw_value = raw_value.strip()
+        try:
+            parsed = shlex.split(raw_value)
+        except ValueError:
+            parsed = []
+        values[key] = parsed[0] if parsed else raw_value.strip("'\"")
+    return values, ""
+
+
+def _mode_string(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return oct(path.stat().st_mode & 0o777)
+
+
+def _has_mode(path: Path, mode: int) -> bool:
+    return path.exists() and (path.stat().st_mode & 0o777) == mode
+
+
+def _all_registry_tokens_hashed(payload: dict[str, Any], list_key: str) -> bool:
+    entries = payload.get(list_key)
+    if not isinstance(entries, list) or not entries:
+        return False
+    return all(
+        isinstance(item, dict) and str(item.get("token") or "").startswith("sha256:")
+        for item in entries
+    )
+
+
+def _token_present_in_files(token: str, files: list[Path]) -> bool:
+    if not token:
+        return False
+    for path in files:
+        if not path.is_file():
+            continue
+        try:
+            if token in path.read_text(encoding="utf-8"):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
+    output_dir = Path(args.output_dir)
+    private_dir = output_dir / "private"
+    required_files = {
+        "operator_registry": output_dir / "operator_registry.json",
+        "miner_registry": output_dir / "miner_registry.json",
+        "coordinator_env": private_dir / "coordinator.private.env",
+        "operator_env": private_dir / "operator.private.env",
+        "start_coordinator_script": output_dir / "start_coordinator.sh",
+        "check_generation_script": output_dir / "check_generation.sh",
+        "submit_generation_script": output_dir / "submit_generation.sh",
+        "runbook": output_dir / "SWARM_BOOTSTRAP.md",
+        "stage0_invite": output_dir / "stage0" / "miner.invite.json",
+        "stage0_join_script": output_dir / "stage0" / "join.sh",
+        "stage0_join_doc": output_dir / "stage0" / "MINER_JOIN.md",
+        "stage1_invite": output_dir / "stage1" / "miner.invite.json",
+        "stage1_join_script": output_dir / "stage1" / "join.sh",
+        "stage1_join_doc": output_dir / "stage1" / "MINER_JOIN.md",
+    }
+    artifacts = {
+        name: {
+            "path": str(path),
+            "present": path.is_file(),
+            "mode": _mode_string(path),
+        }
+        for name, path in required_files.items()
+    }
+    checks: list[dict[str, Any]] = []
+    diagnosis_codes: list[str] = []
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "output_dir_exists",
+        output_dir.is_dir(),
+        detail=str(output_dir),
+        diagnosis_code="bootstrap_output_dir_missing",
+    )
+    missing = [name for name, path in required_files.items() if not path.is_file()]
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "required_files_present",
+        not missing,
+        detail=", ".join(missing),
+        diagnosis_code="bootstrap_missing_required_file",
+    )
+
+    operator_registry, operator_registry_error = _load_bootstrap_json(required_files["operator_registry"])
+    miner_registry, miner_registry_error = _load_bootstrap_json(required_files["miner_registry"])
+    stage0_invite, stage0_invite_error = _load_bootstrap_json(required_files["stage0_invite"])
+    stage1_invite, stage1_invite_error = _load_bootstrap_json(required_files["stage1_invite"])
+    operator_invite_files = sorted(private_dir.glob("*.operator.invite.json")) if private_dir.is_dir() else []
+    operator_invite: dict[str, Any] = {}
+    operator_invite_error = "missing"
+    if operator_invite_files:
+        operator_invite, operator_invite_error = _load_bootstrap_json(operator_invite_files[0])
+    private_stage_invites = sorted(private_dir.glob("*.miner.invite.json")) if private_dir.is_dir() else []
+    coordinator_env, coordinator_env_error = _parse_bootstrap_env(required_files["coordinator_env"])
+    operator_env, operator_env_error = _parse_bootstrap_env(required_files["operator_env"])
+
+    json_errors = [
+        f"operator_registry: {operator_registry_error}" if operator_registry_error else "",
+        f"miner_registry: {miner_registry_error}" if miner_registry_error else "",
+        f"operator_invite: {operator_invite_error}" if operator_invite_error else "",
+        f"stage0_invite: {stage0_invite_error}" if stage0_invite_error else "",
+        f"stage1_invite: {stage1_invite_error}" if stage1_invite_error else "",
+    ]
+    json_errors = [item for item in json_errors if item]
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "json_files_parse",
+        not json_errors,
+        detail="; ".join(json_errors),
+        diagnosis_code="bootstrap_invalid_json_file",
+    )
+    env_errors = [
+        f"coordinator_env: {coordinator_env_error}" if coordinator_env_error else "",
+        f"operator_env: {operator_env_error}" if operator_env_error else "",
+    ]
+    env_errors = [item for item in env_errors if item]
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "private_env_parse",
+        not env_errors,
+        detail="; ".join(env_errors),
+        diagnosis_code="bootstrap_private_env_unreadable",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_invite_private_file_present",
+        len(operator_invite_files) == 1,
+        detail=", ".join(str(path) for path in operator_invite_files),
+        diagnosis_code="bootstrap_operator_invite_missing",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "private_stage_invites_present",
+        len(private_stage_invites) == 2,
+        detail=", ".join(str(path) for path in private_stage_invites),
+        diagnosis_code="bootstrap_private_stage_invites_missing",
+    )
+
+    private_files = [
+        required_files["coordinator_env"],
+        required_files["operator_env"],
+        *operator_invite_files,
+        *private_stage_invites,
+        required_files["stage0_invite"],
+        required_files["stage1_invite"],
+    ]
+    bad_private_modes = [f"{path}:{_mode_string(path)}" for path in private_files if path.exists() and not _has_mode(path, 0o600)]
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "private_files_mode_0600",
+        not bad_private_modes,
+        detail=", ".join(bad_private_modes),
+        diagnosis_code="bootstrap_private_file_bad_permissions",
+    )
+    executable_scripts = [
+        required_files["start_coordinator_script"],
+        required_files["check_generation_script"],
+        required_files["submit_generation_script"],
+        required_files["stage0_join_script"],
+        required_files["stage1_join_script"],
+    ]
+    bad_script_modes = [f"{path}:{_mode_string(path)}" for path in executable_scripts if path.exists() and not _has_mode(path, 0o700)]
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "scripts_mode_0700",
+        not bad_script_modes,
+        detail=", ".join(bad_script_modes),
+        diagnosis_code="bootstrap_script_bad_permissions",
+    )
+
+    observer_verifier = str(coordinator_env.get("CROWDTENSOR_OBSERVER_TOKEN") or "")
+    operator_token = str(operator_env.get("CROWDTENSOR_ADMIN_TOKEN") or "")
+    observer_token = str(operator_env.get("CROWDTENSOR_OBSERVER_TOKEN") or "")
+    operator_invite_token = str(operator_invite.get("operator_token") or "")
+    stage0_token = str(stage0_invite.get("miner_token") or "")
+    stage1_token = str(stage1_invite.get("miner_token") or "")
+    secret_values = unique_redaction_values([
+        operator_token,
+        observer_token,
+        operator_invite_token,
+        str(operator_invite.get("token_hash") or ""),
+        stage0_token,
+        stage1_token,
+        str(stage0_invite.get("token_hash") or ""),
+        str(stage1_invite.get("token_hash") or ""),
+    ])
+
+    coordinator_env_ok = bool(
+        observer_verifier.startswith("sha256:")
+        and "CROWDTENSOR_ADMIN_TOKEN" not in coordinator_env
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "coordinator_env_excludes_operator_credentials",
+        coordinator_env_ok,
+        detail="coordinator env must contain only an observer verifier",
+        diagnosis_code="bootstrap_coordinator_env_credentials_invalid",
+    )
+    operator_env_ok = bool(operator_token and observer_token and not observer_token.startswith("sha256:"))
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_env_contains_operator_credentials",
+        operator_env_ok,
+        detail="operator env must contain plaintext operator and observer tokens for operator-side scripts",
+        diagnosis_code="bootstrap_operator_env_credentials_missing",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "registries_store_hashed_tokens",
+        _all_registry_tokens_hashed(operator_registry, "operators") and _all_registry_tokens_hashed(miner_registry, "miners"),
+        detail="operator_registry operators and miner_registry miners must use sha256: verifiers",
+        diagnosis_code="bootstrap_registry_plaintext_token",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_invite_matches_operator_env",
+        bool(operator_invite_token and operator_invite_token == operator_token),
+        detail="private operator invite token must match operator.private.env",
+        diagnosis_code="bootstrap_operator_invite_env_mismatch",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_invites_match_expected_stages",
+        bool(stage0_invite.get("stage") == "stage0" and stage1_invite.get("stage") == "stage1"),
+        detail=f"stage0={stage0_invite.get('stage')} stage1={stage1_invite.get('stage')}",
+        diagnosis_code="bootstrap_stage_invite_mismatch",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_tokens_distinct",
+        bool(stage0_token and stage1_token and stage0_token != stage1_token),
+        detail="stage0 and stage1 Miner invites must carry distinct private tokens",
+        diagnosis_code="bootstrap_stage_tokens_not_distinct",
+    )
+
+    stage0_script_text, _ = _read_bootstrap_text(required_files["stage0_join_script"])
+    stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
+    coordinator_script_text, _ = _read_bootstrap_text(required_files["start_coordinator_script"])
+    public_files = [
+        required_files["start_coordinator_script"],
+        required_files["check_generation_script"],
+        required_files["submit_generation_script"],
+        required_files["runbook"],
+        required_files["stage0_join_script"],
+        required_files["stage0_join_doc"],
+        required_files["stage1_join_script"],
+        required_files["stage1_join_doc"],
+    ]
+    plaintext_public_leak = any(_token_present_in_files(secret, public_files) for secret in secret_values)
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "public_files_exclude_plaintext_tokens",
+        not plaintext_public_leak,
+        detail="scripts and Markdown must source private files instead of embedding plaintext tokens",
+        diagnosis_code="bootstrap_token_leak_detected",
+    )
+    stage_scripts_reference_operator_env = (
+        "operator.private.env" in stage0_script_text
+        or "operator.private.env" in stage1_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage0_script_text
+        or "CROWDTENSOR_ADMIN_TOKEN" in stage1_script_text
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_join_scripts_exclude_operator_material",
+        not stage_scripts_reference_operator_env,
+        detail="stage join scripts must use only the stage Miner invite",
+        diagnosis_code="bootstrap_stage_package_contains_operator_material",
+    )
+    coordinator_script_admin_reference = "operator.private.env" in coordinator_script_text or "CROWDTENSOR_ADMIN_TOKEN" in coordinator_script_text
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "coordinator_script_uses_coordinator_env",
+        not coordinator_script_admin_reference and "coordinator.private.env" in coordinator_script_text,
+        detail="start_coordinator.sh must source coordinator.private.env and not operator.private.env",
+        diagnosis_code="bootstrap_coordinator_script_credentials_invalid",
+    )
+    stage_package_operator_files = [
+        path for stage_dir in [output_dir / "stage0", output_dir / "stage1"]
+        for path in stage_dir.glob("*")
+        if "operator" in path.name or path.name in {"operator.private.env", "operator_registry.json", "miner_registry.json"}
+    ]
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_packages_exclude_operator_material",
+        not stage_package_operator_files,
+        detail=", ".join(str(path) for path in stage_package_operator_files),
+        diagnosis_code="bootstrap_stage_package_contains_operator_material",
+    )
+
+    ok = bool(checks and all(check.get("ok") is True for check in checks))
+    if ok:
+        diagnosis_codes.append("swarm_bootstrap_package_ready")
+    report = {
+        "schema": "crowdtensor_swarm_bootstrap_check_v1",
+        "ok": ok,
+        "mode": "swarm-bootstrap-check",
+        "output_dir": str(output_dir),
+        "artifacts": artifacts,
+        "checks": checks,
+        "safety": {
+            "private_files_local_only": True,
+            "private_files_mode_0600": not bad_private_modes,
+            "scripts_mode_0700": not bad_script_modes,
+            "coordinator_env_excludes_operator_credentials": coordinator_env_ok,
+            "operator_env_contains_operator_credentials": operator_env_ok,
+            "registries_store_hashed_tokens": _all_registry_tokens_hashed(operator_registry, "operators") and _all_registry_tokens_hashed(miner_registry, "miners"),
+            "scripts_embed_plaintext_tokens": plaintext_public_leak,
+            "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
+            "stage_packages_exclude_operator_material": not stage_package_operator_files,
+            "not_production_billing": True,
+            "not_nat_traversal": True,
+            "not_large_model_serving": True,
+        },
+        "diagnosis_codes": sorted(set(code for code in diagnosis_codes if code)),
+        "operator_action": (
+            "Package is ready for controlled handoff; copy only stage0/ or stage1/ to the matching Miner host."
+            if ok
+            else "Fix the failed bootstrap package checks before copying stage packages or starting the Coordinator."
+        ),
+    }
+    return sanitize(redact_values(report, secret_values))
+
+
+def print_swarm_bootstrap_check(report: dict[str, Any]) -> None:
+    print("CrowdTensor swarm bootstrap check")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  output_dir: {report.get('output_dir')}")
+    failed = [
+        item for item in report.get("checks") or []
+        if isinstance(item, dict) and item.get("ok") is not True
+    ]
+    print(f"  checks: {len(report.get('checks') or [])} total, {len(failed)} failed")
+    for item in failed[:8]:
+        print(f"  failed: {item.get('name')} ({item.get('diagnosis_code')}) {item.get('detail') or ''}".rstrip())
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
     print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
@@ -17826,6 +18247,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     swarm_bootstrap.add_argument("--replace", action="store_true")
     swarm_bootstrap.add_argument("--json", action="store_true")
 
+    swarm_bootstrap_check = subparsers.add_parser(
+        "swarm-bootstrap-check",
+        help="Validate a generated swarm-bootstrap package before sharing Miner stage directories.",
+        description=(
+            "Offline-check a swarm-bootstrap output directory for required files, private-file "
+            "permissions, hashed registries, env separation, and plaintext token leakage in scripts "
+            "or public Markdown. This does not contact the Coordinator or start processes."
+        ),
+    )
+    swarm_bootstrap_check.add_argument("--output-dir", default="state/swarm-bootstrap")
+    swarm_bootstrap_check.add_argument("--json", action="store_true")
+
     join = subparsers.add_parser(
         "join",
         help="Print or run a product-facing Miner command.",
@@ -20055,7 +20488,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "swarm-bootstrap", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "swarm-bootstrap", "swarm-bootstrap-check", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -21165,6 +21598,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_swarm_bootstrap(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "swarm-bootstrap-check":
+        report = build_swarm_bootstrap_check(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_swarm_bootstrap_check(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "join":
         report = build_product_join(args)
