@@ -27,6 +27,11 @@ together; when `--tunnel-command` is supplied, it also writes
 start an operator-supplied tunnel/overlay command before the Coordinator
 without printing the command in public artifacts. `start_discovery.sh` and
 `start_coordinator.sh` remain available for manual debugging.
+Both bootstrap and bootstrap-check reports include
+`bootstrap_handoff.remote_miners_ready`, `recommended_launcher`,
+`verify_before_handoff`, and `ready_to_copy_stage_packages` so operators can
+tell whether the package is only generated or has passed the live no-claim
+preflight required before copying stage directories.
 Run `verify_bootstrap.sh` from a generated `crowdtensor swarm-bootstrap`
 directory before copying stage packages; it wraps
 `crowdtensor swarm-bootstrap-check --check-admission`. That package gate verifies private

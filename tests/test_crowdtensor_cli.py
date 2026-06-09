@@ -1591,6 +1591,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["safety"]["operator_plaintext_token_public"])
         self.assertFalse(report["safety"]["miner_plaintext_tokens_public"])
         self.assertTrue(report["safety"]["private_join_code_files_created"])
+        handoff = report["bootstrap_handoff"]
+        self.assertEqual(handoff["schema"], "crowdtensor_bootstrap_handoff_v1")
+        self.assertTrue(handoff["remote_miners_ready"])
+        self.assertFalse(handoff["tunnel_configured"])
+        self.assertFalse(handoff["discovery_configured"])
+        self.assertFalse(handoff["ready_to_copy_stage_packages"])
+        self.assertEqual(handoff["handoff_blockers"], ["run_verify_bootstrap_live_preflight"])
+        self.assertEqual(handoff["recommended_launcher"], str(scripts["start_control_plane"]))
+        self.assertEqual(handoff["verify_before_handoff"], str(scripts["verify_bootstrap"]))
+        self.assertEqual(handoff["stage_packages_to_copy"]["stage0"], str(output_dir / "stage0"))
+        self.assertIn(str(coordinator_env_path), handoff["coordinator_host_private_files"])
+        self.assertIn(str(operator_env_path), handoff["operator_host_private_files"])
         self.assertNotIn(stage0_join_code, encoded)
         for path in scripts.values():
             self.assertTrue(path.is_file(), path)
@@ -1755,6 +1767,9 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report)
         self.assertTrue(report["tunnel"]["enabled"])
+        self.assertTrue(report["bootstrap_handoff"]["tunnel_configured"])
+        self.assertTrue(report["bootstrap_handoff"]["remote_miners_ready"])
+        self.assertEqual(report["bootstrap_handoff"]["recommended_launcher"], str(scripts["start_control_plane"]))
         self.assertEqual(tunnel_env_path.stat().st_mode & 0o777, 0o600)
         self.assertIn("CROWDTENSOR_TUNNEL_COMMAND=", tunnel_env)
         self.assertIn(tunnel_command, tunnel_env)
@@ -1781,10 +1796,37 @@ class CrowdTensorCliTests(unittest.TestCase):
 
         self.assertTrue(check_report["ok"], check_report)
         self.assertTrue(check_report["tunnel"]["enabled"])
+        self.assertTrue(check_report["bootstrap_handoff"]["tunnel_configured"])
+        self.assertTrue(check_report["bootstrap_handoff"]["offline_package_ready"])
+        self.assertFalse(check_report["bootstrap_handoff"]["ready_to_copy_stage_packages"])
+        self.assertEqual(check_report["bootstrap_handoff"]["handoff_blockers"], ["run_verify_bootstrap_live_preflight"])
         self.assertTrue(check_report["safety"]["tunnel_private_env_ready"])
         self.assertTrue(check_report["safety"]["start_tunnel_script_ready"])
         self.assertNotIn(tunnel_command, json.dumps(check_report, sort_keys=True))
         self.assertNotIn("super-secret-tunnel-token", json.dumps(check_report, sort_keys=True))
+
+    def test_swarm_bootstrap_human_output_includes_handoff_summary(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--tunnel-command",
+            "cloudflared tunnel --url http://127.0.0.1:8787 --token print-secret",
+            "--expect-remote-miners",
+        ])
+        report = cli.build_swarm_bootstrap(args)
+
+        with io.StringIO() as buffer, contextlib.redirect_stdout(buffer):
+            cli.print_swarm_bootstrap(report)
+            rendered = buffer.getvalue()
+
+        self.assertIn("handoff: remote_ready=True tunnel=True discovery=False ready_to_copy=False", rendered)
+        self.assertIn("launcher:", rendered)
+        self.assertIn("verify_before_handoff:", rendered)
+        self.assertNotIn("print-secret", rendered)
 
     def test_swarm_bootstrap_check_validates_ready_private_package(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"

@@ -33,6 +33,9 @@ it emits `crowdtensor_swarm_bootstrap_check_v1` and verifies required files,
 registries, env separation, stage invite Coordinator URL consistency,
 non-local-only remote route readiness via `coordinator_url_remote_route_ready`,
 stage join-code consistency, and plaintext token leakage in scripts or public Markdown. After starting the Coordinator, rerun
+with `--check-admission` and wait for
+`bootstrap_handoff.ready_to_copy_stage_packages=true`; until then the package is
+generated but not live-verified for remote Miner handoff.
 the same command with `--check-coordinator` to call `/ready` and match both
 stage invites against the redacted registry policy, or `--check-admission` to
 also call token-backed `/tasks/preflight` for both stage invites without

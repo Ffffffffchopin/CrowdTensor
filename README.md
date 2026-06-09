@@ -460,6 +460,10 @@ Miner host does not need to edit JSON invites. When bootstrap is run with
 `crowdtensor_miner_join_discovery_v1`, so `join --invite-code-file` can enable
 P2P-lite discovery and resolve the Coordinator without the Miner user
 hand-writing `--peer-bootstrap`.
+Read the `bootstrap_handoff` summary in the JSON or terminal output before
+copying stage directories. `remote_miners_ready` means the advertised URL is a
+remote-capable route; `ready_to_copy_stage_packages` becomes true only after a
+live `verify_bootstrap.sh` / `--check-admission` preflight passes.
 `crowdtensor swarm-bootstrap-check` verifies required
 files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed

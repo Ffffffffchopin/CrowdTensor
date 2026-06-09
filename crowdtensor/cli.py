@@ -11257,6 +11257,72 @@ def _bootstrap_runbook(
     ])
 
 
+def _bootstrap_handoff_summary(
+    *,
+    coordinator_url: str,
+    remote_access: dict[str, Any],
+    tunnel: dict[str, Any],
+    discovery: dict[str, Any],
+    scripts: dict[str, str],
+    private_env: dict[str, str],
+    private_invites: dict[str, str],
+    stage_package_dirs: dict[str, str],
+    live_preflight: dict[str, Any] | None = None,
+    offline_package_ready: bool | None = None,
+) -> dict[str, Any]:
+    live = live_preflight if isinstance(live_preflight, dict) else {}
+    live_checked = bool(live.get("checked"))
+    live_ready = bool(live.get("ok")) if live_checked else None
+    route_ready = bool(
+        remote_access.get("remote_miners_supported")
+        and remote_access.get("diagnosis_code") != "coordinator_remote_route_required"
+    )
+    ready_to_copy = bool(route_ready and live_checked and live_ready)
+    blockers: list[str] = []
+    if not route_ready:
+        blockers.append("fix_remote_coordinator_url")
+    if not live_checked:
+        blockers.append("run_verify_bootstrap_live_preflight")
+    elif not live_ready:
+        blockers.append("fix_live_preflight")
+    return {
+        "schema": "crowdtensor_bootstrap_handoff_v1",
+        "coordinator_url": coordinator_url,
+        "miner_join_url": str(remote_access.get("miner_join_url") or coordinator_url),
+        "remote_miners_ready": route_ready,
+        "remote_route_kind": str(remote_access.get("route_kind") or ""),
+        "external_forwarder_required": bool(remote_access.get("external_forwarder_required")),
+        "tunnel_configured": bool(tunnel.get("enabled")),
+        "discovery_configured": bool(discovery.get("enabled")),
+        "recommended_launcher": scripts.get("start_control_plane", ""),
+        "manual_launchers": {
+            "tunnel": scripts.get("start_tunnel", ""),
+            "discovery": scripts.get("start_discovery", ""),
+            "coordinator": scripts.get("start_coordinator", ""),
+        },
+        "verify_before_handoff": scripts.get("verify_bootstrap", ""),
+        "stage_packages_to_copy": stage_package_dirs,
+        "operator_host_private_files": [
+            private_env.get("operator", ""),
+            private_invites.get("operator", ""),
+        ],
+        "coordinator_host_private_files": [
+            item for item in [
+                private_env.get("coordinator", ""),
+                private_env.get("tunnel", ""),
+            ] if item
+        ],
+        "copy_only_stage_directories": True,
+        "offline_package_ready": offline_package_ready,
+        "live_preflight_checked": live_checked,
+        "live_preflight_ready": live_ready,
+        "ready_to_copy_stage_packages": ready_to_copy,
+        "handoff_blockers": blockers,
+        "public_artifact_safe": True,
+        "not_nat_traversal": True,
+    }
+
+
 def _swarm_bootstrap_miner_summaries(
     stage_invites: list[dict[str, Any]],
     stage_join_code_files: dict[str, Path],
@@ -11567,6 +11633,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "stage0": str(stage_invites[0]["invite_file"]),
         "stage1": str(stage_invites[1]["invite_file"]),
     }
+    stage_package_dirs = {
+        "stage0": str(stage_scripts["stage0"].parent),
+        "stage1": str(stage_scripts["stage1"].parent),
+    }
     private_join_codes_report = {
         "stage0": str(stage_join_code_files["stage0"]),
         "stage1": str(stage_join_code_files["stage1"]),
@@ -11599,6 +11669,17 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "private_join_codes": private_join_codes_report,
         "scripts": scripts,
         "runbook": str(runbook_path),
+        "bootstrap_handoff": _bootstrap_handoff_summary(
+            coordinator_url=coordinator_url,
+            remote_access=remote_access,
+            tunnel=tunnel_summary,
+            discovery=discovery_summary,
+            scripts=scripts,
+            private_env=private_env_report,
+            private_invites=private_invites_report,
+            stage_package_dirs=stage_package_dirs,
+            offline_package_ready=True,
+        ),
         "operator": {
             "operator_id": operator_invite["operator_id"],
             "roles": operator_invite["roles"],
@@ -11647,9 +11728,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
-            "Start the Coordinator with the generated registry paths, run verify_bootstrap.sh for live no-claim admission "
-            "preflight, copy each private Miner invite only to its Miner host, then run the dry-run generate preflight "
-            "before submitting generation."
+            "Run start_control_plane.sh on the Coordinator host, run verify_bootstrap.sh for live no-claim admission "
+            "preflight, copy only stage0/ and stage1/ to the matching Miner hosts, then run the dry-run generate "
+            "preflight before submitting generation."
         ),
     }
     next_commands = report["next_commands"]
@@ -11728,6 +11809,17 @@ def print_swarm_bootstrap(report: dict[str, Any]) -> None:
             f"remote_miners={remote_access.get('remote_miners_supported')} "
             f"diagnosis={remote_access.get('diagnosis_code')}"
         )
+    handoff = report.get("bootstrap_handoff") if isinstance(report.get("bootstrap_handoff"), dict) else {}
+    if handoff:
+        print(
+            "  handoff: "
+            f"remote_ready={handoff.get('remote_miners_ready')} "
+            f"tunnel={handoff.get('tunnel_configured')} "
+            f"discovery={handoff.get('discovery_configured')} "
+            f"ready_to_copy={handoff.get('ready_to_copy_stage_packages')}"
+        )
+        print(f"  launcher: {handoff.get('recommended_launcher')}")
+        print(f"  verify_before_handoff: {handoff.get('verify_before_handoff')}")
     registries = report.get("registries") if isinstance(report.get("registries"), dict) else {}
     print(f"  operator_registry: {registries.get('operator_registry')}")
     print(f"  miner_registry: {registries.get('miner_registry')}")
@@ -12459,6 +12551,35 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "discovery": discovery_report,
         "remote_access": remote_access,
         "live_preflight": live_preflight,
+        "bootstrap_handoff": _bootstrap_handoff_summary(
+            coordinator_url=coordinator_url,
+            remote_access=remote_access,
+            tunnel=tunnel_report,
+            discovery=discovery_report,
+            scripts={
+                "start_control_plane": str(required_files["start_control_plane_script"]),
+                "start_tunnel": str(required_files["start_tunnel_script"]),
+                "start_discovery": str(required_files["start_discovery_script"]),
+                "start_coordinator": str(required_files["start_coordinator_script"]),
+                "verify_bootstrap": str(required_files["verify_bootstrap_script"]),
+            },
+            private_env={
+                "coordinator": str(required_files["coordinator_env"]),
+                "operator": str(required_files["operator_env"]),
+                "tunnel": str(required_files["tunnel_env"]),
+            },
+            private_invites={
+                "operator": str(operator_invite_files[0]) if operator_invite_files else "",
+                "stage0": str(private_stage_invites[0]) if len(private_stage_invites) > 0 else "",
+                "stage1": str(private_stage_invites[1]) if len(private_stage_invites) > 1 else "",
+            },
+            stage_package_dirs={
+                "stage0": str(output_dir / "stage0"),
+                "stage1": str(output_dir / "stage1"),
+            },
+            live_preflight=live_preflight,
+            offline_package_ready=ok,
+        ),
         "artifacts": artifacts,
         "checks": checks,
         "safety": {
@@ -12518,6 +12639,18 @@ def print_swarm_bootstrap_check(report: dict[str, Any]) -> None:
             f"claim_attempted={live_preflight.get('claim_attempted')} "
             f"task_claimed={live_preflight.get('task_claimed')}"
         )
+    handoff = report.get("bootstrap_handoff") if isinstance(report.get("bootstrap_handoff"), dict) else {}
+    if handoff:
+        print(
+            "  handoff: "
+            f"remote_ready={handoff.get('remote_miners_ready')} "
+            f"tunnel={handoff.get('tunnel_configured')} "
+            f"discovery={handoff.get('discovery_configured')} "
+            f"ready_to_copy={handoff.get('ready_to_copy_stage_packages')}"
+        )
+        blockers = handoff.get("handoff_blockers") if isinstance(handoff.get("handoff_blockers"), list) else []
+        if blockers:
+            print(f"  handoff_blockers: {', '.join(str(item) for item in blockers)}")
     failed = [
         item for item in report.get("checks") or []
         if isinstance(item, dict) and item.get("ok") is not True

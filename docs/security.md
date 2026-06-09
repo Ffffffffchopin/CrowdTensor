@@ -107,6 +107,12 @@ code contains the plaintext Miner token and must be treated as private. If
 invite also contains `crowdtensor_miner_join_discovery_v1` so the Miner can use
 P2P-lite discovery without hand-written route flags; this is still not NAT
 traversal.
+The public-safe `bootstrap_handoff` summary may be shared with operators: it
+reports route readiness, the recommended launcher, and
+`ready_to_copy_stage_packages` without exposing plaintext operator tokens,
+Miner tokens, join codes, or tunnel commands. Treat false
+`ready_to_copy_stage_packages` as a stop signal until live admission preflight
+passes.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
