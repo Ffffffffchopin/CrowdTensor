@@ -442,12 +442,15 @@ crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-re
 ```
 
 The report lists the local private operator invite, stage0/stage1 Miner invites,
-operator/coordinator private env files, hashed registries, and copyable
-`serve` / `join` / `generate` scripts plus `verify_bootstrap.sh` and
-`SWARM_BOOTSTRAP.md`. Keep the operator invite and operator env on the operator
-host, use the coordinator env only for `start_coordinator.sh`, run
-`verify_bootstrap.sh` after the Coordinator starts, and send each stage
-directory only to the matching Miner host. `crowdtensor swarm-bootstrap-check` verifies required
+private `miner.join-code.txt` files, operator/coordinator private env files,
+hashed registries, and copyable `serve` / `join` / `generate` scripts plus
+`verify_bootstrap.sh` and `SWARM_BOOTSTRAP.md`. Keep the operator invite and
+operator env on the operator host, use the coordinator env only for
+`start_coordinator.sh`, run `verify_bootstrap.sh` after the Coordinator starts,
+and send each stage directory only to the matching Miner host. Stage `join.sh`
+defaults to `crowdtensor join --invite-code-file miner.join-code.txt` so the
+Miner host does not need to edit JSON invites.
+`crowdtensor swarm-bootstrap-check` verifies required
 files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
 plaintext tokens before handoff. With `--expect-remote-miners`, it also checks

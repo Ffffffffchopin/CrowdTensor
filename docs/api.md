@@ -15,6 +15,10 @@ Miner registries plus separated coordinator/operator private env files for a
 controlled two-stage product swarm. Product `crowdtensor serve` forwards both
 `--operator-token-registry` and `--miner-token-registry`; Miners still send
 their plaintext invite token in `x-crowdtensor-miner-token`.
+Generated stage packages use private opaque `miner.join-code.txt` files with
+`crowdtensor join --invite-code-file` so Miner hosts do not need to edit JSON
+invites; the code file still contains the plaintext Miner token and must remain
+private.
 Run `verify_bootstrap.sh` from a generated `crowdtensor swarm-bootstrap`
 directory before copying stage packages; it wraps
 `crowdtensor swarm-bootstrap-check --check-admission`. That package gate verifies private

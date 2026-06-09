@@ -10889,10 +10889,10 @@ def _bootstrap_stage_join_script() -> str:
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-INVITE_FILE="${CROWDTENSOR_MINER_INVITE_FILE:-$SCRIPT_DIR/miner.invite.json}"
+INVITE_CODE_FILE="${CROWDTENSOR_MINER_INVITE_CODE_FILE:-$SCRIPT_DIR/miner.join-code.txt}"
 
 exec crowdtensor join \\
-  --invite-file "$INVITE_FILE" \\
+  --invite-code-file "$INVITE_CODE_FILE" \\
   --check-admission \\
   --expect-remote-coordinator \\
   --run \\
@@ -10904,7 +10904,7 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
     return "\n".join([
         f"# CrowdTensor {stage} Miner Join",
         "",
-        "This directory is private. It contains the stage-specific Miner invite.",
+        "This directory is private. It contains the stage-specific Miner invite and opaque join code.",
         "",
         "Run:",
         "",
@@ -10912,9 +10912,15 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
         "./join.sh",
         "```",
         "",
+        "Or use the private join code file directly:",
+        "",
+        "```bash",
+        "crowdtensor join --invite-code-file miner.join-code.txt --check-admission --expect-remote-coordinator --run",
+        "```",
+        "",
         f"Coordinator URL: `{coordinator_url}`",
         "",
-        "Keep `miner.invite.json` private and copy only this stage package to the matching Miner host.",
+        "Keep `miner.join-code.txt` and `miner.invite.json` private. Copy only this stage package to the matching Miner host.",
         "",
     ])
 
@@ -11187,11 +11193,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     if args.bind_host in {"0.0.0.0", "::"}:
         serve_command.append("--i-understand-public-bind")
     serve_command.append("--run")
-    join_commands = [
-        ["crowdtensor", "join", "--invite-file", str(invite["invite_file"]), "--check-admission", "--expect-remote-coordinator", "--run"]
-        for invite in stage_invites
-    ]
     stage_scripts: dict[str, Path] = {}
+    stage_join_code_files: dict[str, Path] = {}
+    stage_join_commands: dict[str, list[str]] = {}
     for invite in stage_invites:
         stage = str((invite.get("join_invite") or {}).get("stage") or "")
         stage_dir = output_dir / stage
@@ -11200,6 +11204,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         stage_invite = stage_dir / "miner.invite.json"
         stage_invite.write_text(source_invite.read_text(encoding="utf-8"), encoding="utf-8")
         stage_invite.chmod(0o600)
+        stage_join_code = stage_dir / "miner.join-code.txt"
+        stage_join_code.write_text(str(invite.get("join_invite_code") or "").strip() + "\n", encoding="utf-8")
+        stage_join_code.chmod(0o600)
         join_script = stage_dir / "join.sh"
         _write_executable(join_script, _bootstrap_stage_join_script())
         (stage_dir / "MINER_JOIN.md").write_text(
@@ -11207,6 +11214,16 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             encoding="utf-8",
         )
         stage_scripts[stage] = join_script
+        stage_join_code_files[stage] = stage_join_code
+        stage_join_commands[stage] = [
+            "crowdtensor",
+            "join",
+            "--invite-code-file",
+            str(stage_join_code),
+            "--check-admission",
+            "--expect-remote-coordinator",
+            "--run",
+        ]
     dry_run_command = [
         "crowdtensor",
         "generate",
@@ -11269,6 +11286,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "stage0": str(stage_invites[0]["invite_file"]),
         "stage1": str(stage_invites[1]["invite_file"]),
     }
+    private_join_codes_report = {
+        "stage0": str(stage_join_code_files["stage0"]),
+        "stage1": str(stage_join_code_files["stage1"]),
+    }
     runbook_path.write_text(
         _bootstrap_runbook(
             coordinator_url=coordinator_url,
@@ -11292,6 +11313,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         },
         "private_env": private_env_report,
         "private_invites": private_invites_report,
+        "private_join_codes": private_join_codes_report,
         "scripts": scripts,
         "runbook": str(runbook_path),
         "operator": {
@@ -11306,6 +11328,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 "backend": (invite.get("join_invite") or {}).get("backend"),
                 "hf_model_id": (invite.get("join_invite") or {}).get("hf_model_id"),
                 "invite_file": invite["invite_file"],
+                "join_code_file": str(stage_join_code_files[str((invite.get("join_invite") or {}).get("stage") or "")]),
             }
             for invite in stage_invites
         ],
@@ -11319,8 +11342,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 ["crowdtensor", "swarm-bootstrap-check", "--output-dir", str(output_dir), "--check-admission"]
                 + (["--expect-remote-miners"] if args.expect_remote_miners else []),
             ),
-            command_entry("start stage0 Miner", join_commands[0]),
-            command_entry("start stage1 Miner", join_commands[1]),
+            command_entry("start stage0 Miner", stage_join_commands["stage0"]),
+            command_entry("start stage1 Miner", stage_join_commands["stage1"]),
             command_entry("check generation route", dry_run_command),
             command_entry("submit generation with operator invite token", generate_command),
         ],
@@ -11330,6 +11353,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "registries_created": True,
             "private_env_files_created": True,
             "private_invites_created": True,
+            "private_join_code_files_created": True,
             "scripts_created": True,
             "scripts_embed_plaintext_tokens": False,
         },
@@ -11348,16 +11372,18 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[1]["command_line"] = command_line([str(verify_bootstrap_script)])
     next_commands[1]["requires_files"] = [
         str(stage_scripts["stage0"].parent / "miner.invite.json"),
+        str(stage_join_code_files["stage0"]),
         str(stage_scripts["stage1"].parent / "miner.invite.json"),
+        str(stage_join_code_files["stage1"]),
     ]
     next_commands[1]["script"] = str(verify_bootstrap_script)
     next_commands[2]["command"] = [str(stage_scripts["stage0"])]
     next_commands[2]["command_line"] = command_line([str(stage_scripts["stage0"])])
-    next_commands[2]["requires_files"] = [str(stage_scripts["stage0"].parent / "miner.invite.json")]
+    next_commands[2]["requires_files"] = [str(stage_join_code_files["stage0"])]
     next_commands[2]["script"] = str(stage_scripts["stage0"])
     next_commands[3]["command"] = [str(stage_scripts["stage1"])]
     next_commands[3]["command_line"] = command_line([str(stage_scripts["stage1"])])
-    next_commands[3]["requires_files"] = [str(stage_scripts["stage1"].parent / "miner.invite.json")]
+    next_commands[3]["requires_files"] = [str(stage_join_code_files["stage1"])]
     next_commands[3]["script"] = str(stage_scripts["stage1"])
     next_commands[4]["command"] = [str(check_generation_script)]
     next_commands[4]["command_line"] = command_line([str(check_generation_script)])
@@ -11613,9 +11639,11 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "submit_generation_script": output_dir / "submit_generation.sh",
         "runbook": output_dir / "SWARM_BOOTSTRAP.md",
         "stage0_invite": output_dir / "stage0" / "miner.invite.json",
+        "stage0_join_code": output_dir / "stage0" / "miner.join-code.txt",
         "stage0_join_script": output_dir / "stage0" / "join.sh",
         "stage0_join_doc": output_dir / "stage0" / "MINER_JOIN.md",
         "stage1_invite": output_dir / "stage1" / "miner.invite.json",
+        "stage1_join_code": output_dir / "stage1" / "miner.join-code.txt",
         "stage1_join_script": output_dir / "stage1" / "join.sh",
         "stage1_join_doc": output_dir / "stage1" / "MINER_JOIN.md",
     }
@@ -11712,7 +11740,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         *operator_invite_files,
         *private_stage_invites,
         required_files["stage0_invite"],
+        required_files["stage0_join_code"],
         required_files["stage1_invite"],
+        required_files["stage1_join_code"],
     ]
     bad_private_modes = [f"{path}:{_mode_string(path)}" for path in private_files if path.exists() and not _has_mode(path, 0o600)]
     _bootstrap_check_item(
@@ -11867,6 +11897,8 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
 
     stage0_script_text, _ = _read_bootstrap_text(required_files["stage0_join_script"])
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
+    stage0_join_code_text, _ = _read_bootstrap_text(required_files["stage0_join_code"])
+    stage1_join_code_text, _ = _read_bootstrap_text(required_files["stage1_join_code"])
     coordinator_script_text, _ = _read_bootstrap_text(required_files["start_coordinator_script"])
     verify_script_text, _ = _read_bootstrap_text(required_files["verify_bootstrap_script"])
     public_files = [
@@ -11902,6 +11934,20 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         not stage_scripts_reference_operator_env,
         detail="stage join scripts must use only the stage Miner invite",
         diagnosis_code="bootstrap_stage_package_contains_operator_material",
+    )
+    stage_scripts_use_join_code_file = (
+        "--invite-code-file" in stage0_script_text
+        and "--invite-code-file" in stage1_script_text
+        and "miner.join-code.txt" in stage0_script_text
+        and "miner.join-code.txt" in stage1_script_text
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_join_scripts_use_invite_code_file",
+        stage_scripts_use_join_code_file,
+        detail="stage join scripts must use private miner.join-code.txt by default",
+        diagnosis_code="bootstrap_stage_join_script_not_code_file",
     )
     coordinator_script_admin_reference = "operator.private.env" in coordinator_script_text or "CROWDTENSOR_ADMIN_TOKEN" in coordinator_script_text
     _bootstrap_check_item(
@@ -11943,6 +11989,37 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail=", ".join(str(path) for path in stage_package_operator_files),
         diagnosis_code="bootstrap_stage_package_contains_operator_material",
     )
+    decoded_join_codes: dict[str, dict[str, Any]] = {}
+    join_code_errors: list[str] = []
+    for stage, code_text in [("stage0", stage0_join_code_text), ("stage1", stage1_join_code_text)]:
+        stripped = code_text.strip()
+        try:
+            padded = stripped + "=" * (-len(stripped) % 4)
+            decoded = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError, binascii.Error) as exc:
+            decoded = {}
+            join_code_errors.append(f"{stage}: {exc}")
+        if not isinstance(decoded, dict):
+            decoded = {}
+            join_code_errors.append(f"{stage}: not a JSON object")
+        decoded_join_codes[stage] = decoded
+    code_stage0 = decoded_join_codes.get("stage0") or {}
+    code_stage1 = decoded_join_codes.get("stage1") or {}
+    join_codes_match_invites = bool(
+        not join_code_errors
+        and code_stage0.get("schema") == MINER_JOIN_INVITE_SCHEMA
+        and code_stage1.get("schema") == MINER_JOIN_INVITE_SCHEMA
+        and code_stage0 == stage0_invite
+        and code_stage1 == stage1_invite
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_join_code_files_match_invites",
+        join_codes_match_invites,
+        detail="; ".join(join_code_errors),
+        diagnosis_code="bootstrap_stage_join_code_invalid",
+    )
 
     ok = bool(checks and all(check.get("ok") is True for check in checks))
     if ok:
@@ -11975,7 +12052,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "registries_store_hashed_tokens": _all_registry_tokens_hashed(operator_registry, "operators") and _all_registry_tokens_hashed(miner_registry, "miners"),
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
+            "stage_join_scripts_use_invite_code_file": stage_scripts_use_join_code_file,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
+            "stage_join_code_files_match_invites": join_codes_match_invites,
             "verify_bootstrap_script_ready": verify_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
             "live_preflight_ready": (
@@ -12435,18 +12514,24 @@ def _product_join_evidence_scope(report: dict[str, Any]) -> dict[str, Any]:
 def _load_product_join_invite(args: argparse.Namespace) -> tuple[dict[str, Any], str]:
     invite_file = str(getattr(args, "invite_file", "") or "").strip()
     invite_code = str(getattr(args, "invite", "") or "").strip()
-    if invite_file and invite_code:
-        raise SystemExit("join accepts either --invite-file or --invite, not both")
-    if not invite_file and not invite_code:
+    invite_code_file = str(getattr(args, "invite_code_file", "") or "").strip()
+    invite_sources = [value for value in [invite_file, invite_code, invite_code_file] if value]
+    if len(invite_sources) > 1:
+        raise SystemExit("join accepts only one of --invite-file, --invite, or --invite-code-file")
+    if not invite_sources:
         return {}, ""
     try:
         if invite_file:
             payload = json.loads(Path(invite_file).read_text(encoding="utf-8"))
             source = "invite-file"
         else:
+            if invite_code_file:
+                invite_code = Path(invite_code_file).read_text(encoding="utf-8").strip()
+                source = "invite-code-file"
+            else:
+                source = "invite-code"
             padded = invite_code + "=" * (-len(invite_code) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
-            source = "invite-code"
     except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError, binascii.Error) as exc:
         raise SystemExit(f"invalid join invite: {exc}") from exc
     if not isinstance(payload, dict):
@@ -18521,6 +18606,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         epilog=(
             "examples:\n"
+            "  crowdtensor join --invite-code-file miner.join-code.txt --check-admission --expect-remote-coordinator --run\n"
             "  crowdtensor join --invite-file miner.invite.json --run\n"
             "  crowdtensor join --invite-file miner.invite.json --check-admission --expect-remote-coordinator --json\n"
             "  crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run\n"
@@ -18533,6 +18619,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     join.add_argument("--invite-file", default="", help="read a product Miner join invite JSON generated by scripts/create_miner_invite.py")
     join.add_argument("--invite", default="", help="base64url product Miner join invite code; prefer --invite-file for local secrecy")
+    join.add_argument("--invite-code-file", default="", help="read a private base64url product Miner join invite code from a file")
     join.add_argument("--coordinator-url", default="")
     join.add_argument(
         "--expect-remote-coordinator",

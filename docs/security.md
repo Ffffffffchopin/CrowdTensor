@@ -95,8 +95,10 @@ bootstrap admission check. `operator.private.env` contains the operator admin
 token plus observer token for operator-side dry-run and submit scripts.
 Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
-the matching stage directory, including its `miner.invite.json` and `join.sh`,
-to each Miner host.
+the matching stage directory, including its private `miner.join-code.txt`,
+`miner.invite.json`, and `join.sh`, to each Miner host. Stage `join.sh` uses
+`crowdtensor join --invite-code-file miner.join-code.txt` by default; the join
+code contains the plaintext Miner token and must be treated as private.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in

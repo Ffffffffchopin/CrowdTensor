@@ -1542,10 +1542,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         miner_registry = json.loads((output_dir / "miner_registry.json").read_text(encoding="utf-8"))
         coordinator_env_path = Path(report["private_env"]["coordinator"])
         operator_env_path = Path(report["private_env"]["operator"])
+        stage0_join_code_path = Path(report["private_join_codes"]["stage0"])
+        stage1_join_code_path = Path(report["private_join_codes"]["stage1"])
         coordinator_env = coordinator_env_path.read_text(encoding="utf-8")
         operator_env = operator_env_path.read_text(encoding="utf-8")
         operator_invite = json.loads(Path(report["private_invites"]["operator"]).read_text(encoding="utf-8"))
         stage0_invite = json.loads(Path(report["private_invites"]["stage0"]).read_text(encoding="utf-8"))
+        stage0_join_code = stage0_join_code_path.read_text(encoding="utf-8").strip()
         scripts = {name: Path(path) for name, path in report["scripts"].items()}
         runbook = Path(report["runbook"]).read_text(encoding="utf-8")
 
@@ -1567,6 +1570,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(Path(report["private_invites"]["stage0"]).stat().st_mode & 0o777, 0o600)
         self.assertEqual(Path(report["private_invites"]["stage1"]).stat().st_mode & 0o777, 0o600)
         self.assertEqual((output_dir / "stage0" / "miner.invite.json").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(stage0_join_code_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(stage1_join_code_path.stat().st_mode & 0o777, 0o600)
         self.assertIn("CROWDTENSOR_OBSERVER_TOKEN='sha256:", coordinator_env)
         self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN", coordinator_env)
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN=", operator_env)
@@ -1583,19 +1588,32 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["safety"]["scripts_embed_plaintext_tokens"])
         self.assertFalse(report["safety"]["operator_plaintext_token_public"])
         self.assertFalse(report["safety"]["miner_plaintext_tokens_public"])
+        self.assertTrue(report["safety"]["private_join_code_files_created"])
+        self.assertNotIn(stage0_join_code, encoded)
         for path in scripts.values():
             self.assertTrue(path.is_file(), path)
             self.assertEqual(path.stat().st_mode & 0o777, 0o700)
             script_text = path.read_text(encoding="utf-8")
             self.assertNotIn(operator_invite["operator_token"], script_text)
             self.assertNotIn(stage0_invite["miner_token"], script_text)
+            self.assertNotIn(stage0_join_code, script_text)
         self.assertTrue((output_dir / "stage0" / "miner.invite.json").is_file())
+        self.assertTrue((output_dir / "stage0" / "miner.join-code.txt").is_file())
         self.assertTrue((output_dir / "stage0" / "MINER_JOIN.md").is_file())
+        self.assertEqual(
+            json.loads(base64.urlsafe_b64decode(stage0_join_code.encode("ascii")).decode("utf-8")),
+            stage0_invite,
+        )
+        stage0_doc = (output_dir / "stage0" / "MINER_JOIN.md").read_text(encoding="utf-8")
+        self.assertIn("--invite-code-file miner.join-code.txt", stage0_doc)
+        self.assertNotIn(stage0_join_code, stage0_doc)
         self.assertIn("CrowdTensor Swarm Bootstrap", runbook)
         self.assertIn(str(scripts["start_coordinator"]), runbook)
         self.assertIn(str(scripts["verify_bootstrap"]), runbook)
         self.assertIn("--check-admission", scripts["verify_bootstrap"].read_text(encoding="utf-8"))
         self.assertIn("--expect-remote-miners", scripts["verify_bootstrap"].read_text(encoding="utf-8"))
+        self.assertIn("--invite-code-file", scripts["stage0_join"].read_text(encoding="utf-8"))
+        self.assertIn("miner.join-code.txt", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("verify_bootstrap.sh", report["operator_action"])
         serve_line = report["next_commands"][0]["command_line"]
         self.assertEqual(serve_line, str(scripts["start_coordinator"]))
@@ -1603,6 +1621,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(str(coordinator_env_path), report["next_commands"][0]["requires_files"])
         self.assertEqual(report["next_commands"][1]["command"], [str(scripts["verify_bootstrap"])])
         self.assertEqual(report["next_commands"][2]["command"], [str(scripts["stage0_join"])])
+        self.assertIn(str(stage0_join_code_path), report["next_commands"][2]["requires_files"])
         self.assertEqual(report["next_commands"][4]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
@@ -1639,7 +1658,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["private_files_mode_0600"])
         self.assertTrue(report["safety"]["scripts_mode_0700"])
         self.assertEqual(report["artifacts"]["verify_bootstrap_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["stage0_join_code"]["mode"], "0o600")
         self.assertTrue(report["safety"]["verify_bootstrap_script_ready"])
+        self.assertTrue(report["safety"]["stage_join_scripts_use_invite_code_file"])
+        self.assertTrue(report["safety"]["stage_join_code_files_match_invites"])
         self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
         self.assertTrue(report["safety"]["coordinator_url_remote_route_ready"])
         self.assertTrue(report["safety"]["stage_packages_exclude_operator_material"])
@@ -1691,6 +1713,34 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertFalse(report["safety"]["verify_bootstrap_script_ready"])
         self.assertIn("bootstrap_verify_script_invalid", report["diagnosis_codes"])
+
+    def test_swarm_bootstrap_check_fails_on_broken_join_code_file(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        cli.build_swarm_bootstrap(bootstrap_args)
+        (output_dir / "stage0" / "miner.join-code.txt").write_text("not-base64\n", encoding="utf-8")
+        (output_dir / "stage0" / "miner.join-code.txt").chmod(0o600)
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertFalse(report["safety"]["stage_join_code_files_match_invites"])
+        self.assertIn("bootstrap_stage_join_code_invalid", report["diagnosis_codes"])
 
     def test_swarm_bootstrap_check_fails_on_public_token_leak(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"
@@ -5022,6 +5072,48 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["join_invite"]["policy"]["claim_rate_window_seconds"], 30.0)
         self.assertNotIn("invite-code-secret", encoded)
         self.assertEqual(report["command"][report["command"].index("--real-llm-stage-role") + 1], "stage1")
+
+    def test_product_join_accepts_invite_code_file_and_redacts_token(self) -> None:
+        invite = {
+            "schema": "crowdtensor_miner_join_invite_v1",
+            "coordinator_url": "https://coord.example",
+            "miner_id": "invited-stage0",
+            "stage": "stage0",
+            "backend": "cpu",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "miner_token": "invite-code-file-secret",
+            "token_hash": "sha256:" + "d" * 64,
+            "policy": {
+                "schema": "crowdtensor_miner_join_policy_v1",
+                "trust_tier": "new",
+                "quota_task_limit": 2,
+                "claim_rate_limit": 1,
+                "claim_rate_window_seconds": 30,
+                "read_only_workload": "real_llm_sharded_infer",
+                "not_production": True,
+            },
+        }
+        invite_code = base64.urlsafe_b64encode(
+            json.dumps(invite, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        invite_code_path = Path(self._tmp_dir()) / "miner.join-code.txt"
+        invite_code_path.write_text(invite_code + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "join",
+            "--invite-code-file",
+            str(invite_code_path),
+            "--json",
+        ])
+
+        report = cli.build_product_join(args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["join_invite"]["source"], "invite-code-file")
+        self.assertEqual(report["join_invite"]["stage"], "stage0")
+        self.assertEqual(report["join_invite"]["miner_id"], "invited-stage0")
+        self.assertNotIn("invite-code-file-secret", encoded)
+        self.assertEqual(report["command"][report["command"].index("--real-llm-stage-role") + 1], "stage0")
 
     def test_product_join_missing_route_action(self) -> None:
         args = cli.parse_args([

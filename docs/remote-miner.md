@@ -8,20 +8,22 @@ For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_coordinator.sh`, stage
-`join.sh` files, `verify_bootstrap.sh`, generation scripts, and
-`SWARM_BOOTSTRAP.md`. Keep the generated operator invite and operator env on the
-operator host, use the coordinator env only for the Coordinator process, run
-`verify_bootstrap.sh` after the Coordinator starts, and copy only the matching
-stage directory to each Miner host. The Coordinator URL still must be reachable
+`join.sh` files, private `miner.join-code.txt` files, `verify_bootstrap.sh`,
+generation scripts, and `SWARM_BOOTSTRAP.md`. Keep the generated operator
+invite and operator env on the operator host, use the coordinator env only for
+the Coordinator process, run `verify_bootstrap.sh` after the Coordinator starts,
+and copy only the matching stage directory to each Miner host. Stage `join.sh`
+uses `crowdtensor join --invite-code-file miner.join-code.txt` by default, while
+`miner.invite.json` remains private compatibility material. The Coordinator URL still must be reachable
 by public HTTPS, VPN, trusted LAN, or tunnel; with `--expect-remote-miners`,
 bootstrap fails before creating registry or invite files when the URL is
 local-only. Before copying stage packages, run
 `crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-remote-miners`;
 it emits `crowdtensor_swarm_bootstrap_check_v1` and verifies required files,
-`0600` private env/invite permissions, `0700` helper scripts, hashed registries,
-env separation, stage invite Coordinator URL consistency, non-local-only remote
-route readiness via `coordinator_url_remote_route_ready`, and plaintext token
-leakage in scripts or public Markdown. After starting the Coordinator, rerun
+`0600` private env/invite/join-code permissions, `0700` helper scripts, hashed
+registries, env separation, stage invite Coordinator URL consistency,
+non-local-only remote route readiness via `coordinator_url_remote_route_ready`,
+stage join-code consistency, and plaintext token leakage in scripts or public Markdown. After starting the Coordinator, rerun
 the same command with `--check-coordinator` to call `/ready` and match both
 stage invites against the redacted registry policy, or `--check-admission` to
 also call token-backed `/tasks/preflight` for both stage invites without
