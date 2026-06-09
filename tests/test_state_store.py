@@ -2855,6 +2855,49 @@ class StateStoreTests(unittest.TestCase):
                 ["python-cli/cpu/runtime_contract_v1"],
             )
 
+    def test_record_claim_blocked_adds_auditable_policy_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=1)
+
+            blocked = store.record_claim_blocked(
+                "policy-miner",
+                capabilities={"runtime": "python-cli"},
+                reason="join_policy_stage_mismatch",
+                blocked_workloads=[WORKLOAD_REAL_LLM_SHARDED_INFER],
+            )
+            summary = store.summary()
+
+            self.assertEqual(blocked["reason"], "join_policy_stage_mismatch")
+            self.assertEqual(summary["blocked_claims"], 1)
+            self.assertEqual(summary["last_blocked_claim"]["miner_id"], "policy-miner")
+            self.assertEqual(summary["last_blocked_claim"]["blocked_workloads"], [WORKLOAD_REAL_LLM_SHARDED_INFER])
+
+    def test_miner_claim_usage_counts_leased_and_terminal_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=2)
+            first = store.claim_task("quota-miner", capabilities=self._python_capabilities())
+            store.claim_task("quota-miner", capabilities=self._python_capabilities())
+            inner_result = run_inner_loop(
+                first["weights"],
+                task_id=first["task_id"],
+                miner_id="quota-miner",
+                model_version=first["model_version"],
+                inner_steps=first["inner_steps"],
+            )
+            store.complete_task(
+                first["task_id"],
+                lease_token=first["lease_token"],
+                attempt=first["attempt"],
+                local_delta=inner_result["local_delta"],
+                metrics=inner_result,
+            )
+
+            usage = store.miner_claim_usage("quota-miner")
+
+            self.assertEqual(usage["accepted"], 1)
+            self.assertEqual(usage["leased"], 1)
+            self.assertEqual(usage["claim_count"], 2)
+
     def test_real_llm_stage_capabilities_route_split_miners_without_loading_hf(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)

@@ -62,8 +62,12 @@ may otherwise end up in shell history. The Coordinator registry stores only the
 token verifier plus `join_policy` metadata. `/ready` exposes a redacted
 `miner_policy_summary` with the invited stage, backend, trust tier, quota limit,
 and reward-account presence, but never the plaintext token or reward account.
-This policy is admission and audit metadata for the current Beta; it is not
-production billing, staking, or automatic economic settlement.
+At claim time, the Coordinator enforces the invite's workload, stage, backend,
+and model scope before the Miner can lease work; blocked claims are recorded in
+the normal `blocked_claims` audit counters. A positive `quota_task_limit`
+caps the number of leased, accepted, and rejected claims for that registered
+Miner. Reward fields are still accounting metadata for the current Beta; they
+are not production billing, staking, or automatic economic settlement.
 
 For the recommended high-level two-machine home-compute demo, start with `crowdtensor remote-demo prepare`. The Coordinator host runs `crowdtensord`; the Miner host runs `crowdtensor-miner`; the operator keeps `operator.private.env`; only `miner.private.env`, `miner_join.sh`, and `MINER_JOIN.md` are copied to the Miner host. It creates the registry, private env files, public runbook, `miner_join_pack_v1`, and `remote_home_compute_demo_v1` summary in one output directory:
 

@@ -12,7 +12,13 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from coordinator import create_app, load_miner_token_registry, miner_registry_policy_summary, parse_task_lane
+from coordinator import (
+    create_app,
+    enforce_miner_join_policy,
+    load_miner_token_registry,
+    miner_registry_policy_summary,
+    parse_task_lane,
+)
 from crowdtensor.auth import hash_token
 from crowdtensor.diloco import run_inner_loop
 from crowdtensor.external_llm import WORKLOAD_TYPE as WORKLOAD_EXTERNAL_LLM_INFER
@@ -27,6 +33,7 @@ from crowdtensor.outer_optimizer import (
     compress_sign_delta_with_error_feedback,
 )
 from crowdtensor.protocol import REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY, REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY
+from crowdtensor.real_llm import WORKLOAD_TYPE as WORKLOAD_REAL_LLM_SHARDED_INFER
 from crowdtensor.toy_compute import compute_pseudo_gradient
 
 
@@ -319,6 +326,216 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertEqual(policy_summary["miners"][0]["policy"]["stage"], "stage1")
             self.assertNotIn("registered-token", encoded)
             self.assertNotIn("acct-secret", encoded)
+
+    def test_join_policy_scopes_claim_capabilities(self) -> None:
+        registry = {
+            "stage0-gpu": {
+                "enabled": True,
+                "token": hash_token("registered-token"),
+                "join_policy": {
+                    "stage": "stage0",
+                    "backend": "cuda",
+                    "hf_model_id": "sshleifer/tiny-gpt2",
+                    "read_only_workload": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                },
+            },
+        }
+        capabilities = {
+            "runtime": "python-cli",
+            "backend": "cuda",
+            "protocol_version": "runtime_contract_v1",
+            "supported_workloads": [WORKLOAD_REAL_LLM_SHARDED_INFER, "diloco_train"],
+            "real_llm_runtime": {"model_id": "sshleifer/tiny-gpt2"},
+            "real_llm_sharded_stage_capabilities": [
+                REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+                REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+            ],
+        }
+
+        scoped, reason = enforce_miner_join_policy(
+            miner_id="stage0-gpu",
+            capabilities=capabilities,
+            registry=registry,
+        )
+
+        self.assertEqual(reason, "")
+        self.assertEqual(scoped["supported_workloads"], [WORKLOAD_REAL_LLM_SHARDED_INFER])
+        self.assertEqual(scoped["real_llm_sharded_stage_capabilities"], [REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY])
+        self.assertEqual(scoped["real_llm_runtime"]["adapter_kind"], "hf_transformers_cuda")
+
+    def test_join_policy_rejects_mismatched_stage_claim_and_records_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_registry(
+                Path(tmp) / "miners.json",
+                [
+                    {
+                        "miner_id": "stage0-only",
+                        "token": hash_token("registered-token"),
+                        "join_policy": {
+                            "stage": "stage0",
+                            "backend": "cuda",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "read_only_workload": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                        },
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                miner_token_registry=registry_path,
+                real_llm_backend="hf_transformers_cuda",
+            )
+            app.state.store.create_real_llm_sharded_inference_session(
+                request_count=1,
+                max_new_tokens=1,
+                required_runtime="python-cli",
+                required_backend="cuda",
+                model_id="sshleifer/tiny-gpt2",
+                llm_backend="hf_transformers_cuda",
+            )
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            state = endpoint_for(app, "/state", "GET")
+
+            with self.assertRaises(HTTPException) as blocked:
+                claim_task(
+                    request_model(claim_task)(
+                        miner_id="stage0-only",
+                        capabilities={
+                            "runtime": "python-cli",
+                            "backend": "cuda",
+                            "protocol_version": "runtime_contract_v1",
+                            "supported_workloads": [WORKLOAD_REAL_LLM_SHARDED_INFER],
+                            "real_llm_runtime": {"model_id": "sshleifer/tiny-gpt2"},
+                            "real_llm_sharded_stage_capabilities": [REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY],
+                        },
+                    ),
+                    x_crowdtensor_miner_token="registered-token",
+                )
+
+            self.assertEqual(blocked.exception.status_code, 503)
+            self.assertEqual(blocked.exception.detail, "join_policy_stage_mismatch")
+            summary = state()
+            self.assertEqual(summary["blocked_claims"], 1)
+            self.assertEqual(summary["last_blocked_claim"]["reason"], "join_policy_stage_mismatch")
+
+    def test_join_policy_allows_matching_stage_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_registry(
+                Path(tmp) / "miners.json",
+                [
+                    {
+                        "miner_id": "stage0-only",
+                        "token": hash_token("registered-token"),
+                        "join_policy": {
+                            "stage": "stage0",
+                            "backend": "cuda",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "read_only_workload": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                        },
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                miner_token_registry=registry_path,
+                real_llm_backend="hf_transformers_cuda",
+            )
+            app.state.store.create_real_llm_sharded_inference_session(
+                request_count=1,
+                max_new_tokens=1,
+                required_runtime="python-cli",
+                required_backend="cuda",
+                model_id="sshleifer/tiny-gpt2",
+                llm_backend="hf_transformers_cuda",
+            )
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+
+            claim = claim_task(
+                request_model(claim_task)(
+                    miner_id="stage0-only",
+                    capabilities={
+                        "runtime": "python-cli",
+                        "backend": "cuda",
+                        "protocol_version": "runtime_contract_v1",
+                        "supported_workloads": [WORKLOAD_REAL_LLM_SHARDED_INFER, "diloco_train"],
+                        "real_llm_runtime": {"model_id": "sshleifer/tiny-gpt2"},
+                        "real_llm_sharded_stage_capabilities": [
+                            REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+                            REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+                        ],
+                    },
+                ),
+                x_crowdtensor_miner_token="registered-token",
+            )
+
+            self.assertEqual(claim["workload_type"], WORKLOAD_REAL_LLM_SHARDED_INFER)
+            self.assertEqual(claim["task_requirements"]["backend"], "cuda")
+
+    def test_join_policy_quota_blocks_after_claim_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_registry(
+                Path(tmp) / "miners.json",
+                [
+                    {
+                        "miner_id": "quota-stage0",
+                        "token": hash_token("registered-token"),
+                        "join_policy": {
+                            "stage": "stage0",
+                            "backend": "cuda",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "quota_task_limit": 1,
+                            "read_only_workload": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                        },
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                miner_token_registry=registry_path,
+                real_llm_backend="hf_transformers_cuda",
+            )
+            for _ in range(2):
+                app.state.store.create_real_llm_sharded_inference_session(
+                    request_count=1,
+                    max_new_tokens=1,
+                    required_runtime="python-cli",
+                    required_backend="cuda",
+                    model_id="sshleifer/tiny-gpt2",
+                    llm_backend="hf_transformers_cuda",
+                )
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            state = endpoint_for(app, "/state", "GET")
+            claim_request = request_model(claim_task)(
+                miner_id="quota-stage0",
+                capabilities={
+                    "runtime": "python-cli",
+                    "backend": "cuda",
+                    "protocol_version": "runtime_contract_v1",
+                    "supported_workloads": [WORKLOAD_REAL_LLM_SHARDED_INFER],
+                    "real_llm_runtime": {"model_id": "sshleifer/tiny-gpt2"},
+                    "real_llm_sharded_stage_capabilities": [REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY],
+                },
+            )
+
+            first = claim_task(claim_request, x_crowdtensor_miner_token="registered-token")
+            with self.assertRaises(HTTPException) as blocked:
+                claim_task(claim_request, x_crowdtensor_miner_token="registered-token")
+
+            self.assertEqual(first["workload_type"], WORKLOAD_REAL_LLM_SHARDED_INFER)
+            self.assertEqual(blocked.exception.status_code, 503)
+            self.assertEqual(blocked.exception.detail, "join_policy_quota_exhausted")
+            summary = state()
+            self.assertEqual(summary["blocked_claims"], 1)
+            self.assertEqual(summary["last_blocked_claim"]["reason"], "join_policy_quota_exhausted")
 
     def test_hashed_miner_token_registry_claims_with_plaintext_request_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

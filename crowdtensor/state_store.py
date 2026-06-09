@@ -313,6 +313,54 @@ class StateStore:
                 "training_spec": training_spec,
             }
 
+    def record_claim_blocked(
+        self,
+        miner_id: str,
+        *,
+        capabilities: dict | None = None,
+        reason: str,
+        blocked_workloads: list[str] | None = None,
+        compatible_task_count: int = 0,
+    ) -> dict:
+        with self._lock:
+            queued_count = sum(1 for task in self._tasks.values() if task["status"] == STATUS_QUEUED)
+            event = self._append_event({
+                "type": EVENT_CLAIM_BLOCKED,
+                "miner_id": str(miner_id or "anonymous"),
+                "capabilities": dict(capabilities or {}),
+                "queued_task_count": queued_count,
+                "compatible_task_count": int(compatible_task_count),
+                "blocked_workloads": list(blocked_workloads or []),
+                "reason": str(reason or "claim blocked"),
+                "ts": now_epoch(),
+            })
+            self._apply_task_event(event)
+            return dict(self._blocked_claims[-1]) if self._blocked_claims else {}
+
+    def miner_claim_usage(self, miner_id: str) -> dict:
+        miner_name = str(miner_id or "")
+        with self._lock:
+            leased = 0
+            accepted = 0
+            rejected = 0
+            for task in self._tasks.values():
+                if task.get("miner_id") != miner_name:
+                    continue
+                if task.get("status") == STATUS_LEASED:
+                    leased += 1
+                elif task.get("status") == STATUS_COMPLETED:
+                    accepted += 1
+                elif task.get("status") == STATUS_REJECTED:
+                    rejected += 1
+            return {
+                "schema": "miner_claim_usage_v1",
+                "miner_id": miner_name,
+                "leased": leased,
+                "accepted": accepted,
+                "rejected": rejected,
+                "claim_count": leased + accepted + rejected,
+            }
+
     def heartbeat(
         self,
         task_id: str,

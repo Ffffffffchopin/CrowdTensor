@@ -15,6 +15,12 @@ from crowdtensor.protocol import (
     DEFAULT_WORKLOAD_TYPE,
     LeaseConflict,
     NoTaskAvailable,
+    REAL_LLM_SHARDED_BOTH_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_BOTH_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+    REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+    REAL_LLM_SHARDED_STAGE0_CAPABILITY,
+    REAL_LLM_SHARDED_STAGE1_CAPABILITY,
     ResultRejected,
     WORKLOAD_EXTERNAL_LLM_INFER,
     WORKLOAD_MICRO_LLM_SHARDED_INFER,
@@ -120,6 +126,104 @@ def miner_registry_policy_summary(registry: dict[str, dict[str, Any]]) -> dict[s
         "reward_accounts_public": False,
         "public_artifact_safe": True,
     }
+
+
+def _policy_allowed_stage_capabilities(policy: dict[str, Any]) -> list[str]:
+    stage = str(policy.get("stage") or "both").strip()
+    backend = str(policy.get("backend") or "cpu").strip()
+    if backend == "cuda":
+        return {
+            "stage0": [REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY],
+            "stage1": [REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY],
+            "both": [
+                REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY,
+                REAL_LLM_SHARDED_CUDA_STAGE1_CAPABILITY,
+                REAL_LLM_SHARDED_CUDA_BOTH_CAPABILITY,
+            ],
+        }.get(stage, [])
+    return {
+        "stage0": [REAL_LLM_SHARDED_STAGE0_CAPABILITY],
+        "stage1": [REAL_LLM_SHARDED_STAGE1_CAPABILITY],
+        "both": [
+            REAL_LLM_SHARDED_STAGE0_CAPABILITY,
+            REAL_LLM_SHARDED_STAGE1_CAPABILITY,
+            REAL_LLM_SHARDED_BOTH_CAPABILITY,
+        ],
+    }.get(stage, [])
+
+
+def enforce_miner_join_policy(
+    *,
+    miner_id: str,
+    capabilities: dict[str, Any],
+    registry: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], str]:
+    entry = registry.get(str(miner_id or ""))
+    if not entry:
+        return dict(capabilities or {}), ""
+    policy = entry.get("join_policy") if isinstance(entry.get("join_policy"), dict) else {}
+    if not policy:
+        return dict(capabilities or {}), ""
+
+    restricted = dict(capabilities or {})
+    allowed_workload = str(policy.get("read_only_workload") or WORKLOAD_REAL_LLM_SHARDED_INFER)
+    supported_workloads = restricted.get("supported_workloads")
+    if supported_workloads is None:
+        advertised_workloads = {DEFAULT_WORKLOAD_TYPE}
+    elif isinstance(supported_workloads, str):
+        advertised_workloads = {supported_workloads}
+    else:
+        advertised_workloads = {str(value) for value in supported_workloads}
+    if allowed_workload not in advertised_workloads:
+        return restricted, "join_policy_workload_not_advertised"
+    restricted["supported_workloads"] = [allowed_workload]
+
+    backend = str(policy.get("backend") or "").strip()
+    if backend and backend != "any":
+        advertised_backend = str(restricted.get("backend") or "")
+        if advertised_backend and advertised_backend != backend:
+            return restricted, "join_policy_backend_mismatch"
+        restricted["backend"] = backend
+
+    model_id = str(policy.get("hf_model_id") or "").strip()
+    runtime = restricted.get("real_llm_runtime") if isinstance(restricted.get("real_llm_runtime"), dict) else {}
+    if model_id or backend in {"cpu", "cuda"}:
+        advertised_model = str(runtime.get("model_id") or "").strip()
+        if model_id and advertised_model and advertised_model != model_id:
+            return restricted, "join_policy_model_mismatch"
+        runtime = dict(runtime)
+        if model_id:
+            runtime["model_id"] = model_id
+        if backend == "cuda":
+            runtime["adapter_kind"] = "hf_transformers_cuda"
+        elif backend == "cpu":
+            runtime["adapter_kind"] = "hf_transformers_cpu"
+        restricted["real_llm_runtime"] = runtime
+
+    allowed_stage_capabilities = _policy_allowed_stage_capabilities(policy)
+    if allowed_stage_capabilities:
+        advertised_caps = restricted.get("real_llm_sharded_stage_capabilities")
+        if isinstance(advertised_caps, str):
+            advertised_stage_capabilities = {advertised_caps}
+        elif advertised_caps is None:
+            advertised_stage_capabilities = set(allowed_stage_capabilities)
+        else:
+            advertised_stage_capabilities = {str(value) for value in advertised_caps}
+        allowed_set = set(allowed_stage_capabilities)
+        if advertised_stage_capabilities and not (advertised_stage_capabilities & allowed_set):
+            return restricted, "join_policy_stage_mismatch"
+        restricted["real_llm_sharded_stage_capabilities"] = allowed_stage_capabilities
+        restricted["real_llm_sharded_stage_role"] = str(policy.get("stage") or "both")
+
+    return restricted, ""
+
+
+def miner_join_policy_for(miner_id: str, registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    entry = registry.get(str(miner_id or ""))
+    if not isinstance(entry, dict):
+        return {}
+    policy = entry.get("join_policy")
+    return dict(policy) if isinstance(policy, dict) else {}
 
 
 def _metric_value(value: Any) -> str:
@@ -771,9 +875,35 @@ def create_app(
         x_crowdtensor_miner_token: str | None = Header(default=None),
     ) -> dict:
         require_claim_miner(request.miner_id, x_crowdtensor_miner_token)
+        scoped_capabilities, policy_block_reason = enforce_miner_join_policy(
+            miner_id=request.miner_id,
+            capabilities=request.capabilities,
+            registry=configured_miner_registry,
+        )
+        if policy_block_reason:
+            store.record_claim_blocked(
+                request.miner_id,
+                capabilities=request.capabilities,
+                reason=policy_block_reason,
+                blocked_workloads=[WORKLOAD_REAL_LLM_SHARDED_INFER],
+            )
+            raise HTTPException(status_code=503, detail=policy_block_reason)
+        policy = miner_join_policy_for(request.miner_id, configured_miner_registry)
+        quota_task_limit = int(policy.get("quota_task_limit") or 0) if policy else 0
+        if quota_task_limit > 0:
+            usage = store.miner_claim_usage(request.miner_id)
+            if int(usage.get("claim_count") or 0) >= quota_task_limit:
+                reason = "join_policy_quota_exhausted"
+                store.record_claim_blocked(
+                    request.miner_id,
+                    capabilities=scoped_capabilities,
+                    reason=reason,
+                    blocked_workloads=[str(policy.get("read_only_workload") or WORKLOAD_REAL_LLM_SHARDED_INFER)],
+                )
+                raise HTTPException(status_code=503, detail=reason)
         store.reap_expired()
         try:
-            return store.claim_task(request.miner_id, capabilities=request.capabilities)
+            return store.claim_task(request.miner_id, capabilities=scoped_capabilities)
         except NoTaskAvailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 

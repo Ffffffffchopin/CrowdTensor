@@ -34,9 +34,9 @@ Hivemind-level large-model serving.
 
 - Shorten the two-machine setup path.
 - Improve join packs for non-expert Miner operators.
-- Turn private Miner join invites into the default remote onboarding path, then
-  enforce the recorded join policy as runtime quotas, abuse controls, and
-  operator-visible trust state.
+- Extend private Miner join policy enforcement from scope/quota gates into rate
+  limits, accounting ledger rows, reward summaries, and operator-visible trust
+  state.
 - Make logs, diagnosis codes, and support bundles easier to read.
 - Keep printed next commands copyable while surfacing tokens and peer secrets
   as environment requirements rather than report contents.
