@@ -517,6 +517,11 @@ crowdtensor operator-invite \
 
 Add `--inference-session-rate-limit N --inference-session-rate-window-seconds S`
 to rate-limit generation session creation per admin/operator subject.
+Use `crowdtensor operator-status --coordinator-url ...` as a read-only daily
+operator check over `/ready`, `/state`, trust/quarantine counters, and optional
+accounting/settlement summaries. It writes public-safe
+`crowdtensor_operator_status_cli_v1` artifacts and does not create sessions,
+override trust, or execute payments.
 Use `crowdtensor trust --coordinator-url ...` to write a public-safe
 `crowdtensor_trust_cli_v1` trust/quarantine report from `/state`, and add
 `--mode block|allow|reset --miner-id ... --workload-type ...` with an

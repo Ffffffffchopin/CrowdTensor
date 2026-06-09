@@ -119,6 +119,7 @@ PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
+OPERATOR_STATUS_CLI_SCHEMA = "crowdtensor_operator_status_cli_v1"
 OPERATOR_TRUST_CLI_SCHEMA = "crowdtensor_trust_cli_v1"
 OPERATOR_SETTLEMENT_CLI_SCHEMA = "crowdtensor_settlement_cli_v1"
 MINER_JOIN_INVITE_SCHEMA = "crowdtensor_miner_join_invite_v1"
@@ -15772,6 +15773,502 @@ def _safe_trust_state_summary(
     }
 
 
+def _operator_registry_status(ready: dict[str, Any]) -> dict[str, Any]:
+    auth = ready.get("auth") if isinstance(ready.get("auth"), dict) else {}
+    registry = ready.get("operator_registry_summary") if isinstance(ready.get("operator_registry_summary"), dict) else {}
+    operators = registry.get("operators") if isinstance(registry.get("operators"), list) else []
+    role_counts: dict[str, int] = {}
+    policy_counts = {
+        "with_session_policy": 0,
+        "with_rate_limit": 0,
+        "with_total_session_limit": 0,
+        "with_active_session_limit": 0,
+        "with_workload_allowlist": 0,
+    }
+    safe_operators: list[dict[str, Any]] = []
+    for operator in operators:
+        if not isinstance(operator, dict):
+            continue
+        roles = [str(role) for role in operator.get("roles") or [] if str(role)]
+        for role in roles:
+            role_counts[role] = role_counts.get(role, 0) + 1
+        policy = operator.get("session_policy") if isinstance(operator.get("session_policy"), dict) else {}
+        if policy:
+            policy_counts["with_session_policy"] += 1
+        if int(policy.get("rate_limit") or 0) > 0:
+            policy_counts["with_rate_limit"] += 1
+        if int(policy.get("max_total_sessions") or 0) > 0:
+            policy_counts["with_total_session_limit"] += 1
+        if int(policy.get("max_active_sessions") or 0) > 0:
+            policy_counts["with_active_session_limit"] += 1
+        if policy.get("allowed_workloads"):
+            policy_counts["with_workload_allowlist"] += 1
+        safe_operators.append({
+            "operator_id": operator.get("operator_id"),
+            "enabled": bool(operator.get("enabled")),
+            "label_present": bool(str(operator.get("label") or "").strip()),
+            "roles": roles,
+            "session_policy": {
+                "allowed_workloads": list(policy.get("allowed_workloads") or []),
+                "max_request_count": int(policy.get("max_request_count") or 0),
+                "max_decode_steps": int(policy.get("max_decode_steps") or 0),
+                "max_new_tokens": int(policy.get("max_new_tokens") or 0),
+                "max_active_sessions": int(policy.get("max_active_sessions") or 0),
+                "max_total_sessions": int(policy.get("max_total_sessions") or 0),
+                "rate_limit": int(policy.get("rate_limit") or 0),
+                "rate_window_seconds": float(policy.get("rate_window_seconds") or 0.0),
+            },
+        })
+    return {
+        "schema": "crowdtensor_operator_registry_status_v1",
+        "admin_configured": bool(auth.get("admin_configured")),
+        "operator_registry_configured": bool(auth.get("operator_registry_configured")),
+        "operator_count": int(registry.get("operator_count") or len(safe_operators)),
+        "enabled_operator_count": sum(1 for operator in safe_operators if operator.get("enabled")),
+        "role_counts": role_counts,
+        "session_policy_counts": policy_counts,
+        "operators": safe_operators,
+        "plaintext_credentials_public": False,
+    }
+
+
+def _miner_registry_status(ready: dict[str, Any]) -> dict[str, Any]:
+    auth = ready.get("auth") if isinstance(ready.get("auth"), dict) else {}
+    registry = ready.get("miner_policy_summary") if isinstance(ready.get("miner_policy_summary"), dict) else {}
+    miners = registry.get("miners") if isinstance(registry.get("miners"), list) else []
+    safe_miners: list[dict[str, Any]] = []
+    stage_counts: dict[str, int] = {}
+    backend_counts: dict[str, int] = {}
+    trust_tier_counts: dict[str, int] = {}
+    policy_counts = {
+        "with_quota_limit": 0,
+        "with_claim_rate_limit": 0,
+        "with_reward_account": 0,
+    }
+    for miner in miners:
+        if not isinstance(miner, dict):
+            continue
+        policy = miner.get("policy") if isinstance(miner.get("policy"), dict) else {}
+        stage = str(policy.get("stage") or "")
+        backend = str(policy.get("backend") or "")
+        trust_tier = str(policy.get("trust_tier") or "new")
+        if stage:
+            stage_counts[stage] = stage_counts.get(stage, 0) + 1
+        if backend:
+            backend_counts[backend] = backend_counts.get(backend, 0) + 1
+        if trust_tier:
+            trust_tier_counts[trust_tier] = trust_tier_counts.get(trust_tier, 0) + 1
+        if int(policy.get("quota_task_limit") or 0) > 0:
+            policy_counts["with_quota_limit"] += 1
+        if int(policy.get("claim_rate_limit") or 0) > 0:
+            policy_counts["with_claim_rate_limit"] += 1
+        if bool(policy.get("reward_account_present")):
+            policy_counts["with_reward_account"] += 1
+        safe_miners.append({
+            "miner_id": miner.get("miner_id"),
+            "enabled": bool(miner.get("enabled")),
+            "label_present": bool(str(miner.get("label") or "").strip()),
+            "policy": {
+                "stage": stage,
+                "backend": backend,
+                "hf_model_id": str(policy.get("hf_model_id") or ""),
+                "trust_tier": trust_tier,
+                "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+                "claim_rate_limit": int(policy.get("claim_rate_limit") or 0),
+                "claim_rate_window_seconds": float(policy.get("claim_rate_window_seconds") or 0.0),
+                "reward_account_present": bool(policy.get("reward_account_present")),
+                "read_only_workload": str(policy.get("read_only_workload") or ""),
+            },
+        })
+    return {
+        "schema": "crowdtensor_miner_registry_status_v1",
+        "miner_required": bool(auth.get("miner_required")),
+        "miner_registry_configured": bool(auth.get("miner_registry_configured")),
+        "miner_count": int(registry.get("miner_count") or len(safe_miners)),
+        "policy_count": int(registry.get("policy_count") or len(safe_miners)),
+        "enabled_miner_count": sum(1 for miner in safe_miners if miner.get("enabled")),
+        "stage_counts": stage_counts,
+        "backend_counts": backend_counts,
+        "trust_tier_counts": trust_tier_counts,
+        "policy_counts": policy_counts,
+        "miners": safe_miners,
+        "plaintext_credentials_public": False,
+        "reward_accounts_public": False,
+    }
+
+
+def _safe_accounting_status(accounting: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "crowdtensor_accounting_status_v1",
+        "source_schema": accounting.get("schema"),
+        "row_count": int(accounting.get("row_count") or 0),
+        "limit": int(accounting.get("limit") or 0),
+        "status": accounting.get("status"),
+        "miner_totals_count": len(accounting.get("miner_totals") or {}) if isinstance(accounting.get("miner_totals"), dict) else 0,
+        "created_by_subject_totals_count": (
+            len(accounting.get("created_by_subject_totals") or {})
+            if isinstance(accounting.get("created_by_subject_totals"), dict)
+            else 0
+        ),
+        "raw_prompts_public": bool(accounting.get("raw_prompts_public")),
+        "raw_outputs_public": bool(accounting.get("raw_outputs_public")),
+        "lease_material_public": bool(accounting.get("lease_material_public")),
+        "public_artifact_safe": bool(accounting.get("public_artifact_safe", True)),
+    }
+
+
+def _safe_settlement_status(settlement: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "crowdtensor_settlement_status_v1",
+        "source_schema": settlement.get("schema"),
+        "row_count": int(settlement.get("row_count") or 0),
+        "limit": int(settlement.get("limit") or 0),
+        "unit_price_microcredits": int(settlement.get("unit_price_microcredits") or 0),
+        "settlement_totals_count": (
+            len(settlement.get("settlement_totals") or {})
+            if isinstance(settlement.get("settlement_totals"), dict)
+            else 0
+        ),
+        "created_by_subject_totals_count": (
+            len(settlement.get("created_by_subject_totals") or {})
+            if isinstance(settlement.get("created_by_subject_totals"), dict)
+            else 0
+        ),
+        "draft_only": settlement.get("draft_only") is not False,
+        "payment_executed": bool(settlement.get("payment_executed")),
+        "reward_accounts_public": bool(settlement.get("reward_accounts_public")),
+        "raw_prompts_public": bool(settlement.get("raw_prompts_public")),
+        "raw_outputs_public": bool(settlement.get("raw_outputs_public")),
+        "lease_material_public": bool(settlement.get("lease_material_public")),
+        "public_artifact_safe": bool(settlement.get("public_artifact_safe", True)),
+    }
+
+
+def _operator_status_next_actions(report: dict[str, Any]) -> list[str]:
+    codes = set(str(code) for code in report.get("diagnosis_codes") or [])
+    actions: list[str] = []
+    if "coordinator_route_missing" in codes:
+        actions.append("Pass --coordinator-url for the running Coordinator.")
+    if "ready_unreachable" in codes:
+        actions.append("Start the Coordinator or fix the URL, DNS, firewall, VPN, tunnel, or reverse proxy.")
+    if "state_unavailable" in codes:
+        actions.append("Pass --observer-token or set CROWDTENSOR_OBSERVER_TOKEN when /state is protected.")
+    if "admin_summary_unavailable" in codes:
+        actions.append("Pass an owner/admin/accounting token to include accounting and settlement summaries.")
+    if "trust_effective_blocks_present" in codes:
+        actions.append("Inspect trust_summary rows, then use crowdtensor trust --mode allow/block/reset for workload-scoped decisions.")
+    if "blocked_claim_audit_ready" in codes:
+        actions.append("Review last_blocked_claim and Miner join policy before handing out more join packages.")
+    if "operator_registry_missing" in codes:
+        actions.append("Use crowdtensor operator-invite and start serve with --operator-token-registry for role-scoped operators.")
+    if "miner_registry_missing" in codes:
+        actions.append("Use swarm-bootstrap or create_miner_invite to move Miner admission off a shared token.")
+    if not actions:
+        actions.append("Review operator_status.md; no immediate control-plane blocker was detected.")
+    return actions
+
+
+def render_operator_status_markdown(report: dict[str, Any]) -> str:
+    ready = report.get("ready_summary") if isinstance(report.get("ready_summary"), dict) else {}
+    operator_registry = report.get("operator_registry") if isinstance(report.get("operator_registry"), dict) else {}
+    miner_registry = report.get("miner_registry") if isinstance(report.get("miner_registry"), dict) else {}
+    trust = report.get("trust_summary") if isinstance(report.get("trust_summary"), dict) else {}
+    accounting = report.get("accounting_status") if isinstance(report.get("accounting_status"), dict) else {}
+    settlement = report.get("settlement_status") if isinstance(report.get("settlement_status"), dict) else {}
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    lines = [
+        "# CrowdTensor Operator Status",
+        "",
+        f"- OK: `{bool(report.get('ok'))}`",
+        f"- Coordinator: `{report.get('coordinator_url') or ''}`",
+        f"- Ready: `{bool(ready.get('ok'))}`",
+        f"- Event index: `{ready.get('event_index')}`",
+        f"- Task counts: `{ready.get('task_counts') or {}}`",
+        f"- Diagnosis: `{', '.join(str(code) for code in (report.get('diagnosis_codes') or []))}`",
+        "",
+        "## Access",
+        "",
+        f"- Admin configured: `{bool(operator_registry.get('admin_configured'))}`",
+        f"- Operator registry configured: `{bool(operator_registry.get('operator_registry_configured'))}`",
+        f"- Operators: `{operator_registry.get('enabled_operator_count', 0)}` enabled of `{operator_registry.get('operator_count', 0)}`",
+        f"- Operator roles: `{operator_registry.get('role_counts') or {}}`",
+        f"- Miner registry configured: `{bool(miner_registry.get('miner_registry_configured'))}`",
+        f"- Miners: `{miner_registry.get('enabled_miner_count', 0)}` enabled of `{miner_registry.get('miner_count', 0)}`",
+        f"- Miner stages: `{miner_registry.get('stage_counts') or {}}`",
+        f"- Miner trust tiers: `{miner_registry.get('trust_tier_counts') or {}}`",
+        "",
+        "## Abuse And Trust",
+        "",
+        f"- Blocked claims: `{trust.get('blocked_claims', 0)}`",
+        f"- Auto quarantined pairs: `{trust.get('auto_quarantined_count', 0)}`",
+        f"- Effective blocked pairs: `{trust.get('effective_blocked_count', 0)}`",
+        f"- Manual blocked pairs: `{trust.get('manual_blocked_count', 0)}`",
+        f"- Trust override counts: `{trust.get('trust_override_counts') or {}}`",
+        "",
+        "## Accounting",
+        "",
+    ]
+    if accounting:
+        lines.extend([
+            f"- Accounting rows: `{accounting.get('row_count', 0)}`",
+            f"- Miner totals: `{accounting.get('miner_totals_count', 0)}`",
+            f"- Subject totals: `{accounting.get('created_by_subject_totals_count', 0)}`",
+        ])
+    else:
+        lines.append("- Accounting summary: `not-requested-or-unavailable`")
+    if settlement:
+        lines.extend([
+            f"- Settlement rows: `{settlement.get('row_count', 0)}`",
+            f"- Settlement totals: `{settlement.get('settlement_totals_count', 0)}`",
+            f"- Draft only: `{bool(settlement.get('draft_only', True))}`",
+            f"- Payment executed: `{bool(settlement.get('payment_executed'))}`",
+            f"- Reward accounts public: `{bool(settlement.get('reward_accounts_public'))}`",
+        ])
+    else:
+        lines.append("- Settlement summary: `not-requested-or-unavailable`")
+    lines.extend([
+        "",
+        "## Actions",
+        "",
+    ])
+    for action in report.get("next_actions") or []:
+        lines.append(f"- {action}")
+    lines.extend([
+        "",
+        "## Safety",
+        "",
+        f"- Public artifact safe: `{bool(report.get('public_artifact_safe'))}`",
+        f"- Admin credentials public: `{bool(safety.get('admin_credentials_public'))}`",
+        f"- Observer credentials public: `{bool(safety.get('observer_credentials_public'))}`",
+        f"- Raw prompts public: `{bool(safety.get('raw_prompts_public'))}`",
+        f"- Raw outputs public: `{bool(safety.get('raw_outputs_public'))}`",
+        "- This is a read-only operator status artifact; it does not execute billing, staking, payouts, trust overrides, or inference work.",
+        "",
+        "## Artifacts",
+        "",
+    ])
+    for name, artifact in sorted(artifacts.items()):
+        if not isinstance(artifact, dict):
+            continue
+        lines.append(f"- `{name}`: path=`{artifact.get('path')}` present=`{artifact.get('present')}`")
+    if not artifacts:
+        lines.append("- None.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_operator_status(args: argparse.Namespace) -> dict[str, Any]:
+    coordinator_url = str(getattr(args, "coordinator_url", "") or "").strip().rstrip("/")
+    observer_token = str(getattr(args, "observer_token", "") or "")
+    admin_token = str(getattr(args, "admin_token", "") or "")
+    output_dir = Path(str(getattr(args, "output_dir", "dist/operator-status") or "dist/operator-status"))
+    limit = int(getattr(args, "limit", 50) or 50)
+    report: dict[str, Any] = {
+        "schema": OPERATOR_STATUS_CLI_SCHEMA,
+        "ok": False,
+        "mode": "operator-status",
+        "coordinator_url": coordinator_url,
+        "output_dir": str(output_dir),
+        "include_admin_summaries": bool(getattr(args, "include_admin_summaries", False)),
+        "diagnosis_codes": [],
+        "public_artifact_safe": True,
+        "safety": {
+            "admin_credentials_public": False,
+            "observer_credentials_public": False,
+            "raw_prompts_public": False,
+            "raw_outputs_public": False,
+            "claim_private_material_public": False,
+            "reward_destination_values_public": False,
+            "read_only": True,
+            "no_trust_override_executed": True,
+            "payment_executed": False,
+            "not_production_billing": True,
+            "not_sybil_resistant": True,
+        },
+        "operator_action": "",
+    }
+    redactions = unique_redaction_values([observer_token, admin_token])
+    if not coordinator_url:
+        report["diagnosis_codes"] = ["coordinator_route_missing"]
+        report["operator_action"] = "Pass --coordinator-url for the running Coordinator."
+        return sanitize(redact_values(report, redactions))
+    try:
+        ready = request_json_url(
+            "GET",
+            coordinator_url,
+            "/ready",
+            timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+        )
+        report["ready_summary"] = {
+            "schema": "crowdtensor_operator_ready_summary_v1",
+            "ok": bool(ready.get("ok")),
+            "service": ready.get("service"),
+            "version": ready.get("version"),
+            "event_index": ready.get("event_index"),
+            "task_counts": dict(ready.get("task_counts") or {}),
+            "task_lane_count": len(ready.get("task_lanes") or []),
+            "auth": dict(ready.get("auth") or {}),
+        }
+        report["operator_registry"] = _operator_registry_status(ready)
+        report["miner_registry"] = _miner_registry_status(ready)
+        report["diagnosis_codes"].append("ready_summary_ready")
+        if not bool((ready.get("auth") or {}).get("operator_registry_configured")):
+            report["diagnosis_codes"].append("operator_registry_missing")
+        if not bool((ready.get("auth") or {}).get("miner_registry_configured")):
+            report["diagnosis_codes"].append("miner_registry_missing")
+    except Exception as exc:
+        report["ready_error"] = type(exc).__name__
+        report["ready_detail"] = redact_text(str(exc), redactions)[:200]
+        report["diagnosis_codes"].append("ready_unreachable")
+    state_ready = False
+    try:
+        state = request_json_url(
+            "GET",
+            coordinator_url,
+            "/state",
+            observer_token=observer_token,
+            timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+        )
+        trust_summary = _safe_trust_state_summary(state, limit=limit)
+        report["trust_summary"] = trust_summary
+        state_ready = True
+        report["diagnosis_codes"].append("trust_state_summary_ready")
+        if int(trust_summary.get("blocked_claims") or 0) > 0:
+            report["diagnosis_codes"].append("blocked_claim_audit_ready")
+        if int(trust_summary.get("effective_blocked_count") or 0) > 0:
+            report["diagnosis_codes"].append("trust_effective_blocks_present")
+        else:
+            report["diagnosis_codes"].append("trust_no_effective_blocks")
+    except Exception as exc:
+        report["state_error"] = type(exc).__name__
+        report["state_detail"] = redact_text(str(exc), redactions)[:200]
+        report["diagnosis_codes"].append("state_unavailable")
+        if isinstance(exc, HTTPError) and int(exc.code) in {401, 403}:
+            report["diagnosis_codes"].append("observer_token_rejected")
+    admin_ready = False
+    if bool(getattr(args, "include_admin_summaries", False)):
+        if not admin_token:
+            report["diagnosis_codes"].append("admin_token_required_for_admin_summaries")
+        else:
+            try:
+                accounting = request_json_url(
+                    "GET",
+                    coordinator_url,
+                    f"/admin/accounting?{urlencode({'limit': limit, 'status': 'any'})}",
+                    admin_token=admin_token,
+                    timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+                )
+                settlement = request_json_url(
+                    "GET",
+                    coordinator_url,
+                    f"/admin/settlement?{urlencode({'limit': limit, 'unit_price_microcredits': int(getattr(args, 'unit_price_microcredits', 0) or 0)})}",
+                    admin_token=admin_token,
+                    timeout=float(getattr(args, "http_timeout", 10.0) or 10.0),
+                )
+                report["accounting_status"] = _safe_accounting_status(accounting)
+                report["settlement_status"] = _safe_settlement_status(settlement)
+                admin_ready = bool(
+                    accounting.get("schema") == "miner_accounting_summary_v1"
+                    and settlement.get("schema") == "miner_settlement_draft_v1"
+                    and settlement.get("payment_executed") is False
+                    and settlement.get("reward_accounts_public") is False
+                )
+                report["diagnosis_codes"].append("accounting_status_ready")
+                report["diagnosis_codes"].append("settlement_status_ready")
+                if admin_ready:
+                    report["diagnosis_codes"].append("operator_admin_summaries_ready")
+            except Exception as exc:
+                report["admin_summary_error"] = type(exc).__name__
+                report["admin_summary_detail"] = redact_text(str(exc), redactions)[:200]
+                report["diagnosis_codes"].append("admin_summary_unavailable")
+                if isinstance(exc, HTTPError) and int(exc.code) in {401, 403}:
+                    report["diagnosis_codes"].append("operator_admin_token_rejected")
+    ready_ok = "ready_summary_ready" in report["diagnosis_codes"]
+    report["ok"] = bool(ready_ok and (state_ready or not bool(getattr(args, "require_state", False))) and report.get("public_artifact_safe"))
+    if bool(getattr(args, "include_admin_summaries", False)) and bool(getattr(args, "require_admin_summaries", False)):
+        report["ok"] = bool(report["ok"] and admin_ready)
+    report["diagnosis_codes"] = sorted(set(str(code) for code in report.get("diagnosis_codes", []) if code))
+    report["next_actions"] = _operator_status_next_actions(report)
+    report["operator_action"] = report["next_actions"][0] if report["next_actions"] else ""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report["saved_summary"] = {
+        "path": str(output_dir / "operator_status.json"),
+        "markdown_path": str(output_dir / "operator_status.md"),
+        "public_artifact_safe": True,
+    }
+    report["artifacts"] = {
+        "operator_status": {
+            "path": str(output_dir / "operator_status.json"),
+            "present": True,
+            "kind": "crowdtensor_operator_status",
+        },
+        "operator_status_markdown": {
+            "path": str(output_dir / "operator_status.md"),
+            "present": True,
+            "kind": "crowdtensor_operator_status_markdown",
+        },
+    }
+    safe_report = sanitize(redact_values(copy.deepcopy(report), redactions))
+    (output_dir / "operator_status.json").write_text(
+        json.dumps(safe_report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "operator_status.md").write_text(
+        render_operator_status_markdown(safe_report),
+        encoding="utf-8",
+    )
+    return safe_report
+
+
+def print_operator_status(report: dict[str, Any]) -> None:
+    ready = report.get("ready_summary") if isinstance(report.get("ready_summary"), dict) else {}
+    operator_registry = report.get("operator_registry") if isinstance(report.get("operator_registry"), dict) else {}
+    miner_registry = report.get("miner_registry") if isinstance(report.get("miner_registry"), dict) else {}
+    trust = report.get("trust_summary") if isinstance(report.get("trust_summary"), dict) else {}
+    accounting = report.get("accounting_status") if isinstance(report.get("accounting_status"), dict) else {}
+    settlement = report.get("settlement_status") if isinstance(report.get("settlement_status"), dict) else {}
+    saved = report.get("saved_summary") if isinstance(report.get("saved_summary"), dict) else {}
+    print("CrowdTensor operator status")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  schema: {report.get('schema')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    print(f"  ready: {ready.get('ok')} event_index={ready.get('event_index')} task_counts={ready.get('task_counts')}")
+    print(
+        "  operators: "
+        f"registry={operator_registry.get('operator_registry_configured')} "
+        f"enabled={operator_registry.get('enabled_operator_count', 0)}/{operator_registry.get('operator_count', 0)} "
+        f"roles={operator_registry.get('role_counts') or {}}"
+    )
+    print(
+        "  miners: "
+        f"registry={miner_registry.get('miner_registry_configured')} "
+        f"enabled={miner_registry.get('enabled_miner_count', 0)}/{miner_registry.get('miner_count', 0)} "
+        f"stages={miner_registry.get('stage_counts') or {}}"
+    )
+    print(
+        "  trust: "
+        f"blocked_claims={trust.get('blocked_claims', 0)} "
+        f"effective_blocked={trust.get('effective_blocked_count', 0)} "
+        f"manual_blocked={trust.get('manual_blocked_count', 0)}"
+    )
+    if accounting:
+        print(f"  accounting: rows={accounting.get('row_count', 0)} totals={accounting.get('miner_totals_count', 0)}")
+    if settlement:
+        print(
+            "  settlement: "
+            f"rows={settlement.get('row_count', 0)} "
+            f"draft_only={settlement.get('draft_only')} "
+            f"payment_executed={settlement.get('payment_executed')}"
+        )
+    print(f"  output: {report.get('output_dir')}")
+    if saved:
+        print(f"  saved_summary: {saved.get('path')} markdown={saved.get('markdown_path')}")
+    print(f"  diagnosis: {', '.join(str(code) for code in (report.get('diagnosis_codes') or []))}")
+    for action in report.get("next_actions") or []:
+        print(f"  action: {action}")
+
+
 def render_operator_trust_markdown(report: dict[str, Any]) -> str:
     summary = report.get("trust_summary") if isinstance(report.get("trust_summary"), dict) else {}
     filters = report.get("filters") if isinstance(report.get("filters"), dict) else {}
@@ -21089,6 +21586,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     operator_invite.add_argument("--invite-file", default="")
     operator_invite.add_argument("--json", action="store_true")
 
+    operator_status = subparsers.add_parser(
+        "operator-status",
+        help="Read a running Coordinator and write a public-safe operator status report.",
+        description=(
+            "Fetch /ready and /state to summarize role-scoped operator setup, Miner admission "
+            "policy, abuse controls, trust/quarantine state, and optional accounting/settlement "
+            "readiness. This is read-only: it does not create sessions, override trust, or execute payments."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crowdtensor operator-status --coordinator-url http://127.0.0.1:8787\n"
+            "  CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} \\\n"
+            "    crowdtensor operator-status --coordinator-url http://127.0.0.1:8787 \\\n"
+            "      --observer-token \"$CROWDTENSOR_OBSERVER_TOKEN\" --include-admin-summaries --json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    operator_status.add_argument("--output-dir", default="dist/operator-status")
+    operator_status.add_argument("--coordinator-url", default=os.environ.get("CROWDTENSOR_COORDINATOR_URL", ""))
+    operator_status.add_argument("--observer-token", default=os.environ.get("CROWDTENSOR_OBSERVER_TOKEN", ""))
+    operator_status.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", ""))
+    operator_status.add_argument("--include-admin-summaries", action="store_true")
+    operator_status.add_argument("--require-state", action="store_true")
+    operator_status.add_argument("--require-admin-summaries", action="store_true")
+    operator_status.add_argument("--limit", type=int, default=50)
+    operator_status.add_argument("--unit-price-microcredits", type=int, default=0)
+    operator_status.add_argument("--http-timeout", type=float, default=10.0)
+    operator_status.add_argument("--json", action="store_true")
+
     trust = subparsers.add_parser(
         "trust",
         help="Inspect Miner trust/quarantine state or set a workload-scoped override.",
@@ -23481,7 +24007,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -23589,6 +24115,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--rate-window-seconds must be non-negative")
         if (args.rate_limit > 0) != (args.rate_window_seconds > 0):
             raise SystemExit("--rate-limit and --rate-window-seconds must be set together")
+    if args.command == "operator-status":
+        if args.coordinator_url:
+            parsed_status_url = urlparse(args.coordinator_url)
+            if parsed_status_url.scheme not in {"http", "https"} or not parsed_status_url.hostname:
+                raise SystemExit("--coordinator-url must be a full http(s) URL with a host")
+        if args.limit < 0 or args.limit > 500:
+            raise SystemExit("--limit must be between 0 and 500")
+        if args.unit_price_microcredits < 0:
+            raise SystemExit("--unit-price-microcredits must be non-negative")
+        if args.http_timeout <= 0:
+            raise SystemExit("--http-timeout must be positive")
+        if args.require_admin_summaries and not args.include_admin_summaries:
+            raise SystemExit("--require-admin-summaries requires --include-admin-summaries")
     if args.command == "trust":
         if args.coordinator_url:
             parsed_trust_url = urlparse(args.coordinator_url)
@@ -24618,6 +25157,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_operator_invite(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "operator-status":
+        report = build_operator_status(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_operator_status(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "trust":
         report = build_operator_trust(args)

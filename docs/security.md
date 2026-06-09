@@ -250,6 +250,13 @@ settlement attribution. The `created_by_subject` query parameter is an exact
 label filter for accounting/settlement export, not a token lookup; plaintext
 admin/operator tokens remain private and are never included in those rows or
 totals.
+For routine read-only operator triage, `crowdtensor operator-status` combines
+safe `/ready`, `/state`, and optional `/admin/accounting` plus
+`/admin/settlement` summaries into `crowdtensor_operator_status_cli_v1`
+artifacts (`operator_status.json` and `operator_status.md`). It keeps admin and
+observer credentials, raw prompts, outputs, lease material, reward account
+values, and private claim details out of generated reports, and it does not
+create sessions, set trust overrides, or execute payments.
 For the operator CLI path, `crowdtensor settlement` fetches
 `/admin/settlement` and optionally `/admin/accounting`, writes
 `crowdtensor_settlement_cli_v1` artifacts, and keeps admin credentials, reward

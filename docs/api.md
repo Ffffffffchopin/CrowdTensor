@@ -68,6 +68,15 @@ token to the registry subject, roles, and optional session policy without
 exposing the plaintext token in `/ready`, accounting, settlement, or support
 artifacts.
 
+Use `crowdtensor operator-status` against a running Coordinator for a read-only
+operator control-plane summary. It emits `crowdtensor_operator_status_cli_v1`,
+writes `operator_status.json` and `operator_status.md`, and combines safe
+`/ready` auth/registry metadata, `/state` trust and blocked-claim counters, and
+optional `/admin/accounting` plus `/admin/settlement` status when
+`--include-admin-summaries` is used with an owner/admin/accounting token. The
+CLI does not create inference sessions, change trust overrides, or execute
+payments.
+
 ## Public Endpoints
 
 ### `GET /health`

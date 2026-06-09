@@ -1521,6 +1521,329 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("session_policy:", rendered)
         self.assertNotIn("operator-secret", rendered)
 
+    def test_operator_status_summarizes_control_plane_without_leaking_tokens(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "operator-status"
+        admin_token = "status-admin-secret"
+        observer_token = "status-observer-secret"
+        calls: list[dict[str, object]] = []
+
+        def fake_request(method, base_url, path, payload=None, *, admin_token="", miner_token="", observer_token="", timeout=10.0):
+            calls.append({
+                "method": method,
+                "base_url": base_url,
+                "path": path,
+                "payload": payload,
+                "admin_token": admin_token,
+                "miner_token": miner_token,
+                "observer_token": observer_token,
+                "timeout": timeout,
+            })
+            if path == "/ready":
+                return {
+                    "ok": True,
+                    "service": "crowdtensord-coordinator",
+                    "version": "0.1.0a0",
+                    "event_index": 42,
+                    "task_counts": {"queued": 1, "leased": 0, "completed": 2, "rejected": 1},
+                    "task_lanes": [{"workload_type": "real_llm_sharded_infer"}],
+                    "auth": {
+                        "miner_required": True,
+                        "observer_required": True,
+                        "admin_configured": True,
+                        "miner_registry_configured": True,
+                        "operator_registry_configured": True,
+                    },
+                    "operator_registry_summary": {
+                        "schema": "crowdtensor_operator_registry_summary_v1",
+                        "operator_count": 2,
+                        "operators": [
+                            {
+                                "operator_id": "generate-desk",
+                                "enabled": True,
+                                "label": "private desk label",
+                                "roles": ["admin"],
+                                "session_policy": {
+                                    "allowed_workloads": ["real_llm_sharded_infer"],
+                                    "max_new_tokens": 8,
+                                    "max_total_sessions": 100,
+                                    "rate_limit": 3,
+                                    "rate_window_seconds": 60.0,
+                                },
+                            },
+                            {
+                                "operator_id": "acct",
+                                "enabled": True,
+                                "label": "accounting",
+                                "roles": ["accounting"],
+                                "session_policy": {},
+                            },
+                        ],
+                        "plaintext_tokens_public": False,
+                        "public_artifact_safe": True,
+                    },
+                    "miner_policy_summary": {
+                        "schema": "crowdtensor_miner_registry_policy_summary_v1",
+                        "miner_count": 2,
+                        "policy_count": 2,
+                        "miners": [
+                            {
+                                "miner_id": "stage0-miner",
+                                "enabled": True,
+                                "label": "stage0 private label",
+                                "policy": {
+                                    "stage": "stage0",
+                                    "backend": "cpu",
+                                    "hf_model_id": "sshleifer/tiny-gpt2",
+                                    "trust_tier": "probation",
+                                    "quota_task_limit": 10,
+                                    "claim_rate_limit": 2,
+                                    "claim_rate_window_seconds": 60.0,
+                                    "reward_account_present": True,
+                                    "reward_account": "acct-private-stage0",
+                                    "read_only_workload": "real_llm_sharded_infer",
+                                },
+                            },
+                            {
+                                "miner_id": "stage1-miner",
+                                "enabled": True,
+                                "label": "stage1 private label",
+                                "policy": {
+                                    "stage": "stage1",
+                                    "backend": "cpu",
+                                    "trust_tier": "trusted",
+                                    "reward_account_present": False,
+                                    "read_only_workload": "real_llm_sharded_infer",
+                                },
+                            },
+                        ],
+                        "plaintext_tokens_public": False,
+                        "reward_accounts_public": False,
+                        "public_artifact_safe": True,
+                    },
+                }
+            if path == "/state":
+                return {
+                    "event_index": 42,
+                    "miner_workload_scores": {
+                        "bad-miner": {
+                            "cpu_lora_mock": {
+                                "accepted": 0,
+                                "rejected": 2,
+                                "consecutive_rejections": 2,
+                                "score": -4.0,
+                                "avg_staleness": 0.0,
+                                "last_rejection_code": "adapter_delta_norm_too_large",
+                                "quarantined": True,
+                            }
+                        }
+                    },
+                    "quarantined_miners": {"bad-miner": {"cpu_lora_mock": {"score": -4.0}}},
+                    "effective_quarantined_miners": {"bad-miner": {"cpu_lora_mock": {"score": -4.0}}},
+                    "manual_blocked_miners": {},
+                    "miner_trust_overrides": {},
+                    "blocked_claims": 1,
+                    "last_blocked_claim": {
+                        "event_index": 41,
+                        "miner_id": "bad-miner",
+                        "capabilities": {"private_note": "state-secret"},
+                        "blocked_workloads": ["cpu_lora_mock"],
+                        "reason": "miner quarantined for workload",
+                    },
+                    "incompatible_claims": 0,
+                }
+            if path.startswith("/admin/accounting"):
+                return {
+                    "schema": "miner_accounting_summary_v1",
+                    "row_count": 2,
+                    "limit": 25,
+                    "status": "any",
+                    "miner_totals": {"stage0/real": {"accepted": 1}},
+                    "created_by_subject_totals": {"operator:generate-desk/real": {"accepted": 1}},
+                    "raw_prompts_public": False,
+                    "raw_outputs_public": False,
+                    "lease_material_public": False,
+                    "public_artifact_safe": True,
+                }
+            if path.startswith("/admin/settlement"):
+                return {
+                    "schema": "miner_settlement_draft_v1",
+                    "row_count": 1,
+                    "limit": 25,
+                    "unit_price_microcredits": 4,
+                    "settlement_totals": {"stage0/real": {"accepted": 1}},
+                    "created_by_subject_totals": {"operator:generate-desk/real": {"accepted": 1}},
+                    "draft_only": True,
+                    "payment_executed": False,
+                    "reward_accounts_public": False,
+                    "raw_prompts_public": False,
+                    "raw_outputs_public": False,
+                    "lease_material_public": False,
+                    "public_artifact_safe": True,
+                }
+            raise AssertionError(path)
+
+        args = cli.parse_args([
+            "operator-status",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--observer-token",
+            observer_token,
+            "--admin-token",
+            admin_token,
+            "--include-admin-summaries",
+            "--limit",
+            "25",
+            "--unit-price-microcredits",
+            "4",
+            "--http-timeout",
+            "8",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_operator_status(args)
+
+        saved_json = (output_dir / "operator_status.json").read_text(encoding="utf-8")
+        saved_md = (output_dir / "operator_status.md").read_text(encoding="utf-8")
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "crowdtensor_operator_status_cli_v1")
+        self.assertIn("ready_summary_ready", report["diagnosis_codes"])
+        self.assertIn("trust_state_summary_ready", report["diagnosis_codes"])
+        self.assertIn("blocked_claim_audit_ready", report["diagnosis_codes"])
+        self.assertIn("accounting_status_ready", report["diagnosis_codes"])
+        self.assertIn("settlement_status_ready", report["diagnosis_codes"])
+        self.assertEqual(report["operator_registry"]["role_counts"], {"accounting": 1, "admin": 1})
+        self.assertEqual(report["operator_registry"]["session_policy_counts"]["with_rate_limit"], 1)
+        self.assertEqual(report["miner_registry"]["stage_counts"], {"stage0": 1, "stage1": 1})
+        self.assertEqual(report["miner_registry"]["policy_counts"]["with_reward_account"], 1)
+        self.assertEqual(report["trust_summary"]["blocked_claims"], 1)
+        self.assertEqual(report["trust_summary"]["effective_blocked_count"], 1)
+        self.assertEqual(report["accounting_status"]["row_count"], 2)
+        self.assertEqual(report["settlement_status"]["unit_price_microcredits"], 4)
+        self.assertFalse(report["settlement_status"]["payment_executed"])
+        self.assertEqual([call["path"] for call in calls], [
+            "/ready",
+            "/state",
+            "/admin/accounting?limit=25&status=any",
+            "/admin/settlement?limit=25&unit_price_microcredits=4",
+        ])
+        self.assertEqual(calls[1]["observer_token"], observer_token)
+        self.assertEqual(calls[2]["admin_token"], admin_token)
+        self.assertFalse(report["safety"]["admin_credentials_public"])
+        self.assertFalse(report["safety"]["observer_credentials_public"])
+        self.assertNotIn(admin_token, encoded)
+        self.assertNotIn(observer_token, encoded)
+        self.assertNotIn("acct-private-stage0", encoded)
+        self.assertNotIn("state-secret", encoded)
+        self.assertNotIn("private desk label", encoded)
+        self.assertNotIn(admin_token, saved_json)
+        self.assertNotIn(observer_token, saved_json)
+        self.assertNotIn("acct-private-stage0", saved_json)
+        self.assertNotIn("CrowdTensor Operator Status", saved_json)
+        self.assertIn("CrowdTensor Operator Status", saved_md)
+        self.assertNotIn(admin_token, saved_md)
+        self.assertNotIn(observer_token, saved_md)
+
+        with io.StringIO() as buffer, contextlib.redirect_stdout(buffer):
+            cli.print_operator_status(report)
+            rendered = buffer.getvalue()
+
+        self.assertIn("CrowdTensor operator status", rendered)
+        self.assertIn("operators: registry=True enabled=2/2", rendered)
+        self.assertIn("settlement: rows=1", rendered)
+        self.assertNotIn(admin_token, rendered)
+
+    def test_operator_status_can_report_ready_without_admin_summary_token(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "operator-status-lite"
+        calls: list[dict[str, object]] = []
+
+        def fake_request(method, base_url, path, payload=None, *, admin_token="", miner_token="", observer_token="", timeout=10.0):
+            calls.append({"method": method, "path": path, "admin_token": admin_token, "observer_token": observer_token})
+            if path == "/ready":
+                return {
+                    "ok": True,
+                    "event_index": 1,
+                    "task_counts": {},
+                    "task_lanes": [],
+                    "auth": {
+                        "miner_required": False,
+                        "observer_required": True,
+                        "admin_configured": False,
+                        "miner_registry_configured": False,
+                        "operator_registry_configured": False,
+                    },
+                }
+            if path == "/state":
+                raise cli.HTTPError("https://ct.example/state", 401, "invalid observer token", {}, None)
+            raise AssertionError(path)
+
+        args = cli.parse_args([
+            "operator-status",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--include-admin-summaries",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_operator_status(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("ready_summary_ready", report["diagnosis_codes"])
+        self.assertIn("state_unavailable", report["diagnosis_codes"])
+        self.assertIn("observer_token_rejected", report["diagnosis_codes"])
+        self.assertIn("admin_token_required_for_admin_summaries", report["diagnosis_codes"])
+        self.assertIn("operator_registry_missing", report["diagnosis_codes"])
+        self.assertIn("miner_registry_missing", report["diagnosis_codes"])
+        self.assertEqual([call["path"] for call in calls], ["/ready", "/state"])
+        self.assertTrue((output_dir / "operator_status.json").exists())
+
+    def test_operator_status_require_state_blocks_when_state_unavailable(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "operator-status-require-state"
+
+        def fake_request(method, base_url, path, payload=None, *, admin_token="", miner_token="", observer_token="", timeout=10.0):
+            if path == "/ready":
+                return {
+                    "ok": True,
+                    "event_index": 1,
+                    "task_counts": {},
+                    "task_lanes": [],
+                    "auth": {
+                        "miner_required": False,
+                        "observer_required": True,
+                        "admin_configured": False,
+                        "miner_registry_configured": False,
+                        "operator_registry_configured": False,
+                    },
+                }
+            if path == "/state":
+                raise cli.HTTPError("https://ct.example/state", 401, "invalid observer token", {}, None)
+            raise AssertionError(path)
+
+        args = cli.parse_args([
+            "operator-status",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--require-state",
+            "--json",
+        ])
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_operator_status(args)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("state_unavailable", report["diagnosis_codes"])
+        self.assertIn("observer_token_rejected", report["diagnosis_codes"])
+        self.assertTrue((output_dir / "operator_status.json").exists())
+
     def test_operator_settlement_fetches_draft_and_redacts_private_values(self) -> None:
         output_dir = Path(self._tmp_dir()) / "settlement"
         admin_token = "settlement-admin-secret"

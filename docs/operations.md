@@ -863,6 +863,38 @@ rows by subject/workload without including anonymous background tasks. Use the
 exact `created_by_subject` query parameter to draft settlement rows for one
 operator/admin subject.
 
+Operator status CLI:
+
+```bash
+crowdtensor operator-status \
+  --coordinator-url http://127.0.0.1:8787 \
+  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+  --output-dir dist/operator-status
+```
+
+`crowdtensor operator-status` is the read-only first check for a running
+Coordinator. It emits `crowdtensor_operator_status_cli_v1`, writes
+`operator_status.json` and `operator_status.md`, and summarizes `/ready`
+operator registry state, Miner registry policy state, `/state` trust/quarantine
+and `blocked_claims`, and next actions. Add `--include-admin-summaries` with an
+owner/admin/accounting token to include safe `/admin/accounting` and
+`/admin/settlement` status without exposing credentials, prompts, outputs,
+lease material, or reward account values:
+
+```bash
+CROWDTENSOR_ADMIN_TOKEN=${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN} \
+  crowdtensor operator-status \
+    --coordinator-url http://127.0.0.1:8787 \
+    --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \
+    --include-admin-summaries \
+    --unit-price-microcredits 1
+```
+
+Use `--require-state` or `--require-admin-summaries` when automation should fail
+unless those protected views are reachable. The command is read-only: it does
+not create inference sessions, set trust overrides, execute billing, stake,
+slash, or pay Miners.
+
 Operator settlement CLI:
 
 ```bash
