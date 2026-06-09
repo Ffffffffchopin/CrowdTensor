@@ -3791,6 +3791,8 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "schema": "crowdtensor_miner_join_policy_v1",
                 "trust_tier": "probation",
                 "quota_task_limit": 5,
+                "claim_rate_limit": 2,
+                "claim_rate_window_seconds": 60,
                 "reward_account": "acct_123",
                 "read_only_workload": "real_llm_sharded_infer",
                 "not_production": True,
@@ -3816,6 +3818,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["join_invite"]["backend"], "cuda")
         self.assertEqual(report["join_invite"]["policy"]["trust_tier"], "probation")
         self.assertEqual(report["join_invite"]["policy"]["quota_task_limit"], 5)
+        self.assertEqual(report["join_invite"]["policy"]["claim_rate_limit"], 2)
+        self.assertEqual(report["join_invite"]["policy"]["claim_rate_window_seconds"], 60.0)
         self.assertTrue(report["join_invite"]["policy"]["reward_account_present"])
         self.assertTrue(report["safety"]["invite_token_redacted"])
         self.assertNotIn("invite-secret", encoded)
@@ -3842,6 +3846,8 @@ class CrowdTensorCliTests(unittest.TestCase):
                 "schema": "crowdtensor_miner_join_policy_v1",
                 "trust_tier": "new",
                 "quota_task_limit": 3,
+                "claim_rate_limit": 1,
+                "claim_rate_window_seconds": 30,
                 "read_only_workload": "real_llm_sharded_infer",
                 "not_production": True,
             },
@@ -3863,6 +3869,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["join_invite"]["source"], "invite-code")
         self.assertEqual(report["join_invite"]["stage"], "stage1")
         self.assertEqual(report["join_invite"]["backend"], "cpu")
+        self.assertEqual(report["join_invite"]["policy"]["claim_rate_limit"], 1)
+        self.assertEqual(report["join_invite"]["policy"]["claim_rate_window_seconds"], 30.0)
         self.assertNotIn("invite-code-secret", encoded)
         self.assertEqual(report["command"][report["command"].index("--real-llm-stage-role") + 1], "stage1")
 

@@ -2932,6 +2932,43 @@ class StateStoreTests(unittest.TestCase):
             self.assertEqual(usage["leased"], 1)
             self.assertEqual(usage["claim_count"], 2)
 
+    def test_miner_claim_rate_usage_counts_recent_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=2)
+            first = store.claim_task("rate-miner", capabilities=self._python_capabilities())
+            second = store.claim_task("rate-miner", capabilities=self._python_capabilities())
+            for event in store._claim_events:  # noqa: SLF001 - rate fixture
+                if event["task_id"] == first["task_id"]:
+                    event["claimed_at"] = float(event["claimed_at"]) - 120.0
+
+            usage = store.miner_claim_rate_usage(
+                "rate-miner",
+                window_seconds=60,
+                now=float(store._tasks[second["task_id"]]["claimed_at"]) + 1.0,  # noqa: SLF001
+            )
+
+            self.assertEqual(usage["schema"], "miner_claim_rate_usage_v1")
+            self.assertEqual(usage["claimed"], 1)
+            self.assertEqual(usage["leased"], 1)
+            self.assertEqual(usage["claim_count"], 1)
+
+    def test_miner_claim_rate_usage_counts_requeued_claim_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=1, inner_steps=10, backlog=1)
+            claim = store.claim_task("rate-requeue-miner", capabilities=self._python_capabilities())
+
+            store.reap_expired(now=float(claim["lease_expires_at"]) + 1.0)
+            usage = store.miner_claim_rate_usage(
+                "rate-requeue-miner",
+                window_seconds=60,
+                now=float(claim["lease_expires_at"]) + 2.0,
+            )
+
+            self.assertEqual(usage["claimed"], 1)
+            self.assertEqual(usage["leased"], 0)
+            self.assertEqual(usage["requeued_or_reassigned"], 1)
+            self.assertEqual(usage["claim_count"], 1)
+
     def test_real_llm_stage_capabilities_route_split_miners_without_loading_hf(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)

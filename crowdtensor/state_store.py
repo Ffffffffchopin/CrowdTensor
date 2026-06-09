@@ -186,6 +186,7 @@ class StateStore:
         self._tasks: dict[str, dict] = {}
         self._incompatible_claims: list[dict] = []
         self._blocked_claims: list[dict] = []
+        self._claim_events: list[dict] = []
         self._trust_overrides: dict[str, dict[str, dict]] = {}
         self._model = default_model(outer_optimizer_type=self.outer_optimizer)
         if self.micro_llm_artifact_path:
@@ -359,6 +360,54 @@ class StateStore:
                 "accepted": accepted,
                 "rejected": rejected,
                 "claim_count": leased + accepted + rejected,
+            }
+
+    def miner_claim_rate_usage(
+        self,
+        miner_id: str,
+        *,
+        window_seconds: float,
+        now: float | None = None,
+    ) -> dict:
+        miner_name = str(miner_id or "")
+        window = max(0.0, float(window_seconds or 0.0))
+        current = now_epoch() if now is None else float(now)
+        window_started_at = current - window
+        with self._lock:
+            claimed = 0
+            leased = 0
+            accepted = 0
+            rejected = 0
+            requeued_or_reassigned = 0
+            for event in self._claim_events:
+                if event.get("miner_id") != miner_name:
+                    continue
+                if float(event.get("claimed_at") or 0.0) < window_started_at:
+                    continue
+                claimed += 1
+                task = self._tasks.get(str(event.get("task_id") or ""))
+                if not task or task.get("miner_id") != miner_name:
+                    requeued_or_reassigned += 1
+                elif task.get("status") == STATUS_LEASED:
+                    leased += 1
+                elif task.get("status") == STATUS_COMPLETED:
+                    accepted += 1
+                elif task.get("status") == STATUS_REJECTED:
+                    rejected += 1
+                else:
+                    requeued_or_reassigned += 1
+            return {
+                "schema": "miner_claim_rate_usage_v1",
+                "miner_id": miner_name,
+                "window_seconds": window,
+                "window_started_at": window_started_at,
+                "now": current,
+                "claimed": claimed,
+                "leased": leased,
+                "accepted": accepted,
+                "rejected": rejected,
+                "requeued_or_reassigned": requeued_or_reassigned,
+                "claim_count": claimed,
             }
 
     def miner_accounting_summary(
@@ -2428,6 +2477,7 @@ class StateStore:
                 "model_bundle_updated": False,
                 "capabilities": {},
                 "runtime_status": {},
+                "claimed_at": None,
                 "completed_at": None,
                 "rejected_at": None,
                 "inner_steps": int(event.get("inner_steps", self.inner_steps)),
@@ -2453,6 +2503,13 @@ class StateStore:
         task["updated_at"] = float(event["ts"])
 
         if event_type == EVENT_TASK_CLAIMED:
+            self._claim_events.append({
+                "event_index": int(event.get("event_index", self._event_index)),
+                "task_id": event.get("task_id", ""),
+                "miner_id": event.get("miner_id") or "anonymous",
+                "workload_type": self._workload_type(task),
+                "claimed_at": float(event["ts"]),
+            })
             task.update({
                 "status": STATUS_LEASED,
                 "attempt": int(event["attempt"]),
@@ -2463,6 +2520,7 @@ class StateStore:
                 "model_version": int(event["model_version"]),
                 "inner_steps": int(event.get("inner_steps", task["inner_steps"])),
                 "audit_mode": event.get("audit_mode", task.get("audit_mode", AUDIT_MODE_NONE)) or AUDIT_MODE_NONE,
+                "claimed_at": float(event["ts"]),
                 "claim_weights": event.get("claim_weights"),
                 "claim_training_spec": event.get("claim_training_spec", {}),
                 "claim_optimizer_spec": event.get("claim_optimizer_spec", {}),
@@ -2570,6 +2628,7 @@ class StateStore:
                 "claim_training_spec": {},
                 "claim_optimizer_spec": {},
                 "claim_workload_spec": {},
+                "claimed_at": None,
                 "completed_at": None,
                 "rejected_at": None,
             })
@@ -2825,7 +2884,14 @@ class StateStore:
         stage_id = validation.get("stage_id", metadata.get("stage_id"))
         elapsed_ms = metrics.get("elapsed_ms", validation.get("elapsed_ms"))
         work_units = self._accounting_work_units(task, validation, metrics, metadata)
-        recorded_at = task.get("completed_at") or task.get("rejected_at") or task.get("lease_expires_at") or task.get("updated_at") or 0.0
+        recorded_at = (
+            task.get("completed_at")
+            or task.get("rejected_at")
+            or task.get("claimed_at")
+            or task.get("lease_expires_at")
+            or task.get("updated_at")
+            or 0.0
+        )
         return {
             "schema": "miner_accounting_row_v1",
             "event_index": int(task.get("result_event_index") or 0),
@@ -2843,6 +2909,7 @@ class StateStore:
             "work_units": work_units,
             "elapsed_ms": round(float(elapsed_ms), 6) if isinstance(elapsed_ms, (int, float)) else None,
             "recorded_at": float(recorded_at or 0.0),
+            "claimed_at": float(task.get("claimed_at") or 0.0) if task.get("claimed_at") is not None else None,
             "model_updated": bool(task.get("model_updated", False)),
             "read_only": not bool(
                 task.get("model_updated")

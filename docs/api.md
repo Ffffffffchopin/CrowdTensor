@@ -159,9 +159,10 @@ grouped by Miner and workload. Rows expose safe accounting fields such as
 Miner ID, workload, accepted/rejected/leased status, stage, backend, model ID,
 elapsed time, and workload-specific work units. When the Miner came from a
 registry invite, rows include redacted join policy metadata: trust tier, quota
-limit, reward-account presence, and read-only workload. The endpoint does not
-expose raw prompts, generated text, token ids, activations, lease material,
-idempotency keys, plaintext Miner tokens, or reward account values.
+limit, claim-rate limit, claim-rate window, reward-account presence, and
+read-only workload. The endpoint does not expose raw prompts, generated text,
+token ids, activations, lease material, idempotency keys, plaintext Miner
+tokens, or reward account values.
 
 ### `POST /admin/inference-sessions`
 

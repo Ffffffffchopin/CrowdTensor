@@ -262,6 +262,8 @@ class CoordinatorApiTests(unittest.TestCase):
                             "max_runtime_seconds": 120.0,
                             "trust_tier": "probation",
                             "quota_task_limit": 25,
+                            "claim_rate_limit": 2,
+                            "claim_rate_window_seconds": 60.0,
                             "reward_account": "acct-secret",
                             "read_only_workload": "real_llm_sharded_infer",
                             "not_production": True,
@@ -282,6 +284,8 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertEqual(policy["backend"], "cuda")
             self.assertEqual(policy["trust_tier"], "probation")
             self.assertEqual(policy["quota_task_limit"], 25)
+            self.assertEqual(policy["claim_rate_limit"], 2)
+            self.assertEqual(policy["claim_rate_window_seconds"], 60.0)
             self.assertTrue(policy["coordinator_url_present"])
             self.assertTrue(policy["reward_account_present"])
             self.assertNotIn("registered-token", encoded)
@@ -536,6 +540,67 @@ class CoordinatorApiTests(unittest.TestCase):
             summary = state()
             self.assertEqual(summary["blocked_claims"], 1)
             self.assertEqual(summary["last_blocked_claim"]["reason"], "join_policy_quota_exhausted")
+
+    def test_join_policy_rate_limits_registered_miner_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_registry(
+                Path(tmp) / "miners.json",
+                [
+                    {
+                        "miner_id": "rate-stage0",
+                        "token": hash_token("registered-token"),
+                        "join_policy": {
+                            "stage": "stage0",
+                            "backend": "cuda",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "claim_rate_limit": 1,
+                            "claim_rate_window_seconds": 60.0,
+                            "read_only_workload": WORKLOAD_REAL_LLM_SHARDED_INFER,
+                        },
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                backlog=0,
+                miner_token_registry=registry_path,
+                real_llm_backend="hf_transformers_cuda",
+            )
+            for _ in range(2):
+                app.state.store.create_real_llm_sharded_inference_session(
+                    request_count=1,
+                    max_new_tokens=1,
+                    required_runtime="python-cli",
+                    required_backend="cuda",
+                    model_id="sshleifer/tiny-gpt2",
+                    llm_backend="hf_transformers_cuda",
+                )
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            state = endpoint_for(app, "/state", "GET")
+            claim_request = request_model(claim_task)(
+                miner_id="rate-stage0",
+                capabilities={
+                    "runtime": "python-cli",
+                    "backend": "cuda",
+                    "protocol_version": "runtime_contract_v1",
+                    "supported_workloads": [WORKLOAD_REAL_LLM_SHARDED_INFER],
+                    "real_llm_runtime": {"model_id": "sshleifer/tiny-gpt2"},
+                    "real_llm_sharded_stage_capabilities": [REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY],
+                },
+            )
+
+            first = claim_task(claim_request, x_crowdtensor_miner_token="registered-token")
+            with self.assertRaises(HTTPException) as blocked:
+                claim_task(claim_request, x_crowdtensor_miner_token="registered-token")
+
+            self.assertEqual(first["workload_type"], WORKLOAD_REAL_LLM_SHARDED_INFER)
+            self.assertEqual(blocked.exception.status_code, 429)
+            self.assertEqual(blocked.exception.detail, "join_policy_rate_limited")
+            summary = state()
+            self.assertEqual(summary["blocked_claims"], 1)
+            self.assertEqual(summary["last_blocked_claim"]["reason"], "join_policy_rate_limited")
 
     def test_hashed_miner_token_registry_claims_with_plaintext_request_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1254,6 +1319,8 @@ class CoordinatorApiTests(unittest.TestCase):
                             "hf_model_id": "sshleifer/tiny-gpt2",
                             "trust_tier": "probation",
                             "quota_task_limit": 2,
+                            "claim_rate_limit": 1,
+                            "claim_rate_window_seconds": 30.0,
                             "reward_account": "acct-secret",
                             "read_only_workload": "diloco_train",
                         },
@@ -1317,10 +1384,14 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertEqual(row["work_units"]["inner_steps"], 10)
             self.assertEqual(row["join_policy"]["trust_tier"], "probation")
             self.assertEqual(row["join_policy"]["quota_task_limit"], 2)
+            self.assertEqual(row["join_policy"]["claim_rate_limit"], 1)
+            self.assertEqual(row["join_policy"]["claim_rate_window_seconds"], 30.0)
             self.assertTrue(row["join_policy"]["reward_account_present"])
             totals = accounting["miner_totals"]["accounting-api-miner/diloco_train"]
             self.assertEqual(totals["accepted"], 1)
             self.assertEqual(totals["work_units"]["inner_steps"], 10)
+            self.assertEqual(totals["join_policy"]["claim_rate_limit"], 1)
+            self.assertEqual(totals["join_policy"]["claim_rate_window_seconds"], 30.0)
             self.assertTrue(totals["join_policy"]["reward_account_present"])
             self.assertNotIn("acct-secret", payload)
             self.assertNotIn("accounting-api-secret", payload)

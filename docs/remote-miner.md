@@ -46,6 +46,8 @@ python scripts/create_miner_invite.py \
   --backend cuda \
   --trust-tier probation \
   --quota-task-limit 25 \
+  --claim-rate-limit 4 \
+  --claim-rate-window-seconds 60 \
   --invite-file dist/public-swarm/stage0-gpu-1.invite.json \
   --json
 ```
@@ -61,13 +63,17 @@ file form is preferred because the invite contains the plaintext Miner token and
 may otherwise end up in shell history. The Coordinator registry stores only the
 token verifier plus `join_policy` metadata. `/ready` exposes a redacted
 `miner_policy_summary` with the invited stage, backend, trust tier, quota limit,
-and reward-account presence, but never the plaintext token or reward account.
+claim-rate limit, claim-rate window, and reward-account presence, but never the
+plaintext token or reward account.
 At claim time, the Coordinator enforces the invite's workload, stage, backend,
 and model scope before the Miner can lease work; blocked claims are recorded in
 the normal `blocked_claims` audit counters. A positive `quota_task_limit`
 caps the number of leased, accepted, and rejected claims for that registered
-Miner. Reward fields are still accounting metadata for the current Beta; they
-are not production billing, staking, or automatic economic settlement.
+Miner. A positive `claim_rate_limit` plus `claim_rate_window_seconds` rate
+limits claim events for that registered Miner and returns `429` with
+`join_policy_rate_limited` when the window is exhausted. Reward fields are still
+accounting metadata for the current Beta; they are not production billing,
+staking, or automatic economic settlement.
 
 For the recommended high-level two-machine home-compute demo, start with `crowdtensor remote-demo prepare`. The Coordinator host runs `crowdtensord`; the Miner host runs `crowdtensor-miner`; the operator keeps `operator.private.env`; only `miner.private.env`, `miner_join.sh`, and `MINER_JOIN.md` are copied to the Miner host. It creates the registry, private env files, public runbook, `miner_join_pack_v1`, and `remote_home_compute_demo_v1` summary in one output directory:
 

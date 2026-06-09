@@ -64,6 +64,8 @@ class MinerInviteTests(unittest.TestCase):
                 max_runtime_seconds=120,
                 trust_tier="probation",
                 quota_task_limit=25,
+                claim_rate_limit=2,
+                claim_rate_window_seconds=60,
                 reward_account="acct_123",
                 invite_file=Path(tmp) / "gpu-stage0.invite.json",
             )
@@ -77,6 +79,8 @@ class MinerInviteTests(unittest.TestCase):
             self.assertEqual(policy["max_runtime_seconds"], 120.0)
             self.assertEqual(policy["trust_tier"], "probation")
             self.assertEqual(policy["quota_task_limit"], 25)
+            self.assertEqual(policy["claim_rate_limit"], 2)
+            self.assertEqual(policy["claim_rate_window_seconds"], 60.0)
             self.assertEqual(policy["reward_account"], "acct_123")
             self.assertIn("--backend cuda", invite["product_join_command"])
             self.assertIn("--max-tasks 4", invite["product_join_command"])
@@ -87,6 +91,28 @@ class MinerInviteTests(unittest.TestCase):
             self.assertEqual(invite_payload["schema"], "crowdtensor_miner_join_invite_v1")
             self.assertEqual(invite_payload["miner_token"], "plain-token")
             self.assertEqual(invite_payload["policy"]["trust_tier"], "probation")
+            self.assertEqual(invite_payload["policy"]["claim_rate_limit"], 2)
+
+    def test_invite_requires_complete_claim_rate_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "miners.json"
+
+            with self.assertRaises(ValueError):
+                create_miner_invite.create_invite(
+                    registry_path=registry,
+                    miner_id="rate-a",
+                    coordinator_url="https://coordinator.example",
+                    token="plain-token",
+                    claim_rate_limit=1,
+                )
+            with self.assertRaises(ValueError):
+                create_miner_invite.create_invite(
+                    registry_path=registry,
+                    miner_id="rate-a",
+                    coordinator_url="https://coordinator.example",
+                    token="plain-token",
+                    claim_rate_window_seconds=60,
+                )
 
     def test_duplicate_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

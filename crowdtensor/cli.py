@@ -10834,6 +10834,8 @@ def _apply_product_join_invite(args: argparse.Namespace) -> dict[str, Any]:
             "schema": policy.get("schema") or "crowdtensor_miner_join_policy_v1",
             "trust_tier": policy.get("trust_tier") or "new",
             "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+            "claim_rate_limit": int(policy.get("claim_rate_limit") or 0),
+            "claim_rate_window_seconds": float(policy.get("claim_rate_window_seconds") or 0.0),
             "reward_account_present": bool(policy.get("reward_account")),
             "read_only_workload": policy.get("read_only_workload") or "real_llm_sharded_infer",
             "not_production": policy.get("not_production", True) is not False,
@@ -13102,7 +13104,8 @@ def print_product_join(report: dict[str, Any]) -> None:
             f"backend={invite.get('backend')} "
             f"model={invite.get('hf_model_id')} "
             f"trust={policy.get('trust_tier')} "
-            f"quota={policy.get('quota_task_limit')}"
+            f"quota={policy.get('quota_task_limit')} "
+            f"rate={policy.get('claim_rate_limit')}/{policy.get('claim_rate_window_seconds')}s"
         )
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     if p2p:

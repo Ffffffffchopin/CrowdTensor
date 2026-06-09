@@ -63,10 +63,12 @@ Create registry entries without storing plaintext tokens:
 python3 scripts/create_miner_invite.py \
   --registry state/miner_registry.json \
   --miner-id remote-linux-1 \
-  --coordinator-url https://YOUR_COORDINATOR_HOST
+  --coordinator-url https://YOUR_COORDINATOR_HOST \
+  --claim-rate-limit 4 \
+  --claim-rate-window-seconds 60
 ```
 
-The invite output prints the plaintext token once for the remote Miner, while the registry stores only the `sha256:` verifier. See [Remote Miner Onboarding](remote-miner.md).
+The invite output prints the plaintext token once for the remote Miner, while the registry stores only the `sha256:` verifier plus safe policy metadata. Positive `claim_rate_limit` / `claim_rate_window_seconds` values rate-limit claim events for that registered Miner before it can lease more work. See [Remote Miner Onboarding](remote-miner.md).
 
 **Observer token**
 

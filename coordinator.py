@@ -99,6 +99,8 @@ def _safe_miner_join_policy(policy: Any) -> dict[str, Any]:
         "max_runtime_seconds": float(policy.get("max_runtime_seconds") or 0.0),
         "trust_tier": str(policy.get("trust_tier") or "new"),
         "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+        "claim_rate_limit": int(policy.get("claim_rate_limit") or 0),
+        "claim_rate_window_seconds": float(policy.get("claim_rate_window_seconds") or 0.0),
         "reward_account_present": bool(str(policy.get("reward_account") or "").strip()),
         "read_only_workload": str(policy.get("read_only_workload") or ""),
         "not_production": policy.get("not_production", True) is not False,
@@ -237,6 +239,8 @@ def apply_accounting_policy_summary(accounting: dict[str, Any], registry: dict[s
         row["join_policy"] = {
             "trust_tier": str(policy.get("trust_tier") or "new"),
             "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+            "claim_rate_limit": int(policy.get("claim_rate_limit") or 0),
+            "claim_rate_window_seconds": float(policy.get("claim_rate_window_seconds") or 0.0),
             "reward_account_present": bool(
                 policy.get("reward_account_present")
                 or str(policy.get("reward_account") or "").strip()
@@ -252,6 +256,8 @@ def apply_accounting_policy_summary(accounting: dict[str, Any], registry: dict[s
         item["join_policy"] = {
             "trust_tier": str(policy.get("trust_tier") or "new"),
             "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+            "claim_rate_limit": int(policy.get("claim_rate_limit") or 0),
+            "claim_rate_window_seconds": float(policy.get("claim_rate_window_seconds") or 0.0),
             "reward_account_present": bool(
                 policy.get("reward_account_present")
                 or str(policy.get("reward_account") or "").strip()
@@ -970,6 +976,22 @@ def create_app(
                     blocked_workloads=[str(policy.get("read_only_workload") or WORKLOAD_REAL_LLM_SHARDED_INFER)],
                 )
                 raise HTTPException(status_code=503, detail=reason)
+        claim_rate_limit = int(policy.get("claim_rate_limit") or 0) if policy else 0
+        claim_rate_window_seconds = float(policy.get("claim_rate_window_seconds") or 0.0) if policy else 0.0
+        if claim_rate_limit > 0 and claim_rate_window_seconds > 0:
+            usage = store.miner_claim_rate_usage(
+                request.miner_id,
+                window_seconds=claim_rate_window_seconds,
+            )
+            if int(usage.get("claim_count") or 0) >= claim_rate_limit:
+                reason = "join_policy_rate_limited"
+                store.record_claim_blocked(
+                    request.miner_id,
+                    capabilities=scoped_capabilities,
+                    reason=reason,
+                    blocked_workloads=[str(policy.get("read_only_workload") or WORKLOAD_REAL_LLM_SHARDED_INFER)],
+                )
+                raise HTTPException(status_code=429, detail=reason)
         store.reap_expired()
         try:
             return store.claim_task(request.miner_id, capabilities=scoped_capabilities)

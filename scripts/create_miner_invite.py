@@ -60,6 +60,8 @@ def create_invite(
     max_runtime_seconds: float = 0.0,
     trust_tier: str = "new",
     quota_task_limit: int = 0,
+    claim_rate_limit: int = 0,
+    claim_rate_window_seconds: float = 0.0,
     reward_account: str = "",
     invite_file: Path | None = None,
 ) -> dict:
@@ -87,6 +89,14 @@ def create_invite(
     quota_limit = int(quota_task_limit or 0)
     if quota_limit < 0:
         raise ValueError("quota_task_limit must be non-negative")
+    rate_limit = int(claim_rate_limit or 0)
+    if rate_limit < 0:
+        raise ValueError("claim_rate_limit must be non-negative")
+    rate_window = float(claim_rate_window_seconds or 0.0)
+    if rate_window < 0:
+        raise ValueError("claim_rate_window_seconds must be non-negative")
+    if (rate_limit > 0) != (rate_window > 0):
+        raise ValueError("claim_rate_limit and claim_rate_window_seconds must be set together")
 
     plaintext_token = token or secrets.token_urlsafe(32)
     token_hash = hash_token(plaintext_token)
@@ -109,6 +119,8 @@ def create_invite(
             "max_runtime_seconds": runtime_limit,
             "trust_tier": str(trust_tier or "new"),
             "quota_task_limit": quota_limit,
+            "claim_rate_limit": rate_limit,
+            "claim_rate_window_seconds": rate_window,
             "reward_account": str(reward_account or ""),
             "read_only_workload": "real_llm_sharded_infer",
             "not_production": True,
@@ -208,6 +220,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-runtime-seconds", type=float, default=0.0)
     parser.add_argument("--trust-tier", default="new")
     parser.add_argument("--quota-task-limit", type=int, default=0)
+    parser.add_argument("--claim-rate-limit", type=int, default=0)
+    parser.add_argument("--claim-rate-window-seconds", type=float, default=0.0)
     parser.add_argument("--reward-account", default="")
     parser.add_argument("--invite-file", default="", help="write the plaintext Miner join invite JSON to this private path")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
@@ -231,6 +245,8 @@ def main() -> None:
             max_runtime_seconds=args.max_runtime_seconds,
             trust_tier=args.trust_tier,
             quota_task_limit=args.quota_task_limit,
+            claim_rate_limit=args.claim_rate_limit,
+            claim_rate_window_seconds=args.claim_rate_window_seconds,
             reward_account=args.reward_account,
             invite_file=Path(args.invite_file) if args.invite_file else None,
         )

@@ -725,9 +725,9 @@ curl -H 'x-crowdtensor-admin-token: local-admin' \
 
 `GET /admin/accounting` is the safest operator view for Miner-level usage and
 Beta reward/accounting preparation. It groups safe work units by Miner and
-workload, joins redacted invite policy metadata when present, and avoids raw
-prompts, outputs, token ids, activations, lease material, plaintext tokens, and
-reward account values.
+workload, joins redacted invite policy metadata such as trust tier, quota, and
+claim-rate limits when present, and avoids raw prompts, outputs, token ids,
+activations, lease material, plaintext tokens, and reward account values.
 
 ## Acceptance Checks
 
