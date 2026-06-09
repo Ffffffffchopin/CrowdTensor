@@ -106,7 +106,10 @@ with admission checks but without `--run`; stage `join.sh` uses the same private
 join code with `--run`. The join code contains the plaintext Miner token and
 must be treated as private. Stage `support_bundle.sh` writes
 `miner_support_bundle.json` with file and preflight diagnostics while keeping raw
-join codes and Miner tokens out of the shareable report. If
+join codes and Miner tokens out of the shareable report. Bootstrap also writes
+private `stage0.miner-package.tar.gz` and `stage1.miner-package.tar.gz`
+archives containing those same stage files; treat each archive as private and
+copy only the matching one to its Miner host. If
 `crowdtensor swarm-bootstrap` is run with `--peer-bootstrap`, that private
 invite also contains `crowdtensor_miner_join_discovery_v1` so the Miner can use
 P2P-lite discovery without hand-written route flags; this is still not NAT
@@ -120,7 +123,8 @@ passes.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
-scripts or public Markdown, including `stage_support_bundle_scripts_ready`. Add `--expect-remote-miners` when stage packages
+scripts or public Markdown, including `stage_support_bundle_scripts_ready` and
+`stage_package_archives_ready`. Add `--expect-remote-miners` when stage packages
 will leave the Coordinator host; local-only invite URLs then fail with
 `coordinator_remote_route_required`. After the Coordinator starts, add
 `--check-coordinator` or `--check-admission`; the latter calls token-backed

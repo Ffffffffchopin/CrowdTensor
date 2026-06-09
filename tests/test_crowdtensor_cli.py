@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 import shlex
 import tempfile
@@ -1545,6 +1546,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         tunnel_env_path = Path(report["private_env"]["tunnel"])
         stage0_join_code_path = Path(report["private_join_codes"]["stage0"])
         stage1_join_code_path = Path(report["private_join_codes"]["stage1"])
+        stage0_archive_path = Path(report["stage_package_archives"]["stage0"])
+        stage1_archive_path = Path(report["stage_package_archives"]["stage1"])
         coordinator_env = coordinator_env_path.read_text(encoding="utf-8")
         operator_env = operator_env_path.read_text(encoding="utf-8")
         operator_invite = json.loads(Path(report["private_invites"]["operator"]).read_text(encoding="utf-8"))
@@ -1574,6 +1577,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual((output_dir / "stage0" / "miner.invite.json").stat().st_mode & 0o777, 0o600)
         self.assertEqual(stage0_join_code_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(stage1_join_code_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(stage0_archive_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(stage1_archive_path.stat().st_mode & 0o777, 0o600)
         self.assertIn("CROWDTENSOR_OBSERVER_TOKEN='sha256:", coordinator_env)
         self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN", coordinator_env)
         self.assertIn("CROWDTENSOR_ADMIN_TOKEN=", operator_env)
@@ -1591,6 +1596,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["safety"]["operator_plaintext_token_public"])
         self.assertFalse(report["safety"]["miner_plaintext_tokens_public"])
         self.assertTrue(report["safety"]["private_join_code_files_created"])
+        self.assertTrue(report["safety"]["stage_package_archives_created"])
         handoff = report["bootstrap_handoff"]
         self.assertEqual(handoff["schema"], "crowdtensor_bootstrap_handoff_v1")
         self.assertTrue(handoff["remote_miners_ready"])
@@ -1601,6 +1607,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(handoff["recommended_launcher"], str(scripts["start_control_plane"]))
         self.assertEqual(handoff["verify_before_handoff"], str(scripts["verify_bootstrap"]))
         self.assertEqual(handoff["stage_packages_to_copy"]["stage0"], str(output_dir / "stage0"))
+        self.assertEqual(handoff["stage_package_archives_to_copy"]["stage0"], str(stage0_archive_path))
+        self.assertTrue(handoff["copy_stage_archives_preferred"])
+        self.assertFalse(handoff["copy_only_stage_directories"])
         self.assertEqual(handoff["manual_launchers"]["stage0_check_join"], str(scripts["stage0_check_join"]))
         self.assertEqual(handoff["manual_launchers"]["stage1_check_join"], str(scripts["stage1_check_join"]))
         self.assertEqual(handoff["manual_launchers"]["stage0_support_bundle"], str(scripts["stage0_support_bundle"]))
@@ -1608,6 +1617,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(str(coordinator_env_path), handoff["coordinator_host_private_files"])
         self.assertIn(str(operator_env_path), handoff["operator_host_private_files"])
         self.assertNotIn(stage0_join_code, encoded)
+        with tarfile.open(stage0_archive_path, "r:gz") as tar:
+            archive_members = {member.name: member for member in tar.getmembers()}
+        self.assertIn("stage0/miner.invite.json", archive_members)
+        self.assertIn("stage0/miner.join-code.txt", archive_members)
+        self.assertIn("stage0/check_join.sh", archive_members)
+        self.assertIn("stage0/support_bundle.sh", archive_members)
+        self.assertIn("stage0/join.sh", archive_members)
+        self.assertIn("stage0/MINER_JOIN.md", archive_members)
+        self.assertEqual(archive_members["stage0/miner.invite.json"].mode & 0o777, 0o600)
+        self.assertEqual(archive_members["stage0/miner.join-code.txt"].mode & 0o777, 0o600)
+        self.assertEqual(archive_members["stage0/join.sh"].mode & 0o777, 0o700)
+        self.assertFalse(any("operator" in name or name.endswith("miner_registry.json") for name in archive_members))
         for path in scripts.values():
             self.assertTrue(path.is_file(), path)
             self.assertEqual(path.stat().st_mode & 0o777, 0o700)
@@ -1879,10 +1900,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["artifacts"]["verify_bootstrap_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["stage0_join_code"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["stage0_support_bundle_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["stage0_package_archive"]["mode"], "0o600")
         self.assertTrue(report["safety"]["verify_bootstrap_script_ready"])
         self.assertTrue(report["safety"]["stage_join_scripts_use_invite_code_file"])
         self.assertTrue(report["safety"]["stage_check_join_scripts_ready"])
         self.assertTrue(report["safety"]["stage_support_bundle_scripts_ready"])
+        self.assertTrue(report["safety"]["stage_package_archives_ready"])
         self.assertTrue(report["safety"]["stage_join_code_files_match_invites"])
         self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
         self.assertTrue(report["safety"]["coordinator_url_remote_route_ready"])

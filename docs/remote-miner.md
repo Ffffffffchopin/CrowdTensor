@@ -10,6 +10,7 @@ private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_control_plane.sh`,
 optional `start_tunnel.sh`, `start_discovery.sh`, `start_coordinator.sh`, stage
 `check_join.sh` / `support_bundle.sh` / `join.sh` files, private `miner.join-code.txt` files,
+private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
 `verify_bootstrap.sh`, generation scripts, and `SWARM_BOOTSTRAP.md`.
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
 `--coordinator-url` and a private `--tunnel-command`; the raw tunnel command is
@@ -18,7 +19,7 @@ Keep the generated operator
 invite and operator env on the operator host, use the coordinator env only for
 the Coordinator process, run `start_control_plane.sh` to start the tunnel,
 discovery, and Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
-and copy only the matching stage directory to each Miner host. Stage `check_join.sh`
+and copy only the matching private stage archive to each Miner host. Stage `check_join.sh`
 uses the private invite code file to verify Coordinator reachability and
 admission without starting the Miner; stage `join.sh` uses the same path with
 `--run`, while `miner.invite.json` remains private compatibility material. When
@@ -38,7 +39,7 @@ it emits `crowdtensor_swarm_bootstrap_check_v1` and verifies required files,
 registries, env separation, stage invite Coordinator URL consistency,
 non-local-only remote route readiness via `coordinator_url_remote_route_ready`,
 stage join-code consistency, `stage_check_join_scripts_ready`,
-`stage_support_bundle_scripts_ready`, and plaintext token leakage in scripts or public Markdown.
+`stage_support_bundle_scripts_ready`, `stage_package_archives_ready`, and plaintext token leakage in scripts or public Markdown.
 After starting the Coordinator, rerun the same command with `--check-coordinator`
 to call `/ready` and match both stage invites against the redacted registry
 policy, or with `--check-admission` to also call token-backed `/tasks/preflight`
