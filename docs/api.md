@@ -18,7 +18,9 @@ their plaintext invite token in `x-crowdtensor-miner-token`.
 Generated stage packages use private opaque `miner.join-code.txt` files with
 `crowdtensor join --invite-code-file` so Miner hosts do not need to edit JSON
 invites; the code file still contains the plaintext Miner token and must remain
-private.
+private. Bootstrap can also embed `crowdtensor_miner_join_discovery_v1` when
+`--peer-bootstrap` is supplied, allowing the private invite to select the
+P2P-lite discovery route without exposing tokens in public artifacts.
 Run `verify_bootstrap.sh` from a generated `crowdtensor swarm-bootstrap`
 directory before copying stage packages; it wraps
 `crowdtensor swarm-bootstrap-check --check-admission`. That package gate verifies private

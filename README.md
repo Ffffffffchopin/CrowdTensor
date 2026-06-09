@@ -449,7 +449,11 @@ operator env on the operator host, use the coordinator env only for
 `start_coordinator.sh`, run `verify_bootstrap.sh` after the Coordinator starts,
 and send each stage directory only to the matching Miner host. Stage `join.sh`
 defaults to `crowdtensor join --invite-code-file miner.join-code.txt` so the
-Miner host does not need to edit JSON invites.
+Miner host does not need to edit JSON invites. When bootstrap is run with
+`--peer-bootstrap`, the private invite also carries
+`crowdtensor_miner_join_discovery_v1`, so `join --invite-code-file` can enable
+P2P-lite discovery and resolve the Coordinator without the Miner user
+hand-writing `--peer-bootstrap`.
 `crowdtensor swarm-bootstrap-check` verifies required
 files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed

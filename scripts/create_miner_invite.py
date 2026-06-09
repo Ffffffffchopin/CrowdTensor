@@ -64,6 +64,10 @@ def create_invite(
     claim_rate_window_seconds: float = 0.0,
     reward_account: str = "",
     invite_file: Path | None = None,
+    peer_bootstrap: str = "",
+    p2p_backend: str = "lite",
+    swarm_id: str = "default",
+    route_preference: str = "",
 ) -> dict:
     miner_name = str(miner_id or "").strip()
     if not miner_name:
@@ -97,6 +101,18 @@ def create_invite(
         raise ValueError("claim_rate_window_seconds must be non-negative")
     if (rate_limit > 0) != (rate_window > 0):
         raise ValueError("claim_rate_limit and claim_rate_window_seconds must be set together")
+    peer_bootstrap_url = str(peer_bootstrap or "").strip().rstrip("/")
+    p2p_backend_value = str(p2p_backend or "lite").strip()
+    if p2p_backend_value not in {"lite", "real"}:
+        raise ValueError("p2p_backend must be one of: lite, real")
+    swarm_id_value = str(swarm_id or "default").strip() or "default"
+    route_preference_value = str(route_preference or "").strip()
+    if route_preference_value not in {"", "coordinator-url", "peer-bootstrap"}:
+        raise ValueError("route_preference must be one of: coordinator-url, peer-bootstrap")
+    if route_preference_value == "peer-bootstrap" and not peer_bootstrap_url:
+        raise ValueError("route_preference=peer-bootstrap requires peer_bootstrap")
+    if not route_preference_value:
+        route_preference_value = "peer-bootstrap" if peer_bootstrap_url else "coordinator-url"
 
     plaintext_token = token or secrets.token_urlsafe(32)
     token_hash = hash_token(plaintext_token)
@@ -141,7 +157,6 @@ def create_invite(
         entry["created_at"] = int(previous.get("created_at", now)) if isinstance(previous, dict) else now
         miners[existing_index] = entry
 
-    write_registry(registry_path, registry)
     legacy_command = (
         f"CROWDTENSOR_MINER_TOKEN={plaintext_token} "
         f"crowdtensor-miner --coordinator {coordinator} --miner-id {miner_name} "
@@ -165,6 +180,16 @@ def create_invite(
         product_command_parts.extend(["--max-tasks", str(task_limit)])
     if runtime_limit > 0:
         product_command_parts.extend(["--max-runtime-seconds", str(runtime_limit)])
+    if peer_bootstrap_url:
+        product_command_parts.extend([
+            "--p2p",
+            "--p2p-backend",
+            p2p_backend_value,
+            "--peer-bootstrap",
+            peer_bootstrap_url,
+            "--swarm-id",
+            swarm_id_value,
+        ])
     product_command_parts.append("--run")
     join_invite = {
         "schema": "crowdtensor_miner_join_invite_v1",
@@ -178,6 +203,20 @@ def create_invite(
         "policy": entry["join_policy"],
         "public_artifact_safe": False,
     }
+    if peer_bootstrap_url:
+        discovery = {
+            "schema": "crowdtensor_miner_join_discovery_v1",
+            "enabled": True,
+            "peer_bootstrap": peer_bootstrap_url,
+            "p2p_backend": p2p_backend_value,
+            "swarm_id": swarm_id_value,
+            "route_preference": route_preference_value,
+            "not_nat_traversal": True,
+            "public_artifact_safe": True,
+        }
+        entry["join_policy"]["discovery"] = discovery
+        join_invite["discovery"] = discovery
+    write_registry(registry_path, registry)
     invite_code = base64.urlsafe_b64encode(
         json.dumps(join_invite, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).decode("ascii")
@@ -224,6 +263,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--claim-rate-window-seconds", type=float, default=0.0)
     parser.add_argument("--reward-account", default="")
     parser.add_argument("--invite-file", default="", help="write the plaintext Miner join invite JSON to this private path")
+    parser.add_argument("--peer-bootstrap", default="", help="optional P2P-lite/real discovery bootstrap URL to embed in the private invite")
+    parser.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
+    parser.add_argument("--swarm-id", default="default")
+    parser.add_argument("--route-preference", choices=["coordinator-url", "peer-bootstrap"], default="")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     return parser.parse_args()
 
@@ -249,6 +292,10 @@ def main() -> None:
             claim_rate_window_seconds=args.claim_rate_window_seconds,
             reward_account=args.reward_account,
             invite_file=Path(args.invite_file) if args.invite_file else None,
+            peer_bootstrap=args.peer_bootstrap,
+            p2p_backend=args.p2p_backend,
+            swarm_id=args.swarm_id,
+            route_preference=args.route_preference,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc

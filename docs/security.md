@@ -98,7 +98,11 @@ intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its private `miner.join-code.txt`,
 `miner.invite.json`, and `join.sh`, to each Miner host. Stage `join.sh` uses
 `crowdtensor join --invite-code-file miner.join-code.txt` by default; the join
-code contains the plaintext Miner token and must be treated as private.
+code contains the plaintext Miner token and must be treated as private. If
+`crowdtensor swarm-bootstrap` is run with `--peer-bootstrap`, that private
+invite also contains `crowdtensor_miner_join_discovery_v1` so the Miner can use
+P2P-lite discovery without hand-written route flags; this is still not NAT
+traversal.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in

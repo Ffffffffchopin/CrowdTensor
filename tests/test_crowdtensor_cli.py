@@ -1625,6 +1625,73 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["next_commands"][4]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
+    def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--peer-bootstrap",
+            "http://p2p.example:8788/",
+            "--swarm-id",
+            "public-swarm",
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap(args)
+        miner_registry = json.loads((output_dir / "miner_registry.json").read_text(encoding="utf-8"))
+        stage0_invite = json.loads((output_dir / "stage0" / "miner.invite.json").read_text(encoding="utf-8"))
+        stage1_invite = json.loads((output_dir / "stage1" / "miner.invite.json").read_text(encoding="utf-8"))
+        stage0_join_code = (output_dir / "stage0" / "miner.join-code.txt").read_text(encoding="utf-8").strip()
+        start_script = (output_dir / "start_coordinator.sh").read_text(encoding="utf-8")
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["discovery"]["enabled"])
+        self.assertEqual(report["discovery"]["peer_bootstrap"], "http://p2p.example:8788")
+        self.assertEqual(report["discovery"]["route_preference"], "peer-bootstrap")
+        self.assertEqual(report["discovery"]["swarm_id"], "public-swarm")
+        self.assertTrue(all(item["discovery"]["enabled"] for item in report["miners"]))
+        self.assertTrue(all(item["discovery"]["peer_bootstrap_present"] for item in report["miners"]))
+        self.assertTrue(all(item["discovery"]["route_preference"] == "peer-bootstrap" for item in report["miners"]))
+        self.assertEqual(stage0_invite["discovery"]["schema"], "crowdtensor_miner_join_discovery_v1")
+        self.assertEqual(stage0_invite["discovery"]["peer_bootstrap"], "http://p2p.example:8788")
+        self.assertEqual(stage0_invite["discovery"], miner_registry["miners"][0]["join_policy"]["discovery"])
+        self.assertEqual(stage1_invite["discovery"], miner_registry["miners"][1]["join_policy"]["discovery"])
+        self.assertEqual(
+            json.loads(base64.urlsafe_b64decode(stage0_join_code.encode("ascii")).decode("utf-8")),
+            stage0_invite,
+        )
+        self.assertIn("--p2p", start_script)
+        self.assertIn("--peer-bootstrap", start_script)
+        self.assertIn("'http://p2p.example:8788'", start_script)
+        self.assertIn("--swarm-id", start_script)
+        self.assertIn("'public-swarm'", start_script)
+        self.assertNotIn(stage0_invite["miner_token"], encoded)
+        self.assertNotIn(stage0_join_code, encoded)
+
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+        check_report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertTrue(check_report["ok"], check_report)
+        self.assertTrue(check_report["discovery"]["enabled"])
+        self.assertEqual(check_report["discovery"]["route_preference"], "peer-bootstrap")
+        self.assertEqual(check_report["discovery"]["p2p_backend"], "lite")
+        self.assertEqual(check_report["discovery"]["swarm_id"], "public-swarm")
+        self.assertTrue(check_report["safety"]["stage_invite_discovery_metadata_ready"])
+        self.assertTrue(
+            next(item for item in check_report["checks"] if item["name"] == "stage_invite_discovery_metadata_ready")["ok"]
+        )
+
     def test_swarm_bootstrap_check_validates_ready_private_package(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"
         bootstrap_args = cli.parse_args([
@@ -5114,6 +5181,73 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["join_invite"]["miner_id"], "invited-stage0")
         self.assertNotIn("invite-code-file-secret", encoded)
         self.assertEqual(report["command"][report["command"].index("--real-llm-stage-role") + 1], "stage0")
+
+    def test_product_join_invite_code_file_can_route_through_discovery(self) -> None:
+        invite = {
+            "schema": "crowdtensor_miner_join_invite_v1",
+            "coordinator_url": "https://coord.example",
+            "miner_id": "invited-stage0",
+            "stage": "stage0",
+            "backend": "cpu",
+            "hf_model_id": "sshleifer/tiny-gpt2",
+            "miner_token": "invite-discovery-secret",
+            "token_hash": "sha256:" + "e" * 64,
+            "discovery": {
+                "schema": "crowdtensor_miner_join_discovery_v1",
+                "enabled": True,
+                "peer_bootstrap": "http://p2p.example:8788",
+                "p2p_backend": "lite",
+                "swarm_id": "public-swarm",
+                "route_preference": "peer-bootstrap",
+                "not_nat_traversal": True,
+                "public_artifact_safe": True,
+            },
+            "policy": {
+                "schema": "crowdtensor_miner_join_policy_v1",
+                "trust_tier": "new",
+                "quota_task_limit": 2,
+                "claim_rate_limit": 1,
+                "claim_rate_window_seconds": 30,
+                "read_only_workload": "real_llm_sharded_infer",
+                "not_production": True,
+            },
+        }
+        invite_code = base64.urlsafe_b64encode(
+            json.dumps(invite, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        invite_code_path = Path(self._tmp_dir()) / "miner.join-code.txt"
+        invite_code_path.write_text(invite_code + "\n", encoding="utf-8")
+        args = cli.parse_args([
+            "join",
+            "--invite-code-file",
+            str(invite_code_path),
+            "--json",
+        ])
+        catalog = {"schema": "p2p_lite_catalog_v1", "peers": []}
+
+        with patch.object(
+            cli,
+            "resolve_coordinator_from_discovery",
+            return_value=("https://resolved.example", [{"peer_id": "coord"}], catalog),
+        ) as resolver, patch.object(cli, "announce_discovery_peer", return_value={"ok": True}):
+            report = cli.build_product_join(args)
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["coordinator_url"], "https://resolved.example")
+        self.assertEqual(report["join_invite"]["source"], "invite-code-file")
+        self.assertEqual(report["join_invite"]["route_preference"], "peer-bootstrap")
+        self.assertTrue(report["join_invite"]["discovery"]["enabled"])
+        self.assertTrue(report["join_invite"]["discovery"]["peer_bootstrap_present"])
+        self.assertEqual(report["join_invite"]["discovery"]["swarm_id"], "public-swarm")
+        self.assertTrue(report["peer_bootstrap_used"])
+        self.assertEqual(report["peer_count"], 1)
+        self.assertTrue(report["p2p"]["enabled"])
+        self.assertEqual(report["p2p"]["bootstrap"], "http://p2p.example:8788")
+        self.assertEqual(report["command"][report["command"].index("--coordinator") + 1], "https://resolved.example")
+        self.assertNotIn("https://coord.example", report["command"])
+        self.assertNotIn("invite-discovery-secret", encoded)
+        resolver.assert_called_once()
 
     def test_product_join_missing_route_action(self) -> None:
         args = cli.parse_args([

@@ -93,6 +93,35 @@ class MinerInviteTests(unittest.TestCase):
             self.assertEqual(invite_payload["policy"]["trust_tier"], "probation")
             self.assertEqual(invite_payload["policy"]["claim_rate_limit"], 2)
 
+    def test_invite_can_embed_private_discovery_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "miners.json"
+
+            invite = create_miner_invite.create_invite(
+                registry_path=registry,
+                miner_id="stage0-discovery",
+                coordinator_url="https://coordinator.example",
+                token="plain-token",
+                stage="stage0",
+                peer_bootstrap="http://p2p.example:8788/",
+                p2p_backend="lite",
+                swarm_id="public-swarm",
+                route_preference="peer-bootstrap",
+            )
+
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+            policy_discovery = payload["miners"][0]["join_policy"]["discovery"]
+            join_discovery = invite["join_invite"]["discovery"]
+            self.assertEqual(join_discovery["schema"], "crowdtensor_miner_join_discovery_v1")
+            self.assertEqual(join_discovery["peer_bootstrap"], "http://p2p.example:8788")
+            self.assertEqual(join_discovery["route_preference"], "peer-bootstrap")
+            self.assertEqual(join_discovery, policy_discovery)
+            self.assertIn("--p2p", invite["product_join_command"])
+            self.assertIn("--peer-bootstrap http://p2p.example:8788", invite["product_join_command"])
+            self.assertIn("--swarm-id public-swarm", invite["product_join_command"])
+            decoded = json.loads(base64.urlsafe_b64decode(invite["join_invite_code"]).decode("utf-8"))
+            self.assertEqual(decoded["discovery"], join_discovery)
+
     def test_invite_requires_complete_claim_rate_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             registry = Path(tmp) / "miners.json"

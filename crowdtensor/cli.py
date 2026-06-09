@@ -118,6 +118,7 @@ PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cl
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 MINER_JOIN_INVITE_SCHEMA = "crowdtensor_miner_join_invite_v1"
+MINER_JOIN_DISCOVERY_SCHEMA = "crowdtensor_miner_join_discovery_v1"
 PRODUCT_GENERATE_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_generate_runtime_provenance_v1"
 PRODUCT_GENERATE_EVIDENCE_SCOPE_SCHEMA = "crowdtensor_generate_evidence_scope_v1"
 INFER_RUNTIME_PROVENANCE_SCHEMA = "crowdtensor_infer_runtime_provenance_v1"
@@ -10925,6 +10926,82 @@ def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
     ])
 
 
+def _bootstrap_discovery_summary(args: argparse.Namespace) -> dict[str, Any]:
+    peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "").strip().rstrip("/")
+    enabled = bool(peer_bootstrap)
+    return {
+        "schema": MINER_JOIN_DISCOVERY_SCHEMA,
+        "enabled": enabled,
+        "peer_bootstrap": peer_bootstrap,
+        "p2p_backend": str(getattr(args, "p2p_backend", "lite") or "lite") if enabled else "",
+        "swarm_id": str(getattr(args, "swarm_id", "default") or "default") if enabled else "",
+        "route_preference": "peer-bootstrap" if enabled else "coordinator-url",
+        "not_nat_traversal": True,
+        "public_artifact_safe": True,
+    }
+
+
+def _stage_invite_discovery_summary(invite: dict[str, Any]) -> dict[str, Any]:
+    discovery = invite.get("discovery") if isinstance(invite.get("discovery"), dict) else {}
+    enabled = bool(discovery.get("enabled")) if discovery else False
+    return {
+        "schema": str(discovery.get("schema") or "") if discovery else "",
+        "enabled": enabled,
+        "peer_bootstrap": str(discovery.get("peer_bootstrap") or "").strip().rstrip("/") if discovery else "",
+        "p2p_backend": str(discovery.get("p2p_backend") or "") if discovery else "",
+        "swarm_id": str(discovery.get("swarm_id") or "") if discovery else "",
+        "route_preference": str(discovery.get("route_preference") or "") if discovery else "",
+        "not_nat_traversal": discovery.get("not_nat_traversal", True) is not False if discovery else True,
+        "public_artifact_safe": True,
+    }
+
+
+def _bootstrap_discovery_metadata_ready(stage0_invite: dict[str, Any], stage1_invite: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    stage0 = _stage_invite_discovery_summary(stage0_invite)
+    stage1 = _stage_invite_discovery_summary(stage1_invite)
+    if not stage0["enabled"] and not stage1["enabled"]:
+        return True, "discovery not configured", {
+            "enabled": False,
+            "route_preference": "coordinator-url",
+            "peer_bootstrap_present": False,
+            "p2p_backend": "",
+            "swarm_id": "",
+            "not_nat_traversal": True,
+        }
+    ok = bool(
+        stage0["enabled"]
+        and stage1["enabled"]
+        and stage0["schema"] == MINER_JOIN_DISCOVERY_SCHEMA
+        and stage1["schema"] == MINER_JOIN_DISCOVERY_SCHEMA
+        and stage0["peer_bootstrap"]
+        and stage0["peer_bootstrap"] == stage1["peer_bootstrap"]
+        and stage0["p2p_backend"] in {"lite", "real"}
+        and stage0["p2p_backend"] == stage1["p2p_backend"]
+        and stage0["swarm_id"]
+        and stage0["swarm_id"] == stage1["swarm_id"]
+        and stage0["route_preference"] in {"coordinator-url", "peer-bootstrap"}
+        and stage0["route_preference"] == stage1["route_preference"]
+    )
+    detail = (
+        "stage0/stage1 discovery metadata matches"
+        if ok
+        else (
+            f"stage0={stage0['schema']} {stage0['p2p_backend']} {stage0['swarm_id']} "
+            f"{stage0['route_preference']} peer={bool(stage0['peer_bootstrap'])}; "
+            f"stage1={stage1['schema']} {stage1['p2p_backend']} {stage1['swarm_id']} "
+            f"{stage1['route_preference']} peer={bool(stage1['peer_bootstrap'])}"
+        )
+    )
+    return ok, detail, {
+        "enabled": bool(ok),
+        "route_preference": stage0["route_preference"] if ok else "",
+        "peer_bootstrap_present": bool(stage0["peer_bootstrap"]) if ok else False,
+        "p2p_backend": stage0["p2p_backend"] if ok else "",
+        "swarm_id": stage0["swarm_id"] if ok else "",
+        "not_nat_traversal": True,
+    }
+
+
 def _bootstrap_coordinator_script(args: argparse.Namespace, *, backend: str, coordinator_url: str) -> str:
     profile = "gpu-generation" if backend == "cuda" else "cpu-real-llm"
     lines = [
@@ -10947,6 +11024,14 @@ def _bootstrap_coordinator_script(args: argparse.Namespace, *, backend: str, coo
         f"  --inference-session-rate-limit {_quote_env_value(str(args.rate_limit))} \\",
         f"  --inference-session-rate-window-seconds {_quote_env_value(str(args.rate_window_seconds))} \\",
     ]
+    peer_bootstrap = str(getattr(args, "peer_bootstrap", "") or "").strip().rstrip("/")
+    if peer_bootstrap:
+        lines.extend([
+            "  --p2p \\",
+            f"  --p2p-backend {_quote_env_value(str(getattr(args, 'p2p_backend', 'lite') or 'lite'))} \\",
+            f"  --peer-bootstrap {_quote_env_value(peer_bootstrap)} \\",
+            f"  --swarm-id {_quote_env_value(str(getattr(args, 'swarm_id', 'default') or 'default'))} \\",
+        ])
     if args.expect_remote_miners:
         lines.append("  --expect-remote-miners \\")
     if args.bind_host in {"0.0.0.0", "::"}:
@@ -11044,6 +11129,34 @@ def _bootstrap_runbook(
     ])
 
 
+def _swarm_bootstrap_miner_summaries(
+    stage_invites: list[dict[str, Any]],
+    stage_join_code_files: dict[str, Path],
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for invite in stage_invites:
+        join_invite = invite.get("join_invite") if isinstance(invite.get("join_invite"), dict) else {}
+        stage = str(join_invite.get("stage") or "")
+        discovery = join_invite.get("discovery") if isinstance(join_invite.get("discovery"), dict) else {}
+        summaries.append({
+            "miner_id": invite["miner_id"],
+            "stage": stage,
+            "backend": join_invite.get("backend"),
+            "hf_model_id": join_invite.get("hf_model_id"),
+            "discovery": {
+                "enabled": bool(discovery.get("enabled")),
+                "route_preference": str(discovery.get("route_preference") or ""),
+                "peer_bootstrap_present": bool(discovery.get("peer_bootstrap")),
+                "p2p_backend": str(discovery.get("p2p_backend") or ""),
+                "swarm_id": str(discovery.get("swarm_id") or ""),
+                "not_nat_traversal": True,
+            },
+            "invite_file": invite["invite_file"],
+            "join_code_file": str(stage_join_code_files[stage]),
+        })
+    return summaries
+
+
 def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir)
     private_dir = output_dir / "private"
@@ -11063,6 +11176,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         args.expect_remote_miners
         and remote_access.get("diagnosis_code") == "coordinator_remote_route_required"
     )
+    discovery_summary = _bootstrap_discovery_summary(args)
     operator_registry = output_dir / "operator_registry.json"
     miner_registry = output_dir / "miner_registry.json"
     coordinator_env_path = private_dir / "coordinator.private.env"
@@ -11159,6 +11273,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             claim_rate_window_seconds=args.claim_rate_window_seconds,
             reward_account="",
             invite_file=invite_file,
+            peer_bootstrap=discovery_summary["peer_bootstrap"],
+            p2p_backend=discovery_summary["p2p_backend"] or "lite",
+            swarm_id=discovery_summary["swarm_id"] or "default",
+            route_preference=discovery_summary["route_preference"],
         )
         invite_file.chmod(0o600)
         stage_invites.append(invite)
@@ -11190,6 +11308,16 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     ]
     if args.expect_remote_miners:
         serve_command.append("--expect-remote-miners")
+    if discovery_summary["enabled"]:
+        serve_command.extend([
+            "--p2p",
+            "--p2p-backend",
+            discovery_summary["p2p_backend"],
+            "--peer-bootstrap",
+            discovery_summary["peer_bootstrap"],
+            "--swarm-id",
+            discovery_summary["swarm_id"],
+        ])
     if args.bind_host in {"0.0.0.0", "::"}:
         serve_command.append("--i-understand-public-bind")
     serve_command.append("--run")
@@ -11306,6 +11434,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "mode": "swarm-bootstrap",
         "output_dir": str(output_dir),
         "coordinator_url": coordinator_url,
+        "discovery": discovery_summary,
         "remote_access": remote_access,
         "registries": {
             "operator_registry": str(operator_registry),
@@ -11321,17 +11450,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "roles": operator_invite["roles"],
             "session_policy": operator_invite["session_policy"],
         },
-        "miners": [
-            {
-                "miner_id": invite["miner_id"],
-                "stage": (invite.get("join_invite") or {}).get("stage"),
-                "backend": (invite.get("join_invite") or {}).get("backend"),
-                "hf_model_id": (invite.get("join_invite") or {}).get("hf_model_id"),
-                "invite_file": invite["invite_file"],
-                "join_code_file": str(stage_join_code_files[str((invite.get("join_invite") or {}).get("stage") or "")]),
-            }
-            for invite in stage_invites
-        ],
+        "miners": _swarm_bootstrap_miner_summaries(stage_invites, stage_join_code_files),
         "next_commands": [
             command_entry(
                 "start Coordinator",
@@ -11833,6 +11952,18 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail=f"stage0={stage0_invite.get('stage')} stage1={stage1_invite.get('stage')}",
         diagnosis_code="bootstrap_stage_invite_mismatch",
     )
+    discovery_metadata_ok, discovery_metadata_detail, discovery_report = _bootstrap_discovery_metadata_ready(
+        stage0_invite,
+        stage1_invite,
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "stage_invite_discovery_metadata_ready",
+        discovery_metadata_ok,
+        detail=discovery_metadata_detail,
+        diagnosis_code="bootstrap_stage_discovery_metadata_invalid",
+    )
     _bootstrap_check_item(
         checks,
         diagnosis_codes,
@@ -12039,6 +12170,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "mode": "swarm-bootstrap-check",
         "output_dir": str(output_dir),
         "coordinator_url": coordinator_url,
+        "discovery": discovery_report,
         "remote_access": remote_access,
         "live_preflight": live_preflight,
         "artifacts": artifacts,
@@ -12055,6 +12187,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "stage_join_scripts_use_invite_code_file": stage_scripts_use_join_code_file,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
             "stage_join_code_files_match_invites": join_codes_match_invites,
+            "stage_invite_discovery_metadata_ready": discovery_metadata_ok,
             "verify_bootstrap_script_ready": verify_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
             "live_preflight_ready": (
@@ -12555,14 +12688,37 @@ def _apply_product_join_invite(args: argparse.Namespace) -> dict[str, Any]:
     miner_id = str(invite.get("miner_id") or "").strip()
     token = str(invite.get("miner_token") or "").strip()
     hf_model_id = str(invite.get("hf_model_id") or "sshleifer/tiny-gpt2").strip()
-    if not coordinator_url or not miner_id or not token or not hf_model_id:
-        raise SystemExit("join invite requires coordinator_url, miner_id, miner_token, and hf_model_id")
-    args.coordinator_url = coordinator_url
+    discovery = invite.get("discovery") if isinstance(invite.get("discovery"), dict) else {}
+    discovery_enabled = bool(discovery.get("enabled")) if discovery else False
+    peer_bootstrap = str(discovery.get("peer_bootstrap") or "").strip().rstrip("/") if discovery else ""
+    p2p_backend = str(discovery.get("p2p_backend") or "lite").strip() if discovery else "lite"
+    swarm_id = str(discovery.get("swarm_id") or "default").strip() if discovery else "default"
+    route_preference = str(discovery.get("route_preference") or "coordinator-url").strip() if discovery else "coordinator-url"
+    if discovery:
+        if str(discovery.get("schema") or "") != MINER_JOIN_DISCOVERY_SCHEMA:
+            raise SystemExit(f"join invite discovery schema must be {MINER_JOIN_DISCOVERY_SCHEMA}")
+        if p2p_backend not in {"lite", "real"}:
+            raise SystemExit("join invite discovery p2p_backend must be one of: lite, real")
+        if route_preference not in {"coordinator-url", "peer-bootstrap"}:
+            raise SystemExit("join invite discovery route_preference must be one of: coordinator-url, peer-bootstrap")
+        if discovery_enabled and not peer_bootstrap:
+            raise SystemExit("join invite discovery requires peer_bootstrap when enabled")
+    if not coordinator_url and not peer_bootstrap:
+        raise SystemExit("join invite requires coordinator_url or discovery.peer_bootstrap")
+    if not miner_id or not token or not hf_model_id:
+        raise SystemExit("join invite requires miner_id, miner_token, and hf_model_id")
+    use_discovery_route = bool(discovery_enabled and peer_bootstrap and route_preference == "peer-bootstrap")
+    args.coordinator_url = "" if use_discovery_route else coordinator_url
     args.miner_id = miner_id
     args.stage = stage
     args.backend = backend
     args.miner_token = token
     args.hf_model_id = hf_model_id
+    if use_discovery_route:
+        args.p2p = True
+        args.p2p_backend = p2p_backend
+        args.peer_bootstrap = peer_bootstrap
+        args.swarm_id = swarm_id or "default"
     policy = invite.get("policy") if isinstance(invite.get("policy"), dict) else {}
     if int(policy.get("max_tasks") or 0) > 0 and int(getattr(args, "max_tasks", 0) or 0) <= 0:
         args.max_tasks = int(policy.get("max_tasks") or 0)
@@ -12571,12 +12727,23 @@ def _apply_product_join_invite(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "schema": MINER_JOIN_INVITE_SCHEMA,
         "source": source,
-        "coordinator_url_present": True,
+        "coordinator_url_present": bool(coordinator_url),
+        "route_preference": "peer-bootstrap" if use_discovery_route else "coordinator-url",
         "miner_id": miner_id,
         "stage": stage,
         "backend": backend,
         "hf_model_id": hf_model_id,
         "token_hash": invite.get("token_hash") or "",
+        "discovery": {
+            "schema": MINER_JOIN_DISCOVERY_SCHEMA,
+            "enabled": bool(discovery_enabled and peer_bootstrap),
+            "peer_bootstrap_present": bool(peer_bootstrap),
+            "p2p_backend": p2p_backend if discovery else "",
+            "swarm_id": swarm_id if discovery else "",
+            "route_preference": route_preference if discovery else "",
+            "not_nat_traversal": True,
+            "public_artifact_safe": True,
+        },
         "policy": {
             "schema": policy.get("schema") or "crowdtensor_miner_join_policy_v1",
             "trust_tier": policy.get("trust_tier") or "new",
@@ -18550,6 +18717,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     swarm_bootstrap.add_argument("--public-host", default="127.0.0.1")
     swarm_bootstrap.add_argument("--port", type=int, default=8787)
     swarm_bootstrap.add_argument("--expect-remote-miners", action="store_true")
+    swarm_bootstrap.add_argument("--peer-bootstrap", default="", help="optional P2P discovery bootstrap URL to embed in private Miner invites")
+    swarm_bootstrap.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
+    swarm_bootstrap.add_argument("--swarm-id", default="default")
     swarm_bootstrap.add_argument("--operator-id", default="generate-desk")
     swarm_bootstrap.add_argument("--miner-id-prefix", default="swarm-miner")
     swarm_bootstrap.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")

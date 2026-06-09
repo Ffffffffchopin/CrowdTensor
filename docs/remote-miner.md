@@ -14,7 +14,11 @@ invite and operator env on the operator host, use the coordinator env only for
 the Coordinator process, run `verify_bootstrap.sh` after the Coordinator starts,
 and copy only the matching stage directory to each Miner host. Stage `join.sh`
 uses `crowdtensor join --invite-code-file miner.join-code.txt` by default, while
-`miner.invite.json` remains private compatibility material. The Coordinator URL still must be reachable
+`miner.invite.json` remains private compatibility material. If bootstrap is run
+with `--peer-bootstrap`, the private invite embeds
+`crowdtensor_miner_join_discovery_v1` so the stage join command can discover the
+Coordinator through P2P-lite without the Miner operator manually passing
+`--peer-bootstrap`. The Coordinator URL still must be reachable
 by public HTTPS, VPN, trusted LAN, or tunnel; with `--expect-remote-miners`,
 bootstrap fails before creating registry or invite files when the URL is
 local-only. Before copying stage packages, run
