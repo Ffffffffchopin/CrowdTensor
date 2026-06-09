@@ -8,9 +8,10 @@ For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_coordinator.sh`, stage
-`join.sh` files, generation scripts, and `SWARM_BOOTSTRAP.md`. Keep the
-generated operator invite and operator env on the operator host, use the
-coordinator env only for the Coordinator process, and copy only the matching
+`join.sh` files, `verify_bootstrap.sh`, generation scripts, and
+`SWARM_BOOTSTRAP.md`. Keep the generated operator invite and operator env on the
+operator host, use the coordinator env only for the Coordinator process, run
+`verify_bootstrap.sh` after the Coordinator starts, and copy only the matching
 stage directory to each Miner host. The Coordinator URL still must be reachable
 by public HTTPS, VPN, trusted LAN, or tunnel; with `--expect-remote-miners`,
 bootstrap fails before creating registry or invite files when the URL is

@@ -15,12 +15,14 @@ Miner registries plus separated coordinator/operator private env files for a
 controlled two-stage product swarm. Product `crowdtensor serve` forwards both
 `--operator-token-registry` and `--miner-token-registry`; Miners still send
 their plaintext invite token in `x-crowdtensor-miner-token`.
-Run `crowdtensor swarm-bootstrap-check` before copying stage packages; it is an
-offline package gate that verifies private file permissions, hashed registries,
-env separation, stage invite Coordinator URL consistency, optional
-`--expect-remote-miners` remote route readiness, optional `/ready` checks via
-`--check-coordinator`, optional token-backed no-claim `/tasks/preflight` checks
-via `--check-admission`, and plaintext token leakage.
+Run `verify_bootstrap.sh` from a generated `crowdtensor swarm-bootstrap`
+directory before copying stage packages; it wraps
+`crowdtensor swarm-bootstrap-check --check-admission`. That package gate verifies private
+file permissions, hashed registries, env separation, stage invite Coordinator
+URL consistency, optional `--expect-remote-miners` remote route readiness,
+optional `/ready` checks via `--check-coordinator`, optional token-backed
+no-claim `/tasks/preflight` checks via `--check-admission`, and plaintext token
+leakage.
 
 Use `crowdtensor operator-invite` or `scripts/create_operator_invite.py` to
 create hashed operator registry entries. The operator still sends their

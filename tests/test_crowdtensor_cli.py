@@ -1593,12 +1593,17 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue((output_dir / "stage0" / "MINER_JOIN.md").is_file())
         self.assertIn("CrowdTensor Swarm Bootstrap", runbook)
         self.assertIn(str(scripts["start_coordinator"]), runbook)
+        self.assertIn(str(scripts["verify_bootstrap"]), runbook)
+        self.assertIn("--check-admission", scripts["verify_bootstrap"].read_text(encoding="utf-8"))
+        self.assertIn("--expect-remote-miners", scripts["verify_bootstrap"].read_text(encoding="utf-8"))
+        self.assertIn("verify_bootstrap.sh", report["operator_action"])
         serve_line = report["next_commands"][0]["command_line"]
         self.assertEqual(serve_line, str(scripts["start_coordinator"]))
         self.assertNotIn("CROWDTENSOR_OBSERVER_TOKEN", report["next_commands"][0].get("requires_env", []))
         self.assertIn(str(coordinator_env_path), report["next_commands"][0]["requires_files"])
-        self.assertEqual(report["next_commands"][1]["command"], [str(scripts["stage0_join"])])
-        self.assertEqual(report["next_commands"][3]["command_line"], str(scripts["check_generation"]))
+        self.assertEqual(report["next_commands"][1]["command"], [str(scripts["verify_bootstrap"])])
+        self.assertEqual(report["next_commands"][2]["command"], [str(scripts["stage0_join"])])
+        self.assertEqual(report["next_commands"][4]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
     def test_swarm_bootstrap_check_validates_ready_private_package(self) -> None:
@@ -1633,6 +1638,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(all(check["ok"] for check in report["checks"]))
         self.assertTrue(report["safety"]["private_files_mode_0600"])
         self.assertTrue(report["safety"]["scripts_mode_0700"])
+        self.assertEqual(report["artifacts"]["verify_bootstrap_script"]["mode"], "0o700")
+        self.assertTrue(report["safety"]["verify_bootstrap_script_ready"])
         self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
         self.assertTrue(report["safety"]["coordinator_url_remote_route_ready"])
         self.assertTrue(report["safety"]["stage_packages_exclude_operator_material"])
@@ -1653,6 +1660,37 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("live_preflight: checked=False", rendered)
         self.assertIn("swarm_bootstrap_package_ready", rendered)
         self.assertNotIn(operator_invite["operator_token"], rendered)
+
+    def test_swarm_bootstrap_check_fails_on_broken_verify_script(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        cli.build_swarm_bootstrap(bootstrap_args)
+        (output_dir / "verify_bootstrap.sh").write_text(
+            "#!/usr/bin/env bash\ncrowdtensor swarm-bootstrap-check --output-dir \"$SCRIPT_DIR\"\n",
+            encoding="utf-8",
+        )
+        (output_dir / "verify_bootstrap.sh").chmod(0o700)
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertFalse(report["safety"]["verify_bootstrap_script_ready"])
+        self.assertIn("bootstrap_verify_script_invalid", report["diagnosis_codes"])
 
     def test_swarm_bootstrap_check_fails_on_public_token_leak(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"

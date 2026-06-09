@@ -10976,6 +10976,26 @@ def _bootstrap_generate_script(*, coordinator_url: str, max_new_tokens: int, dry
     return "\n".join(lines)
 
 
+def _bootstrap_verify_script(*, expect_remote_miners: bool) -> str:
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        "",
+        "exec crowdtensor swarm-bootstrap-check \\",
+        '  --output-dir "$SCRIPT_DIR" \\',
+        "  --check-admission \\",
+    ]
+    if expect_remote_miners:
+        lines.append("  --expect-remote-miners \\")
+    lines.extend([
+        '  "$@"',
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def _bootstrap_runbook(
     *,
     coordinator_url: str,
@@ -11001,6 +11021,7 @@ def _bootstrap_runbook(
         "",
         "```bash",
         shlex.quote(scripts.get("start_coordinator", "")),
+        shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("stage0_join", "")),
         shlex.quote(scripts.get("stage1_join", "")),
         shlex.quote(scripts.get("check_generation", "")),
@@ -11043,6 +11064,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     operator_invite_path = private_dir / f"{_bootstrap_slug(args.operator_id)}.operator.invite.json"
     runbook_path = output_dir / "SWARM_BOOTSTRAP.md"
     start_coordinator_script = output_dir / "start_coordinator.sh"
+    verify_bootstrap_script = output_dir / "verify_bootstrap.sh"
     check_generation_script = output_dir / "check_generation.sh"
     submit_generation_script = output_dir / "submit_generation.sh"
     safety = {
@@ -11219,6 +11241,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         ),
     )
     _write_executable(
+        verify_bootstrap_script,
+        _bootstrap_verify_script(expect_remote_miners=bool(args.expect_remote_miners)),
+    )
+    _write_executable(
         submit_generation_script,
         _bootstrap_generate_script(
             coordinator_url=coordinator_url,
@@ -11228,6 +11254,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     )
     scripts = {
         "start_coordinator": str(start_coordinator_script),
+        "verify_bootstrap": str(verify_bootstrap_script),
         "stage0_join": str(stage_scripts["stage0"]),
         "stage1_join": str(stage_scripts["stage1"]),
         "check_generation": str(check_generation_script),
@@ -11287,6 +11314,11 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 "start Coordinator",
                 serve_command,
             ),
+            command_entry(
+                "verify bootstrap live preflight",
+                ["crowdtensor", "swarm-bootstrap-check", "--output-dir", str(output_dir), "--check-admission"]
+                + (["--expect-remote-miners"] if args.expect_remote_miners else []),
+            ),
             command_entry("start stage0 Miner", join_commands[0]),
             command_entry("start stage1 Miner", join_commands[1]),
             command_entry("check generation route", dry_run_command),
@@ -11302,8 +11334,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
-            "Start the Coordinator with the generated registry paths, copy each private Miner invite only to its Miner host, "
-            "then run the dry-run generate preflight before submitting generation."
+            "Start the Coordinator with the generated registry paths, run verify_bootstrap.sh for live no-claim admission "
+            "preflight, copy each private Miner invite only to its Miner host, then run the dry-run generate preflight "
+            "before submitting generation."
         ),
     }
     next_commands = report["next_commands"]
@@ -11311,22 +11344,29 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[0]["command_line"] = command_line([str(start_coordinator_script)])
     next_commands[0]["requires_files"] = [str(coordinator_env_path)]
     next_commands[0]["script"] = str(start_coordinator_script)
-    next_commands[1]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[1]["command_line"] = command_line([str(stage_scripts["stage0"])])
-    next_commands[1]["requires_files"] = [str(stage_scripts["stage0"].parent / "miner.invite.json")]
-    next_commands[1]["script"] = str(stage_scripts["stage0"])
-    next_commands[2]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[2]["command_line"] = command_line([str(stage_scripts["stage1"])])
-    next_commands[2]["requires_files"] = [str(stage_scripts["stage1"].parent / "miner.invite.json")]
-    next_commands[2]["script"] = str(stage_scripts["stage1"])
-    next_commands[3]["command"] = [str(check_generation_script)]
-    next_commands[3]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[3]["requires_files"] = [str(operator_env_path)]
-    next_commands[3]["script"] = str(check_generation_script)
-    next_commands[4]["command"] = [str(submit_generation_script)]
-    next_commands[4]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[1]["command"] = [str(verify_bootstrap_script)]
+    next_commands[1]["command_line"] = command_line([str(verify_bootstrap_script)])
+    next_commands[1]["requires_files"] = [
+        str(stage_scripts["stage0"].parent / "miner.invite.json"),
+        str(stage_scripts["stage1"].parent / "miner.invite.json"),
+    ]
+    next_commands[1]["script"] = str(verify_bootstrap_script)
+    next_commands[2]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[2]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[2]["requires_files"] = [str(stage_scripts["stage0"].parent / "miner.invite.json")]
+    next_commands[2]["script"] = str(stage_scripts["stage0"])
+    next_commands[3]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[3]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[3]["requires_files"] = [str(stage_scripts["stage1"].parent / "miner.invite.json")]
+    next_commands[3]["script"] = str(stage_scripts["stage1"])
+    next_commands[4]["command"] = [str(check_generation_script)]
+    next_commands[4]["command_line"] = command_line([str(check_generation_script)])
     next_commands[4]["requires_files"] = [str(operator_env_path)]
-    next_commands[4]["script"] = str(submit_generation_script)
+    next_commands[4]["script"] = str(check_generation_script)
+    next_commands[5]["command"] = [str(submit_generation_script)]
+    next_commands[5]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[5]["requires_files"] = [str(operator_env_path)]
+    next_commands[5]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -11568,6 +11608,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "coordinator_env": private_dir / "coordinator.private.env",
         "operator_env": private_dir / "operator.private.env",
         "start_coordinator_script": output_dir / "start_coordinator.sh",
+        "verify_bootstrap_script": output_dir / "verify_bootstrap.sh",
         "check_generation_script": output_dir / "check_generation.sh",
         "submit_generation_script": output_dir / "submit_generation.sh",
         "runbook": output_dir / "SWARM_BOOTSTRAP.md",
@@ -11684,6 +11725,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     )
     executable_scripts = [
         required_files["start_coordinator_script"],
+        required_files["verify_bootstrap_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["stage0_join_script"],
@@ -11826,8 +11868,10 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage0_script_text, _ = _read_bootstrap_text(required_files["stage0_join_script"])
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
     coordinator_script_text, _ = _read_bootstrap_text(required_files["start_coordinator_script"])
+    verify_script_text, _ = _read_bootstrap_text(required_files["verify_bootstrap_script"])
     public_files = [
         required_files["start_coordinator_script"],
+        required_files["verify_bootstrap_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["runbook"],
@@ -11868,6 +11912,24 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="start_coordinator.sh must source coordinator.private.env and not operator.private.env",
         diagnosis_code="bootstrap_coordinator_script_credentials_invalid",
     )
+    verify_script_ready = bool(
+        "crowdtensor swarm-bootstrap-check" in verify_script_text
+        and "--check-admission" in verify_script_text
+        and "--output-dir" in verify_script_text
+        and "$SCRIPT_DIR" in verify_script_text
+        and (
+            not bool(getattr(args, "expect_remote_miners", False))
+            or "--expect-remote-miners" in verify_script_text
+        )
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "verify_bootstrap_script_runs_live_admission_preflight",
+        verify_script_ready,
+        detail="verify_bootstrap.sh must wrap swarm-bootstrap-check --check-admission for this package",
+        diagnosis_code="bootstrap_verify_script_invalid",
+    )
     stage_package_operator_files = [
         path for stage_dir in [output_dir / "stage0", output_dir / "stage1"]
         for path in stage_dir.glob("*")
@@ -11885,6 +11947,15 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     ok = bool(checks and all(check.get("ok") is True for check in checks))
     if ok:
         diagnosis_codes.append("swarm_bootstrap_package_ready")
+    if ok and live_preflight.get("checked"):
+        operator_action = "Live bootstrap preflight is ready; copy only stage0/ or stage1/ to the matching Miner host."
+    elif ok:
+        operator_action = (
+            "Offline package is ready; start the Coordinator and run verify_bootstrap.sh before copying stage0/ or "
+            "stage1/ to the matching Miner host."
+        )
+    else:
+        operator_action = "Fix the failed bootstrap package checks before copying stage packages or starting the Coordinator."
     report = {
         "schema": "crowdtensor_swarm_bootstrap_check_v1",
         "ok": ok,
@@ -11905,6 +11976,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "scripts_embed_plaintext_tokens": plaintext_public_leak,
             "stage_join_scripts_exclude_operator_material": not stage_scripts_reference_operator_env,
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
+            "verify_bootstrap_script_ready": verify_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
             "live_preflight_ready": (
                 bool(live_preflight.get("ok")) if live_preflight.get("checked") else None
@@ -11916,11 +11988,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "not_large_model_serving": True,
         },
         "diagnosis_codes": sorted(set(code for code in diagnosis_codes if code)),
-        "operator_action": (
-            "Package is ready for controlled handoff; copy only stage0/ or stage1/ to the matching Miner host."
-            if ok
-            else "Fix the failed bootstrap package checks before copying stage packages or starting the Coordinator."
-        ),
+        "operator_action": operator_action,
     }
     return sanitize(redact_values(report, secret_values))
 

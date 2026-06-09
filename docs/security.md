@@ -90,8 +90,9 @@ contain usable tokens; keep the operator invite on the Coordinator/operator
 host and copy only the matching stage Miner invite to each Miner host.
 Bootstrap also writes executable helper scripts and separate private env files:
 `coordinator.private.env` contains only the observer token verifier for
-`start_coordinator.sh`, while `operator.private.env` contains the operator
-admin token plus observer token for operator-side dry-run and submit scripts.
+`start_coordinator.sh`, while `verify_bootstrap.sh` runs the live no-claim
+bootstrap admission check. `operator.private.env` contains the operator admin
+token plus observer token for operator-side dry-run and submit scripts.
 Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its `miner.invite.json` and `join.sh`,
