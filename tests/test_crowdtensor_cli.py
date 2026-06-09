@@ -1702,6 +1702,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("miner.join-code.txt", scripts["stage0_check_join"].read_text(encoding="utf-8"))
         self.assertNotIn("--run", scripts["stage0_check_join"].read_text(encoding="utf-8"))
         self.assertIn("crowdtensor_miner_stage_support_bundle_v1", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
+        self.assertIn("crowdtensor_miner_local_environment_v1", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
+        self.assertIn("local_environment_ready", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
+        self.assertIn("crowdtensor_cli_missing", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
         self.assertIn("miner_support_bundle.json", scripts["stage0_support_bundle"].read_text(encoding="utf-8"))
         self.assertIn("stage0.miner-package.tar.gz", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("stage0.handoff.sha256", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
@@ -1711,6 +1714,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("join.sh", scripts["stage0_run_miner"].read_text(encoding="utf-8"))
         self.assertIn("--invite-code-file", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("miner.join-code.txt", scripts["stage0_join"].read_text(encoding="utf-8"))
+        self.assertIn("command -v crowdtensor", scripts["stage0_join"].read_text(encoding="utf-8"))
+        self.assertIn("local environment diagnostic", scripts["stage0_check_join"].read_text(encoding="utf-8"))
         self.assertIn("verify_bootstrap.sh", report["operator_action"])
         serve_line = report["next_commands"][0]["command_line"]
         self.assertEqual(serve_line, str(scripts["start_control_plane"]))
@@ -2032,12 +2037,48 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(bundle["files"]["miner_invite"]["ok"])
         self.assertTrue(bundle["files"]["miner_join_code"]["ok"])
         self.assertTrue(bundle["files"]["check_join"]["ok"])
+        self.assertTrue(bundle["files"]["support_bundle"]["ok"])
         self.assertTrue(bundle["files"]["join"]["ok"])
+        self.assertEqual(bundle["local_environment"]["schema"], "crowdtensor_miner_local_environment_v1")
+        self.assertIn("crowdtensor", bundle["local_environment"]["commands"])
+        self.assertIn("sha256sum", bundle["local_environment"]["commands"])
+        self.assertIn("torch", bundle["local_environment"])
+        self.assertFalse(bundle["local_environment"]["raw_paths_public"])
+        self.assertFalse(bundle["local_environment"]["raw_tokens_public"])
         self.assertFalse(bundle["preflight"]["checked"])
         self.assertTrue(bundle["preflight"]["skipped"])
         self.assertNotIn(stage0_invite["miner_token"], bundle_text)
         self.assertNotIn(stage0_join_code, bundle_text)
         self.assertNotIn("miner_token\":", bundle_text)
+
+    def test_swarm_bootstrap_stage_check_join_reports_missing_cli(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        report = cli.build_swarm_bootstrap(args)
+        check_script = Path(report["scripts"]["stage0_check_join"])
+
+        env = os.environ.copy()
+        env["PATH"] = "/usr/bin:/bin"
+        completed = subprocess.run(
+            ["bash", str(check_script)],
+            cwd=str(check_script.parent),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 127)
+        self.assertIn("crowdtensor CLI is not installed or not on PATH", completed.stderr)
+        self.assertIn("support_bundle.sh", completed.stderr)
 
     def test_swarm_bootstrap_stage_runner_extracts_archive_and_collects_support_bundle(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"
@@ -2096,6 +2137,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("miner_support_bundle.json", supported.stdout)
         self.assertEqual(bundle["schema"], "crowdtensor_miner_stage_support_bundle_v1")
         self.assertEqual(bundle["invite"]["stage"], "stage0")
+        self.assertEqual(bundle["local_environment"]["schema"], "crowdtensor_miner_local_environment_v1")
+        self.assertIn("crowdtensor", bundle["local_environment"]["commands"])
+        self.assertIn("sha256sum", bundle["local_environment"]["commands"])
         self.assertFalse(bundle["raw_join_code_public"])
         self.assertFalse(bundle["raw_miner_token_public"])
         self.assertNotIn(stage0_invite["miner_token"], bundle_text)

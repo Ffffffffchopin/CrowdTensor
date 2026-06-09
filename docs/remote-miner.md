@@ -31,7 +31,10 @@ admission without starting the Miner; stage `join.sh` uses the same path with
 `--run`, while `miner.invite.json` remains private compatibility material. When
 route or admission checks fail, stage `support_bundle.sh` writes safe
 `miner_support_bundle.json` diagnostics to share instead of raw
-`miner.join-code.txt` or `miner.invite.json`. If bootstrap is run
+`miner.join-code.txt` or `miner.invite.json`. The bundle includes
+`crowdtensor_miner_local_environment_v1` with `local_environment_ready`,
+`crowdtensor` CLI, `sha256sum`, Python, and optional torch/CUDA probes so the
+Miner host can report setup failures without leaking tokens. If bootstrap is run
 with `--peer-bootstrap`, the private invite embeds
 `crowdtensor_miner_join_discovery_v1` so the stage join command can discover the
 Coordinator through P2P-lite without the Miner operator manually passing

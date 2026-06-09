@@ -106,7 +106,10 @@ with admission checks but without `--run`; stage `join.sh` uses the same private
 join code with `--run`. The join code contains the plaintext Miner token and
 must be treated as private. Stage `support_bundle.sh` writes
 `miner_support_bundle.json` with file and preflight diagnostics while keeping raw
-join codes and Miner tokens out of the shareable report. Bootstrap also writes
+join codes and Miner tokens out of the shareable report. It also includes
+`crowdtensor_miner_local_environment_v1` with `local_environment_ready`, CLI,
+checksum, Python, and optional torch/CUDA probes but no raw token values.
+Bootstrap also writes
 private `stage0.miner-package.tar.gz` and `stage1.miner-package.tar.gz`
 archives containing those same stage files; treat each archive as private and
 copy only the matching one plus its `stage0.run-miner.sh` or

@@ -21,7 +21,10 @@ Generated stage packages use private opaque `miner.join-code.txt` files with
 JSON invites; the code file still contains the plaintext Miner token and must
 remain private. Stage `support_bundle.sh` writes safe
 `miner_support_bundle.json` diagnostics for route/admission troubleshooting
-without raw join codes or Miner tokens. Bootstrap also writes private
+without raw join codes or Miner tokens. The bundle includes
+`crowdtensor_miner_local_environment_v1` with `local_environment_ready`,
+`crowdtensor` CLI, `sha256sum`, Python, and optional torch/CUDA probes.
+Bootstrap also writes private
 `stage0.miner-package.tar.gz` and `stage1.miner-package.tar.gz` archives so the
 operator can copy one stage package per remote Miner host, plus matching
 `stage0.run-miner.sh` / `stage1.run-miner.sh` runners that safely extract,

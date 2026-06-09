@@ -11136,6 +11136,12 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INVITE_CODE_FILE="${CROWDTENSOR_MINER_INVITE_CODE_FILE:-$SCRIPT_DIR/miner.join-code.txt}"
 
+if ! command -v crowdtensor >/dev/null 2>&1; then
+  echo "crowdtensor CLI is not installed or not on PATH; install CrowdTensor before starting this Miner." >&2
+  echo "Run ./support_bundle.sh for a local environment diagnostic." >&2
+  exit 127
+fi
+
 exec crowdtensor join \\
   --invite-code-file "$INVITE_CODE_FILE" \\
   --check-admission \\
@@ -11151,6 +11157,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INVITE_CODE_FILE="${CROWDTENSOR_MINER_INVITE_CODE_FILE:-$SCRIPT_DIR/miner.join-code.txt}"
+
+if ! command -v crowdtensor >/dev/null 2>&1; then
+  echo "crowdtensor CLI is not installed or not on PATH; install CrowdTensor before checking this Miner." >&2
+  echo "Run ./support_bundle.sh for a local environment diagnostic." >&2
+  exit 127
+fi
 
 exec crowdtensor join \\
   --invite-code-file "$INVITE_CODE_FILE" \\
@@ -11178,6 +11190,7 @@ fi
 "$PYTHON_BIN" - "$SCRIPT_DIR" "$OUT" <<'PY'
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -11264,6 +11277,110 @@ def file_entry(name, executable=False, private=False):
             and (not private or mode == 0o600)
             and (not executable or mode == 0o700)
         ),
+    }
+
+
+def command_probe(name, args=None, timeout=5.0):
+    path = shutil.which(name)
+    result = {
+        "name": name,
+        "present": bool(path),
+        "path_present": bool(path),
+        "version_checked": False,
+        "ok": bool(path),
+    }
+    if not path or args is None:
+        return result
+    try:
+        completed = subprocess.run(
+            [name, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        result.update({
+            "version_checked": True,
+            "ok": False,
+            "error": type(exc).__name__,
+        })
+        return result
+    output = (completed.stdout or completed.stderr or "").strip()
+    result.update({
+        "version_checked": True,
+        "returncode": completed.returncode,
+        "ok": completed.returncode == 0,
+        "version_preview": redact(output[:160]),
+    })
+    return result
+
+
+def python_runtime_probe():
+    result = {
+        "schema": "crowdtensor_miner_python_runtime_v1",
+        "executable_present": bool(sys.executable),
+        "version": ".".join(str(part) for part in sys.version_info[:3]),
+        "platform": sys.platform,
+        "ok": True,
+    }
+    if sys.version_info < (3, 10):
+        result["ok"] = False
+        result["diagnosis_code"] = "python_version_too_old"
+    return result
+
+
+def torch_runtime_probe():
+    result = {
+        "schema": "crowdtensor_miner_torch_runtime_v1",
+        "torch_imported": False,
+        "cuda_available": False,
+        "ok": None,
+    }
+    try:
+        import torch  # type: ignore
+    except Exception as exc:
+        result.update({
+            "torch_import_error": type(exc).__name__,
+            "ok": None,
+        })
+        return result
+    result["torch_imported"] = True
+    result["torch_version"] = str(getattr(torch, "__version__", ""))
+    try:
+        result["cuda_available"] = bool(torch.cuda.is_available())
+        result["cuda_device_count"] = int(torch.cuda.device_count()) if result["cuda_available"] else 0
+    except Exception as exc:
+        result["cuda_probe_error"] = type(exc).__name__
+    result["ok"] = True
+    return result
+
+
+def local_environment_probe():
+    python_probe = python_runtime_probe()
+    crowdtensor_probe = command_probe("crowdtensor", ["--help"])
+    sha256_probe = command_probe("sha256sum", ["--version"])
+    diagnostics = []
+    if not crowdtensor_probe.get("present"):
+        diagnostics.append("crowdtensor_cli_missing")
+    elif not crowdtensor_probe.get("ok"):
+        diagnostics.append("crowdtensor_cli_unusable")
+    if not sha256_probe.get("present"):
+        diagnostics.append("sha256sum_missing")
+    if not python_probe.get("ok"):
+        diagnostics.append(str(python_probe.get("diagnosis_code") or "python_runtime_not_ready"))
+    return {
+        "schema": "crowdtensor_miner_local_environment_v1",
+        "python": python_probe,
+        "commands": {
+            "crowdtensor": crowdtensor_probe,
+            "sha256sum": sha256_probe,
+        },
+        "torch": torch_runtime_probe(),
+        "diagnosis_codes": diagnostics,
+        "local_environment_ready": not diagnostics,
+        "raw_paths_public": False,
+        "raw_tokens_public": False,
     }
 
 
@@ -11354,9 +11471,11 @@ bundle = {
         "miner_invite": file_entry("miner.invite.json", private=True),
         "miner_join_code": file_entry("miner.join-code.txt", private=True),
         "check_join": file_entry("check_join.sh", executable=True),
+        "support_bundle": file_entry("support_bundle.sh", executable=True),
         "join": file_entry("join.sh", executable=True),
         "miner_join_doc": file_entry("MINER_JOIN.md"),
     },
+    "local_environment": local_environment_probe(),
     "join_code_file_present": join_code_path.is_file(),
     "join_code_length": len(join_code),
     "raw_join_code_public": False,
@@ -13189,12 +13308,20 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "--invite-code-file" in stage1_script_text
         and "miner.join-code.txt" in stage0_script_text
         and "miner.join-code.txt" in stage1_script_text
+        and "command -v crowdtensor" in stage0_script_text
+        and "command -v crowdtensor" in stage1_script_text
+        and "local environment diagnostic" in stage0_script_text
+        and "local environment diagnostic" in stage1_script_text
     )
     stage_check_join_scripts_ready = (
         "--invite-code-file" in stage0_check_script_text
         and "--invite-code-file" in stage1_check_script_text
         and "miner.join-code.txt" in stage0_check_script_text
         and "miner.join-code.txt" in stage1_check_script_text
+        and "command -v crowdtensor" in stage0_check_script_text
+        and "command -v crowdtensor" in stage1_check_script_text
+        and "local environment diagnostic" in stage0_check_script_text
+        and "local environment diagnostic" in stage1_check_script_text
         and "--run" not in stage0_check_script_text
         and "--run" not in stage1_check_script_text
     )
@@ -13209,6 +13336,12 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and "raw_join_code_public" in stage1_support_script_text
         and "raw_miner_token_public" in stage0_support_script_text
         and "raw_miner_token_public" in stage1_support_script_text
+        and "crowdtensor_miner_local_environment_v1" in stage0_support_script_text
+        and "crowdtensor_miner_local_environment_v1" in stage1_support_script_text
+        and "local_environment_ready" in stage0_support_script_text
+        and "local_environment_ready" in stage1_support_script_text
+        and "crowdtensor_cli_missing" in stage0_support_script_text
+        and "crowdtensor_cli_missing" in stage1_support_script_text
     )
     stage_archive_runner_scripts_ready = (
         "stage0.miner-package.tar.gz" in stage0_runner_script_text

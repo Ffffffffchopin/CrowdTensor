@@ -467,7 +467,10 @@ without starting the Miner; stage `join.sh` then runs the same invite-code path
 with `--run`, so the Miner host does not need to edit JSON invites. If the
 preflight fails, stage `support_bundle.sh` writes public-safe
 `miner_support_bundle.json` diagnostics without raw `miner.join-code.txt` or
-`miner_token` values. When bootstrap is run with
+`miner_token` values; the bundle includes
+`crowdtensor_miner_local_environment_v1` with `local_environment_ready`,
+`crowdtensor` CLI, `sha256sum`, Python, and optional torch/CUDA probes so a
+Miner host can report local setup failures without sharing secrets. When bootstrap is run with
 `--peer-bootstrap`, the private invite also carries
 `crowdtensor_miner_join_discovery_v1`, so `join --invite-code-file` can enable
 P2P-lite discovery and resolve the Coordinator without the Miner user
