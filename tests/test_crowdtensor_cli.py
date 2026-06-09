@@ -1546,6 +1546,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         operator_env = operator_env_path.read_text(encoding="utf-8")
         operator_invite = json.loads(Path(report["private_invites"]["operator"]).read_text(encoding="utf-8"))
         stage0_invite = json.loads(Path(report["private_invites"]["stage0"]).read_text(encoding="utf-8"))
+        scripts = {name: Path(path) for name, path in report["scripts"].items()}
+        runbook = Path(report["runbook"]).read_text(encoding="utf-8")
 
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["schema"], "crowdtensor_swarm_bootstrap_v1")
@@ -1573,17 +1575,26 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(stage0_invite["miner_token"], encoded)
         self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
         self.assertTrue(report["safety"]["private_env_files_created"])
+        self.assertTrue(report["safety"]["scripts_created"])
+        self.assertFalse(report["safety"]["scripts_embed_plaintext_tokens"])
         self.assertFalse(report["safety"]["operator_plaintext_token_public"])
         self.assertFalse(report["safety"]["miner_plaintext_tokens_public"])
+        for path in scripts.values():
+            self.assertTrue(path.is_file(), path)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+            script_text = path.read_text(encoding="utf-8")
+            self.assertNotIn(operator_invite["operator_token"], script_text)
+            self.assertNotIn(stage0_invite["miner_token"], script_text)
+        self.assertTrue((output_dir / "stage0" / "miner.invite.json").is_file())
+        self.assertTrue((output_dir / "stage0" / "MINER_JOIN.md").is_file())
+        self.assertIn("CrowdTensor Swarm Bootstrap", runbook)
+        self.assertIn(str(scripts["start_coordinator"]), runbook)
         serve_line = report["next_commands"][0]["command_line"]
-        self.assertIn(f". {coordinator_env_path}", serve_line)
-        self.assertIn("--operator-token-registry", serve_line)
-        self.assertIn(str(output_dir / "operator_registry.json"), serve_line)
-        self.assertIn("--miner-token-registry", serve_line)
-        self.assertIn(str(output_dir / "miner_registry.json"), serve_line)
+        self.assertEqual(serve_line, str(scripts["start_coordinator"]))
         self.assertNotIn("CROWDTENSOR_OBSERVER_TOKEN", report["next_commands"][0].get("requires_env", []))
         self.assertIn(str(coordinator_env_path), report["next_commands"][0]["requires_files"])
-        self.assertIn(f". {operator_env_path}", report["next_commands"][3]["command_line"])
+        self.assertEqual(report["next_commands"][1]["command"], [str(scripts["stage0_join"])])
+        self.assertEqual(report["next_commands"][3]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
     def test_swarm_bootstrap_remote_local_only_fails_without_creating_invites(self) -> None:
@@ -1603,9 +1614,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["registries"], {})
         self.assertEqual(report["private_env"], {})
         self.assertEqual(report["private_invites"], {})
+        self.assertEqual(report["scripts"], {})
+        self.assertEqual(report["runbook"], "")
         self.assertFalse(report["safety"]["registries_created"])
         self.assertFalse(report["safety"]["private_env_files_created"])
         self.assertFalse(report["safety"]["private_invites_created"])
+        self.assertFalse(report["safety"]["scripts_created"])
         self.assertFalse(output_dir.exists())
 
     def test_product_serve_public_tunnel_url_guides_remote_miners_without_public_bind(self) -> None:

@@ -442,11 +442,11 @@ crowdtensor swarm-bootstrap \
 
 The report lists the local private operator invite, stage0/stage1 Miner invites,
 operator/coordinator private env files, hashed registries, and copyable
-`serve` / `join` / `generate` commands that source the right private env file.
-Keep the operator invite and operator env on the operator host, use the
-coordinator env only for the Coordinator process, and send each Miner invite
-only to the matching Miner host; this is a setup helper, not a production NAT
-traversal or billing system.
+`serve` / `join` / `generate` scripts plus `SWARM_BOOTSTRAP.md`. Keep the
+operator invite and operator env on the operator host, use the coordinator env
+only for `start_coordinator.sh`, and send each stage directory only to the
+matching Miner host; this is a setup helper, not a production NAT traversal or
+billing system.
 Multi-operator deployments can start the same product Coordinator with
 `crowdtensor serve --operator-token-registry state/operator_registry.json --run`
 so audit/accounting operators do not need the legacy owner-level admin token.

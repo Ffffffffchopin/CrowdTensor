@@ -254,6 +254,8 @@ def check_security_docs(root: Path) -> dict[str, Any]:
         "crowdtensor swarm-bootstrap",
         "coordinator.private.env",
         "operator.private.env",
+        "start_coordinator.sh",
+        "join.sh",
         "scripts/create_operator_invite.py",
         "crowdtensor_operator_invite_v1",
     ]:
@@ -396,6 +398,8 @@ def check_remote_miner_docs(root: Path) -> dict[str, Any]:
         "crowdtensor_swarm_bootstrap_v1",
         "coordinator.private.env",
         "operator.private.env",
+        "start_coordinator.sh",
+        "join.sh",
         "scripts/remote_miner_join_check.py",
         "scripts/remote_miner_readiness_check.py",
         "model_bundle_lm",

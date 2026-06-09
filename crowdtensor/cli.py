@@ -10878,8 +10878,143 @@ def _write_private_env(path: Path, values: dict[str, str]) -> None:
     path.chmod(0o600)
 
 
-def _source_env_command(env_path: Path, command: list[str]) -> str:
-    return f". {shlex.quote(str(env_path))} && {command_line(command)}"
+def _write_executable(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o700)
+
+
+def _bootstrap_stage_join_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INVITE_FILE="${CROWDTENSOR_MINER_INVITE_FILE:-$SCRIPT_DIR/miner.invite.json}"
+
+exec crowdtensor join \\
+  --invite-file "$INVITE_FILE" \\
+  --check-admission \\
+  --expect-remote-coordinator \\
+  --run \\
+  "$@"
+"""
+
+
+def _bootstrap_stage_join_markdown(*, stage: str, coordinator_url: str) -> str:
+    return "\n".join([
+        f"# CrowdTensor {stage} Miner Join",
+        "",
+        "This directory is private. It contains the stage-specific Miner invite.",
+        "",
+        "Run:",
+        "",
+        "```bash",
+        "./join.sh",
+        "```",
+        "",
+        f"Coordinator URL: `{coordinator_url}`",
+        "",
+        "Keep `miner.invite.json` private and copy only this stage package to the matching Miner host.",
+        "",
+    ])
+
+
+def _bootstrap_coordinator_script(args: argparse.Namespace, *, backend: str, coordinator_url: str) -> str:
+    profile = "gpu-generation" if backend == "cuda" else "cpu-real-llm"
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        '. "$SCRIPT_DIR/private/coordinator.private.env"',
+        "",
+        "exec crowdtensor serve \\",
+        f"  --profile {_quote_env_value(profile)} \\",
+        f"  --bind-host {_quote_env_value(args.bind_host)} \\",
+        f"  --public-host {_quote_env_value(args.public_host)} \\",
+        f"  --coordinator-public-url {_quote_env_value(coordinator_url)} \\",
+        f"  --port {_quote_env_value(str(args.port))} \\",
+        '  --state-dir "$SCRIPT_DIR/state" \\',
+        '  --operator-token-registry "$SCRIPT_DIR/operator_registry.json" \\',
+        '  --miner-token-registry "$SCRIPT_DIR/miner_registry.json" \\',
+        f"  --hf-model-id {_quote_env_value(args.hf_model_id)} \\",
+        f"  --inference-session-rate-limit {_quote_env_value(str(args.rate_limit))} \\",
+        f"  --inference-session-rate-window-seconds {_quote_env_value(str(args.rate_window_seconds))} \\",
+    ]
+    if args.expect_remote_miners:
+        lines.append("  --expect-remote-miners \\")
+    if args.bind_host in {"0.0.0.0", "::"}:
+        lines.append("  --i-understand-public-bind \\")
+    lines.extend([
+        "  --run \\",
+        '  "$@"',
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _bootstrap_generate_script(*, coordinator_url: str, max_new_tokens: int, dry_run: bool) -> str:
+    prompt = "CrowdTensor routes small models across home compute"
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        '. "$SCRIPT_DIR/private/operator.private.env"',
+        "",
+        "exec crowdtensor generate \\",
+        f"  --coordinator-url {_quote_env_value(coordinator_url)} \\",
+        f"  --prompt {_quote_env_value(prompt)} \\",
+        f"  --max-new-tokens {_quote_env_value(str(max_new_tokens))} \\",
+    ]
+    if dry_run:
+        lines.append("  --dry-run \\")
+    lines.extend([
+        '  "$@"',
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _bootstrap_runbook(
+    *,
+    coordinator_url: str,
+    backend: str,
+    scripts: dict[str, str],
+    private_env: dict[str, str],
+    private_invites: dict[str, str],
+) -> str:
+    return "\n".join([
+        "# CrowdTensor Swarm Bootstrap",
+        "",
+        "This package is local-private. Do not publish it.",
+        "",
+        "## Files",
+        "",
+        f"- Coordinator env: `{private_env.get('coordinator', '')}`",
+        f"- Operator env: `{private_env.get('operator', '')}`",
+        f"- Operator invite: `{private_invites.get('operator', '')}`",
+        f"- Stage0 package: `{Path(scripts.get('stage0_join', '')).parent}`",
+        f"- Stage1 package: `{Path(scripts.get('stage1_join', '')).parent}`",
+        "",
+        "## Run",
+        "",
+        "```bash",
+        shlex.quote(scripts.get("start_coordinator", "")),
+        shlex.quote(scripts.get("stage0_join", "")),
+        shlex.quote(scripts.get("stage1_join", "")),
+        shlex.quote(scripts.get("check_generation", "")),
+        shlex.quote(scripts.get("submit_generation", "")),
+        "```",
+        "",
+        "Copy only the matching stage package to each Miner host.",
+        "Use the coordinator env only for the Coordinator process.",
+        "Keep the operator env and operator invite on the operator host.",
+        "",
+        f"Coordinator URL: `{coordinator_url}`",
+        f"Backend: `{backend}`",
+        "",
+    ])
 
 
 def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
@@ -10906,6 +11041,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     coordinator_env_path = private_dir / "coordinator.private.env"
     operator_env_path = private_dir / "operator.private.env"
     operator_invite_path = private_dir / f"{_bootstrap_slug(args.operator_id)}.operator.invite.json"
+    runbook_path = output_dir / "SWARM_BOOTSTRAP.md"
+    start_coordinator_script = output_dir / "start_coordinator.sh"
+    check_generation_script = output_dir / "check_generation.sh"
+    submit_generation_script = output_dir / "submit_generation.sh"
     safety = {
         "operator_env_local_only": True,
         "coordinator_env_excludes_operator_credentials": True,
@@ -10928,6 +11067,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "registries": {},
             "private_env": {},
             "private_invites": {},
+            "scripts": {},
+            "runbook": "",
             "operator": {},
             "miners": [],
             "next_commands": [],
@@ -10937,6 +11078,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 "registries_created": False,
                 "private_env_files_created": False,
                 "private_invites_created": False,
+                "scripts_created": False,
             },
             "operator_action": "Set --coordinator-url to a public HTTPS, tunnel, VPN, reverse-proxy, or LAN URL before creating or sharing Miner invites.",
         })
@@ -11025,6 +11167,21 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         ["crowdtensor", "join", "--invite-file", str(invite["invite_file"]), "--check-admission", "--expect-remote-coordinator", "--run"]
         for invite in stage_invites
     ]
+    stage_scripts: dict[str, Path] = {}
+    for invite in stage_invites:
+        stage = str((invite.get("join_invite") or {}).get("stage") or "")
+        stage_dir = output_dir / stage
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        source_invite = Path(str(invite["invite_file"]))
+        stage_invite = stage_dir / "miner.invite.json"
+        stage_invite.write_text(source_invite.read_text(encoding="utf-8"), encoding="utf-8")
+        join_script = stage_dir / "join.sh"
+        _write_executable(join_script, _bootstrap_stage_join_script())
+        (stage_dir / "MINER_JOIN.md").write_text(
+            _bootstrap_stage_join_markdown(stage=stage, coordinator_url=coordinator_url),
+            encoding="utf-8",
+        )
+        stage_scripts[stage] = join_script
     dry_run_command = [
         "crowdtensor",
         "generate",
@@ -11046,6 +11203,52 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "--max-new-tokens",
         str(args.max_new_tokens),
     ]
+    _write_executable(
+        start_coordinator_script,
+        _bootstrap_coordinator_script(args, backend=backend, coordinator_url=coordinator_url),
+    )
+    _write_executable(
+        check_generation_script,
+        _bootstrap_generate_script(
+            coordinator_url=coordinator_url,
+            max_new_tokens=args.max_new_tokens,
+            dry_run=True,
+        ),
+    )
+    _write_executable(
+        submit_generation_script,
+        _bootstrap_generate_script(
+            coordinator_url=coordinator_url,
+            max_new_tokens=args.max_new_tokens,
+            dry_run=False,
+        ),
+    )
+    scripts = {
+        "start_coordinator": str(start_coordinator_script),
+        "stage0_join": str(stage_scripts["stage0"]),
+        "stage1_join": str(stage_scripts["stage1"]),
+        "check_generation": str(check_generation_script),
+        "submit_generation": str(submit_generation_script),
+    }
+    private_env_report = {
+        "coordinator": str(coordinator_env_path),
+        "operator": str(operator_env_path),
+    }
+    private_invites_report = {
+        "operator": str(operator_invite_path),
+        "stage0": str(stage_invites[0]["invite_file"]),
+        "stage1": str(stage_invites[1]["invite_file"]),
+    }
+    runbook_path.write_text(
+        _bootstrap_runbook(
+            coordinator_url=coordinator_url,
+            backend=backend,
+            scripts=scripts,
+            private_env=private_env_report,
+            private_invites=private_invites_report,
+        ),
+        encoding="utf-8",
+    )
     report = {
         "schema": "crowdtensor_swarm_bootstrap_v1",
         "ok": True,
@@ -11057,15 +11260,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "operator_registry": str(operator_registry),
             "miner_registry": str(miner_registry),
         },
-        "private_env": {
-            "coordinator": str(coordinator_env_path),
-            "operator": str(operator_env_path),
-        },
-        "private_invites": {
-            "operator": str(operator_invite_path),
-            "stage0": str(stage_invites[0]["invite_file"]),
-            "stage1": str(stage_invites[1]["invite_file"]),
-        },
+        "private_env": private_env_report,
+        "private_invites": private_invites_report,
+        "scripts": scripts,
+        "runbook": str(runbook_path),
         "operator": {
             "operator_id": operator_invite["operator_id"],
             "roles": operator_invite["roles"],
@@ -11097,6 +11295,8 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "registries_created": True,
             "private_env_files_created": True,
             "private_invites_created": True,
+            "scripts_created": True,
+            "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
             "Start the Coordinator with the generated registry paths, copy each private Miner invite only to its Miner host, "
@@ -11104,12 +11304,26 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         ),
     }
     next_commands = report["next_commands"]
-    next_commands[0]["command_line"] = _source_env_command(coordinator_env_path, serve_command)
+    next_commands[0]["command"] = [str(start_coordinator_script)]
+    next_commands[0]["command_line"] = command_line([str(start_coordinator_script)])
     next_commands[0]["requires_files"] = [str(coordinator_env_path)]
-    next_commands[3]["command_line"] = _source_env_command(operator_env_path, dry_run_command)
+    next_commands[0]["script"] = str(start_coordinator_script)
+    next_commands[1]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[1]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[1]["requires_files"] = [str(stage_scripts["stage0"].parent / "miner.invite.json")]
+    next_commands[1]["script"] = str(stage_scripts["stage0"])
+    next_commands[2]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[2]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[2]["requires_files"] = [str(stage_scripts["stage1"].parent / "miner.invite.json")]
+    next_commands[2]["script"] = str(stage_scripts["stage1"])
+    next_commands[3]["command"] = [str(check_generation_script)]
+    next_commands[3]["command_line"] = command_line([str(check_generation_script)])
     next_commands[3]["requires_files"] = [str(operator_env_path)]
-    next_commands[4]["command_line"] = _source_env_command(operator_env_path, generate_command)
+    next_commands[3]["script"] = str(check_generation_script)
+    next_commands[4]["command"] = [str(submit_generation_script)]
+    next_commands[4]["command_line"] = command_line([str(submit_generation_script)])
     next_commands[4]["requires_files"] = [str(operator_env_path)]
+    next_commands[4]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
