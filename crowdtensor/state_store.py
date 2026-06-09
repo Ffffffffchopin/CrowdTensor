@@ -361,6 +361,54 @@ class StateStore:
                 "claim_count": leased + accepted + rejected,
             }
 
+    def miner_accounting_summary(
+        self,
+        *,
+        limit: int = 50,
+        status: str = "any",
+        miner_id: str | None = None,
+        workload_type: str | None = None,
+        session_id: str | None = None,
+    ) -> dict:
+        capped = min(MAX_EVENT_TAIL_LIMIT, max(0, int(limit)))
+        wanted_status = str(status or "any").strip().lower()
+        if wanted_status not in {"any", "leased", "accepted", "rejected"}:
+            raise ValueError("status must be any, leased, accepted, or rejected")
+        wanted_miner = str(miner_id or "").strip()
+        wanted_workload = str(workload_type or "").strip()
+        wanted_session = str(session_id or "").strip()
+        with self._lock:
+            rows: list[dict] = []
+            for task in self._tasks.values():
+                row = self._miner_accounting_row(task)
+                if not row:
+                    continue
+                if wanted_status != "any" and row["accounting_status"] != wanted_status:
+                    continue
+                if wanted_miner and row["miner_id"] != wanted_miner:
+                    continue
+                if wanted_workload and row["workload_type"] != wanted_workload:
+                    continue
+                if wanted_session and row.get("session_id") != wanted_session:
+                    continue
+                rows.append(row)
+            rows.sort(key=lambda item: (float(item.get("recorded_at", 0.0)), int(item.get("event_index", 0))), reverse=True)
+            return {
+                "schema": "miner_accounting_summary_v1",
+                "rows": rows[:capped],
+                "row_count": len(rows),
+                "limit": capped,
+                "status": wanted_status,
+                "miner_id": wanted_miner,
+                "workload_type": wanted_workload,
+                "session_id": wanted_session,
+                "miner_totals": self._miner_accounting_totals(rows),
+                "raw_prompts_public": False,
+                "raw_outputs_public": False,
+                "lease_material_public": False,
+                "public_artifact_safe": True,
+            }
+
     def heartbeat(
         self,
         task_id: str,
@@ -2759,6 +2807,106 @@ class StateStore:
                 "last_rejection_code": score.get("last_rejection_code"),
             },
         }
+
+    def _miner_accounting_row(self, task: dict) -> dict:
+        miner_id = task.get("miner_id")
+        if not miner_id or task.get("status") not in {STATUS_LEASED, STATUS_COMPLETED, STATUS_REJECTED}:
+            return {}
+        status = task.get("status")
+        accounting_status = {
+            STATUS_LEASED: "leased",
+            STATUS_COMPLETED: "accepted",
+            STATUS_REJECTED: "rejected",
+        }.get(status, "unknown")
+        workload_type = self._workload_type(task)
+        validation = task.get("validation") if isinstance(task.get("validation"), dict) else {}
+        metrics = task.get("metrics") if isinstance(task.get("metrics"), dict) else {}
+        metadata = task.get("workload_metadata") if isinstance(task.get("workload_metadata"), dict) else {}
+        stage_id = validation.get("stage_id", metadata.get("stage_id"))
+        elapsed_ms = metrics.get("elapsed_ms", validation.get("elapsed_ms"))
+        work_units = self._accounting_work_units(task, validation, metrics, metadata)
+        recorded_at = task.get("completed_at") or task.get("rejected_at") or task.get("lease_expires_at") or task.get("updated_at") or 0.0
+        return {
+            "schema": "miner_accounting_row_v1",
+            "event_index": int(task.get("result_event_index") or 0),
+            "task_id": task.get("task_id"),
+            "session_id": metadata.get("session_id"),
+            "miner_id": str(miner_id),
+            "workload_type": workload_type,
+            "accounting_status": accounting_status,
+            "accepted": accounting_status == "accepted",
+            "attempt": int(task.get("attempt", 0) or 0),
+            "stage_id": stage_id,
+            "stage_count": validation.get("stage_count", metadata.get("stage_count")),
+            "backend": validation.get("backend", metadata.get("backend", (task.get("capabilities") or {}).get("backend", ""))),
+            "model_id": validation.get("model_id", metadata.get("model_id", "")),
+            "work_units": work_units,
+            "elapsed_ms": round(float(elapsed_ms), 6) if isinstance(elapsed_ms, (int, float)) else None,
+            "recorded_at": float(recorded_at or 0.0),
+            "model_updated": bool(task.get("model_updated", False)),
+            "read_only": not bool(
+                task.get("model_updated")
+                or task.get("adapter_updated")
+                or task.get("micro_transformer_updated")
+                or task.get("model_bundle_updated")
+            ),
+            "raw_payload_public": False,
+        }
+
+    def _accounting_work_units(self, task: dict, validation: dict, metrics: dict, metadata: dict) -> dict:
+        workload_type = self._workload_type(task)
+        if workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER:
+            generated = validation.get("generated_token_count", metrics.get("generated_token_count"))
+            activation_count = validation.get("activation_count", metrics.get("activation_count"))
+            return {
+                "unit": "generated_token_or_stage_row",
+                "generated_token_count": int(generated or 0),
+                "activation_count": int(activation_count or 0),
+                "generation_step": int(validation.get("generation_step", metadata.get("generation_step", 0)) or 0),
+                "max_new_tokens": int(validation.get("max_new_tokens", metadata.get("max_new_tokens", 0)) or 0),
+            }
+        if workload_type in {WORKLOAD_MODEL_BUNDLE_INFER, WORKLOAD_EXTERNAL_LLM_INFER}:
+            request_count = validation.get("request_count", metrics.get("request_count", task.get("inner_steps", 0)))
+            return {
+                "unit": "request",
+                "request_count": int(request_count or 0),
+            }
+        if workload_type in {WORKLOAD_SHARDED_MODEL_BUNDLE_INFER, WORKLOAD_MICRO_LLM_SHARDED_INFER}:
+            return {
+                "unit": "stage_task",
+                "stage_rows": int(validation.get("activation_count", metrics.get("activation_count", 1)) or 1),
+            }
+        return {
+            "unit": "inner_step",
+            "inner_steps": int(task.get("inner_steps", 0) or 0),
+        }
+
+    def _miner_accounting_totals(self, rows: list[dict]) -> dict:
+        totals: dict[str, dict] = {}
+        for row in rows:
+            miner_id = row["miner_id"]
+            workload_type = row["workload_type"]
+            key = f"{miner_id}/{workload_type}"
+            item = totals.setdefault(key, {
+                "miner_id": miner_id,
+                "workload_type": workload_type,
+                "leased": 0,
+                "accepted": 0,
+                "rejected": 0,
+                "elapsed_ms": 0.0,
+                "work_units": {},
+            })
+            status = row.get("accounting_status")
+            if status in {"leased", "accepted", "rejected"}:
+                item[status] += 1
+            if isinstance(row.get("elapsed_ms"), (int, float)):
+                item["elapsed_ms"] = round(float(item["elapsed_ms"]) + float(row["elapsed_ms"]), 6)
+            work_units = row.get("work_units") if isinstance(row.get("work_units"), dict) else {}
+            for unit_key, value in work_units.items():
+                if unit_key == "unit" or not isinstance(value, int):
+                    continue
+                item["work_units"][unit_key] = int(item["work_units"].get(unit_key, 0)) + int(value)
+        return totals
 
     def _validation_summary(self, validation: dict, *, workload_type: str = "") -> dict:
         fields = [

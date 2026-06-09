@@ -1240,6 +1240,92 @@ class CoordinatorApiTests(unittest.TestCase):
             self.assertNotIn("lease_token", public_text)
             self.assertNotIn("result_idempotency_key_hash", public_text)
 
+    def test_admin_accounting_reports_safe_miner_summary_with_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_registry(
+                Path(tmp) / "miners.json",
+                [
+                    {
+                        "miner_id": "accounting-api-miner",
+                        "token": hash_token("registered-token"),
+                        "join_policy": {
+                            "stage": "both",
+                            "backend": "cpu",
+                            "hf_model_id": "sshleifer/tiny-gpt2",
+                            "trust_tier": "probation",
+                            "quota_task_limit": 2,
+                            "reward_account": "acct-secret",
+                            "read_only_workload": "diloco_train",
+                        },
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                admin_token="secret",
+                miner_token_registry=registry_path,
+            )
+            claim_task = endpoint_for(app, "/tasks/claim", "POST")
+            result_task = endpoint_for(app, "/tasks/{task_id}/result", "POST")
+            admin_accounting = endpoint_for(app, "/admin/accounting", "GET")
+            claim = claim_task(
+                request_model(claim_task)(miner_id="accounting-api-miner"),
+                x_crowdtensor_miner_token="registered-token",
+            )
+            inner_result = run_inner_loop(
+                claim["weights"],
+                task_id=claim["task_id"],
+                miner_id="accounting-api-miner",
+                model_version=claim["model_version"],
+                inner_steps=claim["inner_steps"],
+            )
+            result_task(
+                claim["task_id"],
+                request_model(result_task)(
+                    lease_token=claim["lease_token"],
+                    attempt=claim["attempt"],
+                    idempotency_key="accounting-api-secret",
+                    local_delta=inner_result["local_delta"],
+                    metrics={**inner_result, "elapsed_ms": 12.0},
+                ),
+                x_crowdtensor_miner_token="registered-token",
+            )
+
+            with self.assertRaises(HTTPException) as bad_token:
+                admin_accounting(limit=10, x_crowdtensor_admin_token="bad")
+            self.assertEqual(bad_token.exception.status_code, 403)
+            with self.assertRaises(HTTPException) as bad_status:
+                admin_accounting(status="broken", x_crowdtensor_admin_token="secret")
+            self.assertEqual(bad_status.exception.status_code, 422)
+
+            accounting = admin_accounting(
+                limit=10,
+                status="accepted",
+                miner_id="accounting-api-miner",
+                workload_type="diloco_train",
+                x_crowdtensor_admin_token="secret",
+            )
+            payload = json.dumps(accounting, sort_keys=True)
+
+            self.assertEqual(accounting["schema"], "miner_accounting_summary_v1")
+            self.assertEqual(accounting["row_count"], 1)
+            row = accounting["rows"][0]
+            self.assertEqual(row["miner_id"], "accounting-api-miner")
+            self.assertEqual(row["accounting_status"], "accepted")
+            self.assertEqual(row["work_units"]["inner_steps"], 10)
+            self.assertEqual(row["join_policy"]["trust_tier"], "probation")
+            self.assertEqual(row["join_policy"]["quota_task_limit"], 2)
+            self.assertTrue(row["join_policy"]["reward_account_present"])
+            totals = accounting["miner_totals"]["accounting-api-miner/diloco_train"]
+            self.assertEqual(totals["accepted"], 1)
+            self.assertEqual(totals["work_units"]["inner_steps"], 10)
+            self.assertTrue(totals["join_policy"]["reward_account_present"])
+            self.assertNotIn("acct-secret", payload)
+            self.assertNotIn("accounting-api-secret", payload)
+            self.assertNotIn("lease_token", payload)
+
     def test_admin_inference_session_enqueues_read_only_task_and_filters_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(

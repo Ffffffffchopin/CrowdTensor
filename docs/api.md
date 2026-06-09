@@ -141,6 +141,28 @@ Response:
 }
 ```
 
+### `GET /admin/accounting?limit=50&status=any`
+
+Returns a Miner-oriented accounting summary. Requires
+`x-crowdtensor-admin-token`.
+
+Query parameters:
+
+- `limit`: `0..500`, default `50`
+- `status`: `any`, `leased`, `accepted`, or `rejected`
+- `miner_id`: optional exact Miner ID filter
+- `workload_type`: optional exact workload filter
+- `session_id`: optional exact session filter
+
+The response includes `miner_accounting_summary_v1` rows and `miner_totals`
+grouped by Miner and workload. Rows expose safe accounting fields such as
+Miner ID, workload, accepted/rejected/leased status, stage, backend, model ID,
+elapsed time, and workload-specific work units. When the Miner came from a
+registry invite, rows include redacted join policy metadata: trust tier, quota
+limit, reward-account presence, and read-only workload. The endpoint does not
+expose raw prompts, generated text, token ids, activations, lease material,
+idempotency keys, plaintext Miner tokens, or reward account values.
+
 ### `POST /admin/inference-sessions`
 
 Creates one admin-controlled, read-only `model_bundle_infer` task. Requires `x-crowdtensor-admin-token`.

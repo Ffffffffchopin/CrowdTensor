@@ -716,6 +716,19 @@ curl -H 'x-crowdtensor-admin-token: local-admin' \
 
 `GET /admin/results` is the safest operator view for result traceability. It includes validation, replay audit, model impact, and Miner workload score summaries, but avoids raw lease tokens, idempotency material, full result responses, and tensor deltas.
 
+Admin accounting summary:
+
+```bash
+curl -H 'x-crowdtensor-admin-token: local-admin' \
+  'http://127.0.0.1:8787/admin/accounting?status=accepted&limit=20'
+```
+
+`GET /admin/accounting` is the safest operator view for Miner-level usage and
+Beta reward/accounting preparation. It groups safe work units by Miner and
+workload, joins redacted invite policy metadata when present, and avoids raw
+prompts, outputs, token ids, activations, lease material, plaintext tokens, and
+reward account values.
+
 ## Acceptance Checks
 
 First-run Doctor:

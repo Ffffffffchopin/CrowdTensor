@@ -226,6 +226,42 @@ def miner_join_policy_for(miner_id: str, registry: dict[str, dict[str, Any]]) ->
     return dict(policy) if isinstance(policy, dict) else {}
 
 
+def apply_accounting_policy_summary(accounting: dict[str, Any], registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    payload = json.loads(json.dumps(accounting))
+    for row in payload.get("rows", []):
+        if not isinstance(row, dict):
+            continue
+        policy = miner_join_policy_for(str(row.get("miner_id") or ""), registry)
+        if not policy:
+            continue
+        row["join_policy"] = {
+            "trust_tier": str(policy.get("trust_tier") or "new"),
+            "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+            "reward_account_present": bool(
+                policy.get("reward_account_present")
+                or str(policy.get("reward_account") or "").strip()
+            ),
+            "read_only_workload": str(policy.get("read_only_workload") or ""),
+        }
+    for item in payload.get("miner_totals", {}).values():
+        if not isinstance(item, dict):
+            continue
+        policy = miner_join_policy_for(str(item.get("miner_id") or ""), registry)
+        if not policy:
+            continue
+        item["join_policy"] = {
+            "trust_tier": str(policy.get("trust_tier") or "new"),
+            "quota_task_limit": int(policy.get("quota_task_limit") or 0),
+            "reward_account_present": bool(
+                policy.get("reward_account_present")
+                or str(policy.get("reward_account") or "").strip()
+            ),
+            "read_only_workload": str(policy.get("read_only_workload") or ""),
+        }
+    payload["registry_policy_joined"] = bool(registry)
+    return payload
+
+
 def _metric_value(value: Any) -> str:
     if isinstance(value, bool):
         return "1" if value else "0"
@@ -706,6 +742,39 @@ def create_app(
             }
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/admin/accounting")
+    def admin_accounting(
+        limit: int = Query(default=50, ge=0, le=500),
+        status: str = Query(default="any"),
+        miner_id: str = Query(default=""),
+        workload_type: str = Query(default=""),
+        session_id: str = Query(default=""),
+        x_crowdtensor_admin_token: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(x_crowdtensor_admin_token)
+
+        def query_value(value, default):
+            if hasattr(value, "default"):
+                value = value.default
+            return default if value is None else value
+
+        limit_value = query_value(limit, 50)
+        status_value = query_value(status, "any")
+        miner_value = query_value(miner_id, "")
+        workload_value = query_value(workload_type, "")
+        session_value = query_value(session_id, "")
+        try:
+            accounting = store.miner_accounting_summary(
+                limit=limit_value,
+                status=status_value,
+                miner_id=miner_value,
+                workload_type=workload_value,
+                session_id=session_value,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return apply_accounting_policy_summary(accounting, configured_miner_registry)
 
     @app.get("/admin/session-stream")
     def admin_session_stream(

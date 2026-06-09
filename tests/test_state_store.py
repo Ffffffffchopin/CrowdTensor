@@ -427,6 +427,40 @@ class StateStoreTests(unittest.TestCase):
             ]:
                 self.assertNotIn(forbidden, public_text)
 
+    def test_miner_accounting_summary_groups_safe_work_units(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=2)
+            accepted_claim = store.claim_task("accounting-miner")
+            inner_result = run_inner_loop(
+                accepted_claim["weights"],
+                task_id=accepted_claim["task_id"],
+                miner_id="accounting-miner",
+                model_version=accepted_claim["model_version"],
+                inner_steps=accepted_claim["inner_steps"],
+            )
+            store.complete_task(
+                accepted_claim["task_id"],
+                lease_token=accepted_claim["lease_token"],
+                attempt=accepted_claim["attempt"],
+                idempotency_key="accounting-secret",
+                local_delta=inner_result["local_delta"],
+                metrics={**inner_result, "elapsed_ms": 10.5},
+            )
+            store.claim_task("accounting-miner")
+
+            summary = store.miner_accounting_summary(miner_id="accounting-miner")
+            payload = json.dumps(summary, sort_keys=True)
+
+            self.assertEqual(summary["schema"], "miner_accounting_summary_v1")
+            self.assertEqual(summary["row_count"], 2)
+            totals = summary["miner_totals"]["accounting-miner/diloco_train"]
+            self.assertEqual(totals["accepted"], 1)
+            self.assertEqual(totals["leased"], 1)
+            self.assertEqual(totals["work_units"]["inner_steps"], 20)
+            self.assertNotIn("accounting-secret", payload)
+            self.assertNotIn("lease_token", payload)
+            self.assertFalse(summary["lease_material_public"])
+
     def test_sign_compressed_result_updates_model_and_ledger_safely(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = StateStore(
