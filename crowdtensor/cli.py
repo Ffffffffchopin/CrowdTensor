@@ -11988,6 +11988,25 @@ def _bootstrap_tunnel_script(tunnel: dict[str, Any]) -> str:
     ])
 
 
+def _bootstrap_tunnel_doctor_script(*, expect_remote_miners: bool) -> str:
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        "",
+        "exec crowdtensor swarm-tunnel-doctor \\",
+        '  --output-dir "$SCRIPT_DIR" \\',
+    ]
+    if expect_remote_miners:
+        lines.append("  --expect-remote-miners \\")
+    lines.extend([
+        '  "$@"',
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def _bootstrap_control_plane_script(discovery: dict[str, Any], tunnel: dict[str, Any]) -> str:
     lines = [
         "#!/usr/bin/env bash",
@@ -12175,6 +12194,7 @@ def _bootstrap_runbook(
         "```bash",
         shlex.quote(scripts.get("start_control_plane", "")),
         shlex.quote(scripts.get("start_tunnel", "")),
+        shlex.quote(scripts.get("tunnel_doctor", "")),
         shlex.quote(scripts.get("start_discovery", "")),
         shlex.quote(scripts.get("start_coordinator", "")),
         shlex.quote(scripts.get("check_route", "")),
@@ -12264,6 +12284,7 @@ def _bootstrap_handoff_summary(
         "recommended_launcher": scripts.get("start_control_plane", ""),
         "manual_launchers": {
             "tunnel": scripts.get("start_tunnel", ""),
+            "tunnel_doctor": scripts.get("tunnel_doctor", ""),
             "discovery": scripts.get("start_discovery", ""),
             "coordinator": scripts.get("start_coordinator", ""),
             "check_route": scripts.get("check_route", ""),
@@ -12406,6 +12427,279 @@ def build_swarm_handoff_doctor(args: argparse.Namespace) -> dict[str, Any]:
     return sanitize(report)
 
 
+def _shell_binary_from_command(command: str) -> str:
+    try:
+        parts = shlex.split(str(command or ""))
+    except ValueError:
+        return ""
+    return parts[0] if parts else ""
+
+
+def _tunnel_provider_hint(command: str) -> str:
+    binary = Path(_shell_binary_from_command(command)).name.lower()
+    if "cloudflared" in binary:
+        return "cloudflare_tunnel"
+    if "ngrok" in binary:
+        return "ngrok"
+    if binary == "frp" or binary.startswith("frpc"):
+        return "frp"
+    if binary == "tailscale":
+        return "tailscale"
+    if binary:
+        return "custom"
+    return ""
+
+
+def build_swarm_tunnel_doctor(args: argparse.Namespace) -> dict[str, Any]:
+    output_dir = Path(args.output_dir)
+    private_dir = output_dir / "private"
+    tunnel_env_path = private_dir / "tunnel.private.env"
+    start_tunnel_script = output_dir / "start_tunnel.sh"
+    start_control_plane_script = output_dir / "start_control_plane.sh"
+    stage0_invite_path = output_dir / "stage0" / "miner.invite.json"
+    stage1_invite_path = output_dir / "stage1" / "miner.invite.json"
+
+    checks: list[dict[str, Any]] = []
+    diagnosis_codes: list[str] = []
+    tunnel_env, tunnel_env_error = _parse_bootstrap_env(tunnel_env_path)
+    tunnel_command = str(tunnel_env.get("CROWDTENSOR_TUNNEL_COMMAND") or "").strip()
+    command_binary = _shell_binary_from_command(tunnel_command)
+    binary_path = shutil.which(command_binary) if command_binary else None
+    start_tunnel_text, _ = _read_bootstrap_text(start_tunnel_script)
+    start_control_plane_text, _ = _read_bootstrap_text(start_control_plane_script)
+    stage0_invite, stage0_error = _load_bootstrap_json(stage0_invite_path)
+    stage1_invite, stage1_error = _load_bootstrap_json(stage1_invite_path)
+    stage0_url = str(stage0_invite.get("coordinator_url") or "").strip().rstrip("/")
+    stage1_url = str(stage1_invite.get("coordinator_url") or "").strip().rstrip("/")
+    coordinator_url = stage0_url or stage1_url
+    coordinator_urls_match = bool(stage0_url and stage1_url and stage0_url == stage1_url)
+    remote_access = coordinator_remote_access_summary(
+        coordinator_url,
+        bind_host="127.0.0.1",
+        public_host=(urlparse(coordinator_url).hostname or "") if coordinator_url else "",
+        public_url_explicit=bool(coordinator_url),
+        expect_remote_miners=bool(getattr(args, "expect_remote_miners", False)),
+        source="swarm-tunnel-doctor",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "tunnel_private_env_present",
+        tunnel_env_path.is_file(),
+        detail=str(tunnel_env_path),
+        diagnosis_code="tunnel_private_env_missing",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "tunnel_private_env_parse",
+        not tunnel_env_error,
+        detail=tunnel_env_error,
+        diagnosis_code="tunnel_private_env_unreadable",
+    )
+    command_configured = bool(tunnel_command)
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "tunnel_command_configured",
+        bool(
+            command_configured
+            or not bool(getattr(args, "expect_remote_miners", False))
+            or remote_access.get("diagnosis_code") != "coordinator_remote_route_required"
+        ),
+        detail=(
+            "CROWDTENSOR_TUNNEL_COMMAND is present"
+            if command_configured
+            else "no managed tunnel command configured; use an existing reverse proxy, VPN/LAN, port-forwarding, or rerun swarm-bootstrap with --tunnel-command"
+        ),
+        diagnosis_code="tunnel_command_missing",
+    )
+    binary_available = bool(command_binary and binary_path)
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "tunnel_binary_available",
+        (not command_configured) or binary_available,
+        detail=command_binary or "no tunnel command",
+        diagnosis_code="tunnel_binary_missing",
+    )
+    script_ready = bool(
+        (
+            not command_configured
+            and start_tunnel_script.is_file()
+            and "No tunnel or overlay command configured" in start_tunnel_text
+        )
+        or (
+            command_configured
+            and start_tunnel_script.is_file()
+            and "private/tunnel.private.env" in start_tunnel_text
+            and "CROWDTENSOR_TUNNEL_COMMAND" in start_tunnel_text
+            and 'bash -lc "$CROWDTENSOR_TUNNEL_COMMAND"' in start_tunnel_text
+            and tunnel_command not in start_tunnel_text
+        )
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "start_tunnel_script_ready",
+        script_ready,
+        detail="start_tunnel.sh must source private/tunnel.private.env without embedding the tunnel command",
+        diagnosis_code="tunnel_start_script_invalid",
+    )
+    control_plane_ready = bool(
+        start_control_plane_script.is_file()
+        and "start_coordinator.sh" in start_control_plane_text
+        and (
+            not command_configured
+            or "start_tunnel.sh" in start_control_plane_text
+        )
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "start_control_plane_uses_tunnel",
+        control_plane_ready,
+        detail="start_control_plane.sh should launch start_tunnel.sh before start_coordinator.sh when a tunnel command is configured",
+        diagnosis_code="tunnel_control_plane_invalid",
+    )
+    route_ready = bool(
+        coordinator_urls_match
+        and (
+            not bool(getattr(args, "expect_remote_miners", False))
+            or remote_access.get("diagnosis_code") != "coordinator_remote_route_required"
+        )
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "miner_facing_url_ready",
+        route_ready,
+        detail=str(remote_access.get("operator_action") or ""),
+        diagnosis_code="coordinator_remote_route_required" if coordinator_urls_match else "bootstrap_stage_coordinator_url_mismatch",
+    )
+    leaked = bool(tunnel_command and any(
+        tunnel_command in text
+        for text in [start_tunnel_text, start_control_plane_text]
+    ))
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "public_scripts_exclude_tunnel_command",
+        not leaked,
+        detail="public scripts must source the private tunnel env",
+        diagnosis_code="tunnel_command_public_leak",
+    )
+    ok = bool(checks and all(check.get("ok") is True for check in checks))
+    if ok:
+        diagnosis_codes.append("swarm_tunnel_doctor_ready")
+    recommended_next_command = str(start_control_plane_script) if ok else str(remote_access.get("recommended_setup_command") or "")
+    report = {
+        "schema": "crowdtensor_swarm_tunnel_doctor_v1",
+        "ok": ok,
+        "mode": "swarm-tunnel-doctor",
+        "output_dir": str(output_dir),
+        "coordinator_url": coordinator_url,
+        "tunnel": {
+            "schema": "crowdtensor_bootstrap_tunnel_v1",
+            "enabled": command_configured,
+            "provider_hint": _tunnel_provider_hint(tunnel_command),
+            "command_private_env": "CROWDTENSOR_TUNNEL_COMMAND" if command_configured else "",
+            "command_binary": command_binary,
+            "binary_available": binary_available,
+            "binary_path_present": bool(binary_path),
+            "launches_before_coordinator": command_configured,
+            "public_artifact_safe": True,
+            "raw_command_public": False,
+            "not_nat_traversal": True,
+        },
+        "remote_access": remote_access,
+        "files": {
+            "tunnel_env": {
+                "path": str(tunnel_env_path),
+                "present": tunnel_env_path.is_file(),
+                "mode": _mode_string(tunnel_env_path),
+            },
+            "start_tunnel": {
+                "path": str(start_tunnel_script),
+                "present": start_tunnel_script.is_file(),
+                "mode": _mode_string(start_tunnel_script),
+            },
+            "start_control_plane": {
+                "path": str(start_control_plane_script),
+                "present": start_control_plane_script.is_file(),
+                "mode": _mode_string(start_control_plane_script),
+            },
+            "stage0_invite": {
+                "path": str(stage0_invite_path),
+                "present": stage0_invite_path.is_file(),
+                "parse_error": stage0_error,
+            },
+            "stage1_invite": {
+                "path": str(stage1_invite_path),
+                "present": stage1_invite_path.is_file(),
+                "parse_error": stage1_error,
+            },
+        },
+        "checks": checks,
+        "diagnosis_codes": sorted(set(code for code in diagnosis_codes if code)),
+        "recommended_next_command": recommended_next_command,
+        "public_artifact_safe": True,
+        "raw_tunnel_command_public": False,
+        "not_nat_traversal": True,
+        "operator_action": (
+            "Tunnel package is ready; run start_control_plane.sh, then check_route.sh and verify_bootstrap.sh."
+            if ok
+            else "Fix the failed tunnel route checks before starting the control plane or sharing Miner packages."
+        ),
+    }
+    secret_values = unique_redaction_values([tunnel_command])
+    report_path = output_dir / "tunnel_doctor.json"
+    if output_dir.is_dir():
+        report["tunnel_doctor_json"] = str(report_path)
+        report_path.write_text(
+            json.dumps(redact_values(report, secret_values), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        report_path.chmod(0o644)
+    return sanitize(redact_values(report, secret_values))
+
+
+def print_swarm_tunnel_doctor(report: dict[str, Any]) -> None:
+    print("CrowdTensor swarm tunnel doctor")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  output_dir: {report.get('output_dir')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    tunnel = report.get("tunnel") if isinstance(report.get("tunnel"), dict) else {}
+    if tunnel:
+        print(
+            "  tunnel: "
+            f"enabled={tunnel.get('enabled')} "
+            f"provider={tunnel.get('provider_hint') or 'none'} "
+            f"binary={tunnel.get('command_binary') or 'none'} "
+            f"binary_available={tunnel.get('binary_available')}"
+        )
+    remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    if remote_access:
+        print(
+            "  remote_access: "
+            f"route={remote_access.get('route_kind')} "
+            f"remote_miners={remote_access.get('remote_miners_supported')} "
+            f"diagnosis={remote_access.get('diagnosis_code')}"
+        )
+    failed = [
+        item for item in report.get("checks") or []
+        if isinstance(item, dict) and item.get("ok") is not True
+    ]
+    print(f"  checks: {len(report.get('checks') or [])} total, {len(failed)} failed")
+    for item in failed[:8]:
+        print(f"  failed: {item.get('name')} ({item.get('diagnosis_code')}) {item.get('detail') or ''}".rstrip())
+    if report.get("recommended_next_command"):
+        print(f"  next: {report.get('recommended_next_command')}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
+
+
 def _swarm_bootstrap_miner_summaries(
     stage_invites: list[dict[str, Any]],
     stage_join_code_files: dict[str, Path],
@@ -12475,6 +12769,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     runbook_path = output_dir / "SWARM_BOOTSTRAP.md"
     start_control_plane_script = output_dir / "start_control_plane.sh"
     start_tunnel_script = output_dir / "start_tunnel.sh"
+    tunnel_doctor_script = output_dir / "tunnel_doctor.sh"
     start_discovery_script = output_dir / "start_discovery.sh"
     start_coordinator_script = output_dir / "start_coordinator.sh"
     check_route_script = output_dir / "check_route.sh"
@@ -12732,6 +13027,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         _bootstrap_tunnel_script(tunnel_summary),
     )
     _write_executable(
+        tunnel_doctor_script,
+        _bootstrap_tunnel_doctor_script(expect_remote_miners=bool(args.expect_remote_miners)),
+    )
+    _write_executable(
         start_discovery_script,
         _bootstrap_discovery_script(args, discovery_summary),
     )
@@ -12777,6 +13076,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     scripts = {
         "start_control_plane": str(start_control_plane_script),
         "start_tunnel": str(start_tunnel_script),
+        "tunnel_doctor": str(tunnel_doctor_script),
         "start_discovery": str(start_discovery_script),
         "start_coordinator": str(start_coordinator_script),
         "check_route": str(check_route_script),
@@ -12891,6 +13191,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 [str(start_tunnel_script)],
             ),
             command_entry(
+                "doctor tunnel route",
+                [str(tunnel_doctor_script)],
+            ),
+            command_entry(
                 "start discovery",
                 p2p_discovery_daemon_command(
                     backend=discovery_summary["p2p_backend"] or "lite",
@@ -12939,6 +13243,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "private_join_code_files_created": True,
             "stage_package_archives_created": True,
             "stage_handoff_checksums_created": True,
+            "tunnel_doctor_script_created": True,
             "check_route_script_created": True,
             "operator_status_script_created": True,
             "scripts_created": True,
@@ -12963,82 +13268,87 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[1]["optional"] = not bool(tunnel_summary["enabled"])
     if tunnel_summary["enabled"]:
         next_commands[1]["requires_files"] = [str(tunnel_env_path)]
-    next_commands[2]["command"] = [str(start_discovery_script)]
-    next_commands[2]["command_line"] = command_line([str(start_discovery_script)])
-    next_commands[2]["script"] = str(start_discovery_script)
-    next_commands[2]["optional"] = not bool(discovery_summary["enabled"])
-    next_commands[3]["command"] = [str(start_coordinator_script)]
-    next_commands[3]["command_line"] = command_line([str(start_coordinator_script)])
-    next_commands[3]["requires_files"] = [str(coordinator_env_path)]
-    next_commands[3]["script"] = str(start_coordinator_script)
-    next_commands[4]["command"] = [str(check_route_script)]
-    next_commands[4]["command_line"] = command_line([str(check_route_script)])
-    next_commands[4]["script"] = str(check_route_script)
-    next_commands[5]["command"] = [str(verify_bootstrap_script)]
-    next_commands[5]["command_line"] = command_line([str(verify_bootstrap_script)])
-    next_commands[5]["requires_files"] = [
+    next_commands[2]["command"] = [str(tunnel_doctor_script)]
+    next_commands[2]["command_line"] = command_line([str(tunnel_doctor_script)])
+    next_commands[2]["script"] = str(tunnel_doctor_script)
+    next_commands[2]["requires_files"] = [str(tunnel_env_path)]
+    next_commands[2]["optional"] = not bool(tunnel_summary["enabled"])
+    next_commands[3]["command"] = [str(start_discovery_script)]
+    next_commands[3]["command_line"] = command_line([str(start_discovery_script)])
+    next_commands[3]["script"] = str(start_discovery_script)
+    next_commands[3]["optional"] = not bool(discovery_summary["enabled"])
+    next_commands[4]["command"] = [str(start_coordinator_script)]
+    next_commands[4]["command_line"] = command_line([str(start_coordinator_script)])
+    next_commands[4]["requires_files"] = [str(coordinator_env_path)]
+    next_commands[4]["script"] = str(start_coordinator_script)
+    next_commands[5]["command"] = [str(check_route_script)]
+    next_commands[5]["command_line"] = command_line([str(check_route_script)])
+    next_commands[5]["script"] = str(check_route_script)
+    next_commands[6]["command"] = [str(verify_bootstrap_script)]
+    next_commands[6]["command_line"] = command_line([str(verify_bootstrap_script)])
+    next_commands[6]["requires_files"] = [
         str(stage_scripts["stage0"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage0"]),
         str(stage_scripts["stage1"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage1"]),
     ]
-    next_commands[5]["script"] = str(verify_bootstrap_script)
-    next_commands[6]["command"] = [str(handoff_doctor_script)]
-    next_commands[6]["command_line"] = command_line([str(handoff_doctor_script)])
-    next_commands[6]["requires_files"] = next_commands[5]["requires_files"]
-    next_commands[6]["script"] = str(handoff_doctor_script)
-    next_commands[7]["command"] = [str(operator_status_script)]
-    next_commands[7]["command_line"] = command_line([str(operator_status_script)])
-    next_commands[7]["requires_files"] = [str(operator_env_path)]
-    next_commands[7]["script"] = str(operator_status_script)
-    next_commands[8]["command"] = [str(stage_runner_scripts["stage0"]), "--setup"]
-    next_commands[8]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--setup"])
-    next_commands[8]["requires_files"] = [
+    next_commands[6]["script"] = str(verify_bootstrap_script)
+    next_commands[7]["command"] = [str(handoff_doctor_script)]
+    next_commands[7]["command_line"] = command_line([str(handoff_doctor_script)])
+    next_commands[7]["requires_files"] = next_commands[6]["requires_files"]
+    next_commands[7]["script"] = str(handoff_doctor_script)
+    next_commands[8]["command"] = [str(operator_status_script)]
+    next_commands[8]["command_line"] = command_line([str(operator_status_script)])
+    next_commands[8]["requires_files"] = [str(operator_env_path)]
+    next_commands[8]["script"] = str(operator_status_script)
+    next_commands[9]["command"] = [str(stage_runner_scripts["stage0"]), "--setup"]
+    next_commands[9]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--setup"])
+    next_commands[9]["requires_files"] = [
         str(stage_archives["stage0"]),
         str(stage_runner_scripts["stage0"]),
         str(stage_checksum_files["stage0"]),
     ]
-    next_commands[8]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[9]["command"] = [str(stage_runner_scripts["stage0"]), "--start"]
-    next_commands[9]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--start"])
-    next_commands[9]["requires_files"] = next_commands[8]["requires_files"]
     next_commands[9]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[10]["command"] = [str(stage_runner_scripts["stage0"]), "--install", "--dry-run"]
-    next_commands[10]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--install", "--dry-run"])
-    next_commands[10]["requires_files"] = next_commands[8]["requires_files"]
+    next_commands[10]["command"] = [str(stage_runner_scripts["stage0"]), "--start"]
+    next_commands[10]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--start"])
+    next_commands[10]["requires_files"] = next_commands[9]["requires_files"]
     next_commands[10]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[11]["command"] = [str(stage_runner_scripts["stage0"]), "--doctor"]
-    next_commands[11]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--doctor"])
-    next_commands[11]["requires_files"] = next_commands[8]["requires_files"]
+    next_commands[11]["command"] = [str(stage_runner_scripts["stage0"]), "--install", "--dry-run"]
+    next_commands[11]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--install", "--dry-run"])
+    next_commands[11]["requires_files"] = next_commands[9]["requires_files"]
     next_commands[11]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[12]["command"] = [str(stage_runner_scripts["stage1"]), "--setup"]
-    next_commands[12]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--setup"])
-    next_commands[12]["requires_files"] = [
+    next_commands[12]["command"] = [str(stage_runner_scripts["stage0"]), "--doctor"]
+    next_commands[12]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--doctor"])
+    next_commands[12]["requires_files"] = next_commands[9]["requires_files"]
+    next_commands[12]["script"] = str(stage_runner_scripts["stage0"])
+    next_commands[13]["command"] = [str(stage_runner_scripts["stage1"]), "--setup"]
+    next_commands[13]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--setup"])
+    next_commands[13]["requires_files"] = [
         str(stage_archives["stage1"]),
         str(stage_runner_scripts["stage1"]),
         str(stage_checksum_files["stage1"]),
     ]
-    next_commands[12]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[13]["command"] = [str(stage_runner_scripts["stage1"]), "--start"]
-    next_commands[13]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--start"])
-    next_commands[13]["requires_files"] = next_commands[12]["requires_files"]
     next_commands[13]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[14]["command"] = [str(stage_runner_scripts["stage1"]), "--install", "--dry-run"]
-    next_commands[14]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--install", "--dry-run"])
-    next_commands[14]["requires_files"] = next_commands[12]["requires_files"]
+    next_commands[14]["command"] = [str(stage_runner_scripts["stage1"]), "--start"]
+    next_commands[14]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--start"])
+    next_commands[14]["requires_files"] = next_commands[13]["requires_files"]
     next_commands[14]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[15]["command"] = [str(stage_runner_scripts["stage1"]), "--doctor"]
-    next_commands[15]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--doctor"])
-    next_commands[15]["requires_files"] = next_commands[12]["requires_files"]
+    next_commands[15]["command"] = [str(stage_runner_scripts["stage1"]), "--install", "--dry-run"]
+    next_commands[15]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--install", "--dry-run"])
+    next_commands[15]["requires_files"] = next_commands[13]["requires_files"]
     next_commands[15]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[16]["command"] = [str(check_generation_script)]
-    next_commands[16]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[16]["requires_files"] = [str(operator_env_path)]
-    next_commands[16]["script"] = str(check_generation_script)
-    next_commands[17]["command"] = [str(submit_generation_script)]
-    next_commands[17]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[16]["command"] = [str(stage_runner_scripts["stage1"]), "--doctor"]
+    next_commands[16]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--doctor"])
+    next_commands[16]["requires_files"] = next_commands[13]["requires_files"]
+    next_commands[16]["script"] = str(stage_runner_scripts["stage1"])
+    next_commands[17]["command"] = [str(check_generation_script)]
+    next_commands[17]["command_line"] = command_line([str(check_generation_script)])
     next_commands[17]["requires_files"] = [str(operator_env_path)]
-    next_commands[17]["script"] = str(submit_generation_script)
+    next_commands[17]["script"] = str(check_generation_script)
+    next_commands[18]["command"] = [str(submit_generation_script)]
+    next_commands[18]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[18]["requires_files"] = [str(operator_env_path)]
+    next_commands[18]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -13354,6 +13664,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "tunnel_env": private_dir / "tunnel.private.env",
         "start_control_plane_script": output_dir / "start_control_plane.sh",
         "start_tunnel_script": output_dir / "start_tunnel.sh",
+        "tunnel_doctor_script": output_dir / "tunnel_doctor.sh",
         "start_discovery_script": output_dir / "start_discovery.sh",
         "start_coordinator_script": output_dir / "start_coordinator.sh",
         "check_route_script": output_dir / "check_route.sh",
@@ -13501,6 +13812,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     executable_scripts = [
         required_files["start_control_plane_script"],
         required_files["start_tunnel_script"],
+        required_files["tunnel_doctor_script"],
         required_files["start_discovery_script"],
         required_files["start_coordinator_script"],
         required_files["check_route_script"],
@@ -13740,6 +14052,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     )
     control_plane_script_text, _ = _read_bootstrap_text(required_files["start_control_plane_script"])
     tunnel_script_text, _ = _read_bootstrap_text(required_files["start_tunnel_script"])
+    tunnel_doctor_script_text, _ = _read_bootstrap_text(required_files["tunnel_doctor_script"])
     discovery_script_text, _ = _read_bootstrap_text(required_files["start_discovery_script"])
     coordinator_script_text, _ = _read_bootstrap_text(required_files["start_coordinator_script"])
     check_route_script_text, _ = _read_bootstrap_text(required_files["check_route_script"])
@@ -13749,6 +14062,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     public_files = [
         required_files["start_control_plane_script"],
         required_files["start_tunnel_script"],
+        required_files["tunnel_doctor_script"],
         required_files["start_coordinator_script"],
         required_files["start_discovery_script"],
         required_files["check_route_script"],
@@ -14162,6 +14476,24 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="start_tunnel.sh must source private/tunnel.private.env without embedding the tunnel command",
         diagnosis_code="bootstrap_tunnel_script_invalid",
     )
+    tunnel_doctor_script_ready = bool(
+        "crowdtensor swarm-tunnel-doctor" in tunnel_doctor_script_text
+        and "--output-dir" in tunnel_doctor_script_text
+        and "$SCRIPT_DIR" in tunnel_doctor_script_text
+        and (
+            not bool(getattr(args, "expect_remote_miners", False))
+            or "--expect-remote-miners" in tunnel_doctor_script_text
+        )
+        and (not tunnel_command or tunnel_command not in tunnel_doctor_script_text)
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "tunnel_doctor_script_ready",
+        tunnel_doctor_script_ready,
+        detail="tunnel_doctor.sh must wrap swarm-tunnel-doctor without embedding the private tunnel command",
+        diagnosis_code="bootstrap_tunnel_doctor_script_invalid",
+    )
     discovery_script_ready = bool(
         (
             not discovery_report.get("enabled")
@@ -14334,6 +14666,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             scripts={
                 "start_control_plane": str(required_files["start_control_plane_script"]),
                 "start_tunnel": str(required_files["start_tunnel_script"]),
+                "tunnel_doctor": str(required_files["tunnel_doctor_script"]),
                 "start_discovery": str(required_files["start_discovery_script"]),
                 "start_coordinator": str(required_files["start_coordinator_script"]),
                 "check_route": str(required_files["check_route_script"]),
@@ -14406,6 +14739,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "tunnel_private_env_ready": tunnel_env_ready,
             "start_control_plane_script_ready": control_plane_script_ready,
             "start_tunnel_script_ready": tunnel_script_ready,
+            "tunnel_doctor_script_ready": tunnel_doctor_script_ready,
             "start_discovery_script_ready": discovery_script_ready,
             "check_route_script_ready": check_route_script_ready,
             "verify_bootstrap_script_ready": verify_script_ready,
@@ -22538,6 +22872,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     swarm_bootstrap_check.add_argument("--http-timeout", type=float, default=5.0)
     swarm_bootstrap_check.add_argument("--json", action="store_true")
 
+    swarm_tunnel_doctor = subparsers.add_parser(
+        "swarm-tunnel-doctor",
+        help="Validate a generated bootstrap package's public/tunnel route setup without starting it.",
+        description=(
+            "Inspect private/tunnel.private.env, start_tunnel.sh, start_control_plane.sh, "
+            "and stage invite URLs to report whether the Coordinator host has a coherent "
+            "Miner-facing tunnel/reverse-proxy/VPN route. This does not start a tunnel or contact third-party services."
+        ),
+    )
+    swarm_tunnel_doctor.add_argument("--output-dir", default="state/swarm-bootstrap")
+    swarm_tunnel_doctor.add_argument(
+        "--expect-remote-miners",
+        action="store_true",
+        help="fail when the generated Miner-facing URL is local-only",
+    )
+    swarm_tunnel_doctor.add_argument("--json", action="store_true")
+
     swarm_handoff_doctor = subparsers.add_parser(
         "swarm-handoff-doctor",
         help="Write a public-safe Operator handoff report for a generated swarm-bootstrap package.",
@@ -24784,7 +25135,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-tunnel-doctor", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -25983,6 +26334,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_swarm_bootstrap_check(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "swarm-tunnel-doctor":
+        report = build_swarm_tunnel_doctor(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_swarm_tunnel_doctor(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "swarm-handoff-doctor":
         report = build_swarm_handoff_doctor(args)

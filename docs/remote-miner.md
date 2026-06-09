@@ -8,7 +8,8 @@ For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_control_plane.sh`,
-optional `start_tunnel.sh`, `start_discovery.sh`, `start_coordinator.sh`, stage
+optional `start_tunnel.sh`, `tunnel_doctor.sh`, `start_discovery.sh`,
+`start_coordinator.sh`, stage
 `install.sh` / `doctor.sh` / `check_join.sh` / `support_bundle.sh` / `join.sh` files, private `miner.join-code.txt` files,
 private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
 matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
@@ -20,6 +21,10 @@ matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
 `--coordinator-url` and a private `--tunnel-command`; the raw tunnel command is
 stored only in `private/tunnel.private.env` and is started by `start_control_plane.sh`.
+Run `tunnel_doctor.sh` or `crowdtensor swarm-tunnel-doctor --output-dir ...
+--expect-remote-miners` first to emit `crowdtensor_swarm_tunnel_doctor_v1` and
+`tunnel_doctor.json` checks for the private tunnel env, provider binary,
+control-plane launcher, and Miner-facing URL without starting the tunnel.
 `crowdtensor coordinator-route --coordinator-url ... --expect-remote-miners`
 emits public-safe `join_options`, `recommended_join_option`, and
 `recommended_setup_command` templates for public HTTPS/reverse-proxy, tunnel,
@@ -66,7 +71,7 @@ stage join-code consistency, `stage_check_join_scripts_ready`,
 `stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, `stage_package_archives_ready`,
 `stage_archive_runner_scripts_ready`, `stage_setup_start_runner_ready`,
-`stage_handoff_checksums_ready`, and
+`stage_handoff_checksums_ready`, `tunnel_doctor_script_ready`, and
 plaintext token leakage in scripts or public Markdown.
 After starting the Coordinator, rerun the same command with `--check-coordinator`
 to call `/ready` and match both stage invites against the redacted registry

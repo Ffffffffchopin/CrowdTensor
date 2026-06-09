@@ -97,8 +97,12 @@ reward-account presence and must not expose the account values.
 Bootstrap also writes executable helper scripts and separate private env files:
 `coordinator.private.env` contains only the observer token verifier for
 `start_coordinator.sh`; optional `private/tunnel.private.env` contains the
-operator-supplied `--tunnel-command` for `start_tunnel.sh`; `start_control_plane.sh`
-starts the tunnel, discovery, and Coordinator together; `start_discovery.sh`
+operator-supplied `--tunnel-command` for `start_tunnel.sh`; `tunnel_doctor.sh`
+wraps `crowdtensor swarm-tunnel-doctor` and emits
+`crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the
+private tunnel env, provider binary, control-plane launcher, and Miner-facing
+URL without starting a tunnel; `start_control_plane.sh` starts the tunnel,
+discovery, and Coordinator together; `start_discovery.sh`
 starts the configured P2P-lite or real-P2P discovery daemon when `--peer-bootstrap` is used; and
 `verify_bootstrap.sh` runs the live no-claim bootstrap admission check.
 `operator.private.env` contains the operator admin token plus observer token for
@@ -159,6 +163,7 @@ Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
 scripts or public Markdown, including `check_route_script_ready`,
+`tunnel_doctor_script_ready`,
 `operator_status_script_ready`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,

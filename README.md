@@ -439,6 +439,7 @@ crowdtensor swarm-bootstrap \
   --coordinator-url https://YOUR-TUNNEL.example \
   --tunnel-command 'cloudflared tunnel --url http://127.0.0.1:8787' \
   --expect-remote-miners
+state/swarm-bootstrap/tunnel_doctor.sh
 crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-remote-miners
 ```
 
@@ -446,7 +447,7 @@ The report lists the local private operator invite, stage0/stage1 Miner invites,
 private `miner.join-code.txt` files, operator/coordinator private env files,
 hashed registries, and copyable discovery / `serve` / `join` / `generate`
 scripts plus `start_control_plane.sh`, optional `start_tunnel.sh`,
-`start_discovery.sh`, `check_route.sh`, `verify_bootstrap.sh`, private
+`tunnel_doctor.sh`, `start_discovery.sh`, `check_route.sh`, `verify_bootstrap.sh`, private
 `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz`, matching
 `stage0.run-miner.sh` / `stage1.run-miner.sh`,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
@@ -456,8 +457,11 @@ When `--tunnel-command` is supplied, the command is written only to
 `private/tunnel.private.env`; public reports and Markdown show the tunnel
 launcher without echoing tunnel tokens or provider command lines. Keep the operator invite and
 operator env on the operator host, use the coordinator env only for
-`start_coordinator.sh`, run `start_control_plane.sh` to start the tunnel,
-discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
+`start_coordinator.sh`, run `tunnel_doctor.sh` or
+`crowdtensor swarm-tunnel-doctor --output-dir state/swarm-bootstrap --expect-remote-miners`
+to write `crowdtensor_swarm_tunnel_doctor_v1`
+diagnostics in `tunnel_doctor.json` before startup, run `start_control_plane.sh`
+to start the tunnel, discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
 run `check_route.sh` to confirm the advertised Coordinator URL is suitable for
 the intended local or remote Miner path,
 run `operator_status.sh` for a read-only `/ready` / `/state` / accounting /
@@ -496,7 +500,8 @@ Run `handoff_doctor.sh` or `crowdtensor swarm-handoff-doctor` to write
 files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
 plaintext tokens before handoff, including `check_route_script_ready`,
-`operator_status_script_ready`, `stage_install_scripts_ready`, `stage_doctor_scripts_ready`, and
+`tunnel_doctor_script_ready`, `operator_status_script_ready`,
+`stage_install_scripts_ready`, `stage_doctor_scripts_ready`, and
 `stage_support_bundle_scripts_ready`.
 It also verifies `stage_package_archives_ready` so the operator can copy one
 private tarball per Miner instead of hand-picking files, plus

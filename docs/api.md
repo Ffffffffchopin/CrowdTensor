@@ -46,8 +46,12 @@ package writes `start_control_plane.sh` to start discovery plus the Coordinator
 together; when `--tunnel-command` is supplied, it also writes
 `private/tunnel.private.env` and `start_tunnel.sh` so the Coordinator host can
 start an operator-supplied tunnel/overlay command before the Coordinator
-without printing the command in public artifacts. `start_discovery.sh` and
-`start_coordinator.sh` remain available for manual debugging.
+without printing the command in public artifacts. It also writes
+`tunnel_doctor.sh`, which wraps `crowdtensor swarm-tunnel-doctor` and emits
+`crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the
+private tunnel env, provider binary, control-plane launcher, and Miner-facing
+URL without starting a tunnel. `start_discovery.sh` and `start_coordinator.sh`
+remain available for manual debugging.
 Generated `check_route.sh` runs `crowdtensor coordinator-route` so operators can
 classify the advertised Coordinator URL and optionally add `/ready` reachability
 before copying Miner stage packages. It writes `coordinator_route.json` and
@@ -73,6 +77,7 @@ URL consistency, optional `--expect-remote-miners` remote route readiness,
 optional `/ready` checks via `--check-coordinator`, optional token-backed
 no-claim `/tasks/preflight` checks via `--check-admission`, and plaintext token
 leakage, including `check_route_script_ready`,
+`tunnel_doctor_script_ready`,
 `operator_status_script_ready`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,
