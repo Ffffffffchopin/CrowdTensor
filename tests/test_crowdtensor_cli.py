@@ -1695,9 +1695,13 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(str(scripts["start_discovery"]), runbook)
         self.assertIn(str(scripts["start_coordinator"]), runbook)
         self.assertIn(str(scripts["verify_bootstrap"]), runbook)
+        self.assertIn(str(scripts["handoff_doctor"]), runbook)
         self.assertIn("No tunnel or overlay command configured", scripts["start_tunnel"].read_text(encoding="utf-8"))
         self.assertIn("--check-admission", scripts["verify_bootstrap"].read_text(encoding="utf-8"))
         self.assertIn("--expect-remote-miners", scripts["verify_bootstrap"].read_text(encoding="utf-8"))
+        self.assertIn("crowdtensor swarm-handoff-doctor", scripts["handoff_doctor"].read_text(encoding="utf-8"))
+        self.assertIn("--check-admission", scripts["handoff_doctor"].read_text(encoding="utf-8"))
+        self.assertIn("--expect-remote-miners", scripts["handoff_doctor"].read_text(encoding="utf-8"))
         self.assertIn("--invite-code-file", scripts["stage0_check_join"].read_text(encoding="utf-8"))
         self.assertIn("miner.join-code.txt", scripts["stage0_check_join"].read_text(encoding="utf-8"))
         self.assertNotIn("--run", scripts["stage0_check_join"].read_text(encoding="utf-8"))
@@ -1730,11 +1734,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn("CROWDTENSOR_OBSERVER_TOKEN", report["next_commands"][3].get("requires_env", []))
         self.assertIn(str(coordinator_env_path), report["next_commands"][3]["requires_files"])
         self.assertEqual(report["next_commands"][4]["command"], [str(scripts["verify_bootstrap"])])
-        self.assertEqual(report["next_commands"][5]["command"], [str(scripts["stage0_check_join"])])
-        self.assertIn(str(stage0_join_code_path), report["next_commands"][5]["requires_files"])
-        self.assertEqual(report["next_commands"][6]["command"], [str(scripts["stage0_join"])])
+        self.assertEqual(report["next_commands"][5]["command"], [str(scripts["handoff_doctor"])])
+        self.assertEqual(report["next_commands"][6]["command"], [str(scripts["stage0_check_join"])])
         self.assertIn(str(stage0_join_code_path), report["next_commands"][6]["requires_files"])
-        self.assertEqual(report["next_commands"][9]["command_line"], str(scripts["check_generation"]))
+        self.assertEqual(report["next_commands"][7]["command"], [str(scripts["stage0_join"])])
+        self.assertIn(str(stage0_join_code_path), report["next_commands"][7]["requires_files"])
+        self.assertEqual(report["next_commands"][10]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
     def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:
@@ -1949,12 +1954,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["private_files_mode_0600"])
         self.assertTrue(report["safety"]["scripts_mode_0700"])
         self.assertEqual(report["artifacts"]["verify_bootstrap_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["handoff_doctor_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["stage0_join_code"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["stage0_support_bundle_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["stage0_package_archive"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["stage0_handoff_checksum"]["mode"], "0o644")
         self.assertEqual(report["artifacts"]["stage_handoff_manifest"]["mode"], "0o644")
         self.assertTrue(report["safety"]["verify_bootstrap_script_ready"])
+        self.assertTrue(report["safety"]["handoff_doctor_script_ready"])
         self.assertTrue(report["safety"]["stage_join_scripts_use_invite_code_file"])
         self.assertTrue(report["safety"]["stage_check_join_scripts_ready"])
         self.assertTrue(report["safety"]["stage_support_bundle_scripts_ready"])
@@ -1996,6 +2003,67 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("remote_access:", rendered)
         self.assertIn("live_preflight: checked=False", rendered)
         self.assertIn("swarm_bootstrap_package_ready", rendered)
+        self.assertNotIn(operator_invite["operator_token"], rendered)
+
+    def test_swarm_handoff_doctor_writes_public_safe_operator_report(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        bootstrap_report = cli.build_swarm_bootstrap(bootstrap_args)
+        operator_invite = json.loads(Path(bootstrap_report["private_invites"]["operator"]).read_text(encoding="utf-8"))
+        stage0_invite = json.loads((output_dir / "stage0" / "miner.invite.json").read_text(encoding="utf-8"))
+        stage0_join_code = (output_dir / "stage0" / "miner.join-code.txt").read_text(encoding="utf-8").strip()
+        doctor_args = cli.parse_args([
+            "swarm-handoff-doctor",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_handoff_doctor(doctor_args)
+        report_text = json.dumps(report, sort_keys=True)
+        doctor_json = output_dir / "handoff_doctor.json"
+        doctor_md = output_dir / "handoff_doctor.md"
+        written = json.loads(doctor_json.read_text(encoding="utf-8"))
+        markdown = doctor_md.read_text(encoding="utf-8")
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "crowdtensor_swarm_handoff_doctor_v1")
+        self.assertFalse(report["handoff_ready"])
+        self.assertEqual(report["handoff_blockers"], ["run_verify_bootstrap_live_preflight"])
+        self.assertEqual(report["recommended_launcher"], str(output_dir / "start_control_plane.sh"))
+        self.assertEqual(report["verify_before_handoff"], str(output_dir / "verify_bootstrap.sh"))
+        self.assertIn("stage0", report["stage_handoff_files_to_copy"])
+        self.assertEqual(report["handoff_doctor_json"], str(doctor_json))
+        self.assertEqual(report["handoff_doctor_markdown"], str(doctor_md))
+        self.assertEqual(written["schema"], "crowdtensor_swarm_handoff_doctor_v1")
+        self.assertIn("CrowdTensor Handoff Doctor", markdown)
+        self.assertIn("stage0.miner-package.tar.gz", markdown)
+        self.assertIn("./stageX.run-miner.sh --doctor", markdown)
+        self.assertTrue(report["public_artifact_safe"])
+        self.assertFalse(report["raw_tokens_public"])
+        self.assertFalse(report["raw_join_codes_public"])
+        self.assertNotIn(operator_invite["operator_token"], report_text)
+        self.assertNotIn(stage0_invite["miner_token"], report_text)
+        self.assertNotIn(stage0_join_code, report_text)
+        self.assertNotIn(operator_invite["operator_token"], markdown)
+        self.assertNotIn(stage0_invite["miner_token"], markdown)
+        self.assertNotIn(stage0_join_code, markdown)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_swarm_handoff_doctor(report)
+        rendered = stdout.getvalue()
+        self.assertIn("CrowdTensor swarm handoff doctor", rendered)
+        self.assertIn("handoff_ready: False", rendered)
         self.assertNotIn(operator_invite["operator_token"], rendered)
 
     def test_swarm_bootstrap_stage_support_bundle_redacts_private_join_material(self) -> None:

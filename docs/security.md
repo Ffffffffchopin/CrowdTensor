@@ -129,7 +129,9 @@ reports route readiness, the recommended launcher, and
 `ready_to_copy_stage_packages` without exposing plaintext operator tokens,
 Miner tokens, join codes, or tunnel commands. Treat false
 `ready_to_copy_stage_packages` as a stop signal until live admission preflight
-passes.
+passes. `handoff_doctor.sh` / `crowdtensor swarm-handoff-doctor` writes
+`crowdtensor_swarm_handoff_doctor_v1` (`handoff_doctor.json` and
+`handoff_doctor.md`) with public-safe blockers and stage copy lists.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in

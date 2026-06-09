@@ -14,7 +14,8 @@ private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
 matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
 `stage_handoff_manifest.json`,
-`verify_bootstrap.sh`, generation scripts, and `SWARM_BOOTSTRAP.md`.
+`handoff_doctor.sh`, `verify_bootstrap.sh`, generation scripts, and
+`SWARM_BOOTSTRAP.md`.
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
 `--coordinator-url` and a private `--tunnel-command`; the raw tunnel command is
 stored only in `private/tunnel.private.env` and is started by `start_control_plane.sh`.
@@ -59,6 +60,11 @@ for both stage invites without claiming tasks. Wait for
 `bootstrap_handoff.ready_to_copy_stage_packages=true`; until then the package is
 generated but not live-verified for remote Miner handoff.
 A clean live check reports `swarm_bootstrap_live_preflight_ready`.
+For the Operator handoff summary, run `handoff_doctor.sh` or
+`crowdtensor swarm-handoff-doctor`; it emits
+`crowdtensor_swarm_handoff_doctor_v1` and writes public-safe
+`handoff_doctor.json` / `handoff_doctor.md` with blockers and the exact stage
+archive, runner, and checksum files to copy.
 Bootstrap is not NAT traversal.
 
 For a local maintainer check of the CPU inference Beta path before involving a second machine, run:

@@ -46,7 +46,10 @@ Both bootstrap and bootstrap-check reports include
 `bootstrap_handoff.remote_miners_ready`, `recommended_launcher`,
 `verify_before_handoff`, and `ready_to_copy_stage_packages` so operators can
 tell whether the package is only generated or has passed the live no-claim
-preflight required before copying stage directories.
+preflight required before copying stage directories. `crowdtensor swarm-handoff-doctor`
+and generated `handoff_doctor.sh` emit
+`crowdtensor_swarm_handoff_doctor_v1`, `handoff_doctor.json`, and
+`handoff_doctor.md` with blockers and exact stage files to copy.
 Run `verify_bootstrap.sh` from a generated `crowdtensor swarm-bootstrap`
 directory before copying stage packages; it wraps
 `crowdtensor swarm-bootstrap-check --check-admission`. That package gate verifies private
