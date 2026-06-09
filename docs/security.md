@@ -78,6 +78,33 @@ The invite output prints the plaintext token once for the remote Miner, while th
 
 `--admin-token` or `CROWDTENSOR_ADMIN_TOKEN` protects operator endpoints such as event-log tail and trust overrides.
 
+For multi-operator demos, `--operator-token-registry` or
+`CROWDTENSOR_OPERATOR_TOKEN_REGISTRY` can replace or supplement the legacy
+admin token with per-operator roles. The registry stores token verifiers and
+safe role metadata only:
+
+```json
+{
+  "operators": [
+    {
+      "operator_id": "accounting-desk",
+      "token": "sha256:ACCOUNTING_DIGEST",
+      "roles": ["accounting"]
+    },
+    {
+      "operator_id": "auditor-1",
+      "token": "sha256:AUDITOR_DIGEST",
+      "roles": ["auditor"]
+    }
+  ]
+}
+```
+
+`accounting` can read `/admin/accounting` and `/admin/settlement`; `auditor`
+can read event/result/stream audit views; `admin` and `owner` can use all admin
+endpoints. `/ready` exposes only `crowdtensor_operator_registry_summary_v1`
+operator IDs, labels, enabled flags, and roles, never plaintext tokens.
+
 ## What Is Protected
 
 The current controls reduce accidental public access and keep local demo Miners separated from read-only observers and admins.

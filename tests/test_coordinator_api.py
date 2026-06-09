@@ -16,7 +16,9 @@ from coordinator import (
     create_app,
     enforce_miner_join_policy,
     load_miner_token_registry,
+    load_operator_token_registry,
     miner_registry_policy_summary,
+    operator_registry_summary,
     parse_task_lane,
 )
 from crowdtensor.auth import hash_token
@@ -51,6 +53,11 @@ def request_model(endpoint, name: str = "request"):
 
 def write_registry(path: Path, miners: list[dict]) -> Path:
     path.write_text(json.dumps({"miners": miners}), encoding="utf-8")
+    return path
+
+
+def write_operator_registry(path: Path, operators: list[dict]) -> Path:
+    path.write_text(json.dumps({"operators": operators}), encoding="utf-8")
     return path
 
 
@@ -241,6 +248,54 @@ class CoordinatorApiTests(unittest.TestCase):
                 path.write_text(json.dumps(payload), encoding="utf-8")
                 with self.assertRaises(ValueError, msg=filename):
                     load_miner_token_registry(path)
+
+    def test_operator_token_registry_loader_validates_roles_and_redacts_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            valid = write_operator_registry(
+                base / "operators.json",
+                [
+                    {
+                        "operator_id": "acct",
+                        "token": hash_token("accounting-token"),
+                        "enabled": True,
+                        "label": "accounting desk",
+                        "roles": ["accounting"],
+                    },
+                    {
+                        "operator_id": "audit",
+                        "token": "auditor-token",
+                        "roles": "auditor",
+                    },
+                ],
+            )
+            registry = load_operator_token_registry(valid)
+            summary = operator_registry_summary(registry)
+            encoded = json.dumps(summary, sort_keys=True)
+
+            self.assertEqual(registry["acct"]["roles"], ["accounting"])
+            self.assertEqual(registry["audit"]["roles"], ["auditor"])
+            self.assertEqual(summary["schema"], "crowdtensor_operator_registry_summary_v1")
+            self.assertEqual(summary["operator_count"], 2)
+            self.assertFalse(summary["plaintext_tokens_public"])
+            self.assertNotIn("accounting-token", encoded)
+            self.assertNotIn("auditor-token", encoded)
+
+            cases = [
+                ("missing-operators.json", {}),
+                ("duplicate.json", {"operators": [{"operator_id": "a", "token": "1"}, {"operator_id": "a", "token": "2"}]}),
+                ("missing-id.json", {"operators": [{"token": "1"}]}),
+                ("missing-token.json", {"operators": [{"operator_id": "a"}]}),
+                ("bad-enabled.json", {"operators": [{"operator_id": "a", "token": "1", "enabled": "yes"}]}),
+                ("bad-roles.json", {"operators": [{"operator_id": "a", "token": "1", "roles": {"bad": True}}]}),
+                ("unknown-role.json", {"operators": [{"operator_id": "a", "token": "1", "roles": ["root"]}]}),
+                ("bad-hash.json", {"operators": [{"operator_id": "a", "token": "sha256:abc", "roles": ["admin"]}]}),
+            ]
+            for filename, payload in cases:
+                path = base / filename
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaises(ValueError, msg=filename):
+                    load_operator_token_registry(path)
 
     def test_miner_token_registry_preserves_safe_join_policy_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1171,6 +1226,79 @@ class CoordinatorApiTests(unittest.TestCase):
                 admin_trust(override_request, x_crowdtensor_admin_token="wrong")
             self.assertEqual(invalid.exception.status_code, 403)
             self.assertEqual(invalid.exception.detail, "invalid admin token")
+
+    def test_operator_registry_scopes_admin_endpoints_by_role(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = write_operator_registry(
+                Path(tmp) / "operators.json",
+                [
+                    {
+                        "operator_id": "acct",
+                        "token": hash_token("accounting-token"),
+                        "roles": ["accounting"],
+                    },
+                    {
+                        "operator_id": "audit",
+                        "token": hash_token("auditor-token"),
+                        "roles": ["auditor"],
+                    },
+                    {
+                        "operator_id": "owner",
+                        "token": hash_token("owner-token"),
+                        "roles": ["owner"],
+                    },
+                ],
+            )
+            app = create_app(
+                state_dir=tmp,
+                lease_seconds=5,
+                inner_steps=10,
+                admin_token="",
+                operator_token_registry=registry_path,
+            )
+            ready = endpoint_for(app, "/ready", "GET")
+            admin_events = endpoint_for(app, "/admin/events", "GET")
+            admin_accounting = endpoint_for(app, "/admin/accounting", "GET")
+            admin_settlement = endpoint_for(app, "/admin/settlement", "GET")
+            admin_trust = endpoint_for(app, "/admin/trust-overrides", "POST")
+            override_request = request_model(admin_trust)(
+                miner_id="role-miner",
+                workload_type="diloco_train",
+                mode="block",
+                reason="role test",
+            )
+
+            ready_payload = ready()
+            self.assertTrue(ready_payload["auth"]["admin_configured"])
+            self.assertTrue(ready_payload["auth"]["operator_registry_configured"])
+            encoded_ready = json.dumps(ready_payload, sort_keys=True)
+            self.assertEqual(ready_payload["operator_registry_summary"]["operator_count"], 3)
+            self.assertNotIn("accounting-token", encoded_ready)
+            self.assertNotIn("auditor-token", encoded_ready)
+
+            self.assertIn("events", admin_events(limit=1, x_crowdtensor_admin_token="auditor-token"))
+            with self.assertRaises(HTTPException) as auditor_settlement:
+                admin_settlement(limit=1, x_crowdtensor_admin_token="auditor-token")
+            self.assertEqual(auditor_settlement.exception.status_code, 403)
+            self.assertEqual(auditor_settlement.exception.detail, "operator token lacks required role")
+
+            self.assertEqual(
+                admin_accounting(limit=1, x_crowdtensor_admin_token="accounting-token")["schema"],
+                "miner_accounting_summary_v1",
+            )
+            self.assertEqual(
+                admin_settlement(limit=1, x_crowdtensor_admin_token="accounting-token")["schema"],
+                "miner_settlement_draft_v1",
+            )
+            with self.assertRaises(HTTPException) as accounting_events:
+                admin_events(limit=1, x_crowdtensor_admin_token="accounting-token")
+            self.assertEqual(accounting_events.exception.status_code, 403)
+
+            owner_result = admin_trust(override_request, x_crowdtensor_admin_token="owner-token")
+            self.assertTrue(owner_result["accepted"])
+            with self.assertRaises(HTTPException) as accounting_trust:
+                admin_trust(override_request, x_crowdtensor_admin_token="accounting-token")
+            self.assertEqual(accounting_trust.exception.status_code, 403)
 
     def test_admin_trust_override_blocks_allows_and_events_are_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

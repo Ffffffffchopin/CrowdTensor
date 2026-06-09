@@ -649,7 +649,43 @@ To avoid storing a usable token directly in Coordinator config, generate a hashe
 python3 scripts/hash_token.py local-miner
 ```
 
-Then pass the printed `sha256:` value to `--miner-token`, `--observer-token`, `--admin-token`, or a per-Miner registry entry. Clients still send the original token.
+Then pass the printed `sha256:` value to `--miner-token`, `--observer-token`,
+`--admin-token`, a per-Miner registry entry, or a per-operator registry entry.
+Clients still send the original token.
+
+For role-scoped operator access, create a private operator registry:
+
+```json
+{
+  "operators": [
+    {
+      "operator_id": "accounting-desk",
+      "token": "sha256:ACCOUNTING_DIGEST",
+      "roles": ["accounting"]
+    },
+    {
+      "operator_id": "auditor-1",
+      "token": "sha256:AUDITOR_DIGEST",
+      "roles": ["auditor"]
+    }
+  ]
+}
+```
+
+Start the Coordinator with:
+
+```bash
+python3 coordinator.py \
+  --operator-token-registry state/operator_registry.json \
+  --miner-token sha256:MINER_DIGEST \
+  --observer-token sha256:OBSERVER_DIGEST
+```
+
+The role split is intentionally small: `accounting` can read
+`/admin/accounting` and `/admin/settlement`; `auditor` can read
+`/admin/events`, `/admin/results`, and `/admin/session-stream`; `admin` and
+`owner` keep full admin access. The legacy `--admin-token` remains supported as
+owner-level access for existing scripts.
 
 ## Run Miner
 

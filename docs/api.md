@@ -2,13 +2,13 @@
 
 CrowdTensorD exposes a small HTTP API from the Coordinator. This Alpha API is intended for local and controlled remote demos; fields may grow over time, but the core fields below are treated as the current contract.
 
-All request and response bodies are JSON unless noted. Miner, observer, and admin tokens may be configured as plaintext or `sha256:<digest>` verifiers on the Coordinator. Clients always send the original plaintext token.
+All request and response bodies are JSON unless noted. Miner, observer, legacy admin, and operator-registry tokens may be configured as plaintext or `sha256:<digest>` verifiers on the Coordinator. Clients always send the original plaintext token.
 
 ## Authentication Headers
 
 - `x-crowdtensor-miner-token`: required for Miner task endpoints when `--miner-token` or `--miner-token-registry` is configured.
 - `x-crowdtensor-observer-token`: required for `/state` and `/metrics` when `--observer-token` is configured.
-- `x-crowdtensor-admin-token`: required for admin endpoints. Admin endpoints return `403` if no admin token is configured.
+- `x-crowdtensor-admin-token`: required for admin endpoints. A legacy `--admin-token` has owner-level access. `--operator-token-registry` can instead configure per-operator roles: `owner`, `admin`, `accounting`, and `auditor`.
 
 ## Public Endpoints
 
@@ -49,6 +49,8 @@ Response fields:
 - `auth.observer_required`
 - `auth.admin_configured`
 - `auth.miner_registry_configured`
+- `auth.operator_registry_configured`
+- optional `operator_registry_summary` with operator IDs, enabled flags, labels, and roles; plaintext operator tokens are never exposed
 
 ## Observer Endpoints
 
@@ -82,7 +84,7 @@ The metrics output is aggregate-only and avoids raw task payloads, lease tokens,
 
 ### `GET /admin/events?limit=50`
 
-Returns the append-only event tail. Requires `x-crowdtensor-admin-token`.
+Returns the append-only event tail. Requires `x-crowdtensor-admin-token` with legacy admin, `owner`, `admin`, or `auditor` access.
 
 `limit` is clamped by the API to the range `0..500`. Lease tokens are redacted.
 
@@ -94,7 +96,7 @@ Response:
 
 ### `GET /admin/results?limit=50&status=any`
 
-Returns a result-level traceability ledger. Requires `x-crowdtensor-admin-token`.
+Returns a result-level traceability ledger. Requires `x-crowdtensor-admin-token` with legacy admin, `owner`, `admin`, or `auditor` access.
 
 Query parameters:
 
@@ -144,7 +146,8 @@ Response:
 ### `GET /admin/accounting?limit=50&status=any`
 
 Returns a Miner-oriented accounting summary. Requires
-`x-crowdtensor-admin-token`.
+`x-crowdtensor-admin-token` with legacy admin, `owner`, `admin`, or `accounting`
+access.
 
 Query parameters:
 
@@ -167,7 +170,8 @@ tokens, or reward account values.
 ### `GET /admin/settlement?limit=50`
 
 Returns a draft-only Miner settlement summary. Requires
-`x-crowdtensor-admin-token`.
+`x-crowdtensor-admin-token` with legacy admin, `owner`, `admin`, or `accounting`
+access.
 
 Query parameters:
 
@@ -186,7 +190,7 @@ never exposed.
 
 ### `POST /admin/inference-sessions`
 
-Creates one admin-controlled, read-only `model_bundle_infer` task. Requires `x-crowdtensor-admin-token`.
+Creates one admin-controlled, read-only `model_bundle_infer` task. Requires `x-crowdtensor-admin-token` with legacy admin, `owner`, or `admin` access.
 
 This is the current service-shaped API for asking the Coordinator to enqueue a bounded local CPU inference session and then inspect the accepted result by `task_id`. It is not an OpenAI-compatible chat API, does not accept arbitrary prompts, and does not start real LLM serving. The created task is constrained to `runtime=python-cli`, `backend=cpu`, `schema=inference_session_request_v1`, and a `request_count` between `1` and `8`.
 
@@ -240,7 +244,7 @@ It emits `schema=inference_session_client_v1`, waits for the exact returned `tas
 
 ### `POST /admin/trust-overrides`
 
-Sets or clears a workload-scoped trust override. Requires `x-crowdtensor-admin-token`.
+Sets or clears a workload-scoped trust override. Requires `x-crowdtensor-admin-token` with legacy admin, `owner`, or `admin` access.
 
 Request:
 

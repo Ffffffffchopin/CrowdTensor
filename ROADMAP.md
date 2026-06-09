@@ -34,6 +34,8 @@ Hivemind-level large-model serving.
 
 - Shorten the two-machine setup path.
 - Improve join packs for non-expert Miner operators.
+- Extend role-scoped operator tokens into tenant/project-scoped policies and
+  user-facing operator management.
 - Extend private Miner join policy enforcement, claim-rate limits, accounting
   rows, and draft reward summaries into settlement exports and operator-visible
   trust state.

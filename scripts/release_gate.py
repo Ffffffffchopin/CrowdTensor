@@ -243,7 +243,7 @@ def check_security_docs(root: Path) -> dict[str, Any]:
     except OSError as exc:
         return check_result("security_docs", False, [str(exc)])
     details: list[str] = []
-    for fragment in ["sha256:", "scripts/hash_token.py", "hashed token"]:
+    for fragment in ["sha256:", "scripts/hash_token.py", "hashed token", "--operator-token-registry", "roles"]:
         if fragment not in text:
             details.append(f"docs/security.md must mention {fragment}")
     return check_result("security_docs", not details, details)
@@ -280,6 +280,8 @@ def check_api_docs(root: Path) -> dict[str, Any]:
         "GET /admin/settlement",
         "miner_accounting_summary_v1",
         "miner_settlement_draft_v1",
+        "--operator-token-registry",
+        "operator_registry_summary",
         "POST /admin/trust-overrides",
         "POST /tasks/claim",
         "POST /tasks/{task_id}/heartbeat",

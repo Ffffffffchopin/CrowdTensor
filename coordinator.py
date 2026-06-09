@@ -40,6 +40,16 @@ from crowdtensor.state_store import StateStore
 SERVICE_NAME = "crowdtensord-coordinator"
 SERVICE_VERSION = "0.1.0a0"
 API_STATUS = "alpha"
+OPERATOR_ROLE_OWNER = "owner"
+OPERATOR_ROLE_ADMIN = "admin"
+OPERATOR_ROLE_ACCOUNTING = "accounting"
+OPERATOR_ROLE_AUDITOR = "auditor"
+OPERATOR_ALLOWED_ROLES = {
+    OPERATOR_ROLE_OWNER,
+    OPERATOR_ROLE_ADMIN,
+    OPERATOR_ROLE_ACCOUNTING,
+    OPERATOR_ROLE_AUDITOR,
+}
 
 
 def load_miner_token_registry(path: str | Path | None) -> dict[str, dict[str, Any]]:
@@ -84,6 +94,81 @@ def load_miner_token_registry(path: str | Path | None) -> dict[str, dict[str, An
             "join_policy": _safe_miner_join_policy(entry.get("join_policy")),
         }
     return registry
+
+
+def load_operator_token_registry(path: str | Path | None) -> dict[str, dict[str, Any]]:
+    """Load per-operator control-plane tokens from JSON."""
+    if not path:
+        return {}
+    registry_path = Path(path)
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid operator token registry JSON: {exc}") from exc
+    except OSError as exc:
+        raise ValueError(f"could not read operator token registry: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("operator token registry must be a JSON object")
+    operators = payload.get("operators")
+    if not isinstance(operators, list):
+        raise ValueError("operator token registry must contain an operators list")
+
+    registry: dict[str, dict[str, Any]] = {}
+    for index, entry in enumerate(operators):
+        if not isinstance(entry, dict):
+            raise ValueError(f"operator token registry entry {index} must be an object")
+        operator_id = str(entry.get("operator_id", "")).strip()
+        token = str(entry.get("token", "")).strip()
+        if not operator_id:
+            raise ValueError(f"operator token registry entry {index} missing operator_id")
+        if not token:
+            raise ValueError(f"operator token registry entry {index} missing token")
+        token = validate_token_verifier(token, field_name=f"operator token registry entry {index} token")
+        if operator_id in registry:
+            raise ValueError(f"duplicate operator token registry operator_id: {operator_id}")
+        enabled = entry.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError(f"operator token registry entry {index} enabled must be boolean")
+        roles_raw = entry.get("roles", [OPERATOR_ROLE_AUDITOR])
+        if isinstance(roles_raw, str):
+            roles = {roles_raw.strip()}
+        elif isinstance(roles_raw, list):
+            roles = {str(role).strip() for role in roles_raw}
+        else:
+            raise ValueError(f"operator token registry entry {index} roles must be a string or list")
+        roles = {role for role in roles if role}
+        unknown = sorted(role for role in roles if role not in OPERATOR_ALLOWED_ROLES)
+        if unknown:
+            raise ValueError(f"operator token registry entry {index} has unknown roles: {', '.join(unknown)}")
+        if not roles:
+            raise ValueError(f"operator token registry entry {index} must include at least one role")
+        label = entry.get("label", "")
+        registry[operator_id] = {
+            "token": token,
+            "enabled": enabled,
+            "label": str(label or ""),
+            "roles": sorted(roles),
+        }
+    return registry
+
+
+def operator_registry_summary(registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    operators: list[dict[str, Any]] = []
+    for operator_id, entry in sorted(registry.items()):
+        operators.append({
+            "operator_id": operator_id,
+            "enabled": bool(entry.get("enabled")),
+            "label": str(entry.get("label") or ""),
+            "roles": list(entry.get("roles") or []),
+        })
+    return {
+        "schema": "crowdtensor_operator_registry_summary_v1",
+        "operator_count": len(registry),
+        "operators": operators,
+        "plaintext_tokens_public": False,
+        "public_artifact_safe": True,
+    }
 
 
 def _safe_miner_join_policy(policy: Any) -> dict[str, Any]:
@@ -492,6 +577,7 @@ def readiness_payload(
     admin_configured: bool,
     miner_registry_configured: bool,
     miner_policy_summary: dict[str, Any] | None = None,
+    operator_registry_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = {
         "ok": True,
@@ -504,10 +590,16 @@ def readiness_payload(
             "observer_required": bool(observer_required),
             "admin_configured": bool(admin_configured),
             "miner_registry_configured": bool(miner_registry_configured),
+            "operator_registry_configured": bool(
+                operator_registry_summary
+                and int(operator_registry_summary.get("operator_count") or 0) > 0
+            ),
         },
     }
     if miner_policy_summary:
         payload["miner_policy_summary"] = miner_policy_summary
+    if operator_registry_summary:
+        payload["operator_registry_summary"] = operator_registry_summary
     return payload
 
 
@@ -524,6 +616,7 @@ def create_app(
     outer_optimizer: str = OPTIMIZER_DILOCO_MOMENTUM,
     delta_format: str = "dense_float",
     admin_token: str | None = None,
+    operator_token_registry: str | Path | None = None,
     miner_token: str | None = None,
     miner_token_registry: str | Path | None = None,
     observer_token: str | None = None,
@@ -556,6 +649,12 @@ def create_app(
         hf_cache_dir=hf_cache_dir,
     )
     configured_admin_token = admin_token if admin_token is not None else os.environ.get("CROWDTENSOR_ADMIN_TOKEN", "")
+    configured_operator_registry_path = (
+        operator_token_registry
+        if operator_token_registry is not None
+        else os.environ.get("CROWDTENSOR_OPERATOR_TOKEN_REGISTRY", "")
+    )
+    configured_operator_registry = load_operator_token_registry(configured_operator_registry_path)
     configured_miner_token = miner_token if miner_token is not None else os.environ.get("CROWDTENSOR_MINER_TOKEN", "")
     configured_miner_registry_path = (
         miner_token_registry
@@ -614,11 +713,31 @@ def create_app(
         hf_model_id: str = ""
         partition_mode: str = ""
 
-    def require_admin(token: str | None) -> None:
-        if not configured_admin_token:
+    def _token_operator_roles(token: str | None) -> set[str]:
+        if token is None:
+            return set()
+        for entry in configured_operator_registry.values():
+            if entry["enabled"] and token_matches(token, entry["token"]):
+                return {str(role) for role in entry.get("roles") or []}
+        return set()
+
+    def _roles_allow(roles: set[str], required_roles: set[str]) -> bool:
+        if OPERATOR_ROLE_OWNER in roles or OPERATOR_ROLE_ADMIN in roles:
+            return True
+        return bool(roles & required_roles)
+
+    def require_admin(token: str | None, *, roles: set[str] | None = None) -> None:
+        required_roles = set(roles or {OPERATOR_ROLE_ADMIN})
+        if not configured_admin_token and not configured_operator_registry:
             raise HTTPException(status_code=403, detail="admin token is not configured")
-        if not token_matches(token, configured_admin_token):
-            raise HTTPException(status_code=403, detail="invalid admin token")
+        if configured_admin_token and token_matches(token, configured_admin_token):
+            return
+        operator_roles = _token_operator_roles(token)
+        if operator_roles and _roles_allow(operator_roles, required_roles):
+            return
+        if operator_roles:
+            raise HTTPException(status_code=403, detail="operator token lacks required role")
+        raise HTTPException(status_code=403, detail="invalid admin token")
 
     def token_matches_registry(token: str | None) -> bool:
         if token is None:
@@ -711,9 +830,10 @@ def create_app(
                 summary,
                 miner_required=bool(configured_miner_token or configured_miner_registry),
                 observer_required=bool(configured_observer_token),
-                admin_configured=bool(configured_admin_token),
+                admin_configured=bool(configured_admin_token or configured_operator_registry),
                 miner_registry_configured=bool(configured_miner_registry),
                 miner_policy_summary=miner_registry_policy_summary(configured_miner_registry),
+                operator_registry_summary=operator_registry_summary(configured_operator_registry),
             )
         except Exception as exc:
             raise HTTPException(status_code=503, detail={"ok": False, "reason": str(exc)}) from exc
@@ -742,7 +862,7 @@ def create_app(
         limit: int = Query(default=50, ge=0, le=500),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
-        require_admin(x_crowdtensor_admin_token)
+        require_admin(x_crowdtensor_admin_token, roles={OPERATOR_ROLE_AUDITOR})
         return {
             "events": store.event_tail(limit=limit),
             "limit": min(500, max(0, int(limit))),
@@ -758,7 +878,7 @@ def create_app(
         session_id: str = Query(default=""),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
-        require_admin(x_crowdtensor_admin_token)
+        require_admin(x_crowdtensor_admin_token, roles={OPERATOR_ROLE_AUDITOR})
         def query_value(value, default):
             if hasattr(value, "default"):
                 value = value.default
@@ -799,7 +919,7 @@ def create_app(
         session_id: str = Query(default=""),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
-        require_admin(x_crowdtensor_admin_token)
+        require_admin(x_crowdtensor_admin_token, roles={OPERATOR_ROLE_ACCOUNTING})
 
         def query_value(value, default):
             if hasattr(value, "default"):
@@ -832,7 +952,7 @@ def create_app(
         unit_price_microcredits: int = Query(default=0, ge=0),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
-        require_admin(x_crowdtensor_admin_token)
+        require_admin(x_crowdtensor_admin_token, roles={OPERATOR_ROLE_ACCOUNTING})
 
         def query_value(value, default):
             if hasattr(value, "default"):
@@ -864,7 +984,7 @@ def create_app(
         max_new_tokens: int = Query(default=0, ge=0, le=32),
         x_crowdtensor_admin_token: str | None = Header(default=None),
     ) -> dict:
-        require_admin(x_crowdtensor_admin_token)
+        require_admin(x_crowdtensor_admin_token, roles={OPERATOR_ROLE_AUDITOR})
 
         def query_value(value, default):
             if hasattr(value, "default"):
@@ -1186,6 +1306,11 @@ def parse_args() -> argparse.Namespace:
         help="admin token for control-plane endpoints; falls back to CROWDTENSOR_ADMIN_TOKEN",
     )
     parser.add_argument(
+        "--operator-token-registry",
+        default=None,
+        help="JSON per-operator token registry path; falls back to CROWDTENSOR_OPERATOR_TOKEN_REGISTRY",
+    )
+    parser.add_argument(
         "--miner-token",
         default=None,
         help="shared token for Miner task endpoints; falls back to CROWDTENSOR_MINER_TOKEN",
@@ -1262,6 +1387,7 @@ def main() -> None:
         outer_optimizer=args.outer_optimizer,
         delta_format=args.delta_format,
         admin_token=args.admin_token,
+        operator_token_registry=args.operator_token_registry,
         miner_token=args.miner_token,
         miner_token_registry=args.miner_token_registry,
         observer_token=args.observer_token,
