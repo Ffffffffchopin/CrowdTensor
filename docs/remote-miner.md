@@ -8,7 +8,7 @@ For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
 invite, stage0/stage1 Miner packages, executable `start_control_plane.sh`,
-optional `start_tunnel.sh`, `tunnel_doctor.sh`, `start_discovery.sh`,
+`install_operator.sh`, optional `start_tunnel.sh`, `tunnel_doctor.sh`, `start_discovery.sh`,
 `start_coordinator.sh`, stage
 `install.sh` / `doctor.sh` / `check_join.sh` / `support_bundle.sh` / `join.sh` files, private `miner.join-code.txt` files,
 private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
@@ -31,7 +31,9 @@ emits public-safe `join_options`, `recommended_join_option`, and
 VPN/LAN, or explicit port-forwarding before any Miner package is shared.
 Keep the generated operator
 invite and operator env on the operator host, use the coordinator env only for
-the Coordinator process, run `start_control_plane.sh` to start the tunnel,
+the Coordinator process, run `install_operator.sh` first when `crowdtensor`,
+`crowdtensord`, or `crowdtensor-miner` is not already installed on the
+Coordinator host, then run `start_control_plane.sh` to start the tunnel,
 discovery, and Coordinator together, then run `ready_for_handoff.sh` after the
 Coordinator starts to chain `tunnel_doctor.sh`, `check_route.sh --check-ready`,
 `verify_bootstrap.sh`, and `handoff_doctor.sh`. You can still run
@@ -55,7 +57,13 @@ route or admission checks fail, stage `support_bundle.sh` writes safe
 `miner.join-code.txt` or `miner.invite.json`. The bundle includes
 `crowdtensor_miner_local_environment_v1` with `local_environment_ready`,
 `crowdtensor` CLI, `sha256sum`, Python, and optional torch/CUDA probes so the
-Miner host can report setup failures without leaking tokens. If bootstrap is run
+Miner host can report setup failures without leaking tokens. `install_operator.sh`
+creates `.crowdtensor-operator-venv` by default, can be relocated with
+`CROWDTENSOR_OPERATOR_VENV`, checks `crowdtensor`, `crowdtensord`, and
+`crowdtensor-miner`, and supports `--dry-run`, `CROWDTENSOR_INSTALL_SPEC`, and
+`CROWDTENSOR_INSTALL_SOURCE`. It does not read `operator.private.env`, stage
+invites, or join-code files, and it does not start services; generated
+Coordinator/Operator-side scripts prefer that venv when present. If bootstrap is run
 with `--peer-bootstrap`, the private invite embeds
 `crowdtensor_miner_join_discovery_v1` so the stage join command can discover the
 Coordinator through P2P-lite without the Miner operator manually passing
@@ -74,7 +82,8 @@ stage join-code consistency, `stage_check_join_scripts_ready`,
 `stage_support_bundle_scripts_ready`, `stage_package_archives_ready`,
 `stage_archive_runner_scripts_ready`, `stage_setup_start_runner_ready`,
 `stage_handoff_checksums_ready`, `tunnel_doctor_script_ready`,
-`ready_for_handoff_script_ready`, and
+`ready_for_handoff_script_ready`, `operator_install_script_ready`,
+`operator_scripts_use_operator_venv`, and
 plaintext token leakage in scripts or public Markdown.
 After starting the Coordinator, rerun the same command with `--check-coordinator`
 to call `/ready` and match both stage invites against the redacted registry

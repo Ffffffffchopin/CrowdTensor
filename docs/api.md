@@ -28,6 +28,14 @@ bundle and then checks admission without starting the Miner. Stage `support_bund
 without raw join codes or Miner tokens. The bundle includes
 `crowdtensor_miner_local_environment_v1` with `local_environment_ready`,
 `crowdtensor` CLI, `sha256sum`, Python, and optional torch/CUDA probes.
+Bootstrap also writes `install_operator.sh`, which creates
+`.crowdtensor-operator-venv` by default, can be relocated with
+`CROWDTENSOR_OPERATOR_VENV`, checks `crowdtensor`, `crowdtensord`, and
+`crowdtensor-miner`, and supports `--dry-run` plus
+`CROWDTENSOR_INSTALL_SPEC` / `CROWDTENSOR_INSTALL_SOURCE` overrides. It does
+not read `operator.private.env`, stage invites, or join-code files, and it does
+not start services. Coordinator and Operator-side helper scripts prefer that
+venv when present.
 Bootstrap also writes private
 `stage0.miner-package.tar.gz` and `stage1.miner-package.tar.gz` archives so the
 operator can copy one stage package per remote Miner host, plus matching
@@ -85,6 +93,8 @@ leakage, including `check_route_script_ready`,
 `tunnel_doctor_script_ready`,
 `ready_for_handoff_script_ready`,
 `operator_status_script_ready`,
+`operator_install_script_ready`,
+`operator_scripts_use_operator_venv`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, and

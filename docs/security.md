@@ -96,7 +96,13 @@ public reports, bootstrap checks, and handoff doctor reports expose only
 reward-account presence and must not expose the account values.
 Bootstrap also writes executable helper scripts and separate private env files:
 `coordinator.private.env` contains only the observer token verifier for
-`start_coordinator.sh`; optional `private/tunnel.private.env` contains the
+`start_coordinator.sh`; `install_operator.sh` creates
+`.crowdtensor-operator-venv` by default, can be relocated with
+`CROWDTENSOR_OPERATOR_VENV`, checks `crowdtensor`, `crowdtensord`, and
+`crowdtensor-miner`, supports `--dry-run`, `CROWDTENSOR_INSTALL_SPEC`, and
+`CROWDTENSOR_INSTALL_SOURCE`, and does not read `operator.private.env`, stage
+invites, join-code files, or start services; generated Coordinator/Operator
+scripts prefer that venv when present; optional `private/tunnel.private.env` contains the
 operator-supplied `--tunnel-command` for `start_tunnel.sh`; `tunnel_doctor.sh`
 wraps `crowdtensor swarm-tunnel-doctor` and emits
 `crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the
@@ -171,6 +177,8 @@ scripts or public Markdown, including `check_route_script_ready`,
 `tunnel_doctor_script_ready`,
 `ready_for_handoff_script_ready`,
 `operator_status_script_ready`,
+`operator_install_script_ready`,
+`operator_scripts_use_operator_venv`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, and
