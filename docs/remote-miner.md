@@ -14,7 +14,8 @@ private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
 matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
 `stage_handoff_manifest.json`,
-`handoff_doctor.sh`, `operator_status.sh`, `verify_bootstrap.sh`, generation scripts, and
+`handoff_doctor.sh`, `check_route.sh`, `operator_status.sh`,
+`verify_bootstrap.sh`, generation scripts, and
 `SWARM_BOOTSTRAP.md`.
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
 `--coordinator-url` and a private `--tunnel-command`; the raw tunnel command is
@@ -23,6 +24,8 @@ Keep the generated operator
 invite and operator env on the operator host, use the coordinator env only for
 the Coordinator process, run `start_control_plane.sh` to start the tunnel,
 discovery, and Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
+run `check_route.sh` to confirm the advertised Coordinator URL is suitable for
+the intended remote Miner route,
 run `operator_status.sh` on the operator host for read-only Coordinator,
 trust, accounting, and settlement status,
 and copy only the matching private stage archive plus `stageX.run-miner.sh` and
@@ -178,6 +181,9 @@ reward-account presence.
 `swarm-bootstrap-check` also verifies `operator_status_script_ready` so the
 operator status helper stays executable and sources only the private operator
 env instead of embedding plaintext credentials.
+It verifies `check_route_script_ready` so the route helper stays executable and
+continues to use the package's public Coordinator URL without embedding
+credentials.
 At claim time, the Coordinator enforces the invite's workload, stage, backend,
 and model scope before the Miner can lease work; blocked claims are recorded in
 the normal `blocked_claims` audit counters. A positive `quota_task_limit`

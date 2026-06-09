@@ -446,7 +446,7 @@ The report lists the local private operator invite, stage0/stage1 Miner invites,
 private `miner.join-code.txt` files, operator/coordinator private env files,
 hashed registries, and copyable discovery / `serve` / `join` / `generate`
 scripts plus `start_control_plane.sh`, optional `start_tunnel.sh`,
-`start_discovery.sh`, `verify_bootstrap.sh`, private
+`start_discovery.sh`, `check_route.sh`, `verify_bootstrap.sh`, private
 `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz`, matching
 `stage0.run-miner.sh` / `stage1.run-miner.sh`,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
@@ -458,6 +458,8 @@ launcher without echoing tunnel tokens or provider command lines. Keep the opera
 operator env on the operator host, use the coordinator env only for
 `start_coordinator.sh`, run `start_control_plane.sh` to start the tunnel,
 discovery, and the Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
+run `check_route.sh` to confirm the advertised Coordinator URL is suitable for
+the intended local or remote Miner path,
 run `operator_status.sh` for a read-only `/ready` / `/state` / accounting /
 settlement summary from the operator env,
 and send each private stage archive plus matching `stageX.run-miner.sh` and
@@ -488,8 +490,8 @@ Run `handoff_doctor.sh` or `crowdtensor swarm-handoff-doctor` to write
 `crowdtensor swarm-bootstrap-check` verifies required
 files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
-plaintext tokens before handoff, including `operator_status_script_ready` and
-`stage_support_bundle_scripts_ready`.
+plaintext tokens before handoff, including `check_route_script_ready`,
+`operator_status_script_ready`, and `stage_support_bundle_scripts_ready`.
 It also verifies `stage_package_archives_ready` so the operator can copy one
 private tarball per Miner instead of hand-picking files, plus
 `stage_archive_runner_scripts_ready` for the matching one-command Miner runner
@@ -520,6 +522,12 @@ crowdtensor operator-invite \
 
 Add `--inference-session-rate-limit N --inference-session-rate-window-seconds S`
 to rate-limit generation session creation per admin/operator subject.
+Use `crowdtensor coordinator-route --coordinator-url ... --expect-remote-miners`
+as the no-token first check for whether the advertised Coordinator URL is
+local-only, private-network, or public/tunnel, and add `--check-ready` after the
+Coordinator is running to verify `/ready`. It writes
+`crowdtensor_coordinator_route_cli_v1` artifacts and does not join Miners,
+claim tasks, or provide NAT traversal.
 Use `crowdtensor operator-status --coordinator-url ...` as a read-only daily
 operator check over `/ready`, `/state`, trust/quarantine counters, and optional
 accounting/settlement summaries. It writes public-safe

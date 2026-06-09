@@ -118,6 +118,7 @@ USABLE_SWARM_INFERENCE_CLI_SCHEMA = "usable_swarm_inference_cli_v1"
 PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
+COORDINATOR_ROUTE_CLI_SCHEMA = "crowdtensor_coordinator_route_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 OPERATOR_STATUS_CLI_SCHEMA = "crowdtensor_operator_status_cli_v1"
 OPERATOR_TRUST_CLI_SCHEMA = "crowdtensor_trust_cli_v1"
@@ -11834,6 +11835,26 @@ def _bootstrap_operator_status_script(*, coordinator_url: str) -> str:
     ])
 
 
+def _bootstrap_check_route_script(*, coordinator_url: str, expect_remote_miners: bool) -> str:
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        "",
+        "exec crowdtensor coordinator-route \\",
+        f"  --coordinator-url {_quote_env_value(coordinator_url)} \\",
+        '  --output-dir "$SCRIPT_DIR/coordinator-route" \\',
+    ]
+    if expect_remote_miners:
+        lines.append("  --expect-remote-miners \\")
+    lines.extend([
+        '  "$@"',
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def _bootstrap_verify_script(*, expect_remote_miners: bool) -> str:
     lines = [
         "#!/usr/bin/env bash",
@@ -11902,6 +11923,7 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("start_tunnel", "")),
         shlex.quote(scripts.get("start_discovery", "")),
         shlex.quote(scripts.get("start_coordinator", "")),
+        shlex.quote(scripts.get("check_route", "")),
         shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("handoff_doctor", "")),
         shlex.quote(scripts.get("operator_status", "")),
@@ -11984,6 +12006,7 @@ def _bootstrap_handoff_summary(
             "tunnel": scripts.get("start_tunnel", ""),
             "discovery": scripts.get("start_discovery", ""),
             "coordinator": scripts.get("start_coordinator", ""),
+            "check_route": scripts.get("check_route", ""),
             "stage0_check_join": scripts.get("stage0_check_join", ""),
             "stage1_check_join": scripts.get("stage1_check_join", ""),
             "stage0_support_bundle": scripts.get("stage0_support_bundle", ""),
@@ -12190,6 +12213,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     start_tunnel_script = output_dir / "start_tunnel.sh"
     start_discovery_script = output_dir / "start_discovery.sh"
     start_coordinator_script = output_dir / "start_coordinator.sh"
+    check_route_script = output_dir / "check_route.sh"
     verify_bootstrap_script = output_dir / "verify_bootstrap.sh"
     handoff_doctor_script = output_dir / "handoff_doctor.sh"
     operator_status_script = output_dir / "operator_status.sh"
@@ -12438,6 +12462,13 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         _bootstrap_coordinator_script(args, backend=backend, coordinator_url=coordinator_url),
     )
     _write_executable(
+        check_route_script,
+        _bootstrap_check_route_script(
+            coordinator_url=coordinator_url,
+            expect_remote_miners=bool(args.expect_remote_miners),
+        ),
+    )
+    _write_executable(
         check_generation_script,
         _bootstrap_generate_script(
             coordinator_url=coordinator_url,
@@ -12470,6 +12501,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "start_tunnel": str(start_tunnel_script),
         "start_discovery": str(start_discovery_script),
         "start_coordinator": str(start_coordinator_script),
+        "check_route": str(check_route_script),
         "verify_bootstrap": str(verify_bootstrap_script),
         "handoff_doctor": str(handoff_doctor_script),
         "operator_status": str(operator_status_script),
@@ -12589,6 +12621,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 serve_command,
             ),
             command_entry(
+                "check Coordinator route",
+                [str(check_route_script)],
+            ),
+            command_entry(
                 "verify bootstrap live preflight",
                 ["crowdtensor", "swarm-bootstrap-check", "--output-dir", str(output_dir), "--check-admission"]
                 + (["--expect-remote-miners"] if args.expect_remote_miners else []),
@@ -12617,12 +12653,13 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "private_join_code_files_created": True,
             "stage_package_archives_created": True,
             "stage_handoff_checksums_created": True,
+            "check_route_script_created": True,
             "operator_status_script_created": True,
             "scripts_created": True,
             "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
-            "Run start_control_plane.sh on the Coordinator host, run verify_bootstrap.sh for live no-claim admission "
+            "Run start_control_plane.sh on the Coordinator host, run check_route.sh, then run verify_bootstrap.sh for live no-claim admission "
             "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, then run the dry-run generate "
             "preflight and operator_status.sh before submitting generation."
         ),
@@ -12648,47 +12685,50 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[3]["command_line"] = command_line([str(start_coordinator_script)])
     next_commands[3]["requires_files"] = [str(coordinator_env_path)]
     next_commands[3]["script"] = str(start_coordinator_script)
-    next_commands[4]["command"] = [str(verify_bootstrap_script)]
-    next_commands[4]["command_line"] = command_line([str(verify_bootstrap_script)])
-    next_commands[4]["requires_files"] = [
+    next_commands[4]["command"] = [str(check_route_script)]
+    next_commands[4]["command_line"] = command_line([str(check_route_script)])
+    next_commands[4]["script"] = str(check_route_script)
+    next_commands[5]["command"] = [str(verify_bootstrap_script)]
+    next_commands[5]["command_line"] = command_line([str(verify_bootstrap_script)])
+    next_commands[5]["requires_files"] = [
         str(stage_scripts["stage0"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage0"]),
         str(stage_scripts["stage1"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage1"]),
     ]
-    next_commands[4]["script"] = str(verify_bootstrap_script)
-    next_commands[5]["command"] = [str(handoff_doctor_script)]
-    next_commands[5]["command_line"] = command_line([str(handoff_doctor_script)])
-    next_commands[5]["requires_files"] = next_commands[4]["requires_files"]
-    next_commands[5]["script"] = str(handoff_doctor_script)
-    next_commands[6]["command"] = [str(operator_status_script)]
-    next_commands[6]["command_line"] = command_line([str(operator_status_script)])
-    next_commands[6]["requires_files"] = [str(operator_env_path)]
-    next_commands[6]["script"] = str(operator_status_script)
-    next_commands[7]["command"] = [str(stage_check_scripts["stage0"])]
-    next_commands[7]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
-    next_commands[7]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[7]["script"] = str(stage_check_scripts["stage0"])
-    next_commands[8]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[8]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[5]["script"] = str(verify_bootstrap_script)
+    next_commands[6]["command"] = [str(handoff_doctor_script)]
+    next_commands[6]["command_line"] = command_line([str(handoff_doctor_script)])
+    next_commands[6]["requires_files"] = next_commands[5]["requires_files"]
+    next_commands[6]["script"] = str(handoff_doctor_script)
+    next_commands[7]["command"] = [str(operator_status_script)]
+    next_commands[7]["command_line"] = command_line([str(operator_status_script)])
+    next_commands[7]["requires_files"] = [str(operator_env_path)]
+    next_commands[7]["script"] = str(operator_status_script)
+    next_commands[8]["command"] = [str(stage_check_scripts["stage0"])]
+    next_commands[8]["command_line"] = command_line([str(stage_check_scripts["stage0"])])
     next_commands[8]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[8]["script"] = str(stage_scripts["stage0"])
-    next_commands[9]["command"] = [str(stage_check_scripts["stage1"])]
-    next_commands[9]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
-    next_commands[9]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[9]["script"] = str(stage_check_scripts["stage1"])
-    next_commands[10]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[10]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[8]["script"] = str(stage_check_scripts["stage0"])
+    next_commands[9]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[9]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[9]["requires_files"] = [str(stage_join_code_files["stage0"])]
+    next_commands[9]["script"] = str(stage_scripts["stage0"])
+    next_commands[10]["command"] = [str(stage_check_scripts["stage1"])]
+    next_commands[10]["command_line"] = command_line([str(stage_check_scripts["stage1"])])
     next_commands[10]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[10]["script"] = str(stage_scripts["stage1"])
-    next_commands[11]["command"] = [str(check_generation_script)]
-    next_commands[11]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[11]["requires_files"] = [str(operator_env_path)]
-    next_commands[11]["script"] = str(check_generation_script)
-    next_commands[12]["command"] = [str(submit_generation_script)]
-    next_commands[12]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[10]["script"] = str(stage_check_scripts["stage1"])
+    next_commands[11]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[11]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[11]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[11]["script"] = str(stage_scripts["stage1"])
+    next_commands[12]["command"] = [str(check_generation_script)]
+    next_commands[12]["command_line"] = command_line([str(check_generation_script)])
     next_commands[12]["requires_files"] = [str(operator_env_path)]
-    next_commands[12]["script"] = str(submit_generation_script)
+    next_commands[12]["script"] = str(check_generation_script)
+    next_commands[13]["command"] = [str(submit_generation_script)]
+    next_commands[13]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[13]["requires_files"] = [str(operator_env_path)]
+    next_commands[13]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -13006,6 +13046,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "start_tunnel_script": output_dir / "start_tunnel.sh",
         "start_discovery_script": output_dir / "start_discovery.sh",
         "start_coordinator_script": output_dir / "start_coordinator.sh",
+        "check_route_script": output_dir / "check_route.sh",
         "verify_bootstrap_script": output_dir / "verify_bootstrap.sh",
         "handoff_doctor_script": output_dir / "handoff_doctor.sh",
         "operator_status_script": output_dir / "operator_status.sh",
@@ -13148,6 +13189,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["start_tunnel_script"],
         required_files["start_discovery_script"],
         required_files["start_coordinator_script"],
+        required_files["check_route_script"],
         required_files["verify_bootstrap_script"],
         required_files["handoff_doctor_script"],
         required_files["operator_status_script"],
@@ -13378,6 +13420,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     tunnel_script_text, _ = _read_bootstrap_text(required_files["start_tunnel_script"])
     discovery_script_text, _ = _read_bootstrap_text(required_files["start_discovery_script"])
     coordinator_script_text, _ = _read_bootstrap_text(required_files["start_coordinator_script"])
+    check_route_script_text, _ = _read_bootstrap_text(required_files["check_route_script"])
     verify_script_text, _ = _read_bootstrap_text(required_files["verify_bootstrap_script"])
     handoff_doctor_script_text, _ = _read_bootstrap_text(required_files["handoff_doctor_script"])
     operator_status_script_text, _ = _read_bootstrap_text(required_files["operator_status_script"])
@@ -13386,6 +13429,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["start_tunnel_script"],
         required_files["start_coordinator_script"],
         required_files["start_discovery_script"],
+        required_files["check_route_script"],
         required_files["verify_bootstrap_script"],
         required_files["handoff_doctor_script"],
         required_files["operator_status_script"],
@@ -13708,6 +13752,25 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="start_discovery.sh must start the configured discovery daemon or explain discovery is disabled",
         diagnosis_code="bootstrap_discovery_script_invalid",
     )
+    check_route_script_ready = bool(
+        "crowdtensor coordinator-route" in check_route_script_text
+        and "--coordinator-url" in check_route_script_text
+        and coordinator_url in check_route_script_text
+        and "--output-dir" in check_route_script_text
+        and "$SCRIPT_DIR/coordinator-route" in check_route_script_text
+        and (
+            not bool(getattr(args, "expect_remote_miners", False))
+            or "--expect-remote-miners" in check_route_script_text
+        )
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "check_route_script_ready",
+        check_route_script_ready,
+        detail="check_route.sh must wrap coordinator-route for this package",
+        diagnosis_code="bootstrap_check_route_script_invalid",
+    )
     verify_script_ready = bool(
         "crowdtensor swarm-bootstrap-check" in verify_script_text
         and "--check-admission" in verify_script_text
@@ -13842,6 +13905,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "start_tunnel": str(required_files["start_tunnel_script"]),
                 "start_discovery": str(required_files["start_discovery_script"]),
                 "start_coordinator": str(required_files["start_coordinator_script"]),
+                "check_route": str(required_files["check_route_script"]),
                 "verify_bootstrap": str(required_files["verify_bootstrap_script"]),
                 "handoff_doctor": str(required_files["handoff_doctor_script"]),
                 "operator_status": str(required_files["operator_status_script"]),
@@ -13905,6 +13969,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "start_control_plane_script_ready": control_plane_script_ready,
             "start_tunnel_script_ready": tunnel_script_ready,
             "start_discovery_script_ready": discovery_script_ready,
+            "check_route_script_ready": check_route_script_ready,
             "verify_bootstrap_script_ready": verify_script_ready,
             "handoff_doctor_script_ready": handoff_doctor_script_ready,
             "operator_status_script_ready": operator_status_script_ready,
@@ -16033,6 +16098,162 @@ def _operator_status_next_actions(report: dict[str, Any]) -> list[str]:
     if not actions:
         actions.append("Review operator_status.md; no immediate control-plane blocker was detected.")
     return actions
+
+
+def _coordinator_route_next_actions(report: dict[str, Any]) -> list[str]:
+    codes = set(str(code) for code in report.get("diagnosis_codes") or [])
+    remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    actions: list[str] = []
+    if "coordinator_remote_route_required" in codes:
+        actions.append("Use a public HTTPS URL, VPN/LAN address, or tunnel URL before sharing Miner join packages.")
+    elif "coordinator_route_public_or_tunnel" in codes and remote_access.get("external_forwarder_required"):
+        actions.append("Start the tunnel or reverse proxy that forwards this public URL to the local Coordinator bind address.")
+    elif "coordinator_route_private_network" in codes:
+        actions.append("Only Miners on the same LAN, VPN, or trusted private route should use this Coordinator URL.")
+    elif "coordinator_route_local_only" in codes:
+        actions.append("Only same-machine Miners can use this URL; remote Miners need a public URL, VPN/LAN address, or tunnel.")
+    elif "coordinator_route_ready" in codes:
+        actions.append("Use this Coordinator URL in Miner invites or swarm-bootstrap when the matching network path is intentionally available.")
+    if "coordinator_ready_unreachable" in codes:
+        actions.append("Start the Coordinator or fix DNS, firewall, VPN, tunnel, TLS, or reverse proxy routing before asking Miners to join.")
+    elif "coordinator_ready_not_ready" in codes:
+        actions.append("The URL responded but /ready was not healthy; inspect the Coordinator logs and runtime configuration.")
+    elif "coordinator_ready_preflight_ready" in codes:
+        actions.append("The /ready endpoint responded; continue with swarm-bootstrap-check --check-admission before copying stage packages.")
+    if not actions:
+        actions.append("Review coordinator_route.md; no additional action was generated.")
+    return actions
+
+
+def render_coordinator_route_markdown(report: dict[str, Any]) -> str:
+    remote = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
+    lines = [
+        "# CrowdTensor Coordinator Route",
+        "",
+        f"- OK: `{bool(report.get('ok'))}`",
+        f"- Coordinator URL: `{report.get('coordinator_url') or ''}`",
+        f"- Route kind: `{remote.get('route_kind') or ''}`",
+        f"- Host class: `{remote.get('host_class') or ''}`",
+        f"- Remote Miners ready: `{bool(report.get('remote_miners_ready'))}`",
+        f"- External forwarder required: `{bool(remote.get('external_forwarder_required'))}`",
+        f"- Ready checked: `{bool(report.get('ready_checked'))}`",
+        f"- Ready OK: `{ready.get('ok') if ready else None}`",
+        f"- Diagnosis: `{', '.join(str(code) for code in (report.get('diagnosis_codes') or []))}`",
+        "",
+        "## Actions",
+        "",
+    ]
+    for action in report.get("next_actions") or []:
+        lines.append(f"- {action}")
+    lines.extend([
+        "",
+        "## Boundary",
+        "",
+        "- This report checks URL shape and optional `/ready` reachability. It is not NAT traversal, not decentralized discovery, and not proof that remote Miners have joined.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def build_coordinator_route(args: argparse.Namespace) -> dict[str, Any]:
+    coordinator_url = str(getattr(args, "coordinator_url", "") or "").strip().rstrip("/")
+    output_dir = Path(str(getattr(args, "output_dir", "dist/coordinator-route") or "dist/coordinator-route"))
+    remote_access = coordinator_remote_access_summary(
+        coordinator_url,
+        bind_host=str(getattr(args, "bind_host", "") or ""),
+        public_host=str(getattr(args, "public_host", "") or ""),
+        public_url_explicit=bool(getattr(args, "public_url_explicit", False) or coordinator_url),
+        expect_remote_miners=bool(getattr(args, "expect_remote_miners", False)),
+        source="coordinator-route",
+    )
+    remote_miners_ready = bool(
+        remote_access.get("remote_miners_supported")
+        and remote_access.get("diagnosis_code") != "coordinator_remote_route_required"
+    )
+    route_ready = bool(
+        remote_miners_ready
+        or (
+            not bool(getattr(args, "expect_remote_miners", False))
+            and remote_access.get("route_kind") == "local-only"
+        )
+    )
+    diagnosis_codes = [str(remote_access.get("diagnosis_code") or "")]
+    if route_ready:
+        diagnosis_codes.append("coordinator_route_ready")
+    ready_checked = bool(getattr(args, "check_ready", False))
+    coordinator_ready: dict[str, Any] = {}
+    if ready_checked:
+        coordinator_ready = _coordinator_ready_preflight(
+            coordinator_url,
+            timeout=float(getattr(args, "http_timeout", 5.0) or 5.0),
+        )
+        if coordinator_ready.get("ok"):
+            diagnosis_codes.append("coordinator_ready_preflight_ready")
+        elif coordinator_ready.get("error"):
+            diagnosis_codes.append("coordinator_ready_unreachable")
+        else:
+            diagnosis_codes.append("coordinator_ready_not_ready")
+    else:
+        diagnosis_codes.append("coordinator_ready_preflight_skipped")
+    ok = bool(route_ready and (not ready_checked or coordinator_ready.get("ok")))
+    report: dict[str, Any] = {
+        "schema": COORDINATOR_ROUTE_CLI_SCHEMA,
+        "ok": ok,
+        "mode": "coordinator-route",
+        "coordinator_url": coordinator_url,
+        "output_dir": str(output_dir),
+        "route_ready": route_ready,
+        "remote_miners_ready": remote_miners_ready,
+        "ready_checked": ready_checked,
+        "coordinator_ready": coordinator_ready,
+        "remote_access": remote_access,
+        "diagnosis_codes": sorted(set(code for code in diagnosis_codes if code)),
+        "public_artifact_safe": True,
+        "safety": {
+            "raw_tokens_public": False,
+            "not_nat_traversal": True,
+            "not_decentralized_discovery": True,
+            "no_miner_join_attempted": True,
+            "no_task_claimed": True,
+        },
+        "operator_action": "",
+    }
+    report["next_actions"] = _coordinator_route_next_actions(report)
+    report["operator_action"] = " ".join(str(action) for action in report["next_actions"][:2])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "coordinator_route.json"
+    md_path = output_dir / "coordinator_route.md"
+    report["artifacts"] = {
+        "json": {"path": str(json_path), "present": True},
+        "markdown": {"path": str(md_path), "present": True},
+    }
+    json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    md_path.write_text(render_coordinator_route_markdown(report), encoding="utf-8")
+    return sanitize(report)
+
+
+def print_coordinator_route(report: dict[str, Any]) -> None:
+    print("CrowdTensor coordinator route")
+    print(f"  ok: {report.get('ok')}")
+    print(f"  coordinator_url: {report.get('coordinator_url')}")
+    remote = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    if remote:
+        print(
+            "  remote_access: "
+            f"route={remote.get('route_kind')} "
+            f"host={remote.get('host_class')} "
+            f"remote_miners={report.get('remote_miners_ready')} "
+            f"join_url={remote.get('miner_join_url') or 'none'} "
+            f"forwarder_required={remote.get('external_forwarder_required')} "
+            f"diagnosis={remote.get('diagnosis_code')}"
+        )
+    ready = report.get("coordinator_ready") if isinstance(report.get("coordinator_ready"), dict) else {}
+    if report.get("ready_checked"):
+        print(f"  ready: ok={ready.get('ok')} error={ready.get('error') or ''}")
+    if report.get("operator_action"):
+        print(f"  action: {report.get('operator_action')}")
+    print(f"  diagnosis: {', '.join(report.get('diagnosis_codes') or [])}")
 
 
 def render_operator_status_markdown(report: dict[str, Any]) -> str:
@@ -21682,6 +21903,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     operator_status.add_argument("--http-timeout", type=float, default=10.0)
     operator_status.add_argument("--json", action="store_true")
 
+    coordinator_route = subparsers.add_parser(
+        "coordinator-route",
+        help="Check whether a Coordinator URL is usable for Miner joins.",
+        description=(
+            "Classify a Coordinator URL as local-only, private-network, or public/tunnel, "
+            "optionally call /ready, and write public-safe coordinator_route.json/md artifacts. "
+            "This does not perform NAT traversal, join a Miner, claim tasks, or require tokens."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crowdtensor coordinator-route --coordinator-url http://127.0.0.1:8787\n"
+            "  crowdtensor coordinator-route --coordinator-url https://YOUR-TUNNEL.example \\\n"
+            "    --expect-remote-miners --check-ready --json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    coordinator_route.add_argument("--output-dir", default="dist/coordinator-route")
+    coordinator_route.add_argument("--coordinator-url", default=os.environ.get("CROWDTENSOR_COORDINATOR_URL", ""))
+    coordinator_route.add_argument("--bind-host", default="127.0.0.1")
+    coordinator_route.add_argument("--public-host", default="")
+    coordinator_route.add_argument("--public-url-explicit", action="store_true")
+    coordinator_route.add_argument("--expect-remote-miners", action="store_true")
+    coordinator_route.add_argument("--check-ready", action="store_true")
+    coordinator_route.add_argument("--http-timeout", type=float, default=5.0)
+    coordinator_route.add_argument("--json", action="store_true")
+
     trust = subparsers.add_parser(
         "trust",
         help="Inspect Miner trust/quarantine state or set a workload-scoped override.",
@@ -24074,7 +24321,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -24195,6 +24442,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--http-timeout must be positive")
         if args.require_admin_summaries and not args.include_admin_summaries:
             raise SystemExit("--require-admin-summaries requires --include-admin-summaries")
+    if args.command == "coordinator-route":
+        if args.coordinator_url:
+            parsed_route_url = urlparse(args.coordinator_url)
+            if parsed_route_url.scheme not in {"http", "https"} or not parsed_route_url.hostname:
+                raise SystemExit("--coordinator-url must be a full http(s) URL with a host")
+        if args.http_timeout <= 0:
+            raise SystemExit("--http-timeout must be positive")
     if args.command == "trust":
         if args.coordinator_url:
             parsed_trust_url = urlparse(args.coordinator_url)
@@ -25231,6 +25485,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(report, sort_keys=True))
         else:
             print_operator_status(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "coordinator-route":
+        report = build_coordinator_route(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_coordinator_route(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "trust":
         report = build_operator_trust(args)

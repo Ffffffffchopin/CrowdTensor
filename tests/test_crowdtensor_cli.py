@@ -1844,6 +1844,100 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("observer_token_rejected", report["diagnosis_codes"])
         self.assertTrue((output_dir / "operator_status.json").exists())
 
+    def test_coordinator_route_reports_remote_ready_public_url(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "route"
+        args = cli.parse_args([
+            "coordinator-route",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_coordinator_route(args)
+        saved_json = (output_dir / "coordinator_route.json").read_text(encoding="utf-8")
+        saved_md = (output_dir / "coordinator_route.md").read_text(encoding="utf-8")
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["schema"], "crowdtensor_coordinator_route_cli_v1")
+        self.assertTrue(report["route_ready"])
+        self.assertTrue(report["remote_miners_ready"])
+        self.assertFalse(report["ready_checked"])
+        self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
+        self.assertTrue(report["remote_access"]["external_forwarder_required"])
+        self.assertIn("coordinator_route_ready", report["diagnosis_codes"])
+        self.assertIn("coordinator_ready_preflight_skipped", report["diagnosis_codes"])
+        self.assertIn("coordinator_route.json", saved_json)
+        self.assertIn("Remote Miners ready", saved_md)
+
+    def test_coordinator_route_blocks_local_url_for_remote_miners(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "route"
+        args = cli.parse_args([
+            "coordinator-route",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_coordinator_route(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertFalse(report["route_ready"])
+        self.assertFalse(report["remote_miners_ready"])
+        self.assertEqual(report["remote_access"]["route_kind"], "local-only")
+        self.assertIn("coordinator_remote_route_required", report["diagnosis_codes"])
+        self.assertIn("public HTTPS URL", report["operator_action"])
+
+    def test_coordinator_route_can_check_ready_endpoint(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "route"
+        args = cli.parse_args([
+            "coordinator-route",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--check-ready",
+            "--http-timeout",
+            "3",
+            "--json",
+        ])
+        calls: list[tuple[str, str, str, float]] = []
+
+        def fake_request(
+            method: str,
+            base_url: str,
+            path: str,
+            payload: dict | None = None,
+            *,
+            admin_token: str = "",
+            observer_token: str = "",
+            timeout: float = 10.0,
+        ) -> dict:
+            del payload, admin_token, observer_token
+            calls.append((method, base_url, path, timeout))
+            return {
+                "schema": "ready_v1",
+                "service": "crowdtensord-coordinator",
+                "protocol": "runtime_contract_v1",
+                "auth": {"miner_required": True},
+                "task_lanes": ["real_llm_sharded_infer"],
+            }
+
+        with patch.object(cli, "request_json_url", side_effect=fake_request):
+            report = cli.build_coordinator_route(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["ready_checked"])
+        self.assertTrue(report["coordinator_ready"]["ok"])
+        self.assertEqual(calls, [("GET", "https://ct.example", "/ready", 3.0)])
+        self.assertIn("coordinator_ready_preflight_ready", report["diagnosis_codes"])
+
     def test_operator_settlement_fetches_draft_and_redacts_private_values(self) -> None:
         output_dir = Path(self._tmp_dir()) / "settlement"
         admin_token = "settlement-admin-secret"
@@ -2388,6 +2482,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["private_join_code_files_created"])
         self.assertTrue(report["safety"]["stage_package_archives_created"])
         self.assertTrue(report["safety"]["stage_handoff_checksums_created"])
+        self.assertTrue(report["safety"]["check_route_script_created"])
         self.assertTrue(report["safety"]["operator_status_script_created"])
         handoff = report["bootstrap_handoff"]
         self.assertEqual(handoff["schema"], "crowdtensor_bootstrap_handoff_v1")
@@ -2415,6 +2510,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(handoff["manual_launchers"]["stage1_support_bundle"], str(scripts["stage1_support_bundle"]))
         self.assertEqual(handoff["manual_launchers"]["stage0_run_miner"], str(scripts["stage0_run_miner"]))
         self.assertEqual(handoff["manual_launchers"]["stage1_run_miner"], str(scripts["stage1_run_miner"]))
+        self.assertEqual(handoff["manual_launchers"]["check_route"], str(scripts["check_route"]))
         self.assertEqual(handoff["manual_launchers"]["operator_status"], str(scripts["operator_status"]))
         self.assertIn(str(coordinator_env_path), handoff["coordinator_host_private_files"])
         self.assertIn(str(operator_env_path), handoff["operator_host_private_files"])
@@ -2478,6 +2574,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(str(scripts["start_tunnel"]), runbook)
         self.assertIn(str(scripts["start_discovery"]), runbook)
         self.assertIn(str(scripts["start_coordinator"]), runbook)
+        self.assertIn(str(scripts["check_route"]), runbook)
         self.assertIn(str(scripts["verify_bootstrap"]), runbook)
         self.assertIn(str(scripts["handoff_doctor"]), runbook)
         self.assertIn(str(scripts["operator_status"]), runbook)
@@ -2487,6 +2584,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("crowdtensor swarm-handoff-doctor", scripts["handoff_doctor"].read_text(encoding="utf-8"))
         self.assertIn("--check-admission", scripts["handoff_doctor"].read_text(encoding="utf-8"))
         self.assertIn("--expect-remote-miners", scripts["handoff_doctor"].read_text(encoding="utf-8"))
+        check_route_text = scripts["check_route"].read_text(encoding="utf-8")
+        self.assertIn("crowdtensor coordinator-route", check_route_text)
+        self.assertIn("--coordinator-url 'https://ct.example'", check_route_text)
+        self.assertIn("--expect-remote-miners", check_route_text)
+        self.assertIn('$SCRIPT_DIR/coordinator-route', check_route_text)
         operator_status_text = scripts["operator_status"].read_text(encoding="utf-8")
         self.assertIn("crowdtensor operator-status", operator_status_text)
         self.assertIn("private/operator.private.env", operator_status_text)
@@ -2527,15 +2629,16 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["next_commands"][3]["command_line"], str(scripts["start_coordinator"]))
         self.assertNotIn("CROWDTENSOR_OBSERVER_TOKEN", report["next_commands"][3].get("requires_env", []))
         self.assertIn(str(coordinator_env_path), report["next_commands"][3]["requires_files"])
-        self.assertEqual(report["next_commands"][4]["command"], [str(scripts["verify_bootstrap"])])
-        self.assertEqual(report["next_commands"][5]["command"], [str(scripts["handoff_doctor"])])
-        self.assertEqual(report["next_commands"][6]["command"], [str(scripts["operator_status"])])
-        self.assertIn(str(operator_env_path), report["next_commands"][6]["requires_files"])
-        self.assertEqual(report["next_commands"][7]["command"], [str(scripts["stage0_check_join"])])
-        self.assertIn(str(stage0_join_code_path), report["next_commands"][7]["requires_files"])
-        self.assertEqual(report["next_commands"][8]["command"], [str(scripts["stage0_join"])])
+        self.assertEqual(report["next_commands"][4]["command"], [str(scripts["check_route"])])
+        self.assertEqual(report["next_commands"][5]["command"], [str(scripts["verify_bootstrap"])])
+        self.assertEqual(report["next_commands"][6]["command"], [str(scripts["handoff_doctor"])])
+        self.assertEqual(report["next_commands"][7]["command"], [str(scripts["operator_status"])])
+        self.assertIn(str(operator_env_path), report["next_commands"][7]["requires_files"])
+        self.assertEqual(report["next_commands"][8]["command"], [str(scripts["stage0_check_join"])])
         self.assertIn(str(stage0_join_code_path), report["next_commands"][8]["requires_files"])
-        self.assertEqual(report["next_commands"][11]["command_line"], str(scripts["check_generation"]))
+        self.assertEqual(report["next_commands"][9]["command"], [str(scripts["stage0_join"])])
+        self.assertIn(str(stage0_join_code_path), report["next_commands"][9]["requires_files"])
+        self.assertEqual(report["next_commands"][12]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
     def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:
@@ -2824,6 +2927,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["scripts_mode_0700"])
         self.assertEqual(report["artifacts"]["verify_bootstrap_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["handoff_doctor_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["check_route_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["operator_status_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["stage0_join_code"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["stage0_support_bundle_script"]["mode"], "0o700")
@@ -2832,6 +2936,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["artifacts"]["stage_handoff_manifest"]["mode"], "0o644")
         self.assertTrue(report["safety"]["verify_bootstrap_script_ready"])
         self.assertTrue(report["safety"]["handoff_doctor_script_ready"])
+        self.assertTrue(report["safety"]["check_route_script_ready"])
         self.assertTrue(report["safety"]["operator_status_script_ready"])
         self.assertTrue(report["safety"]["stage_join_scripts_use_invite_code_file"])
         self.assertTrue(report["safety"]["stage_check_join_scripts_ready"])

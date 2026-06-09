@@ -42,6 +42,11 @@ together; when `--tunnel-command` is supplied, it also writes
 start an operator-supplied tunnel/overlay command before the Coordinator
 without printing the command in public artifacts. `start_discovery.sh` and
 `start_coordinator.sh` remain available for manual debugging.
+Generated `check_route.sh` runs `crowdtensor coordinator-route` so operators can
+classify the advertised Coordinator URL and optionally add `/ready` reachability
+before copying Miner stage packages. It writes `coordinator_route.json` and
+`coordinator_route.md` and does not join Miners, claim tasks, or provide NAT
+traversal.
 Generated `operator_status.sh` sources only `private/operator.private.env` and
 runs the read-only `crowdtensor operator-status` summary against the running
 Coordinator so operators can check `/ready`, `/state`, accounting, and
@@ -61,7 +66,8 @@ file permissions, hashed registries, env separation, stage invite Coordinator
 URL consistency, optional `--expect-remote-miners` remote route readiness,
 optional `/ready` checks via `--check-coordinator`, optional token-backed
 no-claim `/tasks/preflight` checks via `--check-admission`, and plaintext token
-leakage, including `operator_status_script_ready`,
+leakage, including `check_route_script_ready`,
+`operator_status_script_ready`,
 `stage_support_bundle_scripts_ready`, and
 `stage_package_archives_ready` plus `stage_archive_runner_scripts_ready` and
 `stage_handoff_checksums_ready`.
@@ -81,6 +87,12 @@ optional `/admin/accounting` plus `/admin/settlement` status when
 `--include-admin-summaries` is used with an owner/admin/accounting token. The
 CLI does not create inference sessions, change trust overrides, or execute
 payments.
+
+Use `crowdtensor coordinator-route --coordinator-url ...` before handoff when
+the operator needs a no-token route verdict. It emits
+`crowdtensor_coordinator_route_cli_v1`, writes `coordinator_route.json` and
+`coordinator_route.md`, classifies local-only, private-network, and
+public/tunnel URLs, and optionally checks `/ready` with `--check-ready`.
 
 ## Public Endpoints
 
