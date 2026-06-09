@@ -50,8 +50,11 @@ without printing the command in public artifacts. It also writes
 `tunnel_doctor.sh`, which wraps `crowdtensor swarm-tunnel-doctor` and emits
 `crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the
 private tunnel env, provider binary, control-plane launcher, and Miner-facing
-URL without starting a tunnel. `start_discovery.sh` and `start_coordinator.sh`
-remain available for manual debugging.
+URL without starting a tunnel. `ready_for_handoff.sh` chains
+`tunnel_doctor.sh`, `check_route.sh --check-ready`, `verify_bootstrap.sh`, and
+`handoff_doctor.sh` as the one-command operator gate after the control plane is
+running. `start_discovery.sh` and `start_coordinator.sh` remain available for
+manual debugging.
 Generated `check_route.sh` runs `crowdtensor coordinator-route` so operators can
 classify the advertised Coordinator URL and optionally add `/ready` reachability
 before copying Miner stage packages. It writes `coordinator_route.json` and
@@ -63,21 +66,24 @@ Coordinator so operators can check `/ready`, `/state`, accounting, and
 settlement status without copying credentials into public scripts.
 Both bootstrap and bootstrap-check reports include
 `bootstrap_handoff.remote_miners_ready`, `recommended_launcher`,
-`verify_before_handoff`, and `ready_to_copy_stage_packages` so operators can
+`verify_before_handoff`, `one_command_handoff_check`, and
+`ready_to_copy_stage_packages` so operators can
 tell whether the package is only generated or has passed the live no-claim
 preflight required before copying stage directories. `crowdtensor swarm-handoff-doctor`
 and generated `handoff_doctor.sh` emit
 `crowdtensor_swarm_handoff_doctor_v1`, `handoff_doctor.json`, and
 `handoff_doctor.md` with blockers and exact stage files to copy.
-Run `verify_bootstrap.sh` from a generated `crowdtensor swarm-bootstrap`
-directory before copying stage packages; it wraps
-`crowdtensor swarm-bootstrap-check --check-admission`. That package gate verifies private
+Run `ready_for_handoff.sh` from a generated `crowdtensor swarm-bootstrap`
+directory before copying stage packages; it wraps the tunnel doctor, route
+check, live no-claim admission preflight, and handoff doctor. The underlying
+`crowdtensor swarm-bootstrap-check` package gate verifies private
 file permissions, hashed registries, env separation, stage invite Coordinator
 URL consistency, optional `--expect-remote-miners` remote route readiness,
 optional `/ready` checks via `--check-coordinator`, optional token-backed
 no-claim `/tasks/preflight` checks via `--check-admission`, and plaintext token
 leakage, including `check_route_script_ready`,
 `tunnel_doctor_script_ready`,
+`ready_for_handoff_script_ready`,
 `operator_status_script_ready`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,

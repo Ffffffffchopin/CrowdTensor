@@ -101,7 +101,9 @@ operator-supplied `--tunnel-command` for `start_tunnel.sh`; `tunnel_doctor.sh`
 wraps `crowdtensor swarm-tunnel-doctor` and emits
 `crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the
 private tunnel env, provider binary, control-plane launcher, and Miner-facing
-URL without starting a tunnel; `start_control_plane.sh` starts the tunnel,
+URL without starting a tunnel; `ready_for_handoff.sh` chains
+`tunnel_doctor.sh`, `check_route.sh --check-ready`, `verify_bootstrap.sh`, and
+`handoff_doctor.sh` without embedding private material; `start_control_plane.sh` starts the tunnel,
 discovery, and Coordinator together; `start_discovery.sh`
 starts the configured P2P-lite or real-P2P discovery daemon when `--peer-bootstrap` is used; and
 `verify_bootstrap.sh` runs the live no-claim bootstrap admission check.
@@ -141,12 +143,15 @@ P2P-lite discovery without hand-written route flags; this is still not NAT
 traversal.
 The public-safe `bootstrap_handoff` summary may be shared with operators: it
 reports route readiness, the recommended launcher, and
-`ready_to_copy_stage_packages` without exposing plaintext operator tokens,
+`one_command_handoff_check` / `ready_to_copy_stage_packages` without exposing plaintext operator tokens,
 Miner tokens, join codes, or tunnel commands. Treat false
 `ready_to_copy_stage_packages` as a stop signal until live admission preflight
 passes. `handoff_doctor.sh` / `crowdtensor swarm-handoff-doctor` writes
 `crowdtensor_swarm_handoff_doctor_v1` (`handoff_doctor.json` and
 `handoff_doctor.md`) with public-safe blockers and stage copy lists.
+`ready_for_handoff.sh` is the one-command operator gate after the control plane
+is running; it stops on the first failed tunnel, route, admission, or handoff
+check.
 `check_route.sh` runs `crowdtensor coordinator-route` without tokens to classify
 the advertised Coordinator URL and optional `/ready` reachability before stage
 package handoff; it emits `crowdtensor_coordinator_route_cli_v1` artifacts
@@ -164,6 +169,7 @@ bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
 scripts or public Markdown, including `check_route_script_ready`,
 `tunnel_doctor_script_ready`,
+`ready_for_handoff_script_ready`,
 `operator_status_script_ready`,
 `stage_install_scripts_ready`,
 `stage_doctor_scripts_ready`,

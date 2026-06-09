@@ -12168,6 +12168,25 @@ def _bootstrap_handoff_doctor_script(*, expect_remote_miners: bool) -> str:
     return "\n".join(lines)
 
 
+def _bootstrap_ready_for_handoff_script() -> str:
+    return "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        "",
+        "echo 'CrowdTensor ready-for-handoff: checking tunnel/route package'",
+        '"$SCRIPT_DIR/tunnel_doctor.sh"',
+        "echo 'CrowdTensor ready-for-handoff: checking Coordinator /ready route'",
+        '"$SCRIPT_DIR/check_route.sh" --check-ready',
+        "echo 'CrowdTensor ready-for-handoff: checking Miner admission preflight'",
+        '"$SCRIPT_DIR/verify_bootstrap.sh"',
+        "echo 'CrowdTensor ready-for-handoff: writing handoff doctor report'",
+        '"$SCRIPT_DIR/handoff_doctor.sh"',
+        "",
+    ])
+
+
 def _bootstrap_runbook(
     *,
     coordinator_url: str,
@@ -12200,6 +12219,7 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("check_route", "")),
         shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("handoff_doctor", "")),
+        shlex.quote(scripts.get("ready_for_handoff", "")),
         shlex.quote(scripts.get("operator_status", "")),
         f"{shlex.quote(scripts.get('stage0_run_miner', ''))} --setup",
         f"{shlex.quote(scripts.get('stage0_run_miner', ''))} --start",
@@ -12300,9 +12320,11 @@ def _bootstrap_handoff_summary(
             "stage1_join": scripts.get("stage1_join", ""),
             "stage0_run_miner": scripts.get("stage0_run_miner", ""),
             "stage1_run_miner": scripts.get("stage1_run_miner", ""),
+            "ready_for_handoff": scripts.get("ready_for_handoff", ""),
             "operator_status": scripts.get("operator_status", ""),
         },
         "verify_before_handoff": scripts.get("verify_bootstrap", ""),
+        "one_command_handoff_check": scripts.get("ready_for_handoff", ""),
         "stage_packages_to_copy": stage_package_dirs,
         "stage_package_archives_to_copy": archive_paths,
         "stage_handoff_checksum_files": checksum_paths,
@@ -12346,7 +12368,7 @@ def _build_handoff_doctor_markdown(report: dict[str, Any]) -> str:
         "## Operator Steps",
         "",
         f"1. Start control plane: `{report.get('recommended_launcher', '')}`",
-        f"2. Verify before handoff: `{report.get('verify_before_handoff', '')}`",
+        f"2. Run the one-command handoff check: `{report.get('one_command_handoff_check', '')}`",
         "3. Copy only the listed stage files to each matching Miner host.",
         "4. Ask each Miner to run `./stageX.run-miner.sh --setup`, then `./stageX.run-miner.sh --start`.",
         "",
@@ -12399,6 +12421,7 @@ def build_swarm_handoff_doctor(args: argparse.Namespace) -> dict[str, Any]:
         "handoff_blockers": blockers,
         "recommended_launcher": handoff.get("recommended_launcher", ""),
         "verify_before_handoff": handoff.get("verify_before_handoff", ""),
+        "one_command_handoff_check": handoff.get("one_command_handoff_check", ""),
         "stage_handoff_files_to_copy": copy_files,
         "check_report": check_report,
         "diagnosis_codes": sorted(set([
@@ -12410,7 +12433,7 @@ def build_swarm_handoff_doctor(args: argparse.Namespace) -> dict[str, Any]:
         "raw_join_codes_public": False,
         "not_nat_traversal": True,
         "operator_action": (
-            "Start the control plane, run verify_bootstrap.sh with live admission preflight, then copy only the listed "
+            "Start the control plane, run ready_for_handoff.sh, then copy only the listed "
             "stage archive, runner, and checksum files once handoff_ready is true."
         ),
     }
@@ -12775,6 +12798,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     check_route_script = output_dir / "check_route.sh"
     verify_bootstrap_script = output_dir / "verify_bootstrap.sh"
     handoff_doctor_script = output_dir / "handoff_doctor.sh"
+    ready_for_handoff_script = output_dir / "ready_for_handoff.sh"
     operator_status_script = output_dir / "operator_status.sh"
     check_generation_script = output_dir / "check_generation.sh"
     submit_generation_script = output_dir / "submit_generation.sh"
@@ -13062,6 +13086,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         _bootstrap_handoff_doctor_script(expect_remote_miners=bool(args.expect_remote_miners)),
     )
     _write_executable(
+        ready_for_handoff_script,
+        _bootstrap_ready_for_handoff_script(),
+    )
+    _write_executable(
         operator_status_script,
         _bootstrap_operator_status_script(coordinator_url=coordinator_url),
     )
@@ -13082,6 +13110,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "check_route": str(check_route_script),
         "verify_bootstrap": str(verify_bootstrap_script),
         "handoff_doctor": str(handoff_doctor_script),
+        "ready_for_handoff": str(ready_for_handoff_script),
         "operator_status": str(operator_status_script),
         "stage0_install": str(stage_install_scripts["stage0"]),
         "stage0_doctor": str(stage_doctor_scripts["stage0"]),
@@ -13220,6 +13249,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 [str(handoff_doctor_script)],
             ),
             command_entry(
+                "one-command ready for Miner handoff check",
+                [str(ready_for_handoff_script)],
+            ),
+            command_entry(
                 "check operator status",
                 [str(operator_status_script)],
             ),
@@ -13245,12 +13278,13 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "stage_handoff_checksums_created": True,
             "tunnel_doctor_script_created": True,
             "check_route_script_created": True,
+            "ready_for_handoff_script_created": True,
             "operator_status_script_created": True,
             "scripts_created": True,
             "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
-            "Run start_control_plane.sh on the Coordinator host, run check_route.sh, then run verify_bootstrap.sh for live no-claim admission "
+            "Run start_control_plane.sh on the Coordinator host, then run ready_for_handoff.sh to check the tunnel/route, /ready endpoint, and live no-claim admission "
             "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, ask each Miner to run stageX.run-miner.sh --setup and --start, then run the dry-run generate "
             "preflight and operator_status.sh before submitting generation."
         ),
@@ -13297,58 +13331,63 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[7]["command_line"] = command_line([str(handoff_doctor_script)])
     next_commands[7]["requires_files"] = next_commands[6]["requires_files"]
     next_commands[7]["script"] = str(handoff_doctor_script)
-    next_commands[8]["command"] = [str(operator_status_script)]
-    next_commands[8]["command_line"] = command_line([str(operator_status_script)])
-    next_commands[8]["requires_files"] = [str(operator_env_path)]
-    next_commands[8]["script"] = str(operator_status_script)
-    next_commands[9]["command"] = [str(stage_runner_scripts["stage0"]), "--setup"]
-    next_commands[9]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--setup"])
-    next_commands[9]["requires_files"] = [
+    next_commands[8]["command"] = [str(ready_for_handoff_script)]
+    next_commands[8]["command_line"] = command_line([str(ready_for_handoff_script)])
+    next_commands[8]["requires_files"] = list(next_commands[6]["requires_files"])
+    next_commands[8]["script"] = str(ready_for_handoff_script)
+    next_commands[8]["requires_running"] = ["control_plane"]
+    next_commands[9]["command"] = [str(operator_status_script)]
+    next_commands[9]["command_line"] = command_line([str(operator_status_script)])
+    next_commands[9]["requires_files"] = [str(operator_env_path)]
+    next_commands[9]["script"] = str(operator_status_script)
+    next_commands[10]["command"] = [str(stage_runner_scripts["stage0"]), "--setup"]
+    next_commands[10]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--setup"])
+    next_commands[10]["requires_files"] = [
         str(stage_archives["stage0"]),
         str(stage_runner_scripts["stage0"]),
         str(stage_checksum_files["stage0"]),
     ]
-    next_commands[9]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[10]["command"] = [str(stage_runner_scripts["stage0"]), "--start"]
-    next_commands[10]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--start"])
-    next_commands[10]["requires_files"] = next_commands[9]["requires_files"]
     next_commands[10]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[11]["command"] = [str(stage_runner_scripts["stage0"]), "--install", "--dry-run"]
-    next_commands[11]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--install", "--dry-run"])
-    next_commands[11]["requires_files"] = next_commands[9]["requires_files"]
+    next_commands[11]["command"] = [str(stage_runner_scripts["stage0"]), "--start"]
+    next_commands[11]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--start"])
+    next_commands[11]["requires_files"] = next_commands[10]["requires_files"]
     next_commands[11]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[12]["command"] = [str(stage_runner_scripts["stage0"]), "--doctor"]
-    next_commands[12]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--doctor"])
-    next_commands[12]["requires_files"] = next_commands[9]["requires_files"]
+    next_commands[12]["command"] = [str(stage_runner_scripts["stage0"]), "--install", "--dry-run"]
+    next_commands[12]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--install", "--dry-run"])
+    next_commands[12]["requires_files"] = next_commands[10]["requires_files"]
     next_commands[12]["script"] = str(stage_runner_scripts["stage0"])
-    next_commands[13]["command"] = [str(stage_runner_scripts["stage1"]), "--setup"]
-    next_commands[13]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--setup"])
-    next_commands[13]["requires_files"] = [
+    next_commands[13]["command"] = [str(stage_runner_scripts["stage0"]), "--doctor"]
+    next_commands[13]["command_line"] = command_line([str(stage_runner_scripts["stage0"]), "--doctor"])
+    next_commands[13]["requires_files"] = next_commands[10]["requires_files"]
+    next_commands[13]["script"] = str(stage_runner_scripts["stage0"])
+    next_commands[14]["command"] = [str(stage_runner_scripts["stage1"]), "--setup"]
+    next_commands[14]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--setup"])
+    next_commands[14]["requires_files"] = [
         str(stage_archives["stage1"]),
         str(stage_runner_scripts["stage1"]),
         str(stage_checksum_files["stage1"]),
     ]
-    next_commands[13]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[14]["command"] = [str(stage_runner_scripts["stage1"]), "--start"]
-    next_commands[14]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--start"])
-    next_commands[14]["requires_files"] = next_commands[13]["requires_files"]
     next_commands[14]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[15]["command"] = [str(stage_runner_scripts["stage1"]), "--install", "--dry-run"]
-    next_commands[15]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--install", "--dry-run"])
-    next_commands[15]["requires_files"] = next_commands[13]["requires_files"]
+    next_commands[15]["command"] = [str(stage_runner_scripts["stage1"]), "--start"]
+    next_commands[15]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--start"])
+    next_commands[15]["requires_files"] = next_commands[14]["requires_files"]
     next_commands[15]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[16]["command"] = [str(stage_runner_scripts["stage1"]), "--doctor"]
-    next_commands[16]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--doctor"])
-    next_commands[16]["requires_files"] = next_commands[13]["requires_files"]
+    next_commands[16]["command"] = [str(stage_runner_scripts["stage1"]), "--install", "--dry-run"]
+    next_commands[16]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--install", "--dry-run"])
+    next_commands[16]["requires_files"] = next_commands[14]["requires_files"]
     next_commands[16]["script"] = str(stage_runner_scripts["stage1"])
-    next_commands[17]["command"] = [str(check_generation_script)]
-    next_commands[17]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[17]["requires_files"] = [str(operator_env_path)]
-    next_commands[17]["script"] = str(check_generation_script)
-    next_commands[18]["command"] = [str(submit_generation_script)]
-    next_commands[18]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[17]["command"] = [str(stage_runner_scripts["stage1"]), "--doctor"]
+    next_commands[17]["command_line"] = command_line([str(stage_runner_scripts["stage1"]), "--doctor"])
+    next_commands[17]["requires_files"] = next_commands[14]["requires_files"]
+    next_commands[17]["script"] = str(stage_runner_scripts["stage1"])
+    next_commands[18]["command"] = [str(check_generation_script)]
+    next_commands[18]["command_line"] = command_line([str(check_generation_script)])
     next_commands[18]["requires_files"] = [str(operator_env_path)]
-    next_commands[18]["script"] = str(submit_generation_script)
+    next_commands[18]["script"] = str(check_generation_script)
+    next_commands[19]["command"] = [str(submit_generation_script)]
+    next_commands[19]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[19]["requires_files"] = [str(operator_env_path)]
+    next_commands[19]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -13394,6 +13433,7 @@ def print_swarm_bootstrap(report: dict[str, Any]) -> None:
         )
         print(f"  launcher: {handoff.get('recommended_launcher')}")
         print(f"  verify_before_handoff: {handoff.get('verify_before_handoff')}")
+        print(f"  one_command_handoff_check: {handoff.get('one_command_handoff_check')}")
     registries = report.get("registries") if isinstance(report.get("registries"), dict) else {}
     print(f"  operator_registry: {registries.get('operator_registry')}")
     print(f"  miner_registry: {registries.get('miner_registry')}")
@@ -13670,6 +13710,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "check_route_script": output_dir / "check_route.sh",
         "verify_bootstrap_script": output_dir / "verify_bootstrap.sh",
         "handoff_doctor_script": output_dir / "handoff_doctor.sh",
+        "ready_for_handoff_script": output_dir / "ready_for_handoff.sh",
         "operator_status_script": output_dir / "operator_status.sh",
         "check_generation_script": output_dir / "check_generation.sh",
         "submit_generation_script": output_dir / "submit_generation.sh",
@@ -13818,6 +13859,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["check_route_script"],
         required_files["verify_bootstrap_script"],
         required_files["handoff_doctor_script"],
+        required_files["ready_for_handoff_script"],
         required_files["operator_status_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
@@ -14058,6 +14100,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     check_route_script_text, _ = _read_bootstrap_text(required_files["check_route_script"])
     verify_script_text, _ = _read_bootstrap_text(required_files["verify_bootstrap_script"])
     handoff_doctor_script_text, _ = _read_bootstrap_text(required_files["handoff_doctor_script"])
+    ready_for_handoff_script_text, _ = _read_bootstrap_text(required_files["ready_for_handoff_script"])
     operator_status_script_text, _ = _read_bootstrap_text(required_files["operator_status_script"])
     public_files = [
         required_files["start_control_plane_script"],
@@ -14068,6 +14111,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["check_route_script"],
         required_files["verify_bootstrap_script"],
         required_files["handoff_doctor_script"],
+        required_files["ready_for_handoff_script"],
         required_files["operator_status_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
@@ -14570,6 +14614,25 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         detail="handoff_doctor.sh must wrap swarm-handoff-doctor --check-admission for this package",
         diagnosis_code="bootstrap_handoff_doctor_script_invalid",
     )
+    ready_for_handoff_script_ready = bool(
+        "tunnel_doctor.sh" in ready_for_handoff_script_text
+        and "check_route.sh" in ready_for_handoff_script_text
+        and "--check-ready" in ready_for_handoff_script_text
+        and "verify_bootstrap.sh" in ready_for_handoff_script_text
+        and "handoff_doctor.sh" in ready_for_handoff_script_text
+        and "crowdtensor swarm-bootstrap-check" not in ready_for_handoff_script_text
+        and "CROWDTENSOR_ADMIN_TOKEN" not in ready_for_handoff_script_text
+        and "CROWDTENSOR_MINER_TOKEN" not in ready_for_handoff_script_text
+        and (not tunnel_command or tunnel_command not in ready_for_handoff_script_text)
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "ready_for_handoff_script_ready",
+        ready_for_handoff_script_ready,
+        detail="ready_for_handoff.sh must chain tunnel_doctor.sh, check_route.sh --check-ready, verify_bootstrap.sh, and handoff_doctor.sh without embedding private material",
+        diagnosis_code="bootstrap_ready_for_handoff_script_invalid",
+    )
     operator_status_script_ready = bool(
         "crowdtensor operator-status" in operator_status_script_text
         and "private/operator.private.env" in operator_status_script_text
@@ -14643,7 +14706,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         operator_action = "Live bootstrap preflight is ready; copy each stage archive, runner, and handoff checksum to the matching Miner host."
     elif ok:
         operator_action = (
-            "Offline package is ready; start the Coordinator and run verify_bootstrap.sh before copying each stage archive, "
+            "Offline package is ready; start the Coordinator and run ready_for_handoff.sh before copying each stage archive, "
             "runner, and handoff checksum to the matching Miner host."
         )
     else:
@@ -14672,6 +14735,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "check_route": str(required_files["check_route_script"]),
                 "verify_bootstrap": str(required_files["verify_bootstrap_script"]),
                 "handoff_doctor": str(required_files["handoff_doctor_script"]),
+                "ready_for_handoff": str(required_files["ready_for_handoff_script"]),
                 "operator_status": str(required_files["operator_status_script"]),
                 "stage0_install": str(required_files["stage0_install_script"]),
                 "stage0_doctor": str(required_files["stage0_doctor_script"]),
@@ -14744,6 +14808,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "check_route_script_ready": check_route_script_ready,
             "verify_bootstrap_script_ready": verify_script_ready,
             "handoff_doctor_script_ready": handoff_doctor_script_ready,
+            "ready_for_handoff_script_ready": ready_for_handoff_script_ready,
             "operator_status_script_ready": operator_status_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
             "live_preflight_ready": (
@@ -14796,6 +14861,8 @@ def print_swarm_bootstrap_check(report: dict[str, Any]) -> None:
         blockers = handoff.get("handoff_blockers") if isinstance(handoff.get("handoff_blockers"), list) else []
         if blockers:
             print(f"  handoff_blockers: {', '.join(str(item) for item in blockers)}")
+        if handoff.get("one_command_handoff_check"):
+            print(f"  one_command_handoff_check: {handoff.get('one_command_handoff_check')}")
     failed = [
         item for item in report.get("checks") or []
         if isinstance(item, dict) and item.get("ok") is not True

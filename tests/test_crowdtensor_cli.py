@@ -2501,6 +2501,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["stage_handoff_checksums_created"])
         self.assertTrue(report["safety"]["tunnel_doctor_script_created"])
         self.assertTrue(report["safety"]["check_route_script_created"])
+        self.assertTrue(report["safety"]["ready_for_handoff_script_created"])
         self.assertTrue(report["safety"]["operator_status_script_created"])
         handoff = report["bootstrap_handoff"]
         self.assertEqual(handoff["schema"], "crowdtensor_bootstrap_handoff_v1")
@@ -2511,6 +2512,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(handoff["handoff_blockers"], ["run_verify_bootstrap_live_preflight"])
         self.assertEqual(handoff["recommended_launcher"], str(scripts["start_control_plane"]))
         self.assertEqual(handoff["verify_before_handoff"], str(scripts["verify_bootstrap"]))
+        self.assertEqual(handoff["one_command_handoff_check"], str(scripts["ready_for_handoff"]))
         self.assertEqual(handoff["stage_packages_to_copy"]["stage0"], str(output_dir / "stage0"))
         self.assertEqual(handoff["stage_package_archives_to_copy"]["stage0"], str(stage0_archive_path))
         self.assertEqual(handoff["stage_handoff_checksum_files"]["stage0"], str(stage0_checksum_path))
@@ -2534,6 +2536,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(handoff["manual_launchers"]["stage1_run_miner"], str(scripts["stage1_run_miner"]))
         self.assertEqual(handoff["manual_launchers"]["tunnel_doctor"], str(scripts["tunnel_doctor"]))
         self.assertEqual(handoff["manual_launchers"]["check_route"], str(scripts["check_route"]))
+        self.assertEqual(handoff["manual_launchers"]["ready_for_handoff"], str(scripts["ready_for_handoff"]))
         self.assertEqual(handoff["manual_launchers"]["operator_status"], str(scripts["operator_status"]))
         self.assertIn(str(coordinator_env_path), handoff["coordinator_host_private_files"])
         self.assertIn(str(operator_env_path), handoff["operator_host_private_files"])
@@ -2612,6 +2615,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(str(scripts["check_route"]), runbook)
         self.assertIn(str(scripts["verify_bootstrap"]), runbook)
         self.assertIn(str(scripts["handoff_doctor"]), runbook)
+        self.assertIn(str(scripts["ready_for_handoff"]), runbook)
         self.assertIn(str(scripts["operator_status"]), runbook)
         self.assertIn(str(scripts["stage0_install"]), runbook)
         self.assertIn(str(scripts["stage1_install"]), runbook)
@@ -2627,6 +2631,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("crowdtensor swarm-handoff-doctor", scripts["handoff_doctor"].read_text(encoding="utf-8"))
         self.assertIn("--check-admission", scripts["handoff_doctor"].read_text(encoding="utf-8"))
         self.assertIn("--expect-remote-miners", scripts["handoff_doctor"].read_text(encoding="utf-8"))
+        ready_for_handoff_text = scripts["ready_for_handoff"].read_text(encoding="utf-8")
+        self.assertIn("tunnel_doctor.sh", ready_for_handoff_text)
+        self.assertIn("check_route.sh", ready_for_handoff_text)
+        self.assertIn("--check-ready", ready_for_handoff_text)
+        self.assertIn("verify_bootstrap.sh", ready_for_handoff_text)
+        self.assertIn("handoff_doctor.sh", ready_for_handoff_text)
+        self.assertNotIn("crowdtensor swarm-bootstrap-check", ready_for_handoff_text)
+        self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN", ready_for_handoff_text)
         check_route_text = scripts["check_route"].read_text(encoding="utf-8")
         self.assertIn("crowdtensor coordinator-route", check_route_text)
         self.assertIn("--coordinator-url 'https://ct.example'", check_route_text)
@@ -2687,7 +2699,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("miner.join-code.txt", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("command -v crowdtensor", scripts["stage0_join"].read_text(encoding="utf-8"))
         self.assertIn("local environment diagnostic", scripts["stage0_check_join"].read_text(encoding="utf-8"))
-        self.assertIn("verify_bootstrap.sh", report["operator_action"])
+        self.assertIn("ready_for_handoff.sh", report["operator_action"])
         serve_line = report["next_commands"][0]["command_line"]
         self.assertEqual(serve_line, str(scripts["start_control_plane"]))
         self.assertIn(str(coordinator_env_path), report["next_commands"][0]["requires_files"])
@@ -2703,20 +2715,22 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["next_commands"][5]["command"], [str(scripts["check_route"])])
         self.assertEqual(report["next_commands"][6]["command"], [str(scripts["verify_bootstrap"])])
         self.assertEqual(report["next_commands"][7]["command"], [str(scripts["handoff_doctor"])])
-        self.assertEqual(report["next_commands"][8]["command"], [str(scripts["operator_status"])])
-        self.assertIn(str(operator_env_path), report["next_commands"][8]["requires_files"])
-        self.assertEqual(report["next_commands"][9]["command"], [str(scripts["stage0_run_miner"]), "--setup"])
-        self.assertIn(str(stage0_archive_path), report["next_commands"][9]["requires_files"])
-        self.assertIn(str(stage0_checksum_path), report["next_commands"][9]["requires_files"])
-        self.assertEqual(report["next_commands"][10]["command"], [str(scripts["stage0_run_miner"]), "--start"])
+        self.assertEqual(report["next_commands"][8]["command"], [str(scripts["ready_for_handoff"])])
+        self.assertEqual(report["next_commands"][8]["requires_running"], ["control_plane"])
+        self.assertEqual(report["next_commands"][9]["command"], [str(scripts["operator_status"])])
+        self.assertIn(str(operator_env_path), report["next_commands"][9]["requires_files"])
+        self.assertEqual(report["next_commands"][10]["command"], [str(scripts["stage0_run_miner"]), "--setup"])
         self.assertIn(str(stage0_archive_path), report["next_commands"][10]["requires_files"])
-        self.assertEqual(report["next_commands"][11]["command"], [str(scripts["stage0_run_miner"]), "--install", "--dry-run"])
-        self.assertEqual(report["next_commands"][12]["command"], [str(scripts["stage0_run_miner"]), "--doctor"])
-        self.assertEqual(report["next_commands"][13]["command"], [str(scripts["stage1_run_miner"]), "--setup"])
-        self.assertIn(str(stage1_archive_path), report["next_commands"][13]["requires_files"])
-        self.assertIn(str(stage1_checksum_path), report["next_commands"][13]["requires_files"])
-        self.assertEqual(report["next_commands"][14]["command"], [str(scripts["stage1_run_miner"]), "--start"])
-        self.assertEqual(report["next_commands"][17]["command_line"], str(scripts["check_generation"]))
+        self.assertIn(str(stage0_checksum_path), report["next_commands"][10]["requires_files"])
+        self.assertEqual(report["next_commands"][11]["command"], [str(scripts["stage0_run_miner"]), "--start"])
+        self.assertIn(str(stage0_archive_path), report["next_commands"][11]["requires_files"])
+        self.assertEqual(report["next_commands"][12]["command"], [str(scripts["stage0_run_miner"]), "--install", "--dry-run"])
+        self.assertEqual(report["next_commands"][13]["command"], [str(scripts["stage0_run_miner"]), "--doctor"])
+        self.assertEqual(report["next_commands"][14]["command"], [str(scripts["stage1_run_miner"]), "--setup"])
+        self.assertIn(str(stage1_archive_path), report["next_commands"][14]["requires_files"])
+        self.assertIn(str(stage1_checksum_path), report["next_commands"][14]["requires_files"])
+        self.assertEqual(report["next_commands"][15]["command"], [str(scripts["stage1_run_miner"]), "--start"])
+        self.assertEqual(report["next_commands"][18]["command_line"], str(scripts["check_generation"]))
         self.assertIn(str(operator_env_path), report["next_commands"][-1]["requires_files"])
 
     def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:
@@ -2925,6 +2939,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn('bash -lc "$CROWDTENSOR_TUNNEL_COMMAND"', tunnel_script)
         self.assertIn("tunnel_doctor", scripts)
         self.assertNotIn(tunnel_command, scripts["tunnel_doctor"].read_text(encoding="utf-8"))
+        self.assertIn("ready_for_handoff", scripts)
+        self.assertNotIn(tunnel_command, scripts["ready_for_handoff"].read_text(encoding="utf-8"))
+        self.assertIn("ready_for_handoff.sh", report["operator_action"])
         self.assertFalse(report["next_commands"][2]["optional"])
         self.assertIn(str(tunnel_env_path), report["next_commands"][2]["requires_files"])
         self.assertIn("start_tunnel.sh", control_plane_script)
@@ -2974,6 +2991,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(check_report["safety"]["tunnel_private_env_ready"])
         self.assertTrue(check_report["safety"]["start_tunnel_script_ready"])
         self.assertTrue(check_report["safety"]["tunnel_doctor_script_ready"])
+        self.assertTrue(check_report["safety"]["ready_for_handoff_script_ready"])
         self.assertNotIn(tunnel_command, json.dumps(check_report, sort_keys=True))
         self.assertNotIn("super-secret-tunnel-token", json.dumps(check_report, sort_keys=True))
 
@@ -2998,6 +3016,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("handoff: remote_ready=True tunnel=True discovery=False ready_to_copy=False", rendered)
         self.assertIn("launcher:", rendered)
         self.assertIn("verify_before_handoff:", rendered)
+        self.assertIn("one_command_handoff_check:", rendered)
         self.assertNotIn("print-secret", rendered)
 
     def test_swarm_bootstrap_check_validates_ready_private_package(self) -> None:
@@ -3034,6 +3053,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["scripts_mode_0700"])
         self.assertEqual(report["artifacts"]["verify_bootstrap_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["handoff_doctor_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["ready_for_handoff_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["check_route_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["tunnel_doctor_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["operator_status_script"]["mode"], "0o700")
@@ -3046,6 +3066,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["artifacts"]["stage_handoff_manifest"]["mode"], "0o644")
         self.assertTrue(report["safety"]["verify_bootstrap_script_ready"])
         self.assertTrue(report["safety"]["handoff_doctor_script_ready"])
+        self.assertTrue(report["safety"]["ready_for_handoff_script_ready"])
         self.assertTrue(report["safety"]["check_route_script_ready"])
         self.assertTrue(report["safety"]["tunnel_doctor_script_ready"])
         self.assertTrue(report["safety"]["operator_status_script_ready"])
@@ -3064,6 +3085,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["stage_packages_exclude_operator_material"])
         self.assertFalse(report["safety"]["scripts_embed_plaintext_tokens"])
         self.assertEqual(report["coordinator_url"], "https://ct.example")
+        self.assertIn("ready_for_handoff.sh", report["operator_action"])
         self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
         self.assertTrue(report["remote_access"]["remote_miners_supported"])
         self.assertTrue(
@@ -3092,6 +3114,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("CrowdTensor swarm bootstrap check", rendered)
         self.assertIn("remote_access:", rendered)
         self.assertIn("live_preflight: checked=False", rendered)
+        self.assertIn("one_command_handoff_check:", rendered)
         self.assertIn("swarm_bootstrap_package_ready", rendered)
         self.assertNotIn(operator_invite["operator_token"], rendered)
 
@@ -3392,6 +3415,37 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ok"], report)
         self.assertFalse(report["safety"]["verify_bootstrap_script_ready"])
         self.assertIn("bootstrap_verify_script_invalid", report["diagnosis_codes"])
+
+    def test_swarm_bootstrap_check_fails_on_broken_ready_for_handoff_script(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        bootstrap_args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://ct.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+        cli.build_swarm_bootstrap(bootstrap_args)
+        (output_dir / "ready_for_handoff.sh").write_text(
+            "#!/usr/bin/env bash\n\"$SCRIPT_DIR/handoff_doctor.sh\"\n",
+            encoding="utf-8",
+        )
+        (output_dir / "ready_for_handoff.sh").chmod(0o700)
+        check_args = cli.parse_args([
+            "swarm-bootstrap-check",
+            "--output-dir",
+            str(output_dir),
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap_check(check_args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertFalse(report["safety"]["ready_for_handoff_script_ready"])
+        self.assertIn("bootstrap_ready_for_handoff_script_invalid", report["diagnosis_codes"])
 
     def test_swarm_bootstrap_check_fails_on_broken_join_code_file(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"

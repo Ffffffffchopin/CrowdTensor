@@ -15,7 +15,7 @@ private `stage0.miner-package.tar.gz` / `stage1.miner-package.tar.gz` archives,
 matching `stage0.run-miner.sh` / `stage1.run-miner.sh` helpers,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
 `stage_handoff_manifest.json`,
-`handoff_doctor.sh`, `check_route.sh`, `operator_status.sh`,
+`handoff_doctor.sh`, `ready_for_handoff.sh`, `check_route.sh`, `operator_status.sh`,
 `verify_bootstrap.sh`, generation scripts, and
 `SWARM_BOOTSTRAP.md`.
 If the Coordinator has no directly reachable public address, pass both a Miner-facing
@@ -32,9 +32,11 @@ VPN/LAN, or explicit port-forwarding before any Miner package is shared.
 Keep the generated operator
 invite and operator env on the operator host, use the coordinator env only for
 the Coordinator process, run `start_control_plane.sh` to start the tunnel,
-discovery, and Coordinator together, run `verify_bootstrap.sh` after the Coordinator starts,
-run `check_route.sh` to confirm the advertised Coordinator URL is suitable for
-the intended remote Miner route,
+discovery, and Coordinator together, then run `ready_for_handoff.sh` after the
+Coordinator starts to chain `tunnel_doctor.sh`, `check_route.sh --check-ready`,
+`verify_bootstrap.sh`, and `handoff_doctor.sh`. You can still run
+`verify_bootstrap.sh` and `check_route.sh` separately to confirm the advertised
+Coordinator URL and live no-claim admission path,
 run `operator_status.sh` on the operator host for read-only Coordinator,
 trust, accounting, and settlement status,
 and copy only the matching private stage archive plus `stageX.run-miner.sh` and
@@ -71,7 +73,8 @@ stage join-code consistency, `stage_check_join_scripts_ready`,
 `stage_doctor_scripts_ready`,
 `stage_support_bundle_scripts_ready`, `stage_package_archives_ready`,
 `stage_archive_runner_scripts_ready`, `stage_setup_start_runner_ready`,
-`stage_handoff_checksums_ready`, `tunnel_doctor_script_ready`, and
+`stage_handoff_checksums_ready`, `tunnel_doctor_script_ready`,
+`ready_for_handoff_script_ready`, and
 plaintext token leakage in scripts or public Markdown.
 After starting the Coordinator, rerun the same command with `--check-coordinator`
 to call `/ready` and match both stage invites against the redacted registry
