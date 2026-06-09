@@ -452,7 +452,9 @@ scripts plus `start_control_plane.sh`, optional `start_tunnel.sh`,
 `stage0.run-miner.sh` / `stage1.run-miner.sh`,
 `stage0.handoff.sha256` / `stage1.handoff.sha256`,
 `stage_handoff_manifest.json`, `handoff_doctor.sh`, `operator_status.sh`,
-stage `install.sh`, `doctor.sh`, `check_join.sh`, `support_bundle.sh`, and `SWARM_BOOTSTRAP.md`.
+`auditor_status.sh`, `accounting_status.sh`, `trust_review.sh`,
+`settlement_review.sh`, `operator_review.sh`, stage `install.sh`,
+`doctor.sh`, `check_join.sh`, `support_bundle.sh`, and `SWARM_BOOTSTRAP.md`.
 When `--tunnel-command` is supplied, the command is written only to
 `private/tunnel.private.env`; public reports and Markdown show the tunnel
 launcher without echoing tunnel tokens or provider command lines. Keep the operator invite and
@@ -465,7 +467,9 @@ to start the tunnel, discovery, and the Coordinator together, run `verify_bootst
 run `check_route.sh` to confirm the advertised Coordinator URL is suitable for
 the intended local or remote Miner path,
 run `operator_status.sh` for a read-only `/ready` / `/state` / accounting /
-settlement summary from the operator env,
+settlement summary from the admin operator env, or run `operator_review.sh` to
+chain admin status, auditor event status, accounting status, trust review, and
+settlement draft review without embedding tokens in public scripts,
 and send each private stage archive plus matching `stageX.run-miner.sh` and
 `stageX.handoff.sha256` only to the matching Miner host. The runner verifies
 the checksum before it safely extracts the archive; the recommended Miner-side
@@ -501,7 +505,9 @@ files, `0600` private invite/env permissions, `0700` scripts, hashed registries,
 Coordinator/operator env separation, and that scripts/Markdown do not embed
 plaintext tokens before handoff, including `check_route_script_ready`,
 `tunnel_doctor_script_ready`, `operator_status_script_ready`,
-`stage_install_scripts_ready`, `stage_doctor_scripts_ready`, and
+`auditor_status_script_ready`, `accounting_status_script_ready`,
+`trust_review_script_ready`, `settlement_review_script_ready`,
+`operator_review_script_ready`, `stage_install_scripts_ready`, `stage_doctor_scripts_ready`, and
 `stage_support_bundle_scripts_ready`.
 It also verifies `stage_package_archives_ready` so the operator can copy one
 private tarball per Miner instead of hand-picking files, plus

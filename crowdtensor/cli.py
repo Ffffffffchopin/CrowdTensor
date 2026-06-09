@@ -12368,6 +12368,67 @@ def _bootstrap_operator_status_script(
     return "\n".join(lines)
 
 
+def _bootstrap_trust_review_script(*, coordinator_url: str) -> str:
+    return "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        *_bootstrap_operator_path_prelude(),
+        '. "$SCRIPT_DIR/private/operator.private.env"',
+        ': "${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN in private/operator.private.env}"',
+        "",
+        "exec crowdtensor trust \\",
+        f"  --coordinator-url {_quote_env_value(coordinator_url)} \\",
+        '  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN" \\',
+        '  --output-dir "$SCRIPT_DIR/trust-review" \\',
+        '  "$@"',
+        "",
+    ])
+
+
+def _bootstrap_settlement_review_script(*, coordinator_url: str) -> str:
+    return "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        *_bootstrap_operator_path_prelude(),
+        '. "$SCRIPT_DIR/private/accounting.private.env"',
+        ': "${CROWDTENSOR_ADMIN_TOKEN:?set CROWDTENSOR_ADMIN_TOKEN in private/accounting.private.env}"',
+        "",
+        "exec crowdtensor settlement \\",
+        f"  --coordinator-url {_quote_env_value(coordinator_url)} \\",
+        '  --admin-token "$CROWDTENSOR_ADMIN_TOKEN" \\',
+        "  --include-accounting \\",
+        '  --output-dir "$SCRIPT_DIR/settlement-review" \\',
+        '  "$@"',
+        "",
+    ])
+
+
+def _bootstrap_operator_review_script() -> str:
+    return "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        *_bootstrap_operator_path_prelude(),
+        "",
+        "echo 'CrowdTensor operator review: admin status'",
+        '"$SCRIPT_DIR/operator_status.sh"',
+        "echo 'CrowdTensor operator review: auditor event status'",
+        '"$SCRIPT_DIR/auditor_status.sh"',
+        "echo 'CrowdTensor operator review: accounting status'",
+        '"$SCRIPT_DIR/accounting_status.sh"',
+        "echo 'CrowdTensor operator review: trust review'",
+        '"$SCRIPT_DIR/trust_review.sh"',
+        "echo 'CrowdTensor operator review: settlement review'",
+        '"$SCRIPT_DIR/settlement_review.sh"',
+        "",
+    ])
+
+
 def _bootstrap_check_route_script(*, coordinator_url: str, expect_remote_miners: bool) -> str:
     lines = [
         "#!/usr/bin/env bash",
@@ -12514,6 +12575,7 @@ def _bootstrap_runbook(
         shlex.quote(scripts.get("handoff_doctor", "")),
         shlex.quote(scripts.get("ready_for_handoff", "")),
         shlex.quote(scripts.get("operator_status", "")),
+        shlex.quote(scripts.get("operator_review", "")),
         f"{shlex.quote(scripts.get('stage0_run_miner', ''))} --quickstart",
         f"{shlex.quote(scripts.get('stage0_run_miner', ''))} --setup",
         f"{shlex.quote(scripts.get('stage0_run_miner', ''))} --start",
@@ -12684,6 +12746,9 @@ def _bootstrap_handoff_summary(
             "operator_status": scripts.get("operator_status", ""),
             "auditor_status": scripts.get("auditor_status", ""),
             "accounting_status": scripts.get("accounting_status", ""),
+            "trust_review": scripts.get("trust_review", ""),
+            "settlement_review": scripts.get("settlement_review", ""),
+            "operator_review": scripts.get("operator_review", ""),
         },
         "verify_before_handoff": scripts.get("verify_bootstrap", ""),
         "one_command_handoff_check": scripts.get("ready_for_handoff", ""),
@@ -13226,6 +13291,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     operator_status_script = output_dir / "operator_status.sh"
     auditor_status_script = output_dir / "auditor_status.sh"
     accounting_status_script = output_dir / "accounting_status.sh"
+    trust_review_script = output_dir / "trust_review.sh"
+    settlement_review_script = output_dir / "settlement_review.sh"
+    operator_review_script = output_dir / "operator_review.sh"
     check_generation_script = output_dir / "check_generation.sh"
     submit_generation_script = output_dir / "submit_generation.sh"
     safety = {
@@ -13580,6 +13648,18 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         ),
     )
     _write_executable(
+        trust_review_script,
+        _bootstrap_trust_review_script(coordinator_url=coordinator_url),
+    )
+    _write_executable(
+        settlement_review_script,
+        _bootstrap_settlement_review_script(coordinator_url=coordinator_url),
+    )
+    _write_executable(
+        operator_review_script,
+        _bootstrap_operator_review_script(),
+    )
+    _write_executable(
         submit_generation_script,
         _bootstrap_generate_script(
             coordinator_url=coordinator_url,
@@ -13602,6 +13682,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "operator_status": str(operator_status_script),
         "auditor_status": str(auditor_status_script),
         "accounting_status": str(accounting_status_script),
+        "trust_review": str(trust_review_script),
+        "settlement_review": str(settlement_review_script),
+        "operator_review": str(operator_review_script),
         "stage0_install": str(stage_install_scripts["stage0"]),
         "stage0_doctor": str(stage_doctor_scripts["stage0"]),
         "stage0_check_join": str(stage_check_scripts["stage0"]),
@@ -13647,6 +13730,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "admin": str(operator_status_script),
         "auditor": str(auditor_status_script),
         "accounting": str(accounting_status_script),
+        "trust_review": str(trust_review_script),
+        "settlement_review": str(settlement_review_script),
+        "operator_review": str(operator_review_script),
     }
     operator_roles_report = _swarm_bootstrap_operator_roles_summary(
         role_invites=operator_role_invites,
@@ -13800,6 +13886,9 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             command_entry("submit generation with operator invite token", generate_command),
             command_entry("check auditor status", [str(auditor_status_script)]),
             command_entry("check accounting status", [str(accounting_status_script)]),
+            command_entry("review trust state", [str(trust_review_script)]),
+            command_entry("review settlement draft", [str(settlement_review_script)]),
+            command_entry("run one-command operator review", [str(operator_review_script)]),
         ],
         "diagnosis_codes": ["swarm_bootstrap_ready", str(remote_access.get("diagnosis_code") or "")],
         "safety": {
@@ -13820,13 +13909,16 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             "operator_role_env_files_created": True,
             "auditor_status_script_created": True,
             "accounting_status_script_created": True,
+            "trust_review_script_created": True,
+            "settlement_review_script_created": True,
+            "operator_review_script_created": True,
             "scripts_created": True,
             "scripts_embed_plaintext_tokens": False,
         },
         "operator_action": (
             "Run operator_quickstart.sh on the Coordinator host for the one-command install/start/route/handoff gate. For manual operation, run install_operator.sh first if CrowdTensor is not installed, then start_control_plane.sh, then ready_for_handoff.sh to check the tunnel/route, /ready endpoint, and live no-claim admission "
             "preflight, copy each stageX.miner-package.tar.gz plus matching stageX.run-miner.sh and stageX.handoff.sha256 to the matching Miner host, ask each Miner to run stageX.run-miner.sh --quickstart, then run the dry-run generate "
-            "preflight and operator_status.sh before submitting generation."
+            "preflight and operator_review.sh before submitting generation."
         ),
     }
     next_commands = report["next_commands"]
@@ -13958,6 +14050,21 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     next_commands[25]["requires_files"] = [str(accounting_env_path)]
     next_commands[25]["script"] = str(accounting_status_script)
     next_commands[25]["requires_running"] = ["control_plane"]
+    next_commands[26]["command"] = [str(trust_review_script)]
+    next_commands[26]["command_line"] = command_line([str(trust_review_script)])
+    next_commands[26]["requires_files"] = [str(operator_env_path)]
+    next_commands[26]["script"] = str(trust_review_script)
+    next_commands[26]["requires_running"] = ["control_plane"]
+    next_commands[27]["command"] = [str(settlement_review_script)]
+    next_commands[27]["command_line"] = command_line([str(settlement_review_script)])
+    next_commands[27]["requires_files"] = [str(accounting_env_path)]
+    next_commands[27]["script"] = str(settlement_review_script)
+    next_commands[27]["requires_running"] = ["control_plane"]
+    next_commands[28]["command"] = [str(operator_review_script)]
+    next_commands[28]["command_line"] = command_line([str(operator_review_script)])
+    next_commands[28]["requires_files"] = [str(operator_env_path), str(auditor_env_path), str(accounting_env_path)]
+    next_commands[28]["script"] = str(operator_review_script)
+    next_commands[28]["requires_running"] = ["control_plane"]
     return sanitize(redact_values(report, [
         operator_token,
         auditor_token,
@@ -14307,6 +14414,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "operator_status_script": output_dir / "operator_status.sh",
         "auditor_status_script": output_dir / "auditor_status.sh",
         "accounting_status_script": output_dir / "accounting_status.sh",
+        "trust_review_script": output_dir / "trust_review.sh",
+        "settlement_review_script": output_dir / "settlement_review.sh",
+        "operator_review_script": output_dir / "operator_review.sh",
         "check_generation_script": output_dir / "check_generation.sh",
         "submit_generation_script": output_dir / "submit_generation.sh",
         "runbook": output_dir / "SWARM_BOOTSTRAP.md",
@@ -14482,6 +14592,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["operator_status_script"],
         required_files["auditor_status_script"],
         required_files["accounting_status_script"],
+        required_files["trust_review_script"],
+        required_files["settlement_review_script"],
+        required_files["operator_review_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["stage0_install_script"],
@@ -14795,6 +14908,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     operator_status_script_text, _ = _read_bootstrap_text(required_files["operator_status_script"])
     auditor_status_script_text, _ = _read_bootstrap_text(required_files["auditor_status_script"])
     accounting_status_script_text, _ = _read_bootstrap_text(required_files["accounting_status_script"])
+    trust_review_script_text, _ = _read_bootstrap_text(required_files["trust_review_script"])
+    settlement_review_script_text, _ = _read_bootstrap_text(required_files["settlement_review_script"])
+    operator_review_script_text, _ = _read_bootstrap_text(required_files["operator_review_script"])
     check_generation_script_text, _ = _read_bootstrap_text(required_files["check_generation_script"])
     submit_generation_script_text, _ = _read_bootstrap_text(required_files["submit_generation_script"])
     public_files = [
@@ -14812,6 +14928,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         required_files["operator_status_script"],
         required_files["auditor_status_script"],
         required_files["accounting_status_script"],
+        required_files["trust_review_script"],
+        required_files["settlement_review_script"],
+        required_files["operator_review_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
         required_files["runbook"],
@@ -15235,12 +15354,18 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and ".crowdtensor-operator-venv" in operator_status_script_text
         and ".crowdtensor-operator-venv" in auditor_status_script_text
         and ".crowdtensor-operator-venv" in accounting_status_script_text
+        and ".crowdtensor-operator-venv" in trust_review_script_text
+        and ".crowdtensor-operator-venv" in settlement_review_script_text
+        and ".crowdtensor-operator-venv" in operator_review_script_text
         and ".crowdtensor-operator-venv" in check_generation_script_text
         and ".crowdtensor-operator-venv" in submit_generation_script_text
         and "CROWDTENSOR_OPERATOR_VENV" in coordinator_script_text
         and "CROWDTENSOR_OPERATOR_VENV" in operator_status_script_text
         and "CROWDTENSOR_OPERATOR_VENV" in auditor_status_script_text
         and "CROWDTENSOR_OPERATOR_VENV" in accounting_status_script_text
+        and "CROWDTENSOR_OPERATOR_VENV" in trust_review_script_text
+        and "CROWDTENSOR_OPERATOR_VENV" in settlement_review_script_text
+        and "CROWDTENSOR_OPERATOR_VENV" in operator_review_script_text
         and "CROWDTENSOR_OPERATOR_VENV" in check_generation_script_text
     )
     _bootstrap_check_item(
@@ -15457,6 +15582,43 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         and accounting_token not in accounting_status_script_text
         and observer_token not in accounting_status_script_text
     )
+    trust_review_script_ready = bool(
+        "crowdtensor trust" in trust_review_script_text
+        and "private/operator.private.env" in trust_review_script_text
+        and "CROWDTENSOR_OBSERVER_TOKEN" in trust_review_script_text
+        and "--observer-token" in trust_review_script_text
+        and "--output-dir" in trust_review_script_text
+        and "$SCRIPT_DIR/trust-review" in trust_review_script_text
+        and "CROWDTENSOR_ADMIN_TOKEN" not in trust_review_script_text
+        and operator_token not in trust_review_script_text
+        and observer_token not in trust_review_script_text
+    )
+    settlement_review_script_ready = bool(
+        "crowdtensor settlement" in settlement_review_script_text
+        and "private/accounting.private.env" in settlement_review_script_text
+        and "CROWDTENSOR_ADMIN_TOKEN" in settlement_review_script_text
+        and "--admin-token" in settlement_review_script_text
+        and "--include-accounting" in settlement_review_script_text
+        and "--output-dir" in settlement_review_script_text
+        and "$SCRIPT_DIR/settlement-review" in settlement_review_script_text
+        and accounting_token not in settlement_review_script_text
+    )
+    operator_review_script_ready = bool(
+        "operator_status.sh" in operator_review_script_text
+        and "auditor_status.sh" in operator_review_script_text
+        and "accounting_status.sh" in operator_review_script_text
+        and "trust_review.sh" in operator_review_script_text
+        and "settlement_review.sh" in operator_review_script_text
+        and "crowdtensor operator-status" not in operator_review_script_text
+        and "crowdtensor trust" not in operator_review_script_text
+        and "crowdtensor settlement" not in operator_review_script_text
+        and "CROWDTENSOR_ADMIN_TOKEN" not in operator_review_script_text
+        and "CROWDTENSOR_OBSERVER_TOKEN" not in operator_review_script_text
+        and operator_token not in operator_review_script_text
+        and auditor_token not in operator_review_script_text
+        and accounting_token not in operator_review_script_text
+        and observer_token not in operator_review_script_text
+    )
     _bootstrap_check_item(
         checks,
         diagnosis_codes,
@@ -15480,6 +15642,30 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         accounting_status_script_ready,
         detail="accounting_status.sh must source accounting.private.env and run the accounting/settlement summary",
         diagnosis_code="bootstrap_accounting_status_script_invalid",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "trust_review_script_ready",
+        trust_review_script_ready,
+        detail="trust_review.sh must source operator.private.env and write a read-only trust summary",
+        diagnosis_code="bootstrap_trust_review_script_invalid",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "settlement_review_script_ready",
+        settlement_review_script_ready,
+        detail="settlement_review.sh must source accounting.private.env and write draft settlement/accounting summaries",
+        diagnosis_code="bootstrap_settlement_review_script_invalid",
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "operator_review_script_ready",
+        operator_review_script_ready,
+        detail="operator_review.sh must chain status, trust, and settlement review scripts without embedding credentials",
+        diagnosis_code="bootstrap_operator_review_script_invalid",
     )
     stage_package_operator_files = [
         path for stage_dir in [output_dir / "stage0", output_dir / "stage1"]
@@ -15592,6 +15778,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
                 "operator_status": str(required_files["operator_status_script"]),
                 "auditor_status": str(required_files["auditor_status_script"]),
                 "accounting_status": str(required_files["accounting_status_script"]),
+                "trust_review": str(required_files["trust_review_script"]),
+                "settlement_review": str(required_files["settlement_review_script"]),
+                "operator_review": str(required_files["operator_review_script"]),
                 "stage0_install": str(required_files["stage0_install_script"]),
                 "stage0_doctor": str(required_files["stage0_doctor_script"]),
                 "stage0_check_join": str(required_files["stage0_check_join_script"]),
@@ -15681,6 +15870,9 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "operator_status_script_ready": operator_status_script_ready,
             "auditor_status_script_ready": auditor_status_script_ready,
             "accounting_status_script_ready": accounting_status_script_ready,
+            "trust_review_script_ready": trust_review_script_ready,
+            "settlement_review_script_ready": settlement_review_script_ready,
+            "operator_review_script_ready": operator_review_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
             "live_preflight_ready": (
                 bool(live_preflight.get("ok")) if live_preflight.get("checked") else None

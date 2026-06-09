@@ -2549,6 +2549,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         stage_handoff_manifest_path = Path(report["stage_handoff_manifest"])
         coordinator_env = coordinator_env_path.read_text(encoding="utf-8")
         operator_env = operator_env_path.read_text(encoding="utf-8")
+        auditor_env = auditor_env_path.read_text(encoding="utf-8")
+        accounting_env = accounting_env_path.read_text(encoding="utf-8")
         operator_invite = json.loads(Path(report["private_invites"]["operator"]).read_text(encoding="utf-8"))
         auditor_invite = json.loads(Path(report["private_operator_invites"]["auditor"]).read_text(encoding="utf-8"))
         accounting_invite = json.loads(Path(report["private_operator_invites"]["accounting"]).read_text(encoding="utf-8"))
@@ -2600,10 +2602,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn(operator_invite["operator_token"], encoded)
         self.assertNotIn(auditor_invite["operator_token"], encoded)
         self.assertNotIn(accounting_invite["operator_token"], encoded)
+        observer_token = ""
         for line in operator_env.splitlines():
             if "CROWDTENSOR_OBSERVER_TOKEN=" in line:
                 observer_token = line.split("=", 1)[1].strip().strip("'")
                 self.assertNotIn(observer_token, encoded)
+        self.assertTrue(observer_token)
+        self.assertIn(observer_token, auditor_env)
+        self.assertIn(observer_token, accounting_env)
         self.assertNotIn(stage0_invite["miner_token"], encoded)
         self.assertTrue(report["safety"]["coordinator_env_excludes_operator_credentials"])
         self.assertTrue(report["safety"]["private_env_files_created"])
@@ -2624,6 +2630,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["operator_role_env_files_created"])
         self.assertTrue(report["safety"]["auditor_status_script_created"])
         self.assertTrue(report["safety"]["accounting_status_script_created"])
+        self.assertTrue(report["safety"]["trust_review_script_created"])
+        self.assertTrue(report["safety"]["settlement_review_script_created"])
+        self.assertTrue(report["safety"]["operator_review_script_created"])
         self.assertEqual(report["operator_roles"]["role_counts"], {"accounting": 1, "admin": 1, "auditor": 1})
         self.assertFalse(report["operator_roles"]["plaintext_tokens_public"])
         self.assertIn("private/auditor.private.env", scripts["auditor_status"].read_text(encoding="utf-8"))
@@ -2633,6 +2642,29 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("--include-admin-summaries", scripts["accounting_status"].read_text(encoding="utf-8"))
         self.assertNotIn(auditor_invite["operator_token"], scripts["auditor_status"].read_text(encoding="utf-8"))
         self.assertNotIn(accounting_invite["operator_token"], scripts["accounting_status"].read_text(encoding="utf-8"))
+        trust_review_text = scripts["trust_review"].read_text(encoding="utf-8")
+        self.assertIn("crowdtensor trust", trust_review_text)
+        self.assertIn("private/operator.private.env", trust_review_text)
+        self.assertIn("--observer-token", trust_review_text)
+        self.assertIn('$SCRIPT_DIR/trust-review', trust_review_text)
+        self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN", trust_review_text)
+        settlement_review_text = scripts["settlement_review"].read_text(encoding="utf-8")
+        self.assertIn("crowdtensor settlement", settlement_review_text)
+        self.assertIn("private/accounting.private.env", settlement_review_text)
+        self.assertIn("--admin-token", settlement_review_text)
+        self.assertIn("--include-accounting", settlement_review_text)
+        self.assertIn('$SCRIPT_DIR/settlement-review', settlement_review_text)
+        operator_review_text = scripts["operator_review"].read_text(encoding="utf-8")
+        self.assertIn("operator_status.sh", operator_review_text)
+        self.assertIn("auditor_status.sh", operator_review_text)
+        self.assertIn("accounting_status.sh", operator_review_text)
+        self.assertIn("trust_review.sh", operator_review_text)
+        self.assertIn("settlement_review.sh", operator_review_text)
+        self.assertNotIn("crowdtensor operator-status", operator_review_text)
+        self.assertNotIn("crowdtensor trust", operator_review_text)
+        self.assertNotIn("crowdtensor settlement", operator_review_text)
+        self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN", operator_review_text)
+        self.assertNotIn("CROWDTENSOR_OBSERVER_TOKEN", operator_review_text)
         handoff = report["bootstrap_handoff"]
         self.assertEqual(handoff["schema"], "crowdtensor_bootstrap_handoff_v1")
         self.assertEqual(handoff["operator_role_handoff"]["role_counts"], {"accounting": 1, "admin": 1, "auditor": 1})
@@ -2685,6 +2717,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(handoff["manual_launchers"]["check_route"], str(scripts["check_route"]))
         self.assertEqual(handoff["manual_launchers"]["ready_for_handoff"], str(scripts["ready_for_handoff"]))
         self.assertEqual(handoff["manual_launchers"]["operator_status"], str(scripts["operator_status"]))
+        self.assertEqual(handoff["manual_launchers"]["auditor_status"], str(scripts["auditor_status"]))
+        self.assertEqual(handoff["manual_launchers"]["accounting_status"], str(scripts["accounting_status"]))
+        self.assertEqual(handoff["manual_launchers"]["trust_review"], str(scripts["trust_review"]))
+        self.assertEqual(handoff["manual_launchers"]["settlement_review"], str(scripts["settlement_review"]))
+        self.assertEqual(handoff["manual_launchers"]["operator_review"], str(scripts["operator_review"]))
         self.assertIn(str(coordinator_env_path), handoff["coordinator_host_private_files"])
         self.assertIn(str(operator_env_path), handoff["operator_host_private_files"])
         self.assertNotIn(stage0_join_code, encoded)
@@ -2730,6 +2767,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o700)
             script_text = path.read_text(encoding="utf-8")
             self.assertNotIn(operator_invite["operator_token"], script_text)
+            self.assertNotIn(auditor_invite["operator_token"], script_text)
+            self.assertNotIn(accounting_invite["operator_token"], script_text)
+            self.assertNotIn(observer_token, script_text)
             self.assertNotIn(stage0_invite["miner_token"], script_text)
             self.assertNotIn(stage0_join_code, script_text)
         self.assertTrue((output_dir / "stage0" / "miner.invite.json").is_file())
@@ -2772,6 +2812,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(str(scripts["handoff_doctor"]), runbook)
         self.assertIn(str(scripts["ready_for_handoff"]), runbook)
         self.assertIn(str(scripts["operator_status"]), runbook)
+        self.assertIn(str(scripts["operator_review"]), runbook)
         self.assertIn(str(scripts["stage0_install"]), runbook)
         self.assertIn(str(scripts["stage1_install"]), runbook)
         self.assertIn(str(scripts["stage0_doctor"]), runbook)
@@ -2818,6 +2859,11 @@ class CrowdTensorCliTests(unittest.TestCase):
             "handoff_doctor",
             "ready_for_handoff",
             "operator_status",
+            "auditor_status",
+            "accounting_status",
+            "trust_review",
+            "settlement_review",
+            "operator_review",
             "check_generation",
             "submit_generation",
         ]:
@@ -2908,6 +2954,7 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertNotIn('exec "$SCRIPT_DIR/start_coordinator.sh"', control_plane_text)
         self.assertIn("operator_quickstart.sh", report["operator_action"])
         self.assertIn("ready_for_handoff.sh", report["operator_action"])
+        self.assertIn("operator_review.sh", report["operator_action"])
         self.assertEqual(report["next_commands"][0]["command"], [str(scripts["operator_quickstart"])])
         self.assertIn(str(coordinator_env_path), report["next_commands"][0]["requires_files"])
         self.assertIn(str(operator_env_path), report["next_commands"][0]["requires_files"])
@@ -2953,6 +3000,18 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(str(auditor_env_path), report["next_commands"][24]["requires_files"])
         self.assertEqual(report["next_commands"][25]["command"], [str(scripts["accounting_status"])])
         self.assertIn(str(accounting_env_path), report["next_commands"][25]["requires_files"])
+        self.assertEqual(report["next_commands"][26]["command"], [str(scripts["trust_review"])])
+        self.assertIn(str(operator_env_path), report["next_commands"][26]["requires_files"])
+        self.assertEqual(report["next_commands"][26]["requires_running"], ["control_plane"])
+        self.assertEqual(report["next_commands"][27]["command"], [str(scripts["settlement_review"])])
+        self.assertIn(str(accounting_env_path), report["next_commands"][27]["requires_files"])
+        self.assertEqual(report["next_commands"][27]["requires_running"], ["control_plane"])
+        self.assertEqual(report["next_commands"][28]["command"], [str(scripts["operator_review"])])
+        self.assertEqual(
+            report["next_commands"][28]["requires_files"],
+            [str(operator_env_path), str(auditor_env_path), str(accounting_env_path)],
+        )
+        self.assertEqual(report["next_commands"][28]["requires_running"], ["control_plane"])
 
     def test_swarm_bootstrap_embeds_discovery_route_in_private_invites(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"
@@ -3375,6 +3434,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["artifacts"]["operator_status_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["auditor_status_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["accounting_status_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["trust_review_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["settlement_review_script"]["mode"], "0o700")
+        self.assertEqual(report["artifacts"]["operator_review_script"]["mode"], "0o700")
         self.assertEqual(report["artifacts"]["auditor_env"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["accounting_env"]["mode"], "0o600")
         self.assertEqual(report["artifacts"]["stage0_join_code"]["mode"], "0o600")
@@ -3395,6 +3457,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertTrue(report["safety"]["operator_status_script_ready"])
         self.assertTrue(report["safety"]["auditor_status_script_ready"])
         self.assertTrue(report["safety"]["accounting_status_script_ready"])
+        self.assertTrue(report["safety"]["trust_review_script_ready"])
+        self.assertTrue(report["safety"]["settlement_review_script_ready"])
+        self.assertTrue(report["safety"]["operator_review_script_ready"])
         self.assertTrue(report["safety"]["operator_role_envs_contain_distinct_credentials"])
         self.assertTrue(report["safety"]["operator_role_invites_ready"])
         self.assertEqual(report["operator_roles"]["role_counts"], {"accounting": 1, "admin": 1, "auditor": 1})

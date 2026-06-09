@@ -134,8 +134,13 @@ starts the configured P2P-lite or real-P2P discovery daemon when `--peer-bootstr
 operator-side dry-run and submit scripts. `auditor_status.sh` sources
 `auditor.private.env` and requests only a read-only events summary;
 `accounting_status.sh` sources `accounting.private.env` and requests only
-accounting plus draft settlement summaries. `operator_status.sh` remains the
-admin status helper.
+accounting plus draft settlement summaries. `trust_review.sh` sources the admin
+operator env but uses only the observer token for a read-only trust/quarantine
+report; `settlement_review.sh` sources the accounting env for draft
+settlement/accounting review; `operator_review.sh` chains admin status, auditor
+status, accounting status, trust review, and settlement review as the
+one-command operational review after the control plane is running.
+`operator_status.sh` remains the admin status helper.
 Do not source the operator env into the Coordinator process unless you
 intentionally want to enable the legacy owner-level admin token path. Copy only
 the matching stage directory, including its private `miner.join-code.txt`,
@@ -187,7 +192,10 @@ task.
 `operator_status.sh` stays on the operator host, sources only
 `private/operator.private.env`, and runs read-only `crowdtensor operator-status`
 for `/ready`, `/state`, accounting, and settlement triage without embedding
-operator credentials in public scripts.
+operator credentials in public scripts. `trust_review.sh`,
+`settlement_review.sh`, and `operator_review.sh` provide the corresponding
+daily trust/accounting/settlement review path without copying private tokens
+into script bodies or public reports.
 Run `crowdtensor swarm-bootstrap-check` before handoff; it checks required
 bootstrap files, `0600` private env/invite files, `0700` scripts, hashed
 registries, Coordinator/operator env separation, and plaintext token leakage in
@@ -195,6 +203,11 @@ scripts or public Markdown, including `check_route_script_ready`,
 `tunnel_doctor_script_ready`,
 `ready_for_handoff_script_ready`,
 `operator_status_script_ready`,
+`auditor_status_script_ready`,
+`accounting_status_script_ready`,
+`trust_review_script_ready`,
+`settlement_review_script_ready`,
+`operator_review_script_ready`,
 `operator_install_script_ready`,
 `operator_quickstart_script_ready`,
 `operator_scripts_use_operator_venv`,
