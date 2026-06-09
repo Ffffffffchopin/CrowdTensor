@@ -787,6 +787,19 @@ def coordinator_remote_access_summary(
         "host_class": host_class,
         "route_kind": route_kind,
         "miner_join_url": url,
+        "miner_reachable_join_url_required": bool(expect_remote_miners),
+        "coordinator_public_ip_required": False,
+        "public_reachability_requirement": (
+            "Remote Miner hosts must be able to reach the Miner-reachable Join URL. The Coordinator host "
+            "does not need its own public IP when a tunnel, reverse proxy, VPN/LAN route, or "
+            "trusted overlay provides that reachable URL."
+        ),
+        "accepted_remote_route_kinds": [
+            "public_https_or_reverse_proxy",
+            "operator_tunnel",
+            "vpn_or_lan",
+            "port_forward",
+        ],
         "remote_miners_supported": remote_supported,
         "expect_remote_miners": bool(expect_remote_miners),
         "public_url_explicit": bool(public_url_explicit),
@@ -12365,6 +12378,7 @@ def _bootstrap_runbook(
     scripts: dict[str, str],
     private_env: dict[str, str],
     private_invites: dict[str, str],
+    remote_access: dict[str, Any],
 ) -> str:
     return "\n".join([
         "# CrowdTensor Swarm Bootstrap",
@@ -12418,6 +12432,18 @@ def _bootstrap_runbook(
         "Use the coordinator env only for the Coordinator process.",
         "Keep the operator env and operator invite on the operator host.",
         "",
+        "## Remote Miner Route",
+        "",
+        f"- Miner-reachable Join URL: `{remote_access.get('miner_join_url') or coordinator_url}`",
+        f"- Route kind: `{remote_access.get('route_kind', '')}`",
+        f"- Coordinator public IP required: `{bool(remote_access.get('coordinator_public_ip_required'))}`",
+        f"- External forwarder required: `{bool(remote_access.get('external_forwarder_required'))}`",
+        f"- Recommended route option: `{remote_access.get('recommended_join_option', '')}`",
+        f"- Route check: `{scripts.get('check_route', '')} --check-ready`",
+        f"- Handoff gate: `{scripts.get('ready_for_handoff', '')}`",
+        "",
+        "Remote Miners need a reachable Join URL, not necessarily a public IP on the Coordinator host. A public DNS/reverse proxy, operator tunnel, VPN/LAN route, or explicit port forward can satisfy that route.",
+        "",
         f"Coordinator URL: `{coordinator_url}`",
         f"Backend: `{backend}`",
         "",
@@ -12467,6 +12493,32 @@ def _bootstrap_handoff_summary(
         ]
         for stage in sorted(set(stage_package_dirs) | set(archive_paths) | set(checksum_paths))
     }
+    route_handoff = {
+        "schema": "crowdtensor_route_handoff_v1",
+        "miner_join_url": str(remote_access.get("miner_join_url") or coordinator_url),
+        "remote_route_kind": str(remote_access.get("route_kind") or ""),
+        "remote_miners_ready": route_ready,
+        "miner_reachable_join_url_required": bool(remote_access.get("expect_remote_miners")),
+        "coordinator_public_ip_required": bool(remote_access.get("coordinator_public_ip_required")),
+        "external_forwarder_required": bool(remote_access.get("external_forwarder_required")),
+        "recommended_join_option": str(remote_access.get("recommended_join_option") or ""),
+        "recommended_setup_command": str(remote_access.get("recommended_setup_command") or ""),
+        "accepted_remote_route_kinds": [
+            str(item) for item in (remote_access.get("accepted_remote_route_kinds") or [])
+        ],
+        "check_route": scripts.get("check_route", ""),
+        "ready_check_command": (
+            f"{scripts.get('check_route', '')} --check-ready"
+            if scripts.get("check_route")
+            else ""
+        ),
+        "one_command_handoff_check": scripts.get("ready_for_handoff", ""),
+        "tunnel_configured": bool(tunnel.get("enabled")),
+        "discovery_configured": bool(discovery.get("enabled")),
+        "route_requirement": str(remote_access.get("public_reachability_requirement") or ""),
+        "not_nat_traversal": True,
+        "public_artifact_safe": True,
+    }
     return {
         "schema": "crowdtensor_bootstrap_handoff_v1",
         "coordinator_url": coordinator_url,
@@ -12474,6 +12526,7 @@ def _bootstrap_handoff_summary(
         "remote_miners_ready": route_ready,
         "remote_route_kind": str(remote_access.get("route_kind") or ""),
         "external_forwarder_required": bool(remote_access.get("external_forwarder_required")),
+        "route_handoff": route_handoff,
         "tunnel_configured": bool(tunnel.get("enabled")),
         "discovery_configured": bool(discovery.get("enabled")),
         "recommended_launcher": scripts.get("start_control_plane", ""),
@@ -12533,6 +12586,7 @@ def _bootstrap_handoff_summary(
 def _build_handoff_doctor_markdown(report: dict[str, Any]) -> str:
     copy_files = report.get("stage_handoff_files_to_copy") if isinstance(report.get("stage_handoff_files_to_copy"), dict) else {}
     blockers = report.get("handoff_blockers") if isinstance(report.get("handoff_blockers"), list) else []
+    route = report.get("route_handoff") if isinstance(report.get("route_handoff"), dict) else {}
     lines = [
         "# CrowdTensor Handoff Doctor",
         "",
@@ -12548,6 +12602,17 @@ def _build_handoff_doctor_markdown(report: dict[str, Any]) -> str:
         f"2. Run the one-command handoff check: `{report.get('one_command_handoff_check', '')}`",
         "3. Copy only the listed stage files to each matching Miner host.",
         "4. Ask each Miner to run `./stageX.run-miner.sh --quickstart` (or `--setup` then `--start` for manual troubleshooting).",
+        "",
+        "## Remote Miner Route",
+        "",
+        f"- Miner-reachable Join URL: `{route.get('miner_join_url') or report.get('coordinator_url', '')}`",
+        f"- Route kind: `{route.get('remote_route_kind', '')}`",
+        f"- Coordinator public IP required: `{bool(route.get('coordinator_public_ip_required'))}`",
+        f"- External forwarder required: `{bool(route.get('external_forwarder_required'))}`",
+        f"- Recommended route option: `{route.get('recommended_join_option', '')}`",
+        f"- Ready check: `{route.get('ready_check_command', '')}`",
+        "",
+        "Remote Miners need this Join URL to be reachable; the Coordinator host can remain behind a tunnel, reverse proxy, VPN/LAN route, or trusted overlay.",
         "",
         "## Stage Files",
         "",
@@ -12593,6 +12658,7 @@ def build_swarm_handoff_doctor(args: argparse.Namespace) -> dict[str, Any]:
         "coordinator_url": check_report.get("coordinator_url", ""),
         "handoff_ready": bool(handoff.get("ready_to_copy_stage_packages")),
         "remote_miners_ready": bool(handoff.get("remote_miners_ready")),
+        "route_handoff": handoff.get("route_handoff") if isinstance(handoff.get("route_handoff"), dict) else {},
         "live_preflight_checked": bool(handoff.get("live_preflight_checked")),
         "live_preflight_ready": handoff.get("live_preflight_ready"),
         "handoff_blockers": blockers,
@@ -13354,6 +13420,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
             scripts=scripts,
             private_env=private_env_report,
             private_invites=private_invites_report,
+            remote_access=remote_access,
         ),
         encoding="utf-8",
     )
@@ -13640,7 +13707,9 @@ def print_swarm_bootstrap(report: dict[str, Any]) -> None:
         print(
             "  remote_access: "
             f"route={remote_access.get('route_kind')} "
+            f"join_url={remote_access.get('miner_join_url') or 'none'} "
             f"remote_miners={remote_access.get('remote_miners_supported')} "
+            f"public_ip_required={remote_access.get('coordinator_public_ip_required')} "
             f"diagnosis={remote_access.get('diagnosis_code')}"
         )
     handoff = report.get("bootstrap_handoff") if isinstance(report.get("bootstrap_handoff"), dict) else {}
@@ -13655,6 +13724,16 @@ def print_swarm_bootstrap(report: dict[str, Any]) -> None:
         print(f"  launcher: {handoff.get('recommended_launcher')}")
         print(f"  verify_before_handoff: {handoff.get('verify_before_handoff')}")
         print(f"  one_command_handoff_check: {handoff.get('one_command_handoff_check')}")
+        route = handoff.get("route_handoff") if isinstance(handoff.get("route_handoff"), dict) else {}
+        if route:
+            print(
+                "  route_handoff: "
+                f"join_url={route.get('miner_join_url')} "
+                f"route={route.get('remote_route_kind')} "
+                f"public_ip_required={route.get('coordinator_public_ip_required')} "
+                f"forwarder_required={route.get('external_forwarder_required')} "
+                f"ready_check={route.get('ready_check_command')}"
+            )
     registries = report.get("registries") if isinstance(report.get("registries"), dict) else {}
     print(f"  operator_registry: {registries.get('operator_registry')}")
     print(f"  miner_registry: {registries.get('miner_registry')}")
@@ -15152,7 +15231,9 @@ def print_swarm_bootstrap_check(report: dict[str, Any]) -> None:
         print(
             "  remote_access: "
             f"route={remote_access.get('route_kind')} "
+            f"join_url={remote_access.get('miner_join_url') or 'none'} "
             f"remote_miners={remote_access.get('remote_miners_supported')} "
+            f"public_ip_required={remote_access.get('coordinator_public_ip_required')} "
             f"diagnosis={remote_access.get('diagnosis_code')}"
         )
     live_preflight = report.get("live_preflight") if isinstance(report.get("live_preflight"), dict) else {}
@@ -15179,6 +15260,16 @@ def print_swarm_bootstrap_check(report: dict[str, Any]) -> None:
             print(f"  handoff_blockers: {', '.join(str(item) for item in blockers)}")
         if handoff.get("one_command_handoff_check"):
             print(f"  one_command_handoff_check: {handoff.get('one_command_handoff_check')}")
+        route = handoff.get("route_handoff") if isinstance(handoff.get("route_handoff"), dict) else {}
+        if route:
+            print(
+                "  route_handoff: "
+                f"join_url={route.get('miner_join_url')} "
+                f"route={route.get('remote_route_kind')} "
+                f"public_ip_required={route.get('coordinator_public_ip_required')} "
+                f"forwarder_required={route.get('external_forwarder_required')} "
+                f"ready_check={route.get('ready_check_command')}"
+            )
     failed = [
         item for item in report.get("checks") or []
         if isinstance(item, dict) and item.get("ok") is not True
@@ -15196,6 +15287,15 @@ def print_swarm_handoff_doctor(report: dict[str, Any]) -> None:
     print(f"  ok: {report.get('ok')}")
     print(f"  handoff_ready: {report.get('handoff_ready')}")
     print(f"  coordinator_url: {report.get('coordinator_url')}")
+    route = report.get("route_handoff") if isinstance(report.get("route_handoff"), dict) else {}
+    if route:
+        print(
+            "  route_handoff: "
+            f"join_url={route.get('miner_join_url')} "
+            f"route={route.get('remote_route_kind')} "
+            f"public_ip_required={route.get('coordinator_public_ip_required')} "
+            f"forwarder_required={route.get('external_forwarder_required')}"
+        )
     print(f"  report_json: {report.get('handoff_doctor_json')}")
     print(f"  report_markdown: {report.get('handoff_doctor_markdown')}")
     blockers = report.get("handoff_blockers") if isinstance(report.get("handoff_blockers"), list) else []

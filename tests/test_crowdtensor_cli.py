@@ -1867,6 +1867,10 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertFalse(report["ready_checked"])
         self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
         self.assertTrue(report["remote_access"]["external_forwarder_required"])
+        self.assertFalse(report["remote_access"]["coordinator_public_ip_required"])
+        self.assertTrue(report["remote_access"]["miner_reachable_join_url_required"])
+        self.assertIn("reachable Join URL", report["remote_access"]["public_reachability_requirement"])
+        self.assertIn("operator_tunnel", report["remote_access"]["accepted_remote_route_kinds"])
         self.assertEqual(report["remote_access"]["recommended_join_option"], "operator_tunnel")
         self.assertIn("join_options", report["remote_access"])
         self.assertTrue(any(
@@ -2508,6 +2512,19 @@ class CrowdTensorCliTests(unittest.TestCase):
         handoff = report["bootstrap_handoff"]
         self.assertEqual(handoff["schema"], "crowdtensor_bootstrap_handoff_v1")
         self.assertTrue(handoff["remote_miners_ready"])
+        self.assertEqual(handoff["route_handoff"]["schema"], "crowdtensor_route_handoff_v1")
+        self.assertEqual(handoff["route_handoff"]["miner_join_url"], "https://ct.example")
+        self.assertEqual(handoff["route_handoff"]["remote_route_kind"], "public-or-tunnel")
+        self.assertTrue(handoff["route_handoff"]["miner_reachable_join_url_required"])
+        self.assertFalse(handoff["route_handoff"]["coordinator_public_ip_required"])
+        self.assertTrue(handoff["route_handoff"]["external_forwarder_required"])
+        self.assertEqual(handoff["route_handoff"]["recommended_join_option"], "operator_tunnel")
+        self.assertEqual(
+            handoff["route_handoff"]["ready_check_command"],
+            f"{scripts['check_route']} --check-ready",
+        )
+        self.assertEqual(handoff["route_handoff"]["one_command_handoff_check"], str(scripts["ready_for_handoff"]))
+        self.assertIn("reachable URL", handoff["route_handoff"]["route_requirement"])
         self.assertFalse(handoff["tunnel_configured"])
         self.assertFalse(handoff["discovery_configured"])
         self.assertFalse(handoff["ready_to_copy_stage_packages"])
@@ -2612,6 +2629,11 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("miner_support_bundle.json", stage0_doc)
         self.assertNotIn(stage0_join_code, stage0_doc)
         self.assertIn("CrowdTensor Swarm Bootstrap", runbook)
+        self.assertIn("## Remote Miner Route", runbook)
+        self.assertIn("Miner-reachable Join URL: `https://ct.example`", runbook)
+        self.assertIn("Coordinator public IP required: `False`", runbook)
+        self.assertIn(f"Route check: `{scripts['check_route']} --check-ready`", runbook)
+        self.assertIn("Remote Miners need a reachable Join URL", runbook)
         self.assertIn(str(scripts["operator_quickstart"]), runbook)
         self.assertIn(str(scripts["operator_install"]), runbook)
         self.assertIn(str(scripts["start_control_plane"]), runbook)
@@ -3084,6 +3106,9 @@ class CrowdTensorCliTests(unittest.TestCase):
             rendered = buffer.getvalue()
 
         self.assertIn("handoff: remote_ready=True tunnel=True discovery=False ready_to_copy=False", rendered)
+        self.assertIn("public_ip_required=False", rendered)
+        self.assertIn("route_handoff: join_url=https://ct.example route=public-or-tunnel", rendered)
+        self.assertIn("ready_check=", rendered)
         self.assertIn("launcher:", rendered)
         self.assertIn("verify_before_handoff:", rendered)
         self.assertIn("one_command_handoff_check:", rendered)
@@ -3163,6 +3188,12 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("ready_for_handoff.sh", report["operator_action"])
         self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
         self.assertTrue(report["remote_access"]["remote_miners_supported"])
+        self.assertFalse(report["remote_access"]["coordinator_public_ip_required"])
+        self.assertEqual(
+            report["bootstrap_handoff"]["route_handoff"]["ready_check_command"],
+            f"{output_dir / 'check_route.sh'} --check-ready",
+        )
+        self.assertFalse(report["bootstrap_handoff"]["route_handoff"]["coordinator_public_ip_required"])
         self.assertTrue(
             next(item for item in report["checks"] if item["name"] == "stage_handoff_checksums_ready")["ok"]
         )
@@ -3229,11 +3260,20 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertEqual(report["handoff_blockers"], ["run_verify_bootstrap_live_preflight"])
         self.assertEqual(report["recommended_launcher"], str(output_dir / "start_control_plane.sh"))
         self.assertEqual(report["verify_before_handoff"], str(output_dir / "verify_bootstrap.sh"))
+        self.assertEqual(report["route_handoff"]["schema"], "crowdtensor_route_handoff_v1")
+        self.assertEqual(report["route_handoff"]["miner_join_url"], "https://ct.example")
+        self.assertFalse(report["route_handoff"]["coordinator_public_ip_required"])
+        self.assertTrue(report["route_handoff"]["external_forwarder_required"])
+        self.assertEqual(report["route_handoff"]["ready_check_command"], f"{output_dir / 'check_route.sh'} --check-ready")
         self.assertIn("stage0", report["stage_handoff_files_to_copy"])
         self.assertEqual(report["handoff_doctor_json"], str(doctor_json))
         self.assertEqual(report["handoff_doctor_markdown"], str(doctor_md))
         self.assertEqual(written["schema"], "crowdtensor_swarm_handoff_doctor_v1")
         self.assertIn("CrowdTensor Handoff Doctor", markdown)
+        self.assertIn("## Remote Miner Route", markdown)
+        self.assertIn("Miner-reachable Join URL: `https://ct.example`", markdown)
+        self.assertIn("Coordinator public IP required: `False`", markdown)
+        self.assertIn(f"Ready check: `{output_dir / 'check_route.sh'} --check-ready`", markdown)
         self.assertIn("stage0.miner-package.tar.gz", markdown)
         self.assertIn("./stageX.run-miner.sh --quickstart", markdown)
         self.assertIn("`--setup` then `--start`", markdown)
@@ -3253,6 +3293,8 @@ class CrowdTensorCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("CrowdTensor swarm handoff doctor", rendered)
         self.assertIn("handoff_ready: False", rendered)
+        self.assertIn("route_handoff: join_url=https://ct.example route=public-or-tunnel", rendered)
+        self.assertIn("public_ip_required=False", rendered)
         self.assertNotIn(operator_invite["operator_token"], rendered)
 
     def test_swarm_bootstrap_stage_support_bundle_redacts_private_join_material(self) -> None:
