@@ -11044,6 +11044,39 @@ def _bootstrap_coordinator_script(args: argparse.Namespace, *, backend: str, coo
     return "\n".join(lines)
 
 
+def _bootstrap_discovery_script(args: argparse.Namespace, discovery: dict[str, Any]) -> str:
+    if not discovery.get("enabled"):
+        return "\n".join([
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "",
+            "echo 'No P2P discovery route configured for this bootstrap package.'",
+            "echo 'Rerun crowdtensor swarm-bootstrap with --peer-bootstrap to enable discovery.'",
+            "",
+        ])
+    backend = str(discovery.get("p2p_backend") or "lite")
+    peer_bootstrap = str(discovery.get("peer_bootstrap") or "").strip()
+    port = str(local_coordinator_port_from_url(peer_bootstrap, default=8888 if backend == "real" else 8788))
+    command_name = "p2p-daemon" if backend == "real" else "p2pd"
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        "exec crowdtensor " + command_name + " \\",
+        f"  --host {_quote_env_value(str(getattr(args, 'bind_host', '127.0.0.1') or '127.0.0.1'))} \\",
+        f"  --port {_quote_env_value(port)} \\",
+        f"  --swarm-id {_quote_env_value(str(discovery.get('swarm_id') or 'default'))} \\",
+    ]
+    if backend == "real" and str(getattr(args, "public_host", "") or ""):
+        lines.append(f"  --public-host {_quote_env_value(str(args.public_host))} \\")
+    lines.extend([
+        "  --run \\",
+        '  "$@"',
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def _bootstrap_generate_script(*, coordinator_url: str, max_new_tokens: int, dry_run: bool) -> str:
     prompt = "CrowdTensor routes small models across home compute"
     lines = [
@@ -11111,6 +11144,7 @@ def _bootstrap_runbook(
         "## Run",
         "",
         "```bash",
+        shlex.quote(scripts.get("start_discovery", "")),
         shlex.quote(scripts.get("start_coordinator", "")),
         shlex.quote(scripts.get("verify_bootstrap", "")),
         shlex.quote(scripts.get("stage0_join", "")),
@@ -11183,6 +11217,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     operator_env_path = private_dir / "operator.private.env"
     operator_invite_path = private_dir / f"{_bootstrap_slug(args.operator_id)}.operator.invite.json"
     runbook_path = output_dir / "SWARM_BOOTSTRAP.md"
+    start_discovery_script = output_dir / "start_discovery.sh"
     start_coordinator_script = output_dir / "start_coordinator.sh"
     verify_bootstrap_script = output_dir / "verify_bootstrap.sh"
     check_generation_script = output_dir / "check_generation.sh"
@@ -11374,6 +11409,10 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         str(args.max_new_tokens),
     ]
     _write_executable(
+        start_discovery_script,
+        _bootstrap_discovery_script(args, discovery_summary),
+    )
+    _write_executable(
         start_coordinator_script,
         _bootstrap_coordinator_script(args, backend=backend, coordinator_url=coordinator_url),
     )
@@ -11398,6 +11437,7 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         ),
     )
     scripts = {
+        "start_discovery": str(start_discovery_script),
         "start_coordinator": str(start_coordinator_script),
         "verify_bootstrap": str(verify_bootstrap_script),
         "stage0_join": str(stage_scripts["stage0"]),
@@ -11453,6 +11493,14 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "miners": _swarm_bootstrap_miner_summaries(stage_invites, stage_join_code_files),
         "next_commands": [
             command_entry(
+                "start discovery",
+                p2p_discovery_daemon_command(
+                    backend=discovery_summary["p2p_backend"] or "lite",
+                    peer_bootstrap=discovery_summary["peer_bootstrap"],
+                    swarm_id=discovery_summary["swarm_id"] or "default",
+                ) if discovery_summary["enabled"] else [str(start_discovery_script)],
+            ),
+            command_entry(
                 "start Coordinator",
                 serve_command,
             ),
@@ -11483,35 +11531,39 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         ),
     }
     next_commands = report["next_commands"]
-    next_commands[0]["command"] = [str(start_coordinator_script)]
-    next_commands[0]["command_line"] = command_line([str(start_coordinator_script)])
-    next_commands[0]["requires_files"] = [str(coordinator_env_path)]
-    next_commands[0]["script"] = str(start_coordinator_script)
-    next_commands[1]["command"] = [str(verify_bootstrap_script)]
-    next_commands[1]["command_line"] = command_line([str(verify_bootstrap_script)])
-    next_commands[1]["requires_files"] = [
+    next_commands[0]["command"] = [str(start_discovery_script)]
+    next_commands[0]["command_line"] = command_line([str(start_discovery_script)])
+    next_commands[0]["script"] = str(start_discovery_script)
+    next_commands[0]["optional"] = not bool(discovery_summary["enabled"])
+    next_commands[1]["command"] = [str(start_coordinator_script)]
+    next_commands[1]["command_line"] = command_line([str(start_coordinator_script)])
+    next_commands[1]["requires_files"] = [str(coordinator_env_path)]
+    next_commands[1]["script"] = str(start_coordinator_script)
+    next_commands[2]["command"] = [str(verify_bootstrap_script)]
+    next_commands[2]["command_line"] = command_line([str(verify_bootstrap_script)])
+    next_commands[2]["requires_files"] = [
         str(stage_scripts["stage0"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage0"]),
         str(stage_scripts["stage1"].parent / "miner.invite.json"),
         str(stage_join_code_files["stage1"]),
     ]
-    next_commands[1]["script"] = str(verify_bootstrap_script)
-    next_commands[2]["command"] = [str(stage_scripts["stage0"])]
-    next_commands[2]["command_line"] = command_line([str(stage_scripts["stage0"])])
-    next_commands[2]["requires_files"] = [str(stage_join_code_files["stage0"])]
-    next_commands[2]["script"] = str(stage_scripts["stage0"])
-    next_commands[3]["command"] = [str(stage_scripts["stage1"])]
-    next_commands[3]["command_line"] = command_line([str(stage_scripts["stage1"])])
-    next_commands[3]["requires_files"] = [str(stage_join_code_files["stage1"])]
-    next_commands[3]["script"] = str(stage_scripts["stage1"])
-    next_commands[4]["command"] = [str(check_generation_script)]
-    next_commands[4]["command_line"] = command_line([str(check_generation_script)])
-    next_commands[4]["requires_files"] = [str(operator_env_path)]
-    next_commands[4]["script"] = str(check_generation_script)
-    next_commands[5]["command"] = [str(submit_generation_script)]
-    next_commands[5]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[2]["script"] = str(verify_bootstrap_script)
+    next_commands[3]["command"] = [str(stage_scripts["stage0"])]
+    next_commands[3]["command_line"] = command_line([str(stage_scripts["stage0"])])
+    next_commands[3]["requires_files"] = [str(stage_join_code_files["stage0"])]
+    next_commands[3]["script"] = str(stage_scripts["stage0"])
+    next_commands[4]["command"] = [str(stage_scripts["stage1"])]
+    next_commands[4]["command_line"] = command_line([str(stage_scripts["stage1"])])
+    next_commands[4]["requires_files"] = [str(stage_join_code_files["stage1"])]
+    next_commands[4]["script"] = str(stage_scripts["stage1"])
+    next_commands[5]["command"] = [str(check_generation_script)]
+    next_commands[5]["command_line"] = command_line([str(check_generation_script)])
     next_commands[5]["requires_files"] = [str(operator_env_path)]
-    next_commands[5]["script"] = str(submit_generation_script)
+    next_commands[5]["script"] = str(check_generation_script)
+    next_commands[6]["command"] = [str(submit_generation_script)]
+    next_commands[6]["command_line"] = command_line([str(submit_generation_script)])
+    next_commands[6]["requires_files"] = [str(operator_env_path)]
+    next_commands[6]["script"] = str(submit_generation_script)
     return sanitize(redact_values(report, [
         operator_token,
         observer_token,
@@ -11752,6 +11804,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         "miner_registry": output_dir / "miner_registry.json",
         "coordinator_env": private_dir / "coordinator.private.env",
         "operator_env": private_dir / "operator.private.env",
+        "start_discovery_script": output_dir / "start_discovery.sh",
         "start_coordinator_script": output_dir / "start_coordinator.sh",
         "verify_bootstrap_script": output_dir / "verify_bootstrap.sh",
         "check_generation_script": output_dir / "check_generation.sh",
@@ -11873,6 +11926,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         diagnosis_code="bootstrap_private_file_bad_permissions",
     )
     executable_scripts = [
+        required_files["start_discovery_script"],
         required_files["start_coordinator_script"],
         required_files["verify_bootstrap_script"],
         required_files["check_generation_script"],
@@ -12030,10 +12084,12 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
     stage1_script_text, _ = _read_bootstrap_text(required_files["stage1_join_script"])
     stage0_join_code_text, _ = _read_bootstrap_text(required_files["stage0_join_code"])
     stage1_join_code_text, _ = _read_bootstrap_text(required_files["stage1_join_code"])
+    discovery_script_text, _ = _read_bootstrap_text(required_files["start_discovery_script"])
     coordinator_script_text, _ = _read_bootstrap_text(required_files["start_coordinator_script"])
     verify_script_text, _ = _read_bootstrap_text(required_files["verify_bootstrap_script"])
     public_files = [
         required_files["start_coordinator_script"],
+        required_files["start_discovery_script"],
         required_files["verify_bootstrap_script"],
         required_files["check_generation_script"],
         required_files["submit_generation_script"],
@@ -12088,6 +12144,27 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
         not coordinator_script_admin_reference and "coordinator.private.env" in coordinator_script_text,
         detail="start_coordinator.sh must source coordinator.private.env and not operator.private.env",
         diagnosis_code="bootstrap_coordinator_script_credentials_invalid",
+    )
+    discovery_script_ready = bool(
+        (
+            not discovery_report.get("enabled")
+            and "No P2P discovery route configured" in discovery_script_text
+        )
+        or (
+            discovery_report.get("enabled")
+            and ("crowdtensor p2pd" in discovery_script_text or "crowdtensor p2p-daemon" in discovery_script_text)
+            and "--port" in discovery_script_text
+            and "--swarm-id" in discovery_script_text
+            and "--run" in discovery_script_text
+        )
+    )
+    _bootstrap_check_item(
+        checks,
+        diagnosis_codes,
+        "start_discovery_script_ready",
+        discovery_script_ready,
+        detail="start_discovery.sh must start the configured discovery daemon or explain discovery is disabled",
+        diagnosis_code="bootstrap_discovery_script_invalid",
     )
     verify_script_ready = bool(
         "crowdtensor swarm-bootstrap-check" in verify_script_text
@@ -12188,6 +12265,7 @@ def build_swarm_bootstrap_check(args: argparse.Namespace) -> dict[str, Any]:
             "stage_packages_exclude_operator_material": not stage_package_operator_files,
             "stage_join_code_files_match_invites": join_codes_match_invites,
             "stage_invite_discovery_metadata_ready": discovery_metadata_ok,
+            "start_discovery_script_ready": discovery_script_ready,
             "verify_bootstrap_script_ready": verify_script_ready,
             "coordinator_url_remote_route_ready": remote_route_ready,
             "live_preflight_ready": (

@@ -7,11 +7,13 @@ Use HTTPS, a VPN, or a private network for any remote demo. Miner tokens are sen
 For the product two-stage path, start with `crowdtensor swarm-bootstrap`. It
 emits `crowdtensor_swarm_bootstrap_v1`, writes a private operator registry,
 private Miner registry, coordinator/operator private env files, one operator
-invite, stage0/stage1 Miner packages, executable `start_coordinator.sh`, stage
-`join.sh` files, private `miner.join-code.txt` files, `verify_bootstrap.sh`,
-generation scripts, and `SWARM_BOOTSTRAP.md`. Keep the generated operator
+invite, stage0/stage1 Miner packages, executable `start_discovery.sh`,
+`start_coordinator.sh`, stage `join.sh` files, private `miner.join-code.txt`
+files, `verify_bootstrap.sh`, generation scripts, and `SWARM_BOOTSTRAP.md`.
+Keep the generated operator
 invite and operator env on the operator host, use the coordinator env only for
-the Coordinator process, run `verify_bootstrap.sh` after the Coordinator starts,
+the Coordinator process, run `start_discovery.sh` first when the package uses
+`--peer-bootstrap`, run `verify_bootstrap.sh` after the Coordinator starts,
 and copy only the matching stage directory to each Miner host. Stage `join.sh`
 uses `crowdtensor join --invite-code-file miner.join-code.txt` by default, while
 `miner.invite.json` remains private compatibility material. If bootstrap is run
