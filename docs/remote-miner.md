@@ -56,8 +56,24 @@ Copy only the generated `*.invite.json` file to the Miner host. Before running
 the Miner, check that the Coordinator URL is reachable from that host:
 
 ```bash
-crowdtensor join --invite-file stage0-gpu-1.invite.json --check-admission --json
+crowdtensor join --invite-file stage0-gpu-1.invite.json --check-admission --expect-remote-coordinator --json
 ```
+
+If the Coordinator is behind a tunnel, VPN, or reverse proxy, start it with the
+Miner-facing URL instead of relying on `--public-host` alone:
+
+```bash
+crowdtensor serve \
+  --profile gpu-generation \
+  --coordinator-public-url https://YOUR-TUNNEL.example \
+  --expect-remote-miners \
+  --run
+```
+
+The Coordinator process can still bind locally; `--coordinator-public-url` is
+the advertised join/generate/P2P URL for Miner hosts. It is not NAT traversal or
+a relay service, so the named tunnel, VPN, DNS, firewall, or reverse proxy must
+already route to the Coordinator.
 
 The preflight first calls the public `/ready` endpoint without sending the Miner
 token, compares the invite's Miner ID, stage, backend, model, read-only workload,
@@ -67,6 +83,9 @@ claiming work. It does not lease a task and does not submit a generation
 request. A blocked report with `join_coordinator_unreachable` means the
 Coordinator entry URL, DNS, firewall, VPN, tunnel, or reverse proxy must be
 fixed before the Miner can join.
+`coordinator_remote_route_required` means the invite or `--coordinator-url`
+still points to a local-only address such as `127.0.0.1`; regenerate the invite
+with the public/tunnel/VPN/LAN URL.
 `join_invite_policy_miner_missing` or `join_invite_policy_mismatch` means the
 Coordinator did not load the matching `miner_registry.json`, loaded an older
 registry, or the invite was generated for a different Coordinator.

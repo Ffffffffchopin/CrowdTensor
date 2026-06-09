@@ -1434,6 +1434,59 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("command_line", report)
         self.assertIn("trusted network boundary", report["operator_action"])
 
+    def test_product_serve_public_tunnel_url_guides_remote_miners_without_public_bind(self) -> None:
+        args = cli.parse_args([
+            "serve",
+            "--coordinator-public-url",
+            "https://ct-tunnel.example",
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_product_serve(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["coordinator_url"], "https://ct-tunnel.example")
+        self.assertIn("coordinator_route_public_or_tunnel", report["diagnosis_codes"])
+        self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
+        self.assertTrue(report["remote_access"]["remote_miners_supported"])
+        self.assertTrue(report["remote_access"]["external_forwarder_required"])
+        self.assertFalse(report["safety"]["public_bind_explicit"])
+        self.assertTrue(report["safety"]["coordinator_public_url_explicit"])
+        self.assertIn("Give remote Miners the Coordinator URL https://ct-tunnel.example", report["operator_action"])
+        next_lines = [item["command_line"] for item in report["next_commands"]]
+        self.assertIn(
+            "crowdtensor join --coordinator-url https://ct-tunnel.example --miner-id stage0-miner --stage stage0 --run",
+            next_lines,
+        )
+        self.assertIn(
+            "crowdtensor generate --max-new-tokens 16 --coordinator-url https://ct-tunnel.example --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
+            next_lines,
+        )
+        self.assertNotIn("--coordinator-public-url", report["command_line"])
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cli.print_product_serve(report)
+        rendered = stdout.getvalue()
+        self.assertIn("remote_access: route=public-or-tunnel host=dns remote_miners=True", rendered)
+        self.assertIn("join_url=https://ct-tunnel.example", rendered)
+
+    def test_product_serve_expect_remote_miners_blocks_loopback_join_url(self) -> None:
+        args = cli.parse_args([
+            "serve",
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_product_serve(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_remote_route_required", report["diagnosis_codes"])
+        self.assertEqual(report["remote_access"]["route_kind"], "local-only")
+        self.assertFalse(report["remote_access"]["remote_miners_supported"])
+        self.assertIn("--coordinator-public-url", report["operator_action"])
+
     def test_product_generate_dry_run_uses_session_protocol(self) -> None:
         output_dir = Path(self._tmp_dir())
         args = cli.parse_args([
@@ -3859,6 +3912,50 @@ class CrowdTensorCliTests(unittest.TestCase):
             "crowdtensor generate --max-new-tokens 16 --coordinator-url http://127.0.0.1:8787 --dry-run --observer-token ${CROWDTENSOR_OBSERVER_TOKEN:?set CROWDTENSOR_OBSERVER_TOKEN}",
             next_lines,
         )
+
+    def test_product_join_expect_remote_coordinator_blocks_loopback_url(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--coordinator-url",
+            "http://127.0.0.1:8787",
+            "--expect-remote-coordinator",
+            "--miner-id",
+            "remote-stage0",
+            "--stage",
+            "stage0",
+            "--json",
+        ])
+
+        report = cli.build_product_join(args)
+
+        self.assertFalse(report["ok"], report)
+        self.assertIn("coordinator_remote_route_required", report["diagnosis_codes"])
+        self.assertEqual(report["remote_access"]["route_kind"], "local-only")
+        self.assertFalse(report["remote_access"]["remote_miners_supported"])
+        self.assertFalse(report["runtime_provenance"]["route_ready"])
+        self.assertIn("public HTTPS, tunnel, VPN, or LAN URL", report["operator_action"])
+
+    def test_product_join_expect_remote_coordinator_allows_tunnel_url(self) -> None:
+        args = cli.parse_args([
+            "join",
+            "--coordinator-url",
+            "https://ct-tunnel.example",
+            "--expect-remote-coordinator",
+            "--miner-id",
+            "remote-stage0",
+            "--stage",
+            "stage0",
+            "--json",
+        ])
+
+        report = cli.build_product_join(args)
+
+        self.assertTrue(report["ok"], report)
+        self.assertIn("coordinator_route_public_or_tunnel", report["diagnosis_codes"])
+        self.assertEqual(report["remote_access"]["route_kind"], "public-or-tunnel")
+        self.assertTrue(report["remote_access"]["remote_miners_supported"])
+        self.assertTrue(report["runtime_provenance"]["route_ready"])
+        self.assertIn("public/tunnel Coordinator URL", report["operator_action"])
 
     def test_product_join_accepts_invite_file_and_redacts_token(self) -> None:
         output_dir = Path(self._tmp_dir())

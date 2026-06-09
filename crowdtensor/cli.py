@@ -6,6 +6,7 @@ import argparse
 import base64
 import binascii
 import copy
+import ipaddress
 import json
 import os
 import re
@@ -611,6 +612,119 @@ def is_loopback_coordinator_url(coordinator_url: str = "") -> bool:
     except (TypeError, ValueError):
         return False
     return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _coordinator_url_host_class(coordinator_url: str = "") -> str:
+    try:
+        host = str(urlparse(str(coordinator_url or "")).hostname or "").strip().lower()
+    except (TypeError, ValueError):
+        return "invalid"
+    if not host:
+        return "missing"
+    if host == "localhost":
+        return "loopback"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        if host.endswith(".local") or host.endswith(".lan"):
+            return "private-dns"
+        return "dns"
+    if ip.is_loopback:
+        return "loopback"
+    if ip.is_unspecified:
+        return "unspecified"
+    if ip.is_link_local:
+        return "link-local"
+    if ip.is_private:
+        return "private-network"
+    if ip.is_global:
+        return "public-ip"
+    return "reserved"
+
+
+def coordinator_remote_access_summary(
+    coordinator_url: str,
+    *,
+    bind_host: str = "",
+    public_host: str = "",
+    public_url_explicit: bool = False,
+    expect_remote_miners: bool = False,
+    source: str = "coordinator-url",
+) -> dict[str, Any]:
+    url = str(coordinator_url or "").strip().rstrip("/")
+    host_class = _coordinator_url_host_class(url)
+    route_kind_by_host = {
+        "loopback": "local-only",
+        "unspecified": "invalid-client-url",
+        "private-network": "private-network",
+        "private-dns": "private-network",
+        "public-ip": "public-or-tunnel",
+        "dns": "public-or-tunnel",
+        "link-local": "link-local",
+        "reserved": "reserved",
+        "missing": "missing",
+        "invalid": "invalid",
+    }
+    route_kind = route_kind_by_host.get(host_class, "unknown")
+    remote_supported = route_kind in {"private-network", "public-or-tunnel"}
+    bind_public = str(bind_host or "") in {"0.0.0.0", "::"}
+    external_forwarder_required = bool(public_url_explicit and not bind_public)
+    diagnosis_code = "coordinator_route_missing"
+    if route_kind == "local-only":
+        diagnosis_code = "coordinator_route_local_only"
+    elif route_kind == "invalid-client-url":
+        diagnosis_code = "coordinator_route_invalid_client_url"
+    elif route_kind == "private-network":
+        diagnosis_code = "coordinator_route_private_network"
+    elif route_kind == "public-or-tunnel":
+        diagnosis_code = "coordinator_route_public_or_tunnel"
+    elif route_kind == "link-local":
+        diagnosis_code = "coordinator_route_link_local"
+    elif route_kind == "reserved":
+        diagnosis_code = "coordinator_route_reserved"
+    elif route_kind == "invalid":
+        diagnosis_code = "coordinator_route_invalid"
+    if expect_remote_miners and not remote_supported:
+        diagnosis_code = "coordinator_remote_route_required"
+    if route_kind == "public-or-tunnel" and external_forwarder_required:
+        action = "Start the tunnel or reverse proxy so this public Coordinator URL forwards to the local bind host and port."
+    elif route_kind == "public-or-tunnel":
+        action = "Miner hosts can use this Coordinator URL when DNS, firewall, TLS, and reverse proxy rules allow it."
+    elif route_kind == "private-network":
+        action = "Miner hosts must be on the same LAN, VPN, or trusted private route as this Coordinator URL."
+    elif route_kind == "local-only":
+        action = "Only Miners on the same machine can use this Coordinator URL; use --coordinator-public-url, VPN, or a tunnel for remote Miners."
+    elif route_kind == "invalid-client-url":
+        action = "0.0.0.0/:: are bind addresses, not Miner join URLs; set --public-host or --coordinator-public-url to a reachable host."
+    else:
+        action = "Provide a reachable http(s) Coordinator URL for Miner hosts before asking them to join."
+    return {
+        "schema": "crowdtensor_coordinator_remote_access_v1",
+        "source": source,
+        "coordinator_url": url,
+        "host_class": host_class,
+        "route_kind": route_kind,
+        "miner_join_url": url,
+        "remote_miners_supported": remote_supported,
+        "expect_remote_miners": bool(expect_remote_miners),
+        "public_url_explicit": bool(public_url_explicit),
+        "public_host": str(public_host or ""),
+        "bind_host": str(bind_host or ""),
+        "bind_host_public": bind_public,
+        "external_forwarder_required": external_forwarder_required,
+        "diagnosis_code": diagnosis_code,
+        "operator_action": action,
+        "not_nat_traversal": True,
+        "not_decentralized_discovery": True,
+        "public_artifact_safe": True,
+    }
+
+
+def product_serve_coordinator_url(args: argparse.Namespace) -> str:
+    explicit_url = str(getattr(args, "coordinator_public_url", "") or "").strip().rstrip("/")
+    if explicit_url:
+        return explicit_url
+    return f"http://{args.public_host}:{args.port}"
 
 
 def local_startup_coordinator_url(coordinator_url: str = "", *, default_port: int = 8787) -> str:
@@ -10164,6 +10278,8 @@ def _product_cli_serve_command(args: argparse.Namespace, *, include_run: bool = 
         "--port",
         str(args.port),
     ]
+    if getattr(args, "coordinator_public_url", ""):
+        command.extend(["--coordinator-public-url", args.coordinator_public_url])
     if args.state_dir != "state":
         command.extend(["--state-dir", args.state_dir])
     if args.hf_model_id != "sshleifer/tiny-gpt2":
@@ -10531,7 +10647,19 @@ def _product_join_next_commands(args: argparse.Namespace, *, coordinator_url: st
 def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
     command = build_serve_command(args)
     public_bind = args.bind_host in {"0.0.0.0", "::"}
-    coordinator_url = f"http://{args.public_host}:{args.port}"
+    coordinator_url = product_serve_coordinator_url(args)
+    remote_access = coordinator_remote_access_summary(
+        coordinator_url,
+        bind_host=args.bind_host,
+        public_host=args.public_host,
+        public_url_explicit=bool(str(getattr(args, "coordinator_public_url", "") or "")),
+        expect_remote_miners=bool(getattr(args, "expect_remote_miners", False)),
+        source="serve",
+    )
+    remote_access_blocked = bool(
+        getattr(args, "expect_remote_miners", False)
+        and remote_access.get("diagnosis_code") == "coordinator_remote_route_required"
+    )
     if public_bind and not args.i_understand_public_bind:
         safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token", "--operator-token-registry"})
         return sanitize({
@@ -10539,6 +10667,8 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             "ok": False,
             "mode": "serve",
             "profile": args.profile,
+            "coordinator_url": coordinator_url,
+            "remote_access": remote_access,
             "command": safe_command,
             "command_line": command_line(safe_command),
             "next_commands": _product_public_bind_next_commands(args),
@@ -10552,7 +10682,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
         p2p_backend = _p2p_backend(args)
         peer = build_p2p_peer(
             swarm_id=args.swarm_id,
-            peer_id=args.peer_id or stable_peer_id(f"{args.swarm_id}:coordinator:{args.public_host}:{args.port}"),
+            peer_id=args.peer_id or stable_peer_id(f"{args.swarm_id}:coordinator:{coordinator_url}"),
             role="coordinator",
             coordinator_url=coordinator_url,
             peer_url=args.peer_url,
@@ -10574,12 +10704,22 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
         peer = {}
 
     safe_command = redacted_command(command, {"--admin-token", "--miner-token", "--observer-token", "--operator-token-registry"})
+    diagnosis_codes = (
+        ["coordinator_remote_route_required"]
+        if remote_access_blocked
+        else ["serve_command_ready", str(remote_access.get("diagnosis_code") or "")]
+    ) + (
+        [("real_p2p_coordinator_announce_ready" if _p2p_backend(args) == "real" else "p2p_coordinator_announce_ready")]
+        if args.p2p and peer_announce.get("ok")
+        else []
+    )
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
-        "ok": bool(not args.p2p or peer_announce.get("ok")),
+        "ok": bool((not args.p2p or peer_announce.get("ok")) and not remote_access_blocked),
         "mode": "serve",
         "profile": args.profile,
         "coordinator_url": coordinator_url,
+        "remote_access": remote_access,
         "p2p": {
             "enabled": bool(args.p2p),
             "backend": _p2p_backend(args) if args.p2p else "",
@@ -10590,11 +10730,7 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
         "command_line": command_line(safe_command),
         "next_commands": _product_serve_next_commands(args, coordinator_url=coordinator_url),
         "printed_only": not args.run,
-        "diagnosis_codes": ["serve_command_ready"] + (
-            [("real_p2p_coordinator_announce_ready" if _p2p_backend(args) == "real" else "p2p_coordinator_announce_ready")]
-            if args.p2p and peer_announce.get("ok")
-            else []
-        ),
+        "diagnosis_codes": [code for code in diagnosis_codes if code],
         "safety": {
             "legacy_admin_from_env": bool(os.environ.get("CROWDTENSOR_ADMIN_TOKEN")),
             "operator_registry_supported": True,
@@ -10602,6 +10738,8 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
             "legacy_admin_configured": bool(getattr(args, "admin_token", "")),
             "inference_session_rate_limit_configured": bool(getattr(args, "inference_session_rate_limit", 0) > 0),
             "public_bind_explicit": public_bind,
+            "coordinator_public_url_explicit": bool(str(getattr(args, "coordinator_public_url", "") or "")),
+            "remote_miners_expected": bool(getattr(args, "expect_remote_miners", False)),
             "not_production": True,
             "p2p_discovery_enabled": bool(args.p2p),
             "coordinator_result_fallback": True,
@@ -10628,17 +10766,30 @@ def build_product_serve(args: argparse.Namespace, *, runner: Runner = subprocess
 
 def _product_serve_operator_action(report: dict[str, Any]) -> str:
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    if "coordinator_remote_route_required" in codes:
+        return (
+            "Remote Miners were requested, but the Coordinator join URL is not remotely usable; "
+            "set --coordinator-public-url to a public HTTPS, tunnel, VPN, or LAN URL, or disable --expect-remote-miners."
+        )
     if "public_bind_requires_explicit_ack" in codes:
         return "Add --i-understand-public-bind only on a trusted network boundary, or keep --bind-host on 127.0.0.1."
     if "p2p_coordinator_announce_failed" in codes or "real_p2p_coordinator_announce_failed" in codes:
         return "Start the matching P2P discovery daemon, check --peer-bootstrap/--peer-secret, then rerun serve --p2p."
     if report.get("ok"):
         generate_hint = "crowdtensor generate --p2p --dry-run" if (report.get("p2p") or {}).get("enabled") else f"crowdtensor generate --coordinator-url {report.get('coordinator_url')} --dry-run"
+        access_hint = ""
+        if remote_access.get("route_kind") == "public-or-tunnel":
+            access_hint = f" Give remote Miners the Coordinator URL {remote_access.get('miner_join_url')}."
+        elif remote_access.get("route_kind") == "private-network":
+            access_hint = " Remote Miners must be on the same LAN/VPN/trusted private route."
+        elif remote_access.get("route_kind") == "local-only":
+            access_hint = " This Coordinator URL is local-only; remote Miners need a tunnel, VPN, or --coordinator-public-url."
         if report.get("printed_only"):
-            return f"Rerun with --run to start the Coordinator, start stage0 and stage1 Miners with crowdtensor join, then run {generate_hint}."
+            return f"Rerun with --run to start the Coordinator, start stage0 and stage1 Miners with crowdtensor join, then run {generate_hint}.{access_hint}"
         if (report.get("p2p") or {}).get("enabled"):
-            return "Start or keep stage0 and stage1 Miners joined, then run crowdtensor generate --p2p --dry-run before submitting."
-        return f"Start stage0 and stage1 Miners with --coordinator-url, then run {generate_hint}."
+            return f"Start or keep stage0 and stage1 Miners joined, then run crowdtensor generate --p2p --dry-run before submitting.{access_hint}"
+        return f"Start stage0 and stage1 Miners with --coordinator-url, then run {generate_hint}.{access_hint}"
     if report.get("returncode") not in {None, 0}:
         return "Coordinator process exited; inspect its stderr/logs, fix the runtime error, and rerun serve --run."
     return "Inspect the serve JSON report and Coordinator command for the failing check."
@@ -10941,6 +11092,7 @@ def _product_join_runtime_provenance(report: dict[str, Any], args: argparse.Name
         and "join_admission_unreachable" not in codes
         and "join_admission_preflight_failed" not in codes
         and "join_admission_blocked" not in codes
+        and "coordinator_remote_route_required" not in codes
         and not any(str(code).startswith("join_policy_") for code in codes)
     )
     if coordinator_url:
@@ -11132,6 +11284,11 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             }
     if not coordinator_url:
         local_coordinator_url = "http://127.0.0.1:8787"
+        remote_access = coordinator_remote_access_summary(
+            "",
+            expect_remote_miners=bool(getattr(args, "expect_remote_coordinator", False)),
+            source="join",
+        )
         serve_args = argparse.Namespace(
             profile="gpu-generation" if args.backend == "cuda" else "cpu-real-llm",
             bind_host="127.0.0.1",
@@ -11154,6 +11311,8 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             peer_secret=args.peer_secret,
             http_timeout=args.http_timeout,
             i_understand_public_bind=False,
+            coordinator_public_url="",
+            expect_remote_miners=False,
             run=True,
             json=False,
         )
@@ -11199,6 +11358,7 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
                 "bootstrap": p2p_bootstrap,
                 "discovery": discovery_error,
             },
+            "remote_access": remote_access,
             "diagnosis_codes": (["p2p_discovery_unreachable"] if discovery_error else []) + ["coordinator_route_missing"],
         }
         report["operator_action"] = _product_join_operator_action(report)
@@ -11229,6 +11389,15 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
     else:
         peer = {}
     command = build_join_command(args, coordinator_url=coordinator_url)
+    remote_access = coordinator_remote_access_summary(
+        coordinator_url,
+        expect_remote_miners=bool(getattr(args, "expect_remote_coordinator", False)),
+        source="join",
+    )
+    remote_access_blocked = bool(
+        getattr(args, "expect_remote_coordinator", False)
+        and remote_access.get("diagnosis_code") == "coordinator_remote_route_required"
+    )
     ready = bool(not args.p2p or peer_announce.get("ok"))
     coordinator_preflight: dict[str, Any] = {}
     if bool(getattr(args, "check_coordinator", False) or getattr(args, "check_admission", False)):
@@ -11246,6 +11415,8 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
                     admission_preflight.get("diagnosis_code") or "join_admission_blocked"
                 )
         ready = bool(ready and coordinator_preflight.get("ok"))
+    if remote_access_blocked:
+        ready = False
     safe_command = redacted_command(command, {"--miner-token", "--peer-secret"})
     diagnosis_codes = ["join_command_ready"] + (
         [("real_p2p_stage_miner_announce_ready" if p2p_backend == "real" else "p2p_stage_miner_announce_ready")]
@@ -11266,11 +11437,17 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
             admission_code = str(admission.get("diagnosis_code") or "")
             if admission_code and admission_code not in diagnosis_codes:
                 diagnosis_codes.append(admission_code)
+    remote_code = str(remote_access.get("diagnosis_code") or "")
+    if remote_access_blocked:
+        diagnosis_codes.append("coordinator_remote_route_required")
+    elif remote_code and remote_code not in diagnosis_codes:
+        diagnosis_codes.append(remote_code)
     report = {
         "schema": PUBLIC_SWARM_PRODUCT_CLI_SCHEMA,
         "ok": ready,
         "mode": "join",
         "coordinator_url": coordinator_url,
+        "remote_access": remote_access,
         "peer_bootstrap_used": bool(p2p_bootstrap),
         "peer_count": len(peers),
         "p2p": {
@@ -11337,10 +11514,16 @@ def build_product_join(args: argparse.Namespace, *, runner: Runner = subprocess.
 
 def _product_join_operator_action(report: dict[str, Any]) -> str:
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []))
+    remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
     if "p2p_discovery_unreachable" in codes:
         return "Start the matching P2P discovery daemon from next_commands, or use a direct --coordinator-url."
     if "coordinator_route_missing" in codes:
         return "Start the Coordinator with crowdtensor serve, or pass --coordinator-url/--peer-bootstrap for discovery."
+    if "coordinator_remote_route_required" in codes:
+        return (
+            "This join command was marked as remote, but the Coordinator URL is local-only or otherwise not remotely usable; "
+            "use the Coordinator's public HTTPS, tunnel, VPN, or LAN URL before running this Miner."
+        )
     if "join_coordinator_unreachable" in codes:
         return "Coordinator /ready is unreachable; check the URL, DNS, firewall, VPN, tunnel, or public reverse proxy before running this Miner."
     if "join_coordinator_not_ready" in codes:
@@ -11364,9 +11547,16 @@ def _product_join_operator_action(report: dict[str, Any]) -> str:
         stage_caps = ((report.get("p2p") or {}).get("stage_capabilities") or [])
         stage_text = "/".join(stage_caps) if stage_caps else "the selected stage"
         generate_hint = "crowdtensor generate --p2p --dry-run" if (report.get("p2p") or {}).get("enabled") else f"crowdtensor generate --coordinator-url {report.get('coordinator_url')} --dry-run"
+        access_hint = ""
+        if remote_access.get("route_kind") == "public-or-tunnel":
+            access_hint = " This Miner will use the public/tunnel Coordinator URL."
+        elif remote_access.get("route_kind") == "private-network":
+            access_hint = " This Miner must be on the same LAN/VPN/trusted private route as the Coordinator."
+        elif remote_access.get("route_kind") == "local-only":
+            access_hint = " This URL only reaches a Coordinator on the same machine."
         if report.get("printed_only"):
-            return f"Rerun with --run to start {stage_text}; keep one stage0 and one stage1 Miner running, then run {generate_hint}."
-        return f"Keep this Miner running; start the other stage if needed, then run {generate_hint}."
+            return f"Rerun with --run to start {stage_text}; keep one stage0 and one stage1 Miner running, then run {generate_hint}.{access_hint}"
+        return f"Keep this Miner running; start the other stage if needed, then run {generate_hint}.{access_hint}"
     if report.get("returncode") not in {None, 0}:
         return "Miner process exited; inspect its stderr/logs, fix the runtime error, and rerun join --run."
     return "Inspect the join JSON report and Miner command for the failing check."
@@ -13376,6 +13566,17 @@ def print_product_serve(report: dict[str, Any]) -> None:
     print(f"  ok: {report.get('ok')}")
     print(f"  profile: {report.get('profile')}")
     print(f"  coordinator_url: {report.get('coordinator_url')}")
+    remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    if remote_access:
+        print(
+            "  remote_access: "
+            f"route={remote_access.get('route_kind')} "
+            f"host={remote_access.get('host_class')} "
+            f"remote_miners={remote_access.get('remote_miners_supported')} "
+            f"join_url={remote_access.get('miner_join_url') or 'none'} "
+            f"forwarder_required={remote_access.get('external_forwarder_required')} "
+            f"diagnosis={remote_access.get('diagnosis_code')}"
+        )
     p2p = report.get("p2p") if isinstance(report.get("p2p"), dict) else {}
     if p2p:
         announce = p2p.get("announce") if isinstance(p2p.get("announce"), dict) else {}
@@ -13404,6 +13605,16 @@ def print_product_join(report: dict[str, Any]) -> None:
     print("CrowdTensor join")
     print(f"  ok: {report.get('ok')}")
     print(f"  coordinator_url: {report.get('coordinator_url')}")
+    remote_access = report.get("remote_access") if isinstance(report.get("remote_access"), dict) else {}
+    if remote_access:
+        print(
+            "  remote_access: "
+            f"route={remote_access.get('route_kind')} "
+            f"host={remote_access.get('host_class')} "
+            f"remote_miners={remote_access.get('remote_miners_supported')} "
+            f"join_url={remote_access.get('miner_join_url') or 'none'} "
+            f"diagnosis={remote_access.get('diagnosis_code')}"
+        )
     invite = report.get("join_invite") if isinstance(report.get("join_invite"), dict) else {}
     if invite:
         policy = invite.get("policy") if isinstance(invite.get("policy"), dict) else {}
@@ -16885,6 +17096,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         epilog=(
             "examples:\n"
             "  crowdtensor serve --profile cpu-real-llm --bind-host 127.0.0.1 --public-host 127.0.0.1 --port 8787 --run\n"
+            "  crowdtensor serve --profile cpu-real-llm --coordinator-public-url https://YOUR-TUNNEL.example --expect-remote-miners --run\n"
             "  crowdtensor serve --profile cpu-real-llm --port 8787 --json\n"
             "  crowdtensor serve --p2p --peer-bootstrap http://127.0.0.1:8788 --run\n"
             "\n"
@@ -16895,6 +17107,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     serve.add_argument("--profile", choices=["cpu-real-llm", "gpu-generation"], default="cpu-real-llm")
     serve.add_argument("--bind-host", default="127.0.0.1")
     serve.add_argument("--public-host", default="127.0.0.1")
+    serve.add_argument(
+        "--coordinator-public-url",
+        default="",
+        help="full http(s) URL remote Miners should use, e.g. a HTTPS tunnel or reverse-proxy URL; does not change local bind",
+    )
+    serve.add_argument(
+        "--expect-remote-miners",
+        action="store_true",
+        help="fail early if the advertised Coordinator URL is local-only or otherwise unsuitable for remote Miner hosts",
+    )
     serve.add_argument("--port", type=int, default=8787)
     serve.add_argument("--state-dir", default="state")
     serve.add_argument("--admin-token", default=os.environ.get("CROWDTENSOR_ADMIN_TOKEN", "local-admin"))
@@ -16944,6 +17166,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         epilog=(
             "examples:\n"
             "  crowdtensor join --invite-file miner.invite.json --run\n"
+            "  crowdtensor join --invite-file miner.invite.json --check-admission --expect-remote-coordinator --json\n"
             "  crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage0-miner --stage stage0 --run\n"
             "  crowdtensor join --coordinator-url http://127.0.0.1:8787 --miner-id stage1-miner --stage stage1 --run\n"
             "  crowdtensor join --p2p --peer-bootstrap http://127.0.0.1:8788 --miner-id stage0-miner --stage stage0 --run\n"
@@ -16955,6 +17178,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     join.add_argument("--invite-file", default="", help="read a product Miner join invite JSON generated by scripts/create_miner_invite.py")
     join.add_argument("--invite", default="", help="base64url product Miner join invite code; prefer --invite-file for local secrecy")
     join.add_argument("--coordinator-url", default="")
+    join.add_argument(
+        "--expect-remote-coordinator",
+        action="store_true",
+        help="fail early when --coordinator-url is local-only; use on remote Miner hosts before --run",
+    )
     join.add_argument("--peer-bootstrap", default="")
     join.add_argument("--p2p", action="store_true", help="discover Coordinator and announce stage capability through p2pd")
     join.add_argument("--p2p-backend", choices=["lite", "real"], default="lite")
@@ -19228,6 +19456,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             args.admin_token = ""
         if args.port < 1:
             raise SystemExit("--port must be positive")
+        if args.coordinator_public_url:
+            parsed_public_url = urlparse(args.coordinator_public_url)
+            if parsed_public_url.scheme not in {"http", "https"} or not parsed_public_url.hostname:
+                raise SystemExit("--coordinator-public-url must be a full http(s) URL with a host")
         if args.ttl_seconds <= 0:
             raise SystemExit("--ttl-seconds must be positive")
         if args.lease_seconds <= 0:

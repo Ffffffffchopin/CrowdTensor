@@ -424,6 +424,12 @@ crowdtensor generate \
 
 For real multi-machine trials, keep the Coordinator on a trusted network
 boundary, use explicit tokens, and rotate temporary tokens after public demos.
+The Coordinator does not have to bind directly to a public interface if a tunnel,
+VPN, or reverse proxy provides the Miner-facing URL. Start the Coordinator with
+`--coordinator-public-url https://YOUR-TUNNEL.example --expect-remote-miners`
+to keep local binding separate from the URL that remote Miners should join, and
+use `crowdtensor join --expect-remote-coordinator` on Miner hosts to catch
+accidental `127.0.0.1` or `localhost` invites before running.
 Multi-operator deployments can start the same product Coordinator with
 `crowdtensor serve --operator-token-registry state/operator_registry.json --run`
 so audit/accounting operators do not need the legacy owner-level admin token.
