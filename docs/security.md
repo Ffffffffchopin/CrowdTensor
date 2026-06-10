@@ -120,6 +120,11 @@ operator-supplied `--tunnel-command` or generated `--tunnel-provider` command
 template for `start_tunnel.sh`; `--tunnel-provider ngrok` and
 `--tunnel-provider cloudflare-token` only write private command templates and
 do not create third-party tunnel accounts, domains, or ingress rules;
+`--tunnel-provider cloudflare-quick` without `--coordinator-url` creates only a
+route-prep package with `discover_cloudflare_tunnel.sh` and
+`create_bootstrap_from_tunnel.sh`; it defers registries and Miner invites until
+the temporary `trycloudflare.com` URL is known and requires the quick tunnel
+process to stay running while those temporary packages are used;
 `tunnel_doctor.sh`
 wraps `crowdtensor swarm-tunnel-doctor` and emits
 `crowdtensor_swarm_tunnel_doctor_v1` plus `tunnel_doctor.json` to check the

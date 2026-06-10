@@ -32,6 +32,15 @@ For common static tunnel setups, `--tunnel-provider ngrok` can generate an
 to the local Coordinator upstream. These provider templates are only private
 command generation; they do not register domains, create tunnel accounts, or
 make quick/random tunnel URLs safe for Miner invites.
+For a temporary no-account smoke path, `--tunnel-provider cloudflare-quick`
+without `--coordinator-url` emits a route-prep package with
+`discover_cloudflare_tunnel.sh` and `create_bootstrap_from_tunnel.sh` instead
+of Miner invites. The discovery script starts `cloudflared tunnel --url
+http://127.0.0.1:<port>`, extracts the temporary `trycloudflare.com` URL from
+logs, and then creates the final bootstrap package with that URL. Keep that
+quick tunnel process running while the temporary Miner packages are used; a
+restart can produce a different URL, so this is not a stable production
+Coordinator route.
 Run `tunnel_doctor.sh` or `crowdtensor swarm-tunnel-doctor --output-dir ...
 --expect-remote-miners` first to emit `crowdtensor_swarm_tunnel_doctor_v1` and
 `tunnel_doctor.json` checks for the private tunnel env, provider binary,

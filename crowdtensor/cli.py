@@ -11948,6 +11948,11 @@ def _bootstrap_tunnel_template_command(args: argparse.Namespace) -> tuple[str, d
         template["secret_env"] = token_env
         template["provider_ingress_must_route_to"] = upstream
         return f"cloudflared tunnel run --token \"${{{token_env}:?set {token_env}}}\"", template
+    if provider == "cloudflare-quick":
+        template["ephemeral_url"] = True
+        template["manual_url_discovery_required"] = True
+        template["provider_ingress_must_route_to"] = upstream
+        return f"cloudflared tunnel --url {shlex.quote(upstream)}", template
     raise SystemExit(f"unsupported tunnel provider: {provider}")
 
 
@@ -11967,6 +11972,271 @@ def _resolve_bootstrap_tunnel_command(args: argparse.Namespace) -> tuple[str, di
             "public_artifact_safe": True,
         }
     return _bootstrap_tunnel_template_command(args)
+
+
+def _bootstrap_cloudflare_quick_discovery_script(*, upstream_url: str) -> str:
+    return "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        *_bootstrap_operator_path_prelude(),
+        'RUN_DIR="$SCRIPT_DIR/run"',
+        'LOG_DIR="$SCRIPT_DIR/logs"',
+        'mkdir -p "$RUN_DIR" "$LOG_DIR"',
+        'PID_FILE="$RUN_DIR/cloudflare_quick_tunnel.pid"',
+        'URL_FILE="$RUN_DIR/cloudflare_quick_tunnel.url"',
+        'COMMAND_FILE="$RUN_DIR/cloudflare_quick_tunnel.command"',
+        'LOG_FILE="$LOG_DIR/cloudflare_quick_tunnel.log"',
+        'WAIT_SECONDS="${CROWDTENSOR_TUNNEL_DISCOVERY_WAIT_SECONDS:-60}"',
+        "",
+        "if ! command -v cloudflared >/dev/null 2>&1; then",
+        "  echo 'cloudflared is required for --tunnel-provider cloudflare-quick.' >&2",
+        "  exit 1",
+        "fi",
+        "",
+        'if [ -f "$PID_FILE" ]; then',
+        '  OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"',
+        '  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" >/dev/null 2>&1; then',
+        '    echo "cloudflare quick tunnel already running with pid $OLD_PID"',
+        '    if [ -s "$URL_FILE" ]; then',
+        '      URL="$(cat "$URL_FILE")"',
+        '      echo "Miner-facing URL: $URL"',
+        '      "$SCRIPT_DIR/create_bootstrap_from_tunnel.sh" "$URL"',
+        "    fi",
+        "    exit 0",
+        "  fi",
+        '  rm -f "$PID_FILE"',
+        "fi",
+        "",
+        f"COMMAND=\"cloudflared tunnel --url {_quote_env_value(upstream_url)}\"",
+        'printf "%s\\n" "$COMMAND" >"$COMMAND_FILE"',
+        'echo "Starting temporary Cloudflare quick tunnel for {_upstream_placeholder}"'.replace("{_upstream_placeholder}", upstream_url),
+        'nohup bash -lc "$COMMAND" >"$LOG_FILE" 2>&1 &',
+        'echo "$!" >"$PID_FILE"',
+        'echo "cloudflared pid $(cat "$PID_FILE"), log $LOG_FILE"',
+        "",
+        "URL=''",
+        "DEADLINE=$((SECONDS + WAIT_SECONDS))",
+        'while [ "$SECONDS" -le "$DEADLINE" ]; do',
+        "  URL=$(grep -Eo 'https://[-A-Za-z0-9.]+\\.trycloudflare\\.com' \"$LOG_FILE\" | tail -n 1 || true)",
+        '  if [ -n "$URL" ]; then',
+        "    break",
+        "  fi",
+        "  sleep 1",
+        "done",
+        "",
+        'if [ -z "$URL" ]; then',
+        "  echo 'Could not discover a trycloudflare URL before timeout.' >&2",
+        '  echo "Inspect $LOG_FILE, or rerun with CROWDTENSOR_TUNNEL_DISCOVERY_WAIT_SECONDS=120." >&2',
+        "  exit 1",
+        "fi",
+        "",
+        'printf "%s\\n" "$URL" >"$URL_FILE"',
+        'echo "Miner-facing URL: $URL"',
+        'echo "Next: $SCRIPT_DIR/create_bootstrap_from_tunnel.sh $URL"',
+        '"$SCRIPT_DIR/create_bootstrap_from_tunnel.sh" "$URL"',
+        "",
+        "echo 'Keep this tunnel process running until you are done with the temporary Miner handoff.'",
+        'echo "Stop it with: kill $(cat "$PID_FILE")"',
+        "",
+    ])
+
+
+def _bootstrap_cloudflare_quick_create_script(args: argparse.Namespace) -> str:
+    ignored_flags = {
+        "output_dir",
+        "coordinator_url",
+        "public_host",
+        "tunnel_command",
+        "tunnel_provider",
+        "tunnel_token_env",
+        "json",
+    }
+    command = [
+        "crowdtensor",
+        "swarm-bootstrap",
+        "--output-dir",
+        "FINAL_OUTPUT_DIR",
+        "--coordinator-url",
+        "FINAL_COORDINATOR_URL",
+    ]
+    if bool(getattr(args, "expect_remote_miners", False)):
+        command.append("--expect-remote-miners")
+    value_flags = {
+        "bind_host": "--bind-host",
+        "port": "--port",
+        "peer_bootstrap": "--peer-bootstrap",
+        "p2p_backend": "--p2p-backend",
+        "swarm_id": "--swarm-id",
+        "operator_id": "--operator-id",
+        "miner_id_prefix": "--miner-id-prefix",
+        "backend": "--backend",
+        "hf_model_id": "--hf-model-id",
+        "max_new_tokens": "--max-new-tokens",
+        "max_active_sessions": "--max-active-sessions",
+        "max_total_sessions": "--max-total-sessions",
+        "rate_limit": "--rate-limit",
+        "rate_window_seconds": "--rate-window-seconds",
+        "max_tasks": "--max-tasks",
+        "max_runtime_seconds": "--max-runtime-seconds",
+        "trust_tier": "--trust-tier",
+        "quota_task_limit": "--quota-task-limit",
+        "claim_rate_limit": "--claim-rate-limit",
+        "claim_rate_window_seconds": "--claim-rate-window-seconds",
+        "stage0_reward_account": "--stage0-reward-account",
+        "stage1_reward_account": "--stage1-reward-account",
+    }
+    for attr, flag in value_flags.items():
+        if attr in ignored_flags:
+            continue
+        value = getattr(args, attr, None)
+        if value in {None, ""}:
+            continue
+        command.extend([flag, str(value)])
+    if bool(getattr(args, "replace", False)):
+        command.append("--replace")
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"',
+        *_bootstrap_operator_path_prelude(),
+        'if [ "$#" -lt 1 ]; then',
+        '  echo "usage: $0 https://YOUR-TRYCLOUDFLARE.trycloudflare.com [output-dir]" >&2',
+        "  exit 2",
+        "fi",
+        'COORDINATOR_URL="${1%/}"',
+        'FINAL_OUTPUT_DIR="${2:-$SCRIPT_DIR/final-bootstrap}"',
+        'if [ -z "$COORDINATOR_URL" ]; then',
+        "  echo 'Coordinator URL is required.' >&2",
+        "  exit 2",
+        "fi",
+        "echo 'Creating final bootstrap package for the currently running temporary Cloudflare quick tunnel.'",
+        "echo 'The final package will not restart the quick tunnel; keep this route-prep tunnel process running.'",
+        "",
+        "exec " + command_line(command)
+            .replace("FINAL_OUTPUT_DIR", '"$FINAL_OUTPUT_DIR"')
+            .replace("FINAL_COORDINATOR_URL", '"$COORDINATOR_URL"'),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _bootstrap_cloudflare_quick_runbook(*, upstream_url: str, scripts: dict[str, str]) -> str:
+    return "\n".join([
+        "# CrowdTensor Cloudflare Quick Tunnel Prep",
+        "",
+        "This package does not contain Miner invites yet. It is a route-prep helper for users who do not already have a stable public Coordinator URL.",
+        "",
+        "## Steps",
+        "",
+        "1. Install `cloudflared` on the Coordinator host.",
+        f"2. Run `{scripts.get('discover_cloudflare_tunnel', '')}` to start a temporary quick tunnel to `{upstream_url}` and discover the `trycloudflare.com` URL.",
+        f"3. The script then runs `{scripts.get('create_bootstrap_from_tunnel', '')}` with the discovered URL and writes the real bootstrap package under `final-bootstrap` by default.",
+        "4. The final bootstrap package will not start a new quick tunnel, because that would produce a different random URL.",
+        "5. Keep this route-prep quick tunnel process running while remote Miners use that temporary URL.",
+        "6. Copy only the final bootstrap package's stage archives, runners, and checksum files to Miner hosts after its live handoff gate passes.",
+        "",
+        "## Boundary",
+        "",
+        "- Cloudflare quick tunnels are temporary and the URL can change after restart.",
+        "- This helper does not create Cloudflare accounts, DNS records, production TLS policy, NAT traversal, billing, or large-model serving.",
+        "- For stable operation, prefer `--tunnel-provider cloudflare-token`, `--tunnel-provider ngrok`, a reverse proxy, VPN, or port forwarding with a stable URL.",
+        "",
+    ])
+
+
+def build_swarm_bootstrap_route_prep(args: argparse.Namespace, *, coordinator_url: str, tunnel_command: str, tunnel_template: dict[str, Any], remote_access: dict[str, Any], safety: dict[str, Any]) -> dict[str, Any]:
+    output_dir = Path(args.output_dir)
+    upstream_url = _bootstrap_tunnel_upstream(args)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    private_dir = output_dir / "private"
+    private_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = output_dir / "run"
+    logs_dir = output_dir / "logs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    tunnel_command_file = run_dir / "cloudflare_quick_tunnel.command"
+    discover_script = output_dir / "discover_cloudflare_tunnel.sh"
+    create_script = output_dir / "create_bootstrap_from_tunnel.sh"
+    runbook_path = output_dir / "SWARM_ROUTE_PREP.md"
+    _write_executable(discover_script, _bootstrap_cloudflare_quick_discovery_script(upstream_url=upstream_url))
+    _write_executable(
+        create_script,
+        _bootstrap_cloudflare_quick_create_script(args),
+    )
+    scripts = {
+        "discover_cloudflare_tunnel": str(discover_script),
+        "create_bootstrap_from_tunnel": str(create_script),
+    }
+    runbook_path.write_text(
+        _bootstrap_cloudflare_quick_runbook(upstream_url=upstream_url, scripts=scripts),
+        encoding="utf-8",
+    )
+    runbook_path.chmod(0o644)
+    report = {
+        "schema": "crowdtensor_swarm_bootstrap_v1",
+        "ok": True,
+        "mode": "swarm-bootstrap",
+        "bootstrap_stage": "route-prep",
+        "route_prep_ready": True,
+        "final_bootstrap_ready": False,
+        "output_dir": str(output_dir),
+        "coordinator_url": coordinator_url,
+        "tunnel": {
+            "schema": "crowdtensor_bootstrap_tunnel_v1",
+            "enabled": True,
+            "command_private_env": "",
+            "launches_before_coordinator": False,
+            "public_artifact_safe": True,
+            "not_nat_traversal": True,
+            "operator_supplied_tunnel": False,
+            "template": tunnel_template,
+            "ephemeral_url": True,
+            "manual_url_discovery_required": True,
+        },
+        "remote_access": remote_access,
+        "join_options": remote_access.get("join_options") if isinstance(remote_access.get("join_options"), list) else [],
+        "recommended_join_option": "operator_tunnel",
+        "recommended_setup_command": str(discover_script),
+        "registries": {},
+        "private_env": {},
+        "private_invites": {},
+        "scripts": scripts,
+        "runbook": str(runbook_path),
+        "operator": {},
+        "miners": [],
+        "next_commands": [
+            command_entry("discover temporary Cloudflare tunnel URL", [str(discover_script)]),
+            command_entry(
+                "create final bootstrap from discovered tunnel URL",
+                [str(create_script), "https://YOUR-TRYCLOUDFLARE.trycloudflare.com"],
+            ),
+        ],
+        "diagnosis_codes": [
+            "cloudflare_quick_tunnel_route_prep_ready",
+            "miner_invites_deferred_until_tunnel_url_known",
+        ],
+        "safety": {
+            **safety,
+            "registries_created": False,
+            "private_env_files_created": False,
+            "private_invites_created": False,
+            "scripts_created": True,
+            "route_prep_scripts_created": True,
+            "miner_invites_deferred_until_tunnel_url_known": True,
+            "cloudflare_quick_ephemeral_url": True,
+            "scripts_embed_plaintext_tokens": False,
+        },
+        "operator_action": (
+            "Run discover_cloudflare_tunnel.sh on the Coordinator host to start a temporary Cloudflare quick tunnel, "
+            "discover its trycloudflare.com URL, and generate the final bootstrap package with that URL. "
+            "Keep the tunnel process running while using the temporary Miner packages."
+        ),
+        "public_artifact_safe": True,
+    }
+    return sanitize(redact_values(report, [tunnel_command]))
 
 
 def _stage_invite_discovery_summary(invite: dict[str, Any]) -> dict[str, Any]:
@@ -13307,6 +13577,15 @@ def build_swarm_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "not_nat_traversal": True,
         "not_large_model_serving": True,
     }
+    if str(getattr(args, "tunnel_provider", "") or "").strip() == "cloudflare-quick":
+        return build_swarm_bootstrap_route_prep(
+            args,
+            coordinator_url=coordinator_url,
+            tunnel_command=tunnel_command,
+            tunnel_template=_tunnel_template,
+            remote_access=remote_access,
+            safety=safety,
+        )
     if remote_access_blocked:
         return sanitize({
             "schema": "crowdtensor_swarm_bootstrap_v1",
@@ -24047,7 +24326,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     swarm_bootstrap.add_argument(
         "--tunnel-provider",
-        choices=["ngrok", "cloudflare-token"],
+        choices=["ngrok", "cloudflare-token", "cloudflare-quick"],
         default="",
         help=(
             "generate a managed tunnel command template from --coordinator-url instead of writing "
@@ -26540,7 +26819,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 raise SystemExit("--coordinator-url must be a full http(s) URL with a host")
         if args.tunnel_command and args.tunnel_provider:
             raise SystemExit("--tunnel-command and --tunnel-provider are mutually exclusive")
-        if (args.tunnel_command or args.tunnel_provider) and not args.coordinator_url:
+        if args.tunnel_provider == "cloudflare-quick" and args.coordinator_url:
+            raise SystemExit("--tunnel-provider cloudflare-quick discovers the temporary URL; omit --coordinator-url")
+        if (args.tunnel_command or (args.tunnel_provider and args.tunnel_provider != "cloudflare-quick")) and not args.coordinator_url:
             raise SystemExit("--tunnel-command/--tunnel-provider requires --coordinator-url set to the Miner-facing tunnel/VPN URL")
         if args.tunnel_provider == "ngrok" and urlparse(args.coordinator_url).scheme != "https":
             raise SystemExit("--tunnel-provider ngrok requires an https --coordinator-url with a reserved ngrok domain")

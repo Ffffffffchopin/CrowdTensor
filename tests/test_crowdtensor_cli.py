@@ -3351,6 +3351,64 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn(generated_command, tunnel_env)
         self.assertNotIn(generated_command, json.dumps(report, sort_keys=True))
 
+    def test_swarm_bootstrap_cloudflare_quick_prepares_route_before_invites(self) -> None:
+        output_dir = Path(self._tmp_dir()) / "bootstrap"
+        args = cli.parse_args([
+            "swarm-bootstrap",
+            "--output-dir",
+            str(output_dir),
+            "--tunnel-provider",
+            "cloudflare-quick",
+            "--expect-remote-miners",
+            "--json",
+        ])
+
+        report = cli.build_swarm_bootstrap(args)
+        encoded = json.dumps(report, sort_keys=True)
+        scripts = {name: Path(path) for name, path in report["scripts"].items()}
+        discover_text = scripts["discover_cloudflare_tunnel"].read_text(encoding="utf-8")
+        create_text = scripts["create_bootstrap_from_tunnel"].read_text(encoding="utf-8")
+        runbook = Path(report["runbook"]).read_text(encoding="utf-8")
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["bootstrap_stage"], "route-prep")
+        self.assertTrue(report["route_prep_ready"])
+        self.assertFalse(report["final_bootstrap_ready"])
+        self.assertEqual(report["diagnosis_codes"], [
+            "cloudflare_quick_tunnel_route_prep_ready",
+            "miner_invites_deferred_until_tunnel_url_known",
+        ])
+        self.assertEqual(report["registries"], {})
+        self.assertEqual(report["private_env"], {})
+        self.assertEqual(report["private_invites"], {})
+        self.assertEqual(report["recommended_join_option"], "operator_tunnel")
+        self.assertTrue(report["tunnel"]["enabled"])
+        self.assertTrue(report["tunnel"]["ephemeral_url"])
+        self.assertTrue(report["tunnel"]["manual_url_discovery_required"])
+        self.assertEqual(report["tunnel"]["template"]["provider"], "cloudflare-quick")
+        self.assertEqual(report["tunnel"]["template"]["provider_ingress_must_route_to"], "http://127.0.0.1:8787")
+        self.assertTrue(report["safety"]["route_prep_scripts_created"])
+        self.assertTrue(report["safety"]["miner_invites_deferred_until_tunnel_url_known"])
+        self.assertFalse(report["safety"]["registries_created"])
+        self.assertFalse(report["safety"]["private_invites_created"])
+        self.assertEqual(scripts["discover_cloudflare_tunnel"].stat().st_mode & 0o777, 0o700)
+        self.assertEqual(scripts["create_bootstrap_from_tunnel"].stat().st_mode & 0o777, 0o700)
+        self.assertIn("cloudflared tunnel --url 'http://127.0.0.1:8787'", discover_text)
+        self.assertIn("trycloudflare\\.com", discover_text)
+        self.assertIn("create_bootstrap_from_tunnel.sh", discover_text)
+        self.assertIn("cloudflare_quick_tunnel.command", discover_text)
+        self.assertIn("crowdtensor swarm-bootstrap", create_text)
+        self.assertIn("--coordinator-url \"$COORDINATOR_URL\"", create_text)
+        self.assertNotIn("--tunnel-command", create_text)
+        self.assertIn("--expect-remote-miners", create_text)
+        self.assertIn("The final bootstrap package will not start a new quick tunnel", runbook)
+        self.assertIn("does not contain Miner invites yet", runbook)
+        self.assertIn(str(scripts["discover_cloudflare_tunnel"]), report["recommended_setup_command"])
+        self.assertNotIn("CROWDTENSOR_ADMIN_TOKEN", encoded)
+        self.assertNotIn("CROWDTENSOR_MINER_TOKEN", encoded)
+        self.assertFalse((output_dir / "operator_registry.json").exists())
+        self.assertFalse((output_dir / "stage0").exists())
+
     def test_swarm_bootstrap_rejects_conflicting_tunnel_command_and_provider(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
             cli.parse_args([
@@ -3364,6 +3422,18 @@ class CrowdTensorCliTests(unittest.TestCase):
             ])
 
         self.assertIn("mutually exclusive", str(ctx.exception))
+
+    def test_swarm_bootstrap_rejects_cloudflare_quick_with_fixed_url(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            cli.parse_args([
+                "swarm-bootstrap",
+                "--coordinator-url",
+                "https://ct.example",
+                "--tunnel-provider",
+                "cloudflare-quick",
+            ])
+
+        self.assertIn("discovers the temporary URL", str(ctx.exception))
 
     def test_swarm_bootstrap_human_output_includes_handoff_summary(self) -> None:
         output_dir = Path(self._tmp_dir()) / "bootstrap"

@@ -443,6 +443,20 @@ state/swarm-bootstrap/tunnel_doctor.sh
 crowdtensor swarm-bootstrap-check --output-dir state/swarm-bootstrap --expect-remote-miners
 ```
 
+If you do not have a stable public URL yet, `--tunnel-provider cloudflare-quick`
+creates a route-prep package instead of Miner invites:
+
+```bash
+crowdtensor swarm-bootstrap --output-dir state/swarm-route-prep --tunnel-provider cloudflare-quick --expect-remote-miners
+state/swarm-route-prep/discover_cloudflare_tunnel.sh
+```
+
+The discovery script starts a temporary Cloudflare quick tunnel, extracts the
+`trycloudflare.com` URL, and then creates the final bootstrap package with that
+URL. Keep the quick tunnel process running while those temporary Miner packages
+are in use; for stable operation use a named tunnel, reverse proxy, VPN, or
+port forwarding.
+
 The report lists the local private operator invite, stage0/stage1 Miner invites,
 private `miner.join-code.txt` files, operator/coordinator private env files,
 hashed registries, and copyable discovery / `serve` / `join` / `generate`
