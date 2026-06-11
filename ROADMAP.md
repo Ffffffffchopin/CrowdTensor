@@ -7,6 +7,29 @@ The project is deliberately staged. Each stage must leave behind runnable
 commands, redacted evidence, and clear boundaries before the next layer is
 claimed.
 
+## Development Layers
+
+Use three non-overlapping planning layers:
+
+- **Core technology layer:** model execution across devices. It owns large-model
+  runtime adapters, layer/pipeline/tensor/expert partitioning, activation and
+  KV-cache transport, prefill/decode split, batching, streaming generation,
+  heterogeneous placement, correctness checks, and future training/fine-tuning
+  mechanics. This is the main technical breakthrough layer.
+- **Control layer:** resource governance. It owns Coordinator sessions, task
+  leases, heartbeats, result ledgers, admission, role and tenant policy, quotas,
+  rate limits, trust/quarantine, P2P provider records, accounting, settlement
+  drafts, future incentives, and abuse controls.
+- **User-facing layer:** usability and product surface. It owns CLI commands,
+  bootstrap, quickstart, Miner join packs, route/tunnel helpers, dashboards,
+  docs, support bundles, redacted evidence, onboarding gates, diagnostics, and
+  user-visible health, answer, and cost surfaces.
+
+Security, privacy, observability, artifact redaction, tests, and performance are
+cross-cutting requirements for every layer. The project should not mistake user
+experience polish or control-plane readiness for completion of the core
+large-model sharding breakthrough.
+
 ## Current Milestone
 
 **Public Real-LLM Swarm Inference Beta**
@@ -67,6 +90,9 @@ Hivemind-level large-model serving.
 - Expand small-model variants only when correctness and artifact safety remain
   easy to verify.
 - Keep CPU as the default path; keep CUDA opt-in and fail-closed.
+- Start the core-technology transition plan toward a real large-model runtime
+  adapter and reproducible 7B/13B cross-device benchmark, without claiming the
+  current tiny-model Beta is large-model serving.
 
 ## Mid Term
 
@@ -83,6 +109,18 @@ Hivemind-level large-model serving.
 - Make Miner capability selection and health easier to understand.
 - Keep a clean separation between public user commands and maintainer release
   gates.
+
+**Core large-model path.**
+
+- Evaluate llama.cpp RPC, vLLM/SGLang worker integration, TensorRT-LLM, and
+  Petals-like layer workers as runtime backends rather than rebuilding kernels
+  inside the control plane.
+- Add a partition planner that accounts for VRAM, bandwidth, latency, stage
+  role, KV-cache location, and device reliability.
+- Produce repeatable two-to-four-device benchmarks for quantized 7B/13B models
+  before widening claims to larger open-weight models.
+- Compare LAN/trusted-cluster throughput separately from wide-area Petals-style
+  availability; optimize each route for its own constraints.
 
 **Browser and edge experiments.**
 

@@ -17,6 +17,50 @@ The target audience is:
 
 The project should be honest about status. It is an Alpha control plane, not yet a production DePIN network or real LLM deployment platform.
 
+## Durable Architecture Layering
+
+Use this three-layer model when planning future work. It is meant to keep the
+project focused on the real technical north star: cross-device large-model
+inference for ordinary machines, with later training and fine-tuning support.
+
+1. Core technology layer: solves how the model actually runs across devices.
+   This layer owns large-model runtime adapters such as vLLM, SGLang,
+   TensorRT-LLM, llama.cpp/GGUF/RPC, or Petals-like workers; layer, pipeline,
+   tensor, expert, and prefill/decode partitioning; activation and KV-cache
+   transport; streaming token generation; batching; heterogeneous CPU/GPU
+   placement; correctness checks; redundancy; and future LoRA/DiLoCo-style
+   training or fine-tuning. If changing a component changes whether a model can
+   run, how large it can be, or how fast it runs, treat it as core technology.
+2. Control layer: decides who can participate, which work they receive, how
+   failures recover, how usage is metered, and how trust or economics are
+   enforced. This layer owns the Coordinator, sessions, task leases, heartbeats,
+   result ledgers, Miner admission, operator and user identities, tenant/project
+   policy, quotas, rate limits, capability routing, P2P provider records, trust
+   tiers, quarantine, overrides, accounting summaries, settlement drafts, future
+   rewards, incentives, staking/slashing, abuse detection, and audit logs. It
+   must not embed model math; it schedules and governs explicit workload
+   contracts.
+3. User-facing layer: makes the system usable by ordinary operators, Miners, and
+   request users. This layer owns CLI flows such as `infer`, `generate`, `serve`,
+   `join`, and `swarm-bootstrap`; one-command bootstrap, quickstart, install,
+   route-prep, and runner scripts; dashboards and APIs; docs and runbooks;
+   support bundles; redacted reports; onboarding and release gates; diagnostics;
+   next-command guidance; and user-visible cost, health, and answer surfaces. It
+   should wrap lower layers without inventing policy or runtime semantics.
+
+Cross-cutting requirements such as security, privacy, observability, artifact
+redaction, testing, and performance apply to all three layers. Do not treat them
+as a fourth product layer. For example, core technology must avoid leaking
+activations/KV-cache data, the control layer must protect tokens and enforce
+policy, and the user-facing layer must keep prompts, generated text, credentials,
+lease material, and private runtime state out of public artifacts.
+
+This separation should guide task selection. Near-term user-facing and control
+work is useful, but the core technical breakthrough is still real cross-device
+large-model inference. Future work should increasingly connect the current
+Coordinator-backed small-model proofs to a real large-model runtime and
+benchmark path before claiming production Swarm Inference.
+
 ## Current Completed Capabilities
 
 The project currently includes:

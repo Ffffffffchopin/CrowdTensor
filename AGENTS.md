@@ -8,6 +8,28 @@ CrowdTensor is the project and network vision: open AI infrastructure that can e
 
 CrowdTensorD is the current Alpha daemon/control plane. It validates the reliability and protocol mechanics needed before real home GPU aggregation, Swarm Inference, Swarm Training, browser compute, and P2P routing are added.
 
+## Durable Architecture Layers
+
+Plan work across three layers and keep their responsibilities separate:
+
+- Core technology layer: model execution across devices. This owns real
+  large-model runtime adapters, partitioning, activation/KV-cache transport,
+  batching, streaming, heterogeneous placement, correctness checks, and later
+  training/fine-tuning mechanics.
+- Control layer: governance and scheduling. This owns Coordinator sessions,
+  leases, admission, identity/roles/tenant policy, quotas, rate limits,
+  trust/quarantine, P2P provider records, accounting, settlement drafts, future
+  incentives, abuse controls, and audit logs.
+- User-facing layer: product surface. This owns CLI flows, bootstrap,
+  quickstart, Miner join packs, route/tunnel helpers, docs, support bundles,
+  redacted evidence, diagnostics, onboarding gates, and user-visible answer,
+  cost, and health surfaces.
+
+Security, privacy, observability, artifact redaction, tests, and performance are
+cross-cutting requirements across all three layers. Do not confuse control-plane
+or UX polish with completion of the core technical breakthrough: real
+cross-device large-model inference remains the main unfinished goal.
+
 ## Current Alpha Reality
 
 The current code supports:
