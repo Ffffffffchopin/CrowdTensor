@@ -396,6 +396,36 @@ idempotency material. This is the core large-model sharding Alpha/MVP, not
 production Petals/Hivemind parity, not public RPC security, not NAT traversal,
 not training/fine-tuning, and not a large-model serving SLA.
 
+The next core technology gate is the Inference RC:
+
+```bash
+crowdtensor large-model-shard-rc --output-dir dist/core-technology-inference-rc --json
+python scripts/large_model_inference_rc_check.py \
+  --report dist/core-technology-inference-rc/core_technology_inference_rc.json \
+  --json
+```
+
+This emits `core_technology_inference_rc_v1` and preserves the Alpha artifacts
+while adding `large_model_runtime_adapter_interface_v1`,
+`large_model_runtime_adapter_probe_v2`, `large_model_device_profile_v2`,
+`large_model_partition_manifest_v2`, `large_model_runner_result_v1`,
+`large_model_benchmark_v2`, `large_model_correctness_summary_v1`, and
+`large_model_serving_hooks_v1`. The default mode is a CI-safe
+fixture/diagnostic path: it probes missing llama.cpp binaries, local model
+files, endpoint health, device memory, planner feasibility, runner/supervisor
+contracts, benchmark metrics, correctness digests, serving hooks, redaction,
+and blockers without claiming real 7B execution. Use `--mode real` only for a
+controlled local/LAN/VPN runtime; it enforces `--max-new-tokens <= 8` and a
+20 minute timeout ceiling. Use `--real-run-report` to import a completed real
+short run with TTFT, tokens/s, wall time, generated token count, and output
+digest. A benchmark import can supplement metrics, but the RC real claim comes
+from the runner or real-run import. If no GGUF, llama.cpp binary, RPC worker, or
+hardware is available, the correct ready state is still `ok=true`,
+`real_runtime_verified=false`, `real_7b_runtime_verified=false`, and explicit
+blockers. The RC remains inference-only, controlled-network-only, not public
+P2P/NAT traversal, not production Petals/Hivemind parity, not training or
+fine-tuning, and not an economic network.
+
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 
 ```bash

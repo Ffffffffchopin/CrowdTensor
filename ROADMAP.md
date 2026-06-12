@@ -51,29 +51,48 @@ What is working today:
 This is an engineering beta, not production Swarm Inference and not
 Hivemind-level large-model serving.
 
-The core technology layer now also has a Large-Model Shard Alpha/MVP:
+The core technology layer now has Large-Model Shard Alpha plus an Inference RC:
 
 - `crowdtensor large-model-shard` emits `large_model_shard_alpha_v1`.
+- `crowdtensor large-model-shard-rc` emits `core_technology_inference_rc_v1`
+  and validates with `scripts/large_model_inference_rc_check.py`.
 - The runtime adapter target is GGUF / llama.cpp RPC for controlled
   LAN/VPN/local-process operation.
-- The default 7B-class path is CI-safe planning evidence and keeps
-  `real_runtime_verified=false` unless a real benchmark report is explicitly
-  imported.
+- The default 7B-class RC path is CI-safe fixture and diagnostic evidence and
+  keeps `real_runtime_verified=false` unless a runner/supervisor real run or
+  `--real-run-report` import proves a short controlled runtime execution.
 - The partition planner emits `large_model_partition_manifest_v1` with
   layer-range placement, memory budget checks, controlled endpoint checks,
   latency/bandwidth metadata, and blocker diagnostics.
+- The RC planner emits `large_model_partition_manifest_v2` with tensor split,
+  KV-cache reservation, prefill/decode memory estimates, single-device fallback,
+  multi-worker feasibility, and explicit blocker details.
+- Runtime probing emits `large_model_runtime_adapter_probe_v2` with binary
+  probes, version digests, local model metadata, RPC endpoint health, command
+  validation, sanitized log policy, and controlled LAN/VPN boundaries.
+- Device profiling emits `large_model_device_profile_v2` from local probes or
+  JSON imports, including CPU/RAM, optional GPU/VRAM, usable memory, backend
+  capabilities, latency/bandwidth estimates, and endpoint control checks.
 - The workload contract is `large_model_sharded_generate_v1` and includes
   prefill/decode/finalize steps, KV/prefix cache metadata, streaming, bounded
   batch, cancellation, and health-aware route hooks.
-- The benchmark harness records TTFT, tokens/s, p50/p95 when available, memory,
+- The RC adds `large_model_runner_result_v1`, `large_model_benchmark_v2`,
+  `large_model_correctness_summary_v1`, and `large_model_serving_hooks_v1`.
+  Benchmarks record TTFT, tokens/s, p50/p95 when available, wall time, memory,
   network bytes/token, cache hit/miss metrics, correctness status, failure
   diagnosis, and single-device fallback vs sharded adapter comparison.
 - Public artifacts keep prompts, generated text, token ids, activations,
   KV-cache data, credentials, leases, and idempotency material out of reports.
+- Future runtime descriptors exist for vLLM, SGLang, TensorRT-LLM, and
+  Petals-like backends, but they are explicit `unsupported_runtime_backend`
+  placeholders behind the same adapter interface.
 
-This Alpha is the first core large-model bridge, not a production serving
-claim, not public RPC security, not P2P/NAT traversal, and not training or
-fine-tuning.
+This core path is still not a production serving claim, not public RPC security,
+not P2P/NAT traversal, not a GPU marketplace, and not training or fine-tuning.
+In environments without GGUF, llama.cpp binaries, reachable RPC workers, or
+sufficient hardware, the expected RC outcome is `ok=true` with
+`real_runtime_verified=false`, `real_7b_runtime_verified=false`, and concrete
+blockers.
 
 ## Near Term
 
@@ -114,11 +133,12 @@ fine-tuning.
 - Expand small-model variants only when correctness and artifact safety remain
   easy to verify.
 - Keep CPU as the default path; keep CUDA opt-in and fail-closed.
-- Use `large-model-shard` as the core-technology transition path for 7B-class
-  GGUF / llama.cpp RPC planning and benchmark evidence, without claiming the
+- Use `large-model-shard-rc` as the core-technology transition path for
+  7B-class GGUF / llama.cpp RPC runtime probing, planner v2, runner/supervisor,
+  benchmark v2, correctness, and serving-hook evidence, without claiming the
   current tiny-model Beta is large-model serving.
-- Add real controlled LAN/VPN benchmark imports before widening the
-  `real_runtime_verified` claim beyond fixture planning.
+- Add real controlled LAN/VPN runner imports before widening the
+  `real_runtime_verified` claim beyond fixture diagnostics.
 
 ## Mid Term
 

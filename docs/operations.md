@@ -49,6 +49,90 @@ This Alpha remains controlled LAN/VPN/local-process only: not public RPC safe,
 not production Petals/Hivemind parity, not P2P/NAT traversal, not training or
 fine-tuning, and not a large-model serving SLA.
 
+## Core Technology Inference RC
+
+Use this when validating the core technical layer beyond Alpha planning:
+
+```bash
+crowdtensor large-model-shard-rc \
+  --output-dir dist/core-technology-inference-rc \
+  --json
+python scripts/large_model_inference_rc_check.py \
+  --report dist/core-technology-inference-rc/core_technology_inference_rc.json \
+  --json
+```
+
+The report schema is `core_technology_inference_rc_v1`. It preserves the Alpha
+child report and adds versioned artifacts for the runtime adapter interface,
+runtime probe, device profile v2, partition manifest v2, runner/supervisor
+result, benchmark v2, correctness summary, serving-readiness hooks, Markdown
+summary, and Support Bundle:
+
+- `large_model_runtime_adapter_interface_v1`
+- `large_model_runtime_adapter_probe_v2`
+- `large_model_device_profile_v2`
+- `large_model_partition_manifest_v2`
+- `large_model_runner_result_v1`
+- `large_model_benchmark_v2`
+- `large_model_correctness_summary_v1`
+- `large_model_serving_hooks_v1`
+
+Default `fixture` mode is CI-safe and may still be ready with blockers. It
+probes local llama.cpp binaries, model-file metadata, RPC endpoint reachability,
+device memory, tensor split planning, KV reservation, prefill/decode estimates,
+runner/supervisor contracts, benchmark metrics, correctness digests, streaming
+events, bounded batch shape, cancellation/timeout fields, KV/prefix metadata,
+route health metadata, and public redaction. If no GGUF, llama.cpp binary,
+reachable RPC worker, or sufficient hardware exists, the correct state is
+`ok=true`, `real_runtime_verified=false`, `real_7b_runtime_verified=false`, and
+explicit blockers such as runtime binaries missing, model file missing,
+endpoint unreachable, or partition not runnable.
+
+For a controlled local/LAN/VPN real run, keep it short and bounded:
+
+```bash
+crowdtensor large-model-shard-rc \
+  --mode real \
+  --model-id llama-7b-q4-lan \
+  --model-path /models/llama-7b.Q4_K_M.gguf \
+  --device-profile /secure/private/device_profiles.json \
+  --rpc-endpoint http://127.0.0.1:50052 \
+  --max-new-tokens 8 \
+  --real-timeout-seconds 1200 \
+  --output-dir dist/core-technology-inference-rc-real \
+  --json
+```
+
+`--mode real` enforces `--max-new-tokens <= 8` and a 20 minute timeout ceiling.
+Use `--start-workers` only when the local `rpc-server` command, model path, and
+controlled endpoints are already configured. The runner stores digests and
+metrics, not raw prompts, generated text, or token ids, and it must clean up any
+worker processes it starts.
+
+If the real run happened outside the current process, import a public-safe
+runner report instead:
+
+```bash
+crowdtensor large-model-shard-rc \
+  --real-run-report /secure/private/large_model_real_run.json \
+  --real-benchmark-report /secure/private/large_model_benchmark.json \
+  --output-dir dist/core-technology-inference-rc-import \
+  --json
+```
+
+The real-run import must include `ttft_ms`, `tokens_per_second`,
+`wall_time_seconds`, `generated_token_count`, and `output_digest`; optional
+p50/p95, memory, network, and cache metrics are preserved. A benchmark import
+can supplement metrics, but it cannot by itself set the RC real runtime claim;
+that claim comes from the runner/supervisor result or `--real-run-report`.
+
+The adapter interface includes explicit unsupported descriptors for vLLM,
+SGLang, TensorRT-LLM, and Petals-like backends. Do not treat those descriptors
+as implemented runtime support. This RC remains inference-only,
+controlled-network-only, not public P2P/NAT traversal, not production
+Petals/Hivemind parity, not a GPU marketplace, not training/fine-tuning, and not
+a large-model serving SLA.
+
 ## Public Swarm Inference v2
 
 Use this first when validating the current public-preview inference path. It uses P2P discovery for route lookup, keeps the Coordinator as the execution authority, and validates real small Hugging Face split inference with distinct stage Miners.
