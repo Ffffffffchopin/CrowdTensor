@@ -217,6 +217,8 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli.parse_args(["large-model-kaggle-validate", "--max-new-tokens", "9"])
         with self.assertRaises(SystemExit):
+            cli.parse_args(["large-model-kaggle-validate", "--cuda-build-jobs", "0"])
+        with self.assertRaises(SystemExit):
             cli.parse_args(["large-model-kaggle-validate", "--mode", "evidence-import"])
 
     def test_hf_cuda_package_uses_redacted_inline_command(self) -> None:
@@ -243,6 +245,79 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         self.assertIn("HF_CUDA_INSTALL_COMPAT = True", source)
         self.assertIn("<inline-python-redacted>", source)
         self.assertIn("sharded_path_verified = False", source)
+
+    def test_source_cuda_package_uses_arch_and_no_vmm(self) -> None:
+        output_dir = self._tmp_dir()
+        args = pack.parse_args([
+            "--mode",
+            "package",
+            "--output-dir",
+            str(output_dir),
+            "--llama-build-mode",
+            "source-cuda",
+            "--runtime-path",
+            "rpc",
+            "--cuda-architectures",
+            "60",
+            "--cuda-build-jobs",
+            "1",
+        ])
+        pack.build_report(args)
+
+        source = (output_dir / "kaggle-kernel" / "kernel.py").read_text(encoding="utf-8")
+        compile(source, str(output_dir / "kaggle-kernel" / "kernel.py"), "exec")
+        self.assertIn('CUDA_ARCHITECTURES = "60"', source)
+        self.assertIn("CUDA_BUILD_JOBS = 1", source)
+        self.assertIn("CUDA_NO_VMM = True", source)
+        self.assertIn("-DGGML_RPC=ON", source)
+        self.assertIn("-DGGML_CUDA_NO_VMM=ON", source)
+        self.assertIn("-DCMAKE_CUDA_ARCHITECTURES=", source)
+        self.assertIn("large_model_kaggle_llama_cpp_prepare_complete", source)
+
+    def test_kaggle_auto_falls_back_to_full_output_when_report_missing(self) -> None:
+        output_dir = self._tmp_dir()
+        calls: list[list[str]] = []
+
+        def fake_runner(command, **kwargs):  # type: ignore[no-untyped-def]
+            del kwargs
+            calls.append([str(item) for item in command])
+            command_line = " ".join(str(item) for item in command)
+            if "kernels push" in command_line:
+                return pack.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout="https://www.kaggle.com/code/tester/ct-large-llm-fallback",
+                    stderr="",
+                )
+            if "kernels status" in command_line:
+                return pack.subprocess.CompletedProcess(command, 0, stdout="KernelWorkerStatus.ERROR", stderr="")
+            if "kernels output" in command_line:
+                return pack.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if "kernels delete" in command_line:
+                return pack.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            return pack.subprocess.CompletedProcess(command, 1, stdout="", stderr="unexpected")
+
+        args = pack.parse_args([
+            "--mode",
+            "kaggle-auto",
+            "--output-dir",
+            str(output_dir),
+            "--kaggle-owner",
+            "tester",
+            "--kaggle-status-timeout-seconds",
+            "1",
+            "--kaggle-status-poll-interval",
+            "1",
+        ])
+        steps, _package, run_report_path = pack.run_kaggle_auto(args, output_dir=output_dir, runner=fake_runner)
+
+        self.assertEqual(run_report_path, output_dir / "kaggle-output" / "large_model_kaggle_validation_run.json")
+        self.assertIn("kaggle_kernel_output", [step["name"] for step in steps])
+        self.assertIn("kaggle_kernel_output_full_fallback", [step["name"] for step in steps])
+        output_calls = [call for call in calls if call[:3] == ["kaggle", "kernels", "output"]]
+        self.assertEqual(len(output_calls), 2)
+        self.assertIn("--file-pattern", output_calls[0])
+        self.assertNotIn("--file-pattern", output_calls[1])
 
 
 if __name__ == "__main__":

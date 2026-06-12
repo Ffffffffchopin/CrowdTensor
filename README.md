@@ -455,6 +455,9 @@ crowdtensor large-model-kaggle-validate \
   --tiers small,7b \
   --runtime-path rpc \
   --llama-build-mode source-cuda \
+  --cuda-architectures native \
+  --cuda-no-vmm \
+  --cuda-build-jobs 1 \
   --output-dir dist/large-model-kaggle-validation \
   --json
 python scripts/large_model_kaggle_validation_check.py \
@@ -468,10 +471,14 @@ This emits `large_model_kaggle_validation_v1` and only marks
 through the sharded/RPC path. Failed or partial runs are still useful evidence
 but must keep `core_validation_ready=false`. The retained 2026-06-12 P100
 attempts verified Kaggle GPU hardware and cleanup but did not produce generated
-tokens through the sharded/RPC path: llama.cpp CUDA source build failed on the
-assigned P100 runtime. A fallback Hugging Face CUDA compatibility smoke later
-proved tiny-model GPU generation on the same class of P100 hardware; the
-public-safe import is
+tokens through the sharded/RPC path. The latest source-CUDA/RPC attempts showed
+that P100 needs explicit CUDA architecture selection, `GGML_CUDA_NO_VMM=ON`,
+and `GGML_RPC=ON`; with those fixes the next retained run was killed by Kaggle
+before it produced a public-safe run report. The runner now writes partial run
+reports after hardware/runtime/tier milestones and falls back to a full Kaggle
+output download if the targeted report download misses the file. A fallback
+Hugging Face CUDA compatibility smoke proved tiny-model GPU generation on the
+same class of P100 hardware; the public-safe import is
 `dist/large-model-kaggle-validation-small-hf-cuda-compat-import-20260612/large_model_kaggle_validation.json`.
 It is not 7B/8B-class and not the sharded/RPC path. Treat the retained Kaggle
 artifacts as partial evidence with blockers, not completion of the core

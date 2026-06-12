@@ -4397,6 +4397,10 @@ def build_large_model_kaggle_validation(args: argparse.Namespace, *, runner: Run
         str(args.llama_build_mode),
         "--runtime-path",
         str(args.runtime_path),
+        "--cuda-architectures",
+        str(args.cuda_architectures),
+        "--cuda-build-jobs",
+        str(args.cuda_build_jobs),
         "--context-length",
         str(args.context_length),
         "--max-new-tokens",
@@ -4463,6 +4467,10 @@ def build_large_model_kaggle_validation(args: argparse.Namespace, *, runner: Run
         command.append("--include-13b")
     if getattr(args, "hf_cuda_install_compat", False):
         command.append("--hf-cuda-install-compat")
+    if getattr(args, "cuda_no_vmm", True):
+        command.append("--cuda-no-vmm")
+    else:
+        command.append("--cuda-vmm")
     if getattr(args, "run_report", ""):
         command.extend(["--run-report", str(args.run_report)])
     if getattr(args, "skip_kaggle_cleanup", False):
@@ -25721,6 +25729,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     large_model_kaggle.add_argument("--llama-release", default="b9611")
     large_model_kaggle.add_argument("--llama-build-mode", choices=["auto", "source-cuda", "release"], default="auto")
     large_model_kaggle.add_argument("--runtime-path", choices=["rpc", "cli", "hf-cuda"], default="rpc")
+    large_model_kaggle.add_argument("--cuda-architectures", default="native")
+    large_model_kaggle.add_argument("--cuda-build-jobs", type=int, default=4)
+    large_model_kaggle.add_argument("--cuda-no-vmm", dest="cuda_no_vmm", action="store_true", default=True)
+    large_model_kaggle.add_argument("--cuda-vmm", dest="cuda_no_vmm", action="store_false")
     large_model_kaggle.add_argument("--hf-cuda-install-compat", action="store_true")
     large_model_kaggle.add_argument("--context-length", type=int, default=512)
     large_model_kaggle.add_argument("--max-new-tokens", type=int, default=8)
@@ -28537,6 +28549,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--context-length must be positive")
         if args.max_new_tokens < 1 or args.max_new_tokens > 8:
             raise SystemExit("--max-new-tokens must be between 1 and 8")
+        if args.cuda_build_jobs < 1:
+            raise SystemExit("--cuda-build-jobs must be positive")
         if args.mode == "kaggle-auto" and not args.kaggle_owner:
             config = Path.home() / ".kaggle" / "kaggle.json"
             if config.is_file():

@@ -47,6 +47,7 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 SECRET_FRAGMENTS = (
+    "CrowdTensor validates a public-safe large model sharded inference route.",
     "CROWDTENSOR_MINER_TOKEN=",
     "CROWDTENSOR_OBSERVER_TOKEN=",
     "CROWDTENSOR_ADMIN_TOKEN=",
@@ -332,6 +333,9 @@ LLAMA_RELEASE = "{args.llama_release}"
 LLAMA_BUILD_MODE = "{args.llama_build_mode}"
 RUNTIME_PATH = "{args.runtime_path}"
 HF_CUDA_INSTALL_COMPAT = {str(bool(args.hf_cuda_install_compat))}
+CUDA_ARCHITECTURES = "{args.cuda_architectures}"
+CUDA_NO_VMM = {str(bool(args.cuda_no_vmm))}
+CUDA_BUILD_JOBS = {int(args.cuda_build_jobs)}
 LLAMA_ASSET = "llama-" + LLAMA_RELEASE + "-bin-ubuntu-x64.tar.gz"
 LLAMA_URL = "https://github.com/ggml-org/llama.cpp/releases/download/" + LLAMA_RELEASE + "/" + LLAMA_ASSET
 OUT = Path("/kaggle/working")
@@ -356,6 +360,28 @@ def public_command(command):
         if text == "-c":
             redact_next = True
     return public
+
+
+def safe_tail(value: str, limit: int = 2400) -> str:
+    text = str(value or "")[-limit:]
+    for fragment in [
+        PROMPT_TEXT,
+        "Bearer ",
+        "KAGGLE_KEY",
+        "KAGGLE_USERNAME",
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+    ]:
+        text = text.replace(fragment, "<redacted>")
+    return text
+
+
+def setup_stdout_public(command) -> bool:
+    if not command:
+        return False
+    base = Path(str(command[0])).name
+    return base in {{"cmake", "tar", "nvidia-smi", "ldd"}}
 
 
 def classify_stderr(stderr: str) -> str:
@@ -383,7 +409,7 @@ def run(command, timeout=1200, env=None):
     started = time.monotonic()
     try:
         completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=env)
-        return {{
+        step = {{
             "ok": completed.returncode == 0,
             "returncode": completed.returncode,
             "duration_seconds": round(time.monotonic() - started, 3),
@@ -392,22 +418,32 @@ def run(command, timeout=1200, env=None):
             "stdout_chars": len(completed.stdout or ""),
             "stderr_chars": len(completed.stderr or ""),
             "stderr_hint": classify_stderr(completed.stderr or ""),
+            "stderr_tail": safe_tail(completed.stderr or ""),
             "stdout_public": False,
             "stderr_public": False,
             "command_public": public_command(command),
-        }}, completed.stdout or "", completed.stderr or ""
+        }}
+        if not completed.returncode == 0 and setup_stdout_public(command):
+            step["stdout_tail"] = safe_tail(completed.stdout or "")
+        return step, completed.stdout or "", completed.stderr or ""
     except subprocess.TimeoutExpired as exc:
-        return {{
+        stdout_text = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr_text = exc.stderr if isinstance(exc.stderr, str) else ""
+        step = {{
             "ok": False,
             "error": "timeout",
             "duration_seconds": round(time.monotonic() - started, 3),
-            "stdout_digest": sha_text(exc.stdout or "" if isinstance(exc.stdout, str) else ""),
-            "stderr_digest": sha_text(exc.stderr or "" if isinstance(exc.stderr, str) else ""),
+            "stdout_digest": sha_text(stdout_text),
+            "stderr_digest": sha_text(stderr_text),
             "stderr_hint": "timeout",
+            "stderr_tail": safe_tail(stderr_text),
             "stdout_public": False,
             "stderr_public": False,
             "command_public": public_command(command),
-        }}, "", ""
+        }}
+        if setup_stdout_public(command):
+            step["stdout_tail"] = safe_tail(stdout_text)
+        return step, "", ""
 
 
 def nvidia_smi():
@@ -438,6 +474,22 @@ def nvidia_smi():
         "kaggle_gpu_verified": bool(devices),
         "nvidia_smi_step": step,
     }}
+
+
+def cuda_architectures_for_hardware(hardware):
+    requested = str(CUDA_ARCHITECTURES or "").strip()
+    if requested and requested.lower() != "native":
+        return requested
+    names = " ".join(str(name).lower() for name in hardware.get("gpu_names") or [])
+    if "p100" in names:
+        return "60"
+    if "t4" in names:
+        return "75"
+    if "v100" in names:
+        return "70"
+    if "a100" in names:
+        return "80"
+    return "native"
 
 
 def download(url: str, path: Path, timeout=1800):
@@ -539,23 +591,30 @@ def prepare_llama_release():
     }}
 
 
-def prepare_llama_source_cuda():
+def prepare_llama_source_cuda(hardware):
     archive = OUT / ("llama-source-" + LLAMA_RELEASE + ".tar.gz")
     info = download(LLAMA_SOURCE_URL, archive, timeout=900)
     source_root = OUT / "llama-source"
     source_root.mkdir(exist_ok=True)
     extract_step, stdout, stderr = run(["tar", "-xzf", str(archive), "-C", str(source_root), "--strip-components", "1"], timeout=300)
     build_dir = OUT / "llama-build-cuda"
-    configure_step, _, _ = run([
+    cuda_architectures = cuda_architectures_for_hardware(hardware)
+    configure_command = [
         "cmake",
         "-S",
         str(source_root),
         "-B",
         str(build_dir),
         "-DGGML_CUDA=ON",
+        "-DGGML_RPC=ON",
         "-DLLAMA_CURL=OFF",
         "-DCMAKE_BUILD_TYPE=Release",
-    ], timeout=900)
+    ]
+    if CUDA_NO_VMM:
+        configure_command.append("-DGGML_CUDA_NO_VMM=ON")
+    if cuda_architectures:
+        configure_command.append("-DCMAKE_CUDA_ARCHITECTURES=" + cuda_architectures)
+    configure_step, _, _ = run(configure_command, timeout=900)
     build_step, _, _ = run([
         "cmake",
         "--build",
@@ -563,7 +622,7 @@ def prepare_llama_source_cuda():
         "--config",
         "Release",
         "-j",
-        str(max(2, min(8, os.cpu_count() or 2))),
+        str(max(1, int(CUDA_BUILD_JOBS or 1))),
         "--target",
         "llama-cli",
         "rpc-server",
@@ -587,16 +646,18 @@ def prepare_llama_source_cuda():
         "probe": probe,
         "backend": "llama.cpp",
         "build_mode": "source-cuda",
+        "cuda_architectures": cuda_architectures,
+        "cuda_no_vmm": bool(CUDA_NO_VMM),
         "cuda_runtime_verified": bool(cli and configure_step.get("ok") and build_step.get("ok")),
         "gpu_runtime_capable": bool(cli and configure_step.get("ok") and build_step.get("ok")),
     }}
 
 
-def prepare_llama():
+def prepare_llama(hardware):
     attempts = []
     if LLAMA_BUILD_MODE in ("auto", "source-cuda"):
         try:
-            source = prepare_llama_source_cuda()
+            source = prepare_llama_source_cuda(hardware)
         except Exception as exc:
             source = {{"ok": False, "build_mode": "source-cuda", "error_type": type(exc).__name__}}
         attempts.append(attempt_summary(source))
@@ -1006,49 +1067,26 @@ def run_tier(tier, llama_info, hardware, rpc_info):
     return result
 
 
-def main():
-    started = time.monotonic()
-    hardware = nvidia_smi()
-    llama = {{"ok": False, "llama_cli": "", "backend": "llama.cpp"}}
-    rpc_info = {{"ok": False, "enabled": False, "servers": [], "worker_count": 0}}
-    tier_results = []
-    blockers = []
-    if RUNTIME_PATH != "hf-cuda":
-        try:
-            llama = prepare_llama()
-        except Exception as exc:
-            blockers.append("large_model_kaggle_llama_cpp_install_failed")
-            llama = {{"ok": False, "error_type": type(exc).__name__, "backend": "llama.cpp"}}
-    if hardware.get("gpu_count", 0) <= 0:
-        blockers.append("large_model_kaggle_gpu_unavailable")
-    if RUNTIME_PATH != "hf-cuda" and not llama.get("ok"):
-        blockers.append("large_model_kaggle_llama_cpp_unavailable")
-    if hardware.get("kaggle_gpu_verified") and RUNTIME_PATH == "hf-cuda":
-        for tier in TIERS:
-            tier_results.append(run_hf_tier(tier, hardware))
-            if tier["tier"] == "7b" and tier_results[-1].get("ok"):
-                break
-            if tier["tier"] == "7b" and not tier_results[-1].get("ok"):
-                break
-    elif hardware.get("kaggle_gpu_verified") and llama.get("ok"):
-        rpc_info = start_rpc_servers(llama, hardware)
-        try:
-            for tier in TIERS:
-                tier_results.append(run_tier(tier, llama, hardware, rpc_info))
-                if tier["tier"] == "7b" and tier_results[-1].get("ok"):
-                    break
-                if tier["tier"] == "7b" and not tier_results[-1].get("ok"):
-                    break
-        finally:
-            stop_rpc_servers(rpc_info)
+def build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, *, partial_stage=""):
     ok = any(item.get("ok") for item in tier_results)
     real_7b = any((item.get("validation") or {{}}).get("real_7b_runtime_verified") for item in tier_results)
     sharded_path = any((item.get("validation") or {{}}).get("sharded_path_verified") for item in tier_results)
     multi_worker_sharded_path = any((item.get("validation") or {{}}).get("multi_worker_sharded_path_verified") for item in tier_results)
     gpu_runtime = any((item.get("validation") or {{}}).get("gpu_runtime_verified") for item in tier_results)
-    report = {{
+    diagnosis = sorted(set(
+        ["large_model_kaggle_validation_run_ready" if ok else "large_model_kaggle_validation_run_blocked"]
+        + ["large_model_kaggle_gpu_hardware_verified" if hardware.get("kaggle_gpu_verified") else "large_model_kaggle_gpu_runtime_missing"]
+        + ["large_model_kaggle_gpu_runtime_verified" if gpu_runtime else "large_model_kaggle_gpu_runtime_not_verified"]
+        + ["large_model_7b_runtime_verified" if real_7b else "large_model_7b_runtime_not_verified"]
+        + ["large_model_sharded_runtime_path_verified" if sharded_path else "large_model_sharded_runtime_path_not_verified"]
+        + ["large_model_multi_worker_sharded_path_verified" if multi_worker_sharded_path else "large_model_multi_worker_sharded_path_not_verified"]
+        + ([partial_stage] if partial_stage else [])
+        + [code for item in tier_results for code in item.get("diagnosis_codes", [])]
+    ))
+    return {{
         "schema": SCHEMA,
         "ok": ok,
+        "partial_stage": partial_stage,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "duration_seconds": round(time.monotonic() - started, 3),
         "hardware": hardware,
@@ -1062,15 +1100,7 @@ def main():
         "sharded_path_verified": sharded_path,
         "multi_worker_sharded_path_verified": multi_worker_sharded_path,
         "blockers": blockers + ([] if ok else ["large_model_kaggle_no_successful_real_run"]),
-        "diagnosis_codes": sorted(set(
-            ["large_model_kaggle_validation_run_ready" if ok else "large_model_kaggle_validation_run_blocked"]
-            + ["large_model_kaggle_gpu_hardware_verified" if hardware.get("kaggle_gpu_verified") else "large_model_kaggle_gpu_runtime_missing"]
-            + ["large_model_kaggle_gpu_runtime_verified" if gpu_runtime else "large_model_kaggle_gpu_runtime_not_verified"]
-            + ["large_model_7b_runtime_verified" if real_7b else "large_model_7b_runtime_not_verified"]
-            + ["large_model_sharded_runtime_path_verified" if sharded_path else "large_model_sharded_runtime_path_not_verified"]
-            + ["large_model_multi_worker_sharded_path_verified" if multi_worker_sharded_path else "large_model_multi_worker_sharded_path_not_verified"]
-            + [code for item in tier_results for code in item.get("diagnosis_codes", [])]
-        )),
+        "diagnosis_codes": diagnosis,
         "safety": {{
             "public_artifact_safe": True,
             "raw_prompt_public": False,
@@ -1081,7 +1111,56 @@ def main():
             "credentials_public": False,
         }},
     }}
+
+
+def write_run_report(report):
     (OUT / "large_model_kaggle_validation_run.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+
+
+def main():
+    started = time.monotonic()
+    hardware = nvidia_smi()
+    llama = {{"ok": False, "llama_cli": "", "backend": "llama.cpp"}}
+    rpc_info = {{"ok": False, "enabled": False, "servers": [], "worker_count": 0}}
+    tier_results = []
+    blockers = []
+    write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_hardware_probe_complete"))
+    if RUNTIME_PATH != "hf-cuda":
+        try:
+            llama = prepare_llama(hardware)
+        except Exception as exc:
+            blockers.append("large_model_kaggle_llama_cpp_install_failed")
+            llama = {{"ok": False, "error_type": type(exc).__name__, "backend": "llama.cpp"}}
+        write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_llama_cpp_prepare_complete"))
+    if hardware.get("gpu_count", 0) <= 0:
+        blockers.append("large_model_kaggle_gpu_unavailable")
+    if RUNTIME_PATH != "hf-cuda" and not llama.get("ok"):
+        blockers.append("large_model_kaggle_llama_cpp_unavailable")
+    if hardware.get("kaggle_gpu_verified") and RUNTIME_PATH == "hf-cuda":
+        for tier in TIERS:
+            tier_results.append(run_hf_tier(tier, hardware))
+            write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_complete"))
+            if tier["tier"] == "7b" and tier_results[-1].get("ok"):
+                break
+            if tier["tier"] == "7b" and not tier_results[-1].get("ok"):
+                break
+    elif hardware.get("kaggle_gpu_verified") and llama.get("ok"):
+        rpc_info = start_rpc_servers(llama, hardware)
+        write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_rpc_start_complete"))
+        try:
+            for tier in TIERS:
+                tier_results.append(run_tier(tier, llama, hardware, rpc_info))
+                write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_complete"))
+                if tier["tier"] == "7b" and tier_results[-1].get("ok"):
+                    break
+                if tier["tier"] == "7b" and not tier_results[-1].get("ok"):
+                    break
+        finally:
+            stop_rpc_servers(rpc_info)
+    report = build_run_report(started, hardware, llama, rpc_info, tier_results, blockers)
+    ok = bool(report.get("ok"))
+    real_7b = bool(report.get("real_7b_runtime_verified"))
+    write_run_report(report)
     print(json.dumps({{"ok": ok, "schema": SCHEMA, "real_7b_runtime_verified": real_7b, "diagnosis_codes": report["diagnosis_codes"]}}, sort_keys=True))
     raise SystemExit(0 if ok else 1)
 
@@ -1128,7 +1207,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
             "- Public artifacts contain digests/counts and diagnostics only.",
             "- Raw prompts, generated text, generated token ids, activations, credentials, and private env files are excluded.",
             "",
-            "The run first probes Kaggle GPU visibility, installs a llama.cpp release binary, runs the small tier, then attempts the 7B tier.",
+            "The run first probes Kaggle GPU visibility, prepares the configured runtime backend, runs the small tier, then attempts the 7B tier.",
             "The 13B tier is optional and should stay a stretch target.",
         ]) + "\n",
         encoding="utf-8",
@@ -1162,6 +1241,7 @@ def run_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Runne
     )
     steps.append(status_step)
     output_path = output_dir / "kaggle-output"
+    run_report_path = output_path / "large_model_kaggle_validation_run.json"
     if status_step.get("terminal"):
         output_step = run_step(
             "kaggle_kernel_output",
@@ -1181,6 +1261,24 @@ def run_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Runne
         )
         output_step["output_path"] = str(output_path)
         steps.append(output_step)
+        if not run_report_path.is_file():
+            output_fallback_step = run_step(
+                "kaggle_kernel_output_full_fallback",
+                [
+                    "kaggle",
+                    "kernels",
+                    "output",
+                    str(kernel_ref),
+                    "-p",
+                    str(output_path),
+                    "--force",
+                ],
+                runner=runner,
+                timeout_seconds=args.kaggle_output_timeout_seconds,
+            )
+            output_fallback_step["output_path"] = str(output_path)
+            output_fallback_step["reason"] = "run_report_missing_after_patterned_output"
+            steps.append(output_fallback_step)
     if not args.skip_kaggle_cleanup:
         cleanup_step = run_step(
             "kaggle_kernel_delete",
@@ -1190,7 +1288,7 @@ def run_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Runne
         )
         cleanup_step["kernel_ref"] = str(kernel_ref)
         steps.append(cleanup_step)
-    return steps, package, output_path / "large_model_kaggle_validation_run.json"
+    return steps, package, run_report_path
 
 
 def normalize_run_report(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1630,6 +1728,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--llama-release", default=DEFAULT_LLAMA_RELEASE)
     parser.add_argument("--llama-build-mode", choices=LLAMA_BUILD_MODES, default="auto")
     parser.add_argument("--runtime-path", choices=RUNTIME_PATHS, default="rpc")
+    parser.add_argument("--cuda-architectures", default="native")
+    parser.add_argument("--cuda-build-jobs", type=int, default=4)
+    parser.add_argument("--cuda-no-vmm", dest="cuda_no_vmm", action="store_true", default=True)
+    parser.add_argument("--cuda-vmm", dest="cuda_no_vmm", action="store_false")
     parser.add_argument("--hf-cuda-install-compat", action="store_true")
     parser.add_argument("--context-length", type=int, default=512)
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
@@ -1667,6 +1769,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--context-length must be positive")
     if args.max_new_tokens < 1 or args.max_new_tokens > inference_rc.MAX_REAL_RUN_TOKENS:
         raise SystemExit(f"--max-new-tokens must be between 1 and {inference_rc.MAX_REAL_RUN_TOKENS}")
+    if args.cuda_build_jobs < 1:
+        raise SystemExit("--cuda-build-jobs must be positive")
     tiers = selected_tiers(args)
     bad = sorted(set(tiers) - set(TIERS))
     if bad:

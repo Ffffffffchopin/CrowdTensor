@@ -217,6 +217,9 @@ crowdtensor large-model-kaggle-validate \
   --tiers small,7b \
   --runtime-path rpc \
   --llama-build-mode source-cuda \
+  --cuda-architectures native \
+  --cuda-no-vmm \
+  --cuda-build-jobs 1 \
   --output-dir dist/large-model-kaggle-validation \
   --json
 python scripts/large_model_kaggle_validation_check.py \
@@ -227,12 +230,16 @@ python scripts/large_model_kaggle_validation_check.py \
 
 The report schema is `large_model_kaggle_validation_v1`. It packages a private
 Kaggle script kernel, requests GPU, probes `nvidia-smi`, runs bounded model
-tiers, downloads only `large_model_kaggle_validation_run.json`, deletes the
-temporary kernel by default, and writes a public-safe Support Bundle. Public
-artifacts expose model/runtime/hardware metadata, token counts, digests,
-metrics, diagnosis codes, and cleanup status only; they must not expose raw
-prompts, generated text, generated token ids, activations, credentials, leases,
-idempotency material, private Kaggle files, or model secrets.
+tiers, first tries to download `large_model_kaggle_validation_run.json`, falls
+back to a full output download if that report is missing, deletes the temporary
+kernel by default, and writes a public-safe Support Bundle. The Kaggle script
+also writes partial run reports after hardware probe, runtime preparation, RPC
+startup, and each tier attempt so a killed kernel can still leave useful
+diagnostics. Public artifacts expose model/runtime/hardware metadata, token
+counts, digests, metrics, diagnosis codes, and cleanup status only; they must
+not expose raw prompts, generated text, generated token ids, activations,
+credentials, leases, idempotency material, private Kaggle files, or model
+secrets.
 
 Readiness flags are intentionally strict. `real_runtime_verified` means a real
 LLM run generated tokens. `real_7b_runtime_verified` means the successful run
@@ -261,6 +268,19 @@ Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
 - `dist/large-model-kaggle-validation-small-hf-cuda-compat-import-20260612/large_model_kaggle_validation.json`
   is the canonical public-safe import for that successful tiny-model GPU smoke;
   it keeps `core_validation_ready=false` with 7B and sharded-path blockers.
+- `dist/large-model-kaggle-validation-rpc-cuda-arch-retry-20260612/large_model_kaggle_validation.json`
+  verified a source-CUDA build attempt on assigned P100 hardware with
+  `CMAKE_CUDA_ARCHITECTURES=60`, then failed because llama.cpp VMM support
+  referenced a missing `CUDA::cuda_driver` target on that Kaggle image.
+- `dist/large-model-kaggle-validation-rpc-cuda-no-vmm-20260612/large_model_kaggle_validation.json`
+  verified that `GGML_CUDA_NO_VMM=ON` fixed the CUDA driver target issue and
+  built `llama-cli`, then failed because the RPC server target was not present
+  until `GGML_RPC=ON` was added.
+- `dist/large-model-kaggle-validation-rpc-cuda-no-vmm-rpc-20260612/large_model_kaggle_validation.json`
+  used the corrected source-CUDA/RPC configuration, but Kaggle killed the
+  kernel before `large_model_kaggle_validation_run.json` was retained. Cleanup
+  still succeeded. This is a runtime-resource blocker, not proof of 7B/RPC
+  generation.
 
 Do not treat those reports as core technology completion. They are bounded
 runtime evidence plus blockers that justify further GPU runtime work or a

@@ -188,12 +188,16 @@ The project currently includes:
   reports with `scripts/large_model_kaggle_validation_check.py`. This is the
   bounded fresh Kaggle GPU proof path for the core technology layer. It creates
   a private GPU script kernel, probes Kaggle hardware, runs selected model
-  tiers, downloads only `large_model_kaggle_validation_run.json`, cleans up the
-  temporary kernel by default, and preserves redacted JSON/Markdown/support
-  evidence. The strict completion signal is `core_validation_ready`, which may
-  be true only when the same report proves real token generation, a 7B/8B-class
-  model, Kaggle CUDA runtime execution, and the intended sharded/RPC path.
-  Keep `real_runtime_verified`, `real_7b_runtime_verified`,
+  tiers, first tries to download `large_model_kaggle_validation_run.json`, uses
+  a full output fallback when that report is missing, cleans up the temporary
+  kernel by default, and preserves redacted JSON/Markdown/support evidence. The
+  Kaggle script must keep writing partial run reports after hardware probe,
+  runtime preparation, RPC startup, and each tier attempt so killed kernels
+  still leave diagnostics when Kaggle retains outputs. The strict completion
+  signal is `core_validation_ready`, which may be true only when the same report
+  proves real token generation, a 7B/8B-class model, Kaggle CUDA runtime
+  execution, and the intended sharded/RPC path. Keep `real_runtime_verified`,
+  `real_7b_runtime_verified`,
   `gpu_runtime_verified`, `sharded_path_verified`,
   `multi_worker_sharded_path_verified`, and `core_validation_ready` separate so
   partial evidence cannot overclaim. The 2026-06-12 retained P100 attempts
@@ -202,10 +206,16 @@ The project currently includes:
   missing/shared-library and non-CUDA-runtime issues, the `source-cuda`
   llama.cpp path failed during CMake/CUDA build, and a Hugging Face CUDA
   compatibility smoke generated 4 tokens from `sshleifer/tiny-gpt2` on P100
-  after installing CUDA 11.8-compatible PyTorch/Transformers. Preserve the
-  tiny-model GPU smoke as partial real-runtime evidence only; it is not
-  7B/8B-class and not the intended sharded/RPC path. Do not claim the core
-  technology layer is fully validated until a fresh report sets
+  after installing CUDA 11.8-compatible PyTorch/Transformers. Later P100
+  source-CUDA/RPC attempts showed the required fixes:
+  `CMAKE_CUDA_ARCHITECTURES=60` for P100, `GGML_CUDA_NO_VMM=ON` to avoid the
+  missing `CUDA::cuda_driver` target on Kaggle, and `GGML_RPC=ON` so the
+  `rpc-server` target exists. With those fixes, Kaggle killed the run before a
+  public-safe run report was retained, so it remains a runtime-resource blocker,
+  not a 7B/RPC success. Preserve the tiny-model GPU smoke as partial
+  real-runtime evidence only; it is not 7B/8B-class and not the intended
+  sharded/RPC path. Do not claim the core technology layer is fully validated
+  until a fresh report sets
   `core_validation_ready=true` for a 7B/8B sharded/RPC Kaggle run. Public
   artifacts must continue to redact raw prompts, generated text, generated
   token ids, activations, KV cache, credentials, leases, idempotency material,
