@@ -323,6 +323,9 @@ def build_handoff_report(
         ]:
             if item not in blockers:
                 blockers.append(item)
+    elif not bool(inference_report.get("real_7b_runtime_verified")):
+        if "core_technology_real_7b_runtime_not_verified" not in blockers:
+            blockers.append("core_technology_real_7b_runtime_not_verified")
     codes = [
         "core_technology_handoff_rc_ready",
         "core_technology_stable_entrypoint_ready",

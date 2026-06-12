@@ -102,9 +102,10 @@ class CoreTechnologyHandoffTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertTrue(report["real_runtime_verified"])
-        self.assertTrue(report["real_7b_runtime_verified"])
+        self.assertFalse(report["real_7b_runtime_verified"])
         self.assertEqual(report["runner_result"]["runner_mode"], "real-import")
         self.assertIn("core_technology_real_runtime_verified", report["diagnosis_codes"])
+        self.assertIn("core_technology_real_7b_runtime_not_verified", report["blockers"])
         self.assertNotIn("external_real_runtime_resources_required", report["blockers"])
         check.validate_report(report)
 

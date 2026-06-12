@@ -206,6 +206,66 @@ token ids, activations, KV cache, credentials, leases, idempotency material,
 private env files, and registries out of JSON, Markdown, terminal summaries,
 and Support Bundles.
 
+## Large-Model Kaggle Validation
+
+Use this when the core technology goal requires fresh external GPU evidence
+instead of local fixture/plan evidence:
+
+```bash
+crowdtensor large-model-kaggle-validate \
+  --mode kaggle-auto \
+  --tiers small,7b \
+  --runtime-path rpc \
+  --llama-build-mode source-cuda \
+  --output-dir dist/large-model-kaggle-validation \
+  --json
+python scripts/large_model_kaggle_validation_check.py \
+  --report dist/large-model-kaggle-validation/large_model_kaggle_validation.json \
+  --require-core-ready \
+  --json
+```
+
+The report schema is `large_model_kaggle_validation_v1`. It packages a private
+Kaggle script kernel, requests GPU, probes `nvidia-smi`, runs bounded model
+tiers, downloads only `large_model_kaggle_validation_run.json`, deletes the
+temporary kernel by default, and writes a public-safe Support Bundle. Public
+artifacts expose model/runtime/hardware metadata, token counts, digests,
+metrics, diagnosis codes, and cleanup status only; they must not expose raw
+prompts, generated text, generated token ids, activations, credentials, leases,
+idempotency material, private Kaggle files, or model secrets.
+
+Readiness flags are intentionally strict. `real_runtime_verified` means a real
+LLM run generated tokens. `real_7b_runtime_verified` means the successful run
+was 7B/8B-class. `gpu_runtime_verified` means the successful generation ran
+through a CUDA-capable Kaggle runtime, not just that `nvidia-smi` saw a GPU.
+`sharded_path_verified` means the successful generation used the intended
+sharded/RPC path. `core_validation_ready` requires all three: 7B/8B, Kaggle GPU
+runtime, and sharded/RPC path. Single-process, CPU-only, or failed runs must
+leave `core_validation_ready=false` with explicit blockers.
+
+Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
+
+- `dist/large-model-kaggle-validation-kaggle-auto-20260612/large_model_kaggle_validation.json`
+  verified Kaggle P100 hardware and model download, then failed because the
+  Linux llama.cpp release needed runtime library fixes and was not a CUDA build.
+- `dist/large-model-kaggle-validation-small-rpc-cuda-retry2-20260612/large_model_kaggle_validation.json`
+  verified P100 hardware and kernel cleanup, but `source-cuda` llama.cpp build
+  failed during CMake/CUDA setup, so no tier ran.
+- `dist/large-model-kaggle-validation-small-hf-cuda-fixed-20260612/large_model_kaggle_validation.json`
+  verified P100 hardware and PyTorch CUDA visibility, but the Hugging Face
+  smoke failed during generation with a public-safe `AcceleratorError` digest.
+- `dist/large-model-kaggle-validation-small-hf-cuda-compat-20260612/kaggle-output/large_model_kaggle_validation_run.json`
+  verified a tiny Hugging Face model generated 4 tokens on P100 after installing
+  compatible CUDA 11.8 PyTorch/Transformers, but it is not a 7B/8B model and not
+  the intended sharded/RPC path.
+- `dist/large-model-kaggle-validation-small-hf-cuda-compat-import-20260612/large_model_kaggle_validation.json`
+  is the canonical public-safe import for that successful tiny-model GPU smoke;
+  it keeps `core_validation_ready=false` with 7B and sharded-path blockers.
+
+Do not treat those reports as core technology completion. They are bounded
+runtime evidence plus blockers that justify further GPU runtime work or a
+different Kaggle accelerator before claiming the 7B/8B sharded validation gate.
+
 ## Public Swarm Inference v2
 
 Use this first when validating the current public-preview inference path. It uses P2P discovery for route lookup, keeps the Coordinator as the execution authority, and validates real small Hugging Face split inference with distinct stage Miners.

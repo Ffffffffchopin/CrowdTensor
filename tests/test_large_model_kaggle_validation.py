@@ -1,0 +1,249 @@
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from crowdtensor import cli
+from scripts import large_model_kaggle_validation_check as check
+from scripts import large_model_kaggle_validation_pack as pack
+
+
+class LargeModelKaggleValidationTests(unittest.TestCase):
+    def _tmp_dir(self) -> Path:
+        return Path(tempfile.mkdtemp(prefix="crowdtensor_large_model_kaggle_test_"))
+
+    def test_fixture_is_public_safe_without_real_overclaim(self) -> None:
+        output_dir = self._tmp_dir()
+        report = pack.build_report(pack.parse_args(["--mode", "fixture", "--output-dir", str(output_dir)]))
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["schema"], pack.SCHEMA)
+        self.assertFalse(report["real_runtime_verified"])
+        self.assertFalse(report["real_7b_runtime_verified"])
+        self.assertFalse(report["sharded_path_verified"])
+        self.assertIn("large_model_kaggle_not_executed", report["blockers"])
+        self.assertIn("large_model_sharded_runtime_path_not_verified", report["blockers"])
+        self.assertTrue(report["safety"]["public_artifact_safe"])
+        self.assertEqual(pack.public_redaction_errors(report), [])
+        check.validate_report(report)
+
+        for name in [
+            "large_model_kaggle_validation.json",
+            "large_model_kaggle_validation.md",
+            "support_bundle.json",
+            "large_model_kaggle_validation_run_normalized.json",
+        ]:
+            self.assertTrue((output_dir / name).is_file(), name)
+
+    def test_real_7b_import_builds_rc_and_handoff_chain(self) -> None:
+        output_dir = self._tmp_dir()
+        run_report = output_dir / "real_7b_run.json"
+        run_report.write_text(
+            json.dumps({
+                "schema": pack.RUN_SCHEMA,
+                "ok": True,
+                "model": {
+                    "model_id": "qwen2.5-7b-instruct-q2-k",
+                    "parameter_count_b": 7.6,
+                    "quantization": "Q2_K",
+                    "model_size_mb": 2876,
+                },
+                "runtime": {
+                    "backend": "llama_cpp_rpc",
+                    "intended_backend": "llama_cpp_rpc",
+                    "worker_count": 2,
+                    "stage_count": 2,
+                    "cuda_runtime_verified": True,
+                    "sharded_path_verified": True,
+                    "multi_worker_sharded_path_verified": True,
+                },
+                "hardware": {
+                    "provider": "kaggle",
+                    "gpu_count": 2,
+                    "gpu_names": ["Tesla T4", "Tesla T4"],
+                    "devices": [
+                        {"name": "Tesla T4", "memory_total_mb": 15360, "memory_free_mb": 14000},
+                        {"name": "Tesla T4", "memory_total_mb": 15360, "memory_free_mb": 14000},
+                    ],
+                    "kaggle_gpu_verified": True,
+                },
+                "validation": {
+                    "real_runtime_verified": True,
+                    "real_7b_runtime_verified": True,
+                    "kaggle_gpu_verified": True,
+                    "gpu_runtime_verified": True,
+                    "sharded_path_verified": True,
+                    "multi_worker_sharded_path_verified": True,
+                    "core_validation_ready": True,
+                    "scale_tier": "7b",
+                },
+                "metrics": {
+                    "ttft_ms": 100.0,
+                    "tokens_per_second": 12.0,
+                    "wall_time_seconds": 1.0,
+                    "generated_token_count": 8,
+                    "max_new_tokens": 8,
+                    "output_digest": "sha256:" + "4" * 64,
+                },
+                "diagnosis_codes": ["large_model_kaggle_real_runtime_verified"],
+            }),
+            encoding="utf-8",
+        )
+
+        report = pack.build_report(pack.parse_args([
+            "--mode",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "imported-7b"),
+            "--run-report",
+            str(run_report),
+        ]))
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["real_runtime_verified"])
+        self.assertTrue(report["real_7b_runtime_verified"])
+        self.assertTrue(report["gpu_runtime_verified"])
+        self.assertTrue(report["sharded_path_verified"])
+        self.assertTrue(report["multi_worker_sharded_path_verified"])
+        self.assertTrue(report["core_validation_ready"])
+        self.assertEqual(report["model"]["model_id"], "qwen2.5-7b-instruct-q2-k")
+        self.assertEqual(report["runtime"]["backend"], "llama_cpp_rpc")
+        self.assertEqual(report["metrics"]["generated_token_count"], 8)
+        self.assertTrue(report["inference_rc_report"]["real_runtime_verified"])
+        self.assertTrue(report["inference_rc_report"]["real_7b_runtime_verified"])
+        self.assertTrue(report["handoff_rc_report"]["real_runtime_verified"])
+        check.validate_report(report)
+        check.validate_report(report, require_real_7b=True, require_core_ready=True)
+
+    def test_small_real_import_does_not_overclaim_7b(self) -> None:
+        output_dir = self._tmp_dir()
+        run_report = output_dir / "small_run.json"
+        run_report.write_text(
+            json.dumps({
+                "schema": pack.RUN_SCHEMA,
+                "ok": True,
+                "model": {
+                    "model_id": "qwen2.5-1.5b-instruct-q4-k-m",
+                    "parameter_count_b": 1.5,
+                    "quantization": "Q4_K_M",
+                    "model_size_mb": 1066,
+                    "layer_count": 28,
+                },
+                "runtime": {
+                    "backend": "llama_cpp_rpc",
+                    "intended_backend": "llama_cpp_rpc",
+                    "worker_count": 1,
+                    "stage_count": 1,
+                    "cuda_runtime_verified": True,
+                    "sharded_path_verified": True,
+                    "multi_worker_sharded_path_verified": False,
+                },
+                "hardware": {
+                    "provider": "kaggle",
+                    "gpu_count": 1,
+                    "gpu_names": ["Tesla P100-PCIE-16GB"],
+                    "devices": [{"name": "Tesla P100-PCIE-16GB", "memory_total_mb": 16280, "memory_free_mb": 15000}],
+                    "kaggle_gpu_verified": True,
+                },
+                "validation": {
+                    "real_runtime_verified": True,
+                    "real_7b_runtime_verified": False,
+                    "kaggle_gpu_verified": True,
+                    "gpu_runtime_verified": True,
+                    "sharded_path_verified": True,
+                    "multi_worker_sharded_path_verified": False,
+                    "core_validation_ready": False,
+                    "scale_tier": "small",
+                },
+                "metrics": {
+                    "ttft_ms": 100.0,
+                    "tokens_per_second": 12.0,
+                    "wall_time_seconds": 1.0,
+                    "generated_token_count": 4,
+                    "max_new_tokens": 4,
+                    "output_digest": "sha256:" + "3" * 64,
+                },
+                "diagnosis_codes": ["large_model_kaggle_real_runtime_verified"],
+            }),
+            encoding="utf-8",
+        )
+
+        report = pack.build_report(pack.parse_args([
+            "--mode",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "imported"),
+            "--run-report",
+            str(run_report),
+        ]))
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["real_runtime_verified"])
+        self.assertFalse(report["real_7b_runtime_verified"])
+        self.assertTrue(report["gpu_runtime_verified"])
+        self.assertTrue(report["sharded_path_verified"])
+        self.assertFalse(report["core_validation_ready"])
+        self.assertEqual(report["model"]["model_id"], "qwen2.5-1.5b-instruct-q4-k-m")
+        self.assertEqual(report["runtime"]["backend"], "llama_cpp_rpc")
+        self.assertEqual(report["metrics"]["generated_token_count"], 4)
+        self.assertIn("large_model_7b_runtime_not_verified", report["diagnosis_codes"])
+        self.assertTrue(report["inference_rc_report"]["real_runtime_verified"])
+        self.assertFalse(report["inference_rc_report"]["real_7b_runtime_verified"])
+        self.assertEqual(report["inference_rc_report"]["alpha_report"]["model_manifest"]["model_size_mb"], 1066)
+        check.validate_report(report)
+
+    def test_cli_wrapper_and_bad_args(self) -> None:
+        output_dir = self._tmp_dir()
+        args = cli.parse_args(["large-model-kaggle-validate", "--mode", "package", "--output-dir", str(output_dir)])
+        summary = cli.build_large_model_kaggle_validation(args)
+
+        self.assertFalse(summary["ok"])
+        self.assertEqual(summary["cli_schema"], "large_model_kaggle_validation_cli_v1")
+        self.assertFalse(summary["real_7b_runtime_verified"])
+        self.assertFalse(summary["core_validation_ready"])
+        self.assertTrue((output_dir / "large_model_kaggle_validation_cli_summary.json").is_file())
+
+        rendered = io.StringIO()
+        with contextlib.redirect_stdout(rendered):
+            cli.print_large_model_kaggle_validation(summary)
+        output = rendered.getvalue()
+        self.assertIn("CrowdTensor large-model Kaggle validation", output)
+        self.assertIn("real_7b=False", output)
+
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["large-model-kaggle-validate", "--max-new-tokens", "9"])
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["large-model-kaggle-validate", "--mode", "evidence-import"])
+
+    def test_hf_cuda_package_uses_redacted_inline_command(self) -> None:
+        output_dir = self._tmp_dir()
+        args = pack.parse_args([
+            "--mode",
+            "package",
+            "--output-dir",
+            str(output_dir),
+            "--tiers",
+            "small",
+            "--runtime-path",
+            "hf-cuda",
+            "--hf-cuda-install-compat",
+        ])
+        report = pack.build_report(args)
+
+        self.assertFalse(report["core_validation_ready"])
+        kernel = output_dir / "kaggle-kernel" / "kernel.py"
+        self.assertTrue(kernel.is_file())
+        source = kernel.read_text(encoding="utf-8")
+        compile(source, str(kernel), "exec")
+        self.assertIn('"hf-cuda"', source)
+        self.assertIn("HF_CUDA_INSTALL_COMPAT = True", source)
+        self.assertIn("<inline-python-redacted>", source)
+        self.assertIn("sharded_path_verified = False", source)
+
+
+if __name__ == "__main__":
+    unittest.main()

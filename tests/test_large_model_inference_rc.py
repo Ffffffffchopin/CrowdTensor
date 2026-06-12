@@ -198,10 +198,11 @@ class LargeModelInferenceRcTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertTrue(report["real_runtime_verified"])
-        self.assertTrue(report["real_7b_runtime_verified"])
+        self.assertFalse(report["real_7b_runtime_verified"])
         self.assertEqual(report["runner_result"]["runner_mode"], "real-import")
         self.assertEqual(report["benchmark"]["measurement_kind"], "real-runtime")
-        self.assertIn("core_technology_real_7b_runtime_verified", report["diagnosis_codes"])
+        self.assertIn("core_technology_real_runtime_verified", report["diagnosis_codes"])
+        self.assertIn("core_technology_real_7b_runtime_not_verified", report["diagnosis_codes"])
         self.assertFalse(report["runner_result"]["output_text_public"])
 
     def test_cli_wrapper_generates_ready_rc_summary_without_real_overclaim(self) -> None:

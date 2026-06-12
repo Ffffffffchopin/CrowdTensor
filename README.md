@@ -446,6 +446,37 @@ handoff boundary: the inference core interfaces and evidence path are stable
 enough to develop other layers, while real external 7B+ runtime proof remains a
 resource-dependent follow-up.
 
+For fresh Kaggle GPU validation of the core layer, use the bounded Kaggle
+runner:
+
+```bash
+crowdtensor large-model-kaggle-validate \
+  --mode kaggle-auto \
+  --tiers small,7b \
+  --runtime-path rpc \
+  --llama-build-mode source-cuda \
+  --output-dir dist/large-model-kaggle-validation \
+  --json
+python scripts/large_model_kaggle_validation_check.py \
+  --report dist/large-model-kaggle-validation/large_model_kaggle_validation.json \
+  --require-core-ready \
+  --json
+```
+
+This emits `large_model_kaggle_validation_v1` and only marks
+`core_validation_ready=true` when a real 7B/8B-class run succeeds on Kaggle GPU
+through the sharded/RPC path. Failed or partial runs are still useful evidence
+but must keep `core_validation_ready=false`. The retained 2026-06-12 P100
+attempts verified Kaggle GPU hardware and cleanup but did not produce generated
+tokens through the sharded/RPC path: llama.cpp CUDA source build failed on the
+assigned P100 runtime. A fallback Hugging Face CUDA compatibility smoke later
+proved tiny-model GPU generation on the same class of P100 hardware; the
+public-safe import is
+`dist/large-model-kaggle-validation-small-hf-cuda-compat-import-20260612/large_model_kaggle_validation.json`.
+It is not 7B/8B-class and not the sharded/RPC path. Treat the retained Kaggle
+artifacts as partial evidence with blockers, not completion of the core
+large-model validation goal.
+
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 
 ```bash

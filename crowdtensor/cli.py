@@ -121,6 +121,7 @@ GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 LARGE_MODEL_SHARD_ALPHA_CLI_SCHEMA = "large_model_shard_alpha_cli_v1"
 CORE_TECHNOLOGY_INFERENCE_RC_CLI_SCHEMA = "core_technology_inference_rc_cli_v1"
 CORE_TECHNOLOGY_HANDOFF_RC_CLI_SCHEMA = "core_technology_handoff_rc_cli_v1"
+LARGE_MODEL_KAGGLE_VALIDATION_CLI_SCHEMA = "large_model_kaggle_validation_cli_v1"
 COORDINATOR_ROUTE_CLI_SCHEMA = "crowdtensor_coordinator_route_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 OPERATOR_STATUS_CLI_SCHEMA = "crowdtensor_operator_status_cli_v1"
@@ -4364,6 +4365,168 @@ def build_core_technology_handoff_rc(args: argparse.Namespace, *, runner: Runner
     }
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary["artifacts"]["core_technology_handoff_rc_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_large_model_kaggle_validation(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "large_model_kaggle_validation_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "large_model_kaggle_validation_pack.py"),
+        "--mode",
+        str(args.mode),
+        "--output-dir",
+        str(output_dir),
+        "--kaggle-owner",
+        str(args.kaggle_owner),
+        "--kernel-slug-prefix",
+        str(args.kernel_slug_prefix),
+        "--kernel-title-prefix",
+        str(args.kernel_title_prefix),
+        "--accelerator",
+        str(args.accelerator),
+        "--llama-release",
+        str(args.llama_release),
+        "--llama-build-mode",
+        str(args.llama_build_mode),
+        "--runtime-path",
+        str(args.runtime_path),
+        "--context-length",
+        str(args.context_length),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--small-model-id",
+        str(args.small_model_id),
+        "--small-model-repo",
+        str(args.small_model_repo),
+        "--small-model-file",
+        str(args.small_model_file),
+        "--small-parameter-count-b",
+        str(args.small_parameter_count_b),
+        "--small-quantization",
+        str(args.small_quantization),
+        "--small-model-size-mb",
+        str(args.small_model_size_mb),
+        "--small-layer-count",
+        str(args.small_layer_count),
+        "--seven-b-model-id",
+        str(args.seven_b_model_id),
+        "--seven-b-model-repo",
+        str(args.seven_b_model_repo),
+        "--seven-b-model-file",
+        str(args.seven_b_model_file),
+        "--seven-b-parameter-count-b",
+        str(args.seven_b_parameter_count_b),
+        "--seven-b-quantization",
+        str(args.seven_b_quantization),
+        "--seven-b-model-size-mb",
+        str(args.seven_b_model_size_mb),
+        "--seven-b-layer-count",
+        str(args.seven_b_layer_count),
+        "--thirteen-b-model-id",
+        str(args.thirteen_b_model_id),
+        "--thirteen-b-model-repo",
+        str(args.thirteen_b_model_repo),
+        "--thirteen-b-model-file",
+        str(args.thirteen_b_model_file),
+        "--thirteen-b-parameter-count-b",
+        str(args.thirteen_b_parameter_count_b),
+        "--thirteen-b-quantization",
+        str(args.thirteen_b_quantization),
+        "--thirteen-b-model-size-mb",
+        str(args.thirteen_b_model_size_mb),
+        "--thirteen-b-layer-count",
+        str(args.thirteen_b_layer_count),
+        "--kernel-timeout-seconds",
+        str(args.kernel_timeout_seconds),
+        "--kaggle-push-timeout-seconds",
+        str(args.kaggle_push_timeout_seconds),
+        "--kaggle-status-timeout-seconds",
+        str(args.kaggle_status_timeout_seconds),
+        "--kaggle-status-poll-interval",
+        str(args.kaggle_status_poll_interval),
+        "--kaggle-output-timeout-seconds",
+        str(args.kaggle_output_timeout_seconds),
+        "--kaggle-delete-timeout-seconds",
+        str(args.kaggle_delete_timeout_seconds),
+        "--json",
+    ]
+    if getattr(args, "tiers", ""):
+        command.extend(["--tiers", str(args.tiers)])
+    if getattr(args, "include_13b", False):
+        command.append("--include-13b")
+    if getattr(args, "hf_cuda_install_compat", False):
+        command.append("--hf-cuda-install-compat")
+    if getattr(args, "run_report", ""):
+        command.extend(["--run-report", str(args.run_report)])
+    if getattr(args, "skip_kaggle_cleanup", False):
+        command.append("--skip-kaggle-cleanup")
+    step, payload = run_json_step(
+        "large_model_kaggle_validation",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": LARGE_MODEL_KAGGLE_VALIDATION_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["large_model_kaggle_validation_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="large_model_kaggle_validation_cli_summary",
+        schema=LARGE_MODEL_KAGGLE_VALIDATION_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    encoded = json.dumps(summary, sort_keys=True)
+    kaggle_sensitive_fragments = (
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"activation":',
+        '"activations":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+    )
+    leaks = [fragment for fragment in kaggle_sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "large-model Kaggle validation summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "large_model_kaggle_validation_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "public_artifact_safe": bool((summary.get("safety") or {}).get("public_artifact_safe")) if isinstance(summary.get("safety"), dict) else False,
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["large_model_kaggle_validation_cli_summary"]["present"] = True
     summary["artifact_summary"]["present_artifact_count"] = sum(
         1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
     )
@@ -22641,6 +22804,53 @@ def print_core_technology_handoff_rc(summary: dict[str, Any]) -> None:
             print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_large_model_kaggle_validation(summary: dict[str, Any]) -> None:
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    hardware = summary.get("hardware") if isinstance(summary.get("hardware"), dict) else {}
+    lifecycle = summary.get("kaggle_lifecycle") if isinstance(summary.get("kaggle_lifecycle"), dict) else {}
+    print("CrowdTensor large-model Kaggle validation")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(f"  mode: {summary.get('mode')} output={summary.get('output_dir')}")
+    print(
+        "  real_runtime: "
+        f"verified={bool(summary.get('real_runtime_verified'))} "
+        f"real_7b={bool(summary.get('real_7b_runtime_verified'))} "
+        f"real_13b={bool(summary.get('real_13b_runtime_verified'))} "
+        f"gpu_runtime={bool(summary.get('gpu_runtime_verified'))} "
+        f"sharded={bool(summary.get('sharded_path_verified'))} "
+        f"multi_worker={bool(summary.get('multi_worker_sharded_path_verified'))} "
+        f"core_ready={bool(summary.get('core_validation_ready'))}"
+    )
+    print(
+        "  kaggle: "
+        f"owner={lifecycle.get('owner')} "
+        f"kernel={lifecycle.get('kernel_ref')} "
+        f"accelerator={lifecycle.get('requested_accelerator')} "
+        f"deleted={lifecycle.get('kernels_deleted')}"
+    )
+    print(
+        "  hardware: "
+        f"gpu_count={hardware.get('gpu_count')} "
+        f"gpu_names={','.join(str(item) for item in hardware.get('gpu_names') or [])}"
+    )
+    print(f"  largest_successful_tier: {summary.get('largest_successful_tier')}")
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    for item in summary.get("blockers") or []:
+        print(f"  blocker: {item}")
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_micro_llm_artifact(summary: dict[str, Any]) -> None:
     print("CrowdTensor micro-LLM artifact")
     print(f"  ok: {summary.get('ok')}")
@@ -25495,6 +25705,55 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     core_tech_handoff.add_argument("--full-pytest", action="store_true")
     core_tech_handoff.add_argument("--timeout-seconds", type=int, default=150)
     core_tech_handoff.add_argument("--json", action="store_true")
+    large_model_kaggle = subparsers.add_parser(
+        "large-model-kaggle-validate",
+        help="Package, run, or import Kaggle GPU large-model validation evidence.",
+    )
+    large_model_kaggle.add_argument("--mode", choices=["package", "kaggle-auto", "evidence-import", "fixture"], default="package")
+    large_model_kaggle.add_argument("--output-dir", default="dist/large-model-kaggle-validation")
+    large_model_kaggle.add_argument("--kaggle-owner", default=os.environ.get("KAGGLE_USERNAME", ""))
+    large_model_kaggle.add_argument("--kernel-slug-prefix", default="ct-large-llm")
+    large_model_kaggle.add_argument("--kernel-title-prefix", default="CrowdTensor Large LLM")
+    large_model_kaggle.add_argument("--accelerator", default="GPU")
+    large_model_kaggle.add_argument("--tiers", default="")
+    large_model_kaggle.add_argument("--include-13b", action="store_true")
+    large_model_kaggle.add_argument("--run-report", default="")
+    large_model_kaggle.add_argument("--llama-release", default="b9611")
+    large_model_kaggle.add_argument("--llama-build-mode", choices=["auto", "source-cuda", "release"], default="auto")
+    large_model_kaggle.add_argument("--runtime-path", choices=["rpc", "cli", "hf-cuda"], default="rpc")
+    large_model_kaggle.add_argument("--hf-cuda-install-compat", action="store_true")
+    large_model_kaggle.add_argument("--context-length", type=int, default=512)
+    large_model_kaggle.add_argument("--max-new-tokens", type=int, default=8)
+    large_model_kaggle.add_argument("--small-model-id", default="qwen2.5-1.5b-instruct-q4-k-m")
+    large_model_kaggle.add_argument("--small-model-repo", default="Qwen/Qwen2.5-1.5B-Instruct-GGUF")
+    large_model_kaggle.add_argument("--small-model-file", default="qwen2.5-1.5b-instruct-q4_k_m.gguf")
+    large_model_kaggle.add_argument("--small-parameter-count-b", type=float, default=1.5)
+    large_model_kaggle.add_argument("--small-quantization", default="Q4_K_M")
+    large_model_kaggle.add_argument("--small-model-size-mb", type=int, default=1066)
+    large_model_kaggle.add_argument("--small-layer-count", type=int, default=28)
+    large_model_kaggle.add_argument("--seven-b-model-id", default="qwen2.5-7b-instruct-q2-k")
+    large_model_kaggle.add_argument("--seven-b-model-repo", default="Qwen/Qwen2.5-7B-Instruct-GGUF")
+    large_model_kaggle.add_argument("--seven-b-model-file", default="qwen2.5-7b-instruct-q2_k.gguf")
+    large_model_kaggle.add_argument("--seven-b-parameter-count-b", type=float, default=7.6)
+    large_model_kaggle.add_argument("--seven-b-quantization", default="Q2_K")
+    large_model_kaggle.add_argument("--seven-b-model-size-mb", type=int, default=2876)
+    large_model_kaggle.add_argument("--seven-b-layer-count", type=int, default=28)
+    large_model_kaggle.add_argument("--thirteen-b-model-id", default="qwen2.5-13b-placeholder")
+    large_model_kaggle.add_argument("--thirteen-b-model-repo", default="Qwen/Qwen2.5-7B-Instruct-GGUF")
+    large_model_kaggle.add_argument("--thirteen-b-model-file", default="qwen2.5-7b-instruct-q2_k.gguf")
+    large_model_kaggle.add_argument("--thirteen-b-parameter-count-b", type=float, default=13.0)
+    large_model_kaggle.add_argument("--thirteen-b-quantization", default="Q2_K")
+    large_model_kaggle.add_argument("--thirteen-b-model-size-mb", type=int, default=8192)
+    large_model_kaggle.add_argument("--thirteen-b-layer-count", type=int, default=40)
+    large_model_kaggle.add_argument("--kernel-timeout-seconds", type=int, default=7200)
+    large_model_kaggle.add_argument("--kaggle-push-timeout-seconds", type=float, default=240.0)
+    large_model_kaggle.add_argument("--kaggle-status-timeout-seconds", type=float, default=5400.0)
+    large_model_kaggle.add_argument("--kaggle-status-poll-interval", type=float, default=30.0)
+    large_model_kaggle.add_argument("--kaggle-output-timeout-seconds", type=float, default=300.0)
+    large_model_kaggle.add_argument("--kaggle-delete-timeout-seconds", type=float, default=180.0)
+    large_model_kaggle.add_argument("--skip-kaggle-cleanup", action="store_true")
+    large_model_kaggle.add_argument("--timeout-seconds", type=int, default=7800)
+    large_model_kaggle.add_argument("--json", action="store_true")
     micro_artifact = subparsers.add_parser(
         "micro-llm-artifact",
         help="Build or inspect the dependency-free file-backed Micro-LLM artifact.",
@@ -28273,6 +28532,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             value = getattr(args, attr)
             if value and not Path(value).is_file():
                 raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
+    if args.command == "large-model-kaggle-validate":
+        if args.context_length < 1:
+            raise SystemExit("--context-length must be positive")
+        if args.max_new_tokens < 1 or args.max_new_tokens > 8:
+            raise SystemExit("--max-new-tokens must be between 1 and 8")
+        if args.mode == "kaggle-auto" and not args.kaggle_owner:
+            config = Path.home() / ".kaggle" / "kaggle.json"
+            if config.is_file():
+                try:
+                    loaded = json.loads(config.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    loaded = {}
+                if isinstance(loaded, dict):
+                    args.kaggle_owner = str(loaded.get("username") or "")
+            if not args.kaggle_owner:
+                raise SystemExit("--kaggle-owner or KAGGLE_USERNAME is required for kaggle-auto")
+        if args.mode == "evidence-import" and not args.run_report:
+            raise SystemExit("--run-report is required for evidence-import")
+        if args.run_report and not Path(args.run_report).is_file():
+            raise SystemExit("--run-report must point to an existing JSON file")
+        for attr in [
+            "kaggle_push_timeout_seconds",
+            "kaggle_status_timeout_seconds",
+            "kaggle_status_poll_interval",
+            "kaggle_output_timeout_seconds",
+            "kaggle_delete_timeout_seconds",
+        ]:
+            if float(getattr(args, attr)) <= 0:
+                raise SystemExit(f"--{attr.replace('_', '-')} must be positive")
     if args.command == "micro-llm-artifact":
         if args.version < 1:
             raise SystemExit("--version must be at least 1")
@@ -28716,6 +29004,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(summary, sort_keys=True))
         else:
             print_core_technology_handoff_rc(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "large-model-kaggle-validate":
+        summary = build_large_model_kaggle_validation(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_large_model_kaggle_validation(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "micro-llm-artifact":
         summary = build_micro_llm_artifact(args)

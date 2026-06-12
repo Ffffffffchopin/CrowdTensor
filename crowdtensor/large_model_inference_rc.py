@@ -567,12 +567,82 @@ def import_real_run_report(path: str | Path) -> dict[str, Any]:
     missing = [name for name in required if metrics.get(name) is None]
     if missing:
         raise ValueError(f"real run report missing required fields: {', '.join(missing)}")
+    model = payload.get("model") if isinstance(payload.get("model"), dict) else {}
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    hardware = payload.get("hardware") if isinstance(payload.get("hardware"), dict) else {}
+    validation = payload.get("validation") if isinstance(payload.get("validation"), dict) else {}
+    try:
+        parameter_b = float(model.get("parameter_count_b") or payload.get("model_parameter_count_b") or 0.0)
+    except (TypeError, ValueError):
+        parameter_b = 0.0
+    runtime_backend = str(runtime.get("backend") or payload.get("runtime_backend") or "")
+    scale_tier = str(validation.get("scale_tier") or payload.get("scale_tier") or "")
+    quantization = str(model.get("quantization") or payload.get("quantization") or "")
+    real_7b_verified = bool(
+        payload.get("real_7b_runtime_verified")
+        or validation.get("real_7b_runtime_verified")
+        or (
+            parameter_b >= 7.0
+            and metrics.get("generated_token_count")
+            and (payload.get("ok") is not False)
+        )
+    )
+    sharded_path_verified = bool(
+        payload.get("sharded_path_verified")
+        or validation.get("sharded_path_verified")
+        or runtime.get("sharded_path_verified")
+    )
+    kaggle_gpu_verified = bool(
+        payload.get("kaggle_gpu_verified")
+        or validation.get("kaggle_gpu_verified")
+        or hardware.get("kaggle_gpu_verified")
+    )
+    gpu_runtime_verified = bool(
+        payload.get("gpu_runtime_verified")
+        or validation.get("gpu_runtime_verified")
+        or runtime.get("cuda_runtime_verified")
+        or runtime.get("gpu_runtime_verified")
+    )
+    multi_worker_sharded_path_verified = bool(
+        payload.get("multi_worker_sharded_path_verified")
+        or validation.get("multi_worker_sharded_path_verified")
+        or runtime.get("multi_worker_sharded_path_verified")
+    )
     return {
         "schema": RUNNER_RESULT_SCHEMA,
         "runner_mode": "real-import",
         "ok": True,
         "real_runtime_verified": True,
+        "real_7b_runtime_verified": real_7b_verified,
+        "sharded_path_verified": sharded_path_verified,
+        "kaggle_gpu_verified": kaggle_gpu_verified,
+        "gpu_runtime_verified": gpu_runtime_verified,
+        "multi_worker_sharded_path_verified": multi_worker_sharded_path_verified,
         "source": str(path),
+        "model": {
+            "model_id": model.get("model_id") or payload.get("model_id"),
+            "parameter_count_b": parameter_b,
+            "quantization": quantization,
+            "scale_tier": scale_tier,
+            "model_path_public": False,
+        },
+        "runtime": {
+            "backend": runtime_backend,
+            "worker_count": runtime.get("worker_count") or payload.get("worker_count"),
+            "stage_count": runtime.get("stage_count") or payload.get("stage_count"),
+            "sharded_path_verified": sharded_path_verified,
+            "kaggle_gpu_verified": kaggle_gpu_verified,
+            "gpu_runtime_verified": gpu_runtime_verified,
+            "multi_worker_sharded_path_verified": multi_worker_sharded_path_verified,
+        },
+        "hardware": {
+            "provider": hardware.get("provider") or payload.get("hardware_provider"),
+            "gpu_count": hardware.get("gpu_count") or payload.get("gpu_count"),
+            "gpu_names": hardware.get("gpu_names") or payload.get("gpu_names") or [],
+            "machine_shape": hardware.get("machine_shape") or payload.get("machine_shape"),
+            "kaggle_gpu_verified": kaggle_gpu_verified,
+            "gpu_runtime_verified": gpu_runtime_verified,
+        },
         "generated_token_count": int(metrics.get("generated_token_count") or 0),
         "max_new_tokens": int(metrics.get("max_new_tokens") or metrics.get("generated_token_count") or 0),
         "output_digest": str(metrics.get("output_digest")),
@@ -590,7 +660,15 @@ def import_real_run_report(path: str | Path) -> dict[str, Any]:
             "cache_misses": metrics.get("cache_misses", 0),
         },
         "process_cleanup": {"required": False, "completed": True},
-        "diagnosis_codes": ["large_model_real_run_imported", "large_model_runner_real_runtime_verified"],
+        "diagnosis_codes": [
+            "large_model_real_run_imported",
+            "large_model_runner_real_runtime_verified",
+        ]
+        + (["large_model_real_7b_runtime_verified"] if real_7b_verified else ["large_model_real_7b_runtime_not_verified"])
+        + (["large_model_kaggle_gpu_runtime_verified"] if kaggle_gpu_verified else [])
+        + (["large_model_gpu_runtime_verified"] if gpu_runtime_verified else [])
+        + (["large_model_sharded_runtime_path_verified"] if sharded_path_verified else [])
+        + (["large_model_multi_worker_sharded_path_verified"] if multi_worker_sharded_path_verified else []),
     }
 
 
@@ -779,6 +857,9 @@ def run_real_supervisor(
         "runner_mode": "real",
         "ok": bool(ok),
         "real_runtime_verified": bool(ok),
+        "real_7b_runtime_verified": bool(ok and float(model_manifest.get("model_size_mb") or 0) >= 6144),
+        "sharded_path_verified": bool(ok and len(adapter.get("worker_endpoints") or []) >= 1),
+        "kaggle_gpu_verified": False,
         "returncode": completed.returncode,
         "generated_token_count": generated_estimate,
         "token_count_source": "stdout_whitespace_estimate",
@@ -897,6 +978,11 @@ def build_benchmark_v2(
         },
         "imported_benchmark_used": imported_metrics_used,
         "runner_real_runtime_verified": bool(runner_result.get("real_runtime_verified")),
+        "runner_real_7b_runtime_verified": bool(runner_result.get("real_7b_runtime_verified")),
+        "sharded_path_verified": bool(runner_result.get("sharded_path_verified")),
+        "kaggle_gpu_verified": bool(runner_result.get("kaggle_gpu_verified")),
+        "gpu_runtime_verified": bool(runner_result.get("gpu_runtime_verified")),
+        "multi_worker_sharded_path_verified": bool(runner_result.get("multi_worker_sharded_path_verified")),
         "diagnosis_codes": [
             "large_model_benchmark_v2_ready",
             "large_model_single_device_comparison_ready",
@@ -939,6 +1025,11 @@ def build_correctness_summary(
             }),
         },
         "diagnosis_codes": ["large_model_correctness_summary_ready"],
+        "real_7b_runtime_verified": bool(runner_result.get("real_7b_runtime_verified")),
+        "sharded_path_verified": bool(runner_result.get("sharded_path_verified")),
+        "kaggle_gpu_verified": bool(runner_result.get("kaggle_gpu_verified")),
+        "gpu_runtime_verified": bool(runner_result.get("gpu_runtime_verified")),
+        "multi_worker_sharded_path_verified": bool(runner_result.get("multi_worker_sharded_path_verified")),
     }
     if runner_result.get("real_runtime_verified"):
         summary["diagnosis_codes"].append("large_model_correctness_real_runtime_summary_ready")
@@ -1094,6 +1185,10 @@ def build_rc_report(
     serving_hooks: dict[str, Any],
 ) -> dict[str, Any]:
     real_verified = bool(runner_result.get("real_runtime_verified"))
+    real_7b_verified = bool(runner_result.get("real_7b_runtime_verified"))
+    gpu_runtime_verified = bool(runner_result.get("gpu_runtime_verified"))
+    sharded_path_verified = bool(runner_result.get("sharded_path_verified"))
+    multi_worker_sharded_path_verified = bool(runner_result.get("multi_worker_sharded_path_verified"))
     blockers: list[str] = []
     for source in [runtime_probe, partition_manifest, runner_result, benchmark]:
         for item in source.get("blockers") or []:
@@ -1130,9 +1225,27 @@ def build_rc_report(
     for source in [adapter_interface, runtime_probe, device_profile, partition_manifest, runner_result, benchmark, correctness, serving_hooks]:
         codes.extend(source.get("diagnosis_codes") or [])
     if real_verified:
+        codes.append("core_technology_real_runtime_verified")
+    else:
+        codes.append("core_technology_real_runtime_not_verified")
+    if real_7b_verified:
         codes.append("core_technology_real_7b_runtime_verified")
     else:
-        codes.extend(["core_technology_real_7b_runtime_not_verified", "core_technology_fixture_or_plan_ready"])
+        codes.append("core_technology_real_7b_runtime_not_verified")
+    if gpu_runtime_verified:
+        codes.append("core_technology_gpu_runtime_verified")
+    else:
+        codes.append("core_technology_gpu_runtime_not_verified")
+    if sharded_path_verified:
+        codes.append("core_technology_sharded_runtime_path_verified")
+    else:
+        codes.append("core_technology_sharded_runtime_path_not_verified")
+    if multi_worker_sharded_path_verified:
+        codes.append("core_technology_multi_worker_sharded_path_verified")
+    else:
+        codes.append("core_technology_multi_worker_sharded_path_not_verified")
+    if not real_verified:
+        codes.append("core_technology_fixture_or_plan_ready")
     seen: set[str] = set()
     diagnosis_codes = [code for code in codes if not (code in seen or seen.add(code))]
     ok = bool(
@@ -1151,7 +1264,10 @@ def build_rc_report(
         "mode": mode,
         "output_dir": str(output_dir),
         "real_runtime_verified": real_verified,
-        "real_7b_runtime_verified": real_verified,
+        "real_7b_runtime_verified": real_7b_verified,
+        "gpu_runtime_verified": gpu_runtime_verified,
+        "sharded_path_verified": sharded_path_verified,
+        "multi_worker_sharded_path_verified": multi_worker_sharded_path_verified,
         "alpha_report": alpha_report,
         "adapter_interface": adapter_interface,
         "runtime_adapter_probe": runtime_probe,
