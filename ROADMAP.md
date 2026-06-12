@@ -51,11 +51,14 @@ What is working today:
 This is an engineering beta, not production Swarm Inference and not
 Hivemind-level large-model serving.
 
-The core technology layer now has Large-Model Shard Alpha plus an Inference RC:
+The core technology layer now has Large-Model Shard Alpha, Inference RC, and a
+Core Technology Handoff RC:
 
 - `crowdtensor large-model-shard` emits `large_model_shard_alpha_v1`.
 - `crowdtensor large-model-shard-rc` emits `core_technology_inference_rc_v1`
   and validates with `scripts/large_model_inference_rc_check.py`.
+- `crowdtensor core-tech-handoff` emits `core_technology_handoff_rc_v1` and
+  validates with `scripts/core_technology_handoff_check.py`.
 - The runtime adapter target is GGUF / llama.cpp RPC for controlled
   LAN/VPN/local-process operation.
 - The default 7B-class RC path is CI-safe fixture and diagnostic evidence and
@@ -86,13 +89,18 @@ The core technology layer now has Large-Model Shard Alpha plus an Inference RC:
 - Future runtime descriptors exist for vLLM, SGLang, TensorRT-LLM, and
   Petals-like backends, but they are explicit `unsupported_runtime_backend`
   placeholders behind the same adapter interface.
+- The Handoff RC aggregates Alpha and Inference RC evidence, deployment
+  runbooks, adapter conformance, test gates, and a next-layer integration
+  contract for the control layer, user layer, and future
+  permissions/trust/billing layer.
 
 This core path is still not a production serving claim, not public RPC security,
 not P2P/NAT traversal, not a GPU marketplace, and not training or fine-tuning.
 In environments without GGUF, llama.cpp binaries, reachable RPC workers, or
 sufficient hardware, the expected RC outcome is `ok=true` with
 `real_runtime_verified=false`, `real_7b_runtime_verified=false`, and concrete
-blockers.
+blockers. The Handoff RC is the point where other layers can be developed
+against stable core contracts without reworking core inference foundations.
 
 ## Near Term
 
@@ -133,10 +141,11 @@ blockers.
 - Expand small-model variants only when correctness and artifact safety remain
   easy to verify.
 - Keep CPU as the default path; keep CUDA opt-in and fail-closed.
-- Use `large-model-shard-rc` as the core-technology transition path for
-  7B-class GGUF / llama.cpp RPC runtime probing, planner v2, runner/supervisor,
-  benchmark v2, correctness, and serving-hook evidence, without claiming the
-  current tiny-model Beta is large-model serving.
+- Use `core-tech-handoff` as the core-technology transition path for 7B-class
+  GGUF / llama.cpp RPC runtime probing, planner v2, runner/supervisor,
+  benchmark v2, correctness, serving-hook evidence, deployment runbooks, and
+  next-layer contracts, without claiming the current tiny-model Beta is
+  large-model serving.
 - Add real controlled LAN/VPN runner imports before widening the
   `real_runtime_verified` claim beyond fixture diagnostics.
 

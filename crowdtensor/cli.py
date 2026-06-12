@@ -120,6 +120,7 @@ PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cl
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 LARGE_MODEL_SHARD_ALPHA_CLI_SCHEMA = "large_model_shard_alpha_cli_v1"
 CORE_TECHNOLOGY_INFERENCE_RC_CLI_SCHEMA = "core_technology_inference_rc_cli_v1"
+CORE_TECHNOLOGY_HANDOFF_RC_CLI_SCHEMA = "core_technology_handoff_rc_cli_v1"
 COORDINATOR_ROUTE_CLI_SCHEMA = "crowdtensor_coordinator_route_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 OPERATOR_STATUS_CLI_SCHEMA = "crowdtensor_operator_status_cli_v1"
@@ -4234,6 +4235,135 @@ def build_core_technology_inference_rc(args: argparse.Namespace, *, runner: Runn
     }
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary["artifacts"]["core_technology_inference_rc_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_core_technology_handoff_rc(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "core_technology_handoff_rc_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "core_technology_handoff_pack.py"),
+        "--mode",
+        str(args.mode),
+        "--output-dir",
+        str(output_dir),
+        "--runtime-backend",
+        str(args.runtime_backend),
+        "--model-id",
+        str(args.model_id),
+        "--model-path",
+        str(args.model_path),
+        "--quantization",
+        str(args.quantization),
+        "--layer-count",
+        str(args.layer_count),
+        "--context-length",
+        str(args.context_length),
+        "--model-size-mb",
+        str(args.model_size_mb),
+        "--reserved-kv-cache-mb",
+        str(args.reserved_kv_cache_mb),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--llama-cli",
+        str(args.llama_cli),
+        "--llama-rpc-server",
+        str(args.llama_rpc_server),
+        "--prompt-placeholder",
+        str(args.prompt_placeholder),
+        "--endpoint-timeout-seconds",
+        str(args.endpoint_timeout_seconds),
+        "--real-timeout-seconds",
+        str(args.real_timeout_seconds),
+        "--json",
+    ]
+    optional_args = [
+        ("--model-metadata", "model_metadata"),
+        ("--device-profile", "device_profile"),
+        ("--real-benchmark-report", "real_benchmark_report"),
+        ("--real-run-report", "real_run_report"),
+        ("--baseline-digest", "baseline_digest"),
+        ("--rpc-endpoint", "rpc_endpoint"),
+    ]
+    for flag, attr in optional_args:
+        value = getattr(args, attr, "")
+        if value:
+            command.extend([flag, str(value)])
+    if getattr(args, "start_workers", False):
+        command.append("--start-workers")
+    if getattr(args, "full_pytest", False):
+        command.append("--full-pytest")
+    step, payload = run_json_step(
+        "core_technology_handoff_rc",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": CORE_TECHNOLOGY_HANDOFF_RC_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["core_technology_handoff_rc_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="core_technology_handoff_rc_cli_summary",
+        schema=CORE_TECHNOLOGY_HANDOFF_RC_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    encoded = json.dumps(summary, sort_keys=True)
+    large_model_sensitive_fragments = (
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+    )
+    leaks = [fragment for fragment in large_model_sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "core technology Handoff RC summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "core_technology_handoff_rc_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "public_artifact_safe": bool((summary.get("safety") or {}).get("public_artifact_safe")) if isinstance(summary.get("safety"), dict) else False,
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["core_technology_handoff_rc_cli_summary"]["present"] = True
     summary["artifact_summary"]["present_artifact_count"] = sum(
         1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
     )
@@ -22385,7 +22515,7 @@ def print_core_technology_inference_rc(summary: dict[str, Any]) -> None:
     )
     print(
         "  adapter_interface: "
-        f"selected={adapter_interface.get('selected_backend')} "
+        f"selected={adapter_interface.get('selected_runtime_backend')} "
         f"supported={bool(adapter_interface.get('selected_supported'))}"
     )
     print(
@@ -22438,6 +22568,71 @@ def print_core_technology_inference_rc(summary: dict[str, Any]) -> None:
             f"support={artifact_summary_value.get('support_bundle')} "
             f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
         )
+    for item in summary.get("blockers") or []:
+        print(f"  blocker: {item}")
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_core_technology_handoff_rc(summary: dict[str, Any]) -> None:
+    capability = summary.get("capability_summary") if isinstance(summary.get("capability_summary"), dict) else {}
+    deployment = summary.get("deployment_runbook") if isinstance(summary.get("deployment_runbook"), dict) else {}
+    next_layer = summary.get("next_layer_integration_contract") if isinstance(summary.get("next_layer_integration_contract"), dict) else {}
+    adapter = summary.get("adapter_conformance") if isinstance(summary.get("adapter_conformance"), dict) else {}
+    tests = summary.get("test_gate_summary") if isinstance(summary.get("test_gate_summary"), dict) else {}
+    answers = summary.get("handoff_answers") if isinstance(summary.get("handoff_answers"), dict) else {}
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    print("CrowdTensor core technology Handoff RC")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(f"  mode: {summary.get('mode')} output={summary.get('output_dir')}")
+    print(
+        "  real_runtime: "
+        f"verified={bool(summary.get('real_runtime_verified'))} "
+        f"real_7b={bool(summary.get('real_7b_runtime_verified'))}"
+    )
+    print(
+        "  capability: "
+        f"plan={bool(capability.get('can_plan_large_model_sharding'))} "
+        f"fixture={bool(capability.get('can_run_ci_safe_fixture'))} "
+        f"import={bool(capability.get('can_import_real_runtime_evidence'))} "
+        f"handoff={bool(capability.get('can_support_control_layer_development'))}"
+    )
+    print(
+        "  deployment: "
+        f"ready={bool(deployment.get('ready'))} "
+        f"sections={','.join([name for name in ['local_fixture', 'local_real_runtime', 'lan_vpn_two_worker_runtime', 'import_retained_evidence'] if deployment.get(name)])}"
+    )
+    print(
+        "  next_layer: "
+        f"ready={bool(next_layer.get('ready'))} "
+        f"control={bool(next_layer.get('control_layer'))} "
+        f"user={bool(next_layer.get('user_layer'))} "
+        f"signals={len((next_layer.get('permissions_trust_billing_layer') or {}).get('core_signals') or []) if isinstance(next_layer.get('permissions_trust_billing_layer'), dict) else 0}"
+    )
+    print(
+        "  adapter_conformance: "
+        f"ready={bool(adapter.get('ready'))} "
+        f"future={','.join(adapter.get('future_runtime_backends') or [])}"
+    )
+    print(
+        "  test_gates: "
+        f"ready={bool(tests.get('ready'))} "
+        f"commands={len(tests.get('commands') or [])} "
+        f"coverage={len(tests.get('coverage') or [])}"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    for item in answers.get("what_core_can_do") or []:
+        print(f"  can_do: {item}")
     for item in summary.get("blockers") or []:
         print(f"  blocker: {item}")
     print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
@@ -25270,6 +25465,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     large_model_shard_rc.add_argument("--start-workers", action="store_true")
     large_model_shard_rc.add_argument("--timeout-seconds", type=int, default=120)
     large_model_shard_rc.add_argument("--json", action="store_true")
+    core_tech_handoff = subparsers.add_parser(
+        "core-tech-handoff",
+        help="Build the core technology Handoff RC package for next-layer development.",
+    )
+    core_tech_handoff.add_argument("--mode", choices=["plan", "fixture", "real"], default="fixture")
+    core_tech_handoff.add_argument("--output-dir", default="dist/core-technology-handoff-rc")
+    core_tech_handoff.add_argument("--runtime-backend", default="llama_cpp_rpc")
+    core_tech_handoff.add_argument("--model-id", default="gguf-7b-alpha-fixture")
+    core_tech_handoff.add_argument("--model-path", default="models/gguf-7b-alpha.Q4_K_M.gguf")
+    core_tech_handoff.add_argument("--quantization", default="Q4_K_M")
+    core_tech_handoff.add_argument("--layer-count", type=int, default=32)
+    core_tech_handoff.add_argument("--context-length", type=int, default=4096)
+    core_tech_handoff.add_argument("--model-size-mb", type=int, default=7168)
+    core_tech_handoff.add_argument("--reserved-kv-cache-mb", type=int, default=512)
+    core_tech_handoff.add_argument("--max-new-tokens", type=int, default=8)
+    core_tech_handoff.add_argument("--model-metadata", default="")
+    core_tech_handoff.add_argument("--device-profile", default="")
+    core_tech_handoff.add_argument("--real-benchmark-report", default="")
+    core_tech_handoff.add_argument("--real-run-report", default="")
+    core_tech_handoff.add_argument("--baseline-digest", default="")
+    core_tech_handoff.add_argument("--llama-cli", default="llama-cli")
+    core_tech_handoff.add_argument("--llama-rpc-server", default="rpc-server")
+    core_tech_handoff.add_argument("--prompt-placeholder", default="PROMPT_FILE")
+    core_tech_handoff.add_argument("--rpc-endpoint", default="")
+    core_tech_handoff.add_argument("--endpoint-timeout-seconds", type=float, default=0.25)
+    core_tech_handoff.add_argument("--real-timeout-seconds", type=float, default=120.0)
+    core_tech_handoff.add_argument("--start-workers", action="store_true")
+    core_tech_handoff.add_argument("--full-pytest", action="store_true")
+    core_tech_handoff.add_argument("--timeout-seconds", type=int, default=150)
+    core_tech_handoff.add_argument("--json", action="store_true")
     micro_artifact = subparsers.add_parser(
         "micro-llm-artifact",
         help="Build or inspect the dependency-free file-backed Micro-LLM artifact.",
@@ -27079,7 +27304,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-tunnel-doctor", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "large-model-shard", "large-model-shard-rc", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-tunnel-doctor", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "large-model-shard", "large-model-shard-rc", "core-tech-handoff", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -28025,6 +28250,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             value = getattr(args, attr)
             if value and not Path(value).is_file():
                 raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
+    if args.command == "core-tech-handoff":
+        if args.layer_count < 1:
+            raise SystemExit("--layer-count must be positive")
+        if args.context_length < 1:
+            raise SystemExit("--context-length must be positive")
+        if args.model_size_mb < 1:
+            raise SystemExit("--model-size-mb must be positive")
+        if args.reserved_kv_cache_mb < 0:
+            raise SystemExit("--reserved-kv-cache-mb must be non-negative")
+        if args.max_new_tokens < 1:
+            raise SystemExit("--max-new-tokens must be positive")
+        if args.mode == "real" and args.max_new_tokens > 8:
+            raise SystemExit("--max-new-tokens must be <= 8 in real mode")
+        if args.endpoint_timeout_seconds <= 0:
+            raise SystemExit("--endpoint-timeout-seconds must be positive")
+        if args.real_timeout_seconds <= 0:
+            raise SystemExit("--real-timeout-seconds must be positive")
+        if args.mode == "real" and args.real_timeout_seconds > 1200:
+            raise SystemExit("--real-timeout-seconds must be <= 1200 in real mode")
+        for attr in ["real_benchmark_report", "real_run_report"]:
+            value = getattr(args, attr)
+            if value and not Path(value).is_file():
+                raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
     if args.command == "micro-llm-artifact":
         if args.version < 1:
             raise SystemExit("--version must be at least 1")
@@ -28461,6 +28709,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(summary, sort_keys=True))
         else:
             print_core_technology_inference_rc(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "core-tech-handoff":
+        summary = build_core_technology_handoff_rc(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_core_technology_handoff_rc(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "micro-llm-artifact":
         summary = build_micro_llm_artifact(args)

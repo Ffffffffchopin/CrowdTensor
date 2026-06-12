@@ -426,6 +426,26 @@ blockers. The RC remains inference-only, controlled-network-only, not public
 P2P/NAT traversal, not production Petals/Hivemind parity, not training or
 fine-tuning, and not an economic network.
 
+The core technology handoff gate packages the RC for next-layer development:
+
+```bash
+crowdtensor core-tech-handoff --output-dir dist/core-technology-handoff-rc --json
+python scripts/core_technology_handoff_check.py \
+  --report dist/core-technology-handoff-rc/core_technology_handoff_rc.json \
+  --json
+```
+
+This emits `core_technology_handoff_rc_v1`. It embeds the Inference RC, adds a
+deployment runbook, adapter conformance summary, next-layer integration
+contract, test-gate summary, final Support Bundle, and answers for how the
+control layer, user layer, and future permissions/trust/billing layer should
+consume core signals. In CI-safe environments it remains ready with
+`real_runtime_verified=false`, `real_7b_runtime_verified=false`, and blockers
+when GGUF/llama.cpp/RPC/hardware are absent. Treat this as the core technology
+handoff boundary: the inference core interfaces and evidence path are stable
+enough to develop other layers, while real external 7B+ runtime proof remains a
+resource-dependent follow-up.
+
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 
 ```bash

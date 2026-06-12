@@ -133,6 +133,79 @@ controlled-network-only, not public P2P/NAT traversal, not production
 Petals/Hivemind parity, not a GPU marketplace, not training/fine-tuning, and not
 a large-model serving SLA.
 
+## Core Technology Handoff RC
+
+Use this when the core technology layer needs a single handoff artifact for the
+control layer, user-facing layer, and future permissions/trust/billing work:
+
+```bash
+crowdtensor core-tech-handoff \
+  --output-dir dist/core-technology-handoff-rc \
+  --json
+python scripts/core_technology_handoff_check.py \
+  --report dist/core-technology-handoff-rc/core_technology_handoff_rc.json \
+  --json
+```
+
+The report schema is `core_technology_handoff_rc_v1`. It embeds the Inference
+RC report and adds:
+
+- `core_technology_deployment_runbook_v1`
+- `core_technology_next_layer_contract_v1`
+- `core_technology_adapter_conformance_v1`
+- `core_technology_test_gate_summary_v1`
+- `core_technology_handoff_rc_support_bundle_v1`
+
+The deployment runbook covers local fixture, local real runtime, LAN/VPN
+two-worker runtime, retained real-run import, troubleshooting, and cleanup. The
+next-layer contract exposes stable control-layer inputs, user-layer status and
+streaming/batch schemas, and core signals that a later permissions/trust/billing
+layer can consume without implementing those systems in the core layer.
+
+Common handoff commands:
+
+```bash
+# CI-safe handoff
+crowdtensor core-tech-handoff --mode fixture --json
+
+# Plan-only handoff
+crowdtensor core-tech-handoff --mode plan --json
+
+# Controlled real runtime, bounded
+crowdtensor core-tech-handoff \
+  --mode real \
+  --model-path /models/llama-7b.Q4_K_M.gguf \
+  --rpc-endpoint http://127.0.0.1:50052 \
+  --max-new-tokens 8 \
+  --real-timeout-seconds 1200 \
+  --json
+
+# Import retained public-safe real runtime evidence
+crowdtensor core-tech-handoff \
+  --real-run-report /secure/private/large_model_real_run.json \
+  --real-benchmark-report /secure/private/large_model_benchmark.json \
+  --json
+```
+
+If no real GGUF/llama.cpp/RPC/hardware exists, the expected handoff state is
+`ok=true`, `real_runtime_verified=false`, `real_7b_runtime_verified=false`, and
+blockers such as missing runtime binaries, missing model file, unreachable RPC
+endpoints, insufficient memory, and `external_real_runtime_resources_required`.
+This is still a completed handoff when the objective is core interface,
+deployment, diagnostic, artifact, and next-layer readiness. It is not a claim
+that a 7B/13B/70B model was actually run.
+
+Before leaving a real runtime attempt, check for leftovers:
+
+```bash
+ps -eo pid,comm,args | rg -i 'llama|rpc-server|large_model_inference|large-model-shard-rc' || true
+```
+
+Public Handoff RC artifacts must keep raw prompts, generated text, generated
+token ids, activations, KV cache, credentials, leases, idempotency material,
+private env files, and registries out of JSON, Markdown, terminal summaries,
+and Support Bundles.
+
 ## Public Swarm Inference v2
 
 Use this first when validating the current public-preview inference path. It uses P2P discovery for route lookup, keeps the Coordinator as the execution authority, and validates real small Hugging Face split inference with distinct stage Miners.
