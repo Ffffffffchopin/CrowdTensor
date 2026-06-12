@@ -32,7 +32,7 @@ large-model sharding breakthrough.
 
 ## Current Milestone
 
-**Public Real-LLM Swarm Inference Beta**
+**Public Real-LLM Swarm Inference Beta + Large-Model Shard Alpha**
 
 The current beta proves a small real Hugging Face GPT model can be split across
 two stage Miners behind a Coordinator-backed swarm route.
@@ -50,6 +50,30 @@ What is working today:
 
 This is an engineering beta, not production Swarm Inference and not
 Hivemind-level large-model serving.
+
+The core technology layer now also has a Large-Model Shard Alpha/MVP:
+
+- `crowdtensor large-model-shard` emits `large_model_shard_alpha_v1`.
+- The runtime adapter target is GGUF / llama.cpp RPC for controlled
+  LAN/VPN/local-process operation.
+- The default 7B-class path is CI-safe planning evidence and keeps
+  `real_runtime_verified=false` unless a real benchmark report is explicitly
+  imported.
+- The partition planner emits `large_model_partition_manifest_v1` with
+  layer-range placement, memory budget checks, controlled endpoint checks,
+  latency/bandwidth metadata, and blocker diagnostics.
+- The workload contract is `large_model_sharded_generate_v1` and includes
+  prefill/decode/finalize steps, KV/prefix cache metadata, streaming, bounded
+  batch, cancellation, and health-aware route hooks.
+- The benchmark harness records TTFT, tokens/s, p50/p95 when available, memory,
+  network bytes/token, cache hit/miss metrics, correctness status, failure
+  diagnosis, and single-device fallback vs sharded adapter comparison.
+- Public artifacts keep prompts, generated text, token ids, activations,
+  KV-cache data, credentials, leases, and idempotency material out of reports.
+
+This Alpha is the first core large-model bridge, not a production serving
+claim, not public RPC security, not P2P/NAT traversal, and not training or
+fine-tuning.
 
 ## Near Term
 
@@ -90,9 +114,11 @@ Hivemind-level large-model serving.
 - Expand small-model variants only when correctness and artifact safety remain
   easy to verify.
 - Keep CPU as the default path; keep CUDA opt-in and fail-closed.
-- Start the core-technology transition plan toward a real large-model runtime
-  adapter and reproducible 7B/13B cross-device benchmark, without claiming the
+- Use `large-model-shard` as the core-technology transition path for 7B-class
+  GGUF / llama.cpp RPC planning and benchmark evidence, without claiming the
   current tiny-model Beta is large-model serving.
+- Add real controlled LAN/VPN benchmark imports before widening the
+  `real_runtime_verified` claim beyond fixture planning.
 
 ## Mid Term
 
@@ -112,13 +138,15 @@ Hivemind-level large-model serving.
 
 **Core large-model path.**
 
-- Evaluate llama.cpp RPC, vLLM/SGLang worker integration, TensorRT-LLM, and
-  Petals-like layer workers as runtime backends rather than rebuilding kernels
-  inside the control plane.
-- Add a partition planner that accounts for VRAM, bandwidth, latency, stage
-  role, KV-cache location, and device reliability.
-- Produce repeatable two-to-four-device benchmarks for quantized 7B/13B models
-  before widening claims to larger open-weight models.
+- Keep llama.cpp RPC / GGUF as the first concrete adapter while evaluating
+  vLLM/SGLang worker integration, TensorRT-LLM, and Petals-like layer workers
+  as later runtime backends rather than rebuilding kernels inside the control
+  plane.
+- Extend the partition planner from layer-range placement into tensor/expert,
+  KV-cache placement, prefill/decode split, health-aware routing, and device
+  reliability scoring.
+- Produce repeatable two-to-four-device real benchmarks for quantized 7B/13B
+  models before widening claims to larger open-weight models.
 - Compare LAN/trusted-cluster throughput separately from wide-area Petals-style
   availability; optimize each route for its own constraints.
 

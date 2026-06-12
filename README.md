@@ -372,6 +372,30 @@ idempotency material. If `ok` is false, start with the Markdown
 missing token target, KV-cache, route hardening, batch/stream, external
 runtime, or requeue evidence that must be rerun or imported.
 
+To work on the core technology layer instead of the current tiny/small-model
+product beta, build the Large-Model Shard Alpha evidence:
+
+```bash
+crowdtensor large-model-shard --output-dir dist/large-model-shard-alpha --json
+python scripts/large_model_shard_alpha_check.py \
+  --report dist/large-model-shard-alpha/large_model_shard_alpha.json \
+  --json
+```
+
+This emits `large_model_shard_alpha_v1` plus a CLI summary. It creates a
+7B-class GGUF / llama.cpp RPC runtime adapter, layer-range partition manifest,
+`large_model_sharded_generate_v1` workload contract, serving-readiness hooks,
+and benchmark harness artifacts. The default path is CI-safe planning evidence:
+it does not require a GGUF file or real 7B hardware and keeps
+`real_runtime_verified=false`. A real controlled LAN/VPN run can pass
+`--model-path`, `--model-metadata`, `--device-profile`, and
+`--real-benchmark-report` to import actual TTFT, tokens/s, memory, network, and
+cache metrics. Public artifacts still redact raw prompts, generated text,
+generated token ids, activations, KV cache, credentials, leases, and
+idempotency material. This is the core large-model sharding Alpha/MVP, not
+production Petals/Hivemind parity, not public RPC security, not NAT traversal,
+not training/fine-tuning, and not a large-model serving SLA.
+
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 
 ```bash
@@ -695,6 +719,18 @@ Real small-model anchors: Real Small-LLM Sharded Inference Beta,
 `remote_python_real_llm_sharded_infer`, `hf_dependencies_missing`,
 `hf_transformers_cpu`, optional [hf], CPU-only, read-only, not P2P, not
 GGUF/llama.cpp, and not large-model.
+
+Core large-model Alpha anchors: `crowdtensor large-model-shard`,
+`large_model_shard_alpha_v1`, `large_model_runtime_adapter_v1`,
+`large_model_partition_manifest_v1`, `large_model_sharded_generate_v1`,
+`large_model_shard_benchmark_v1`, `large_model_shard_alpha_check_v1`,
+`scripts/large_model_shard_alpha_pack.py`,
+`scripts/large_model_shard_alpha_check.py`, llama.cpp RPC / GGUF,
+layer-range placement, controlled LAN/VPN/local process only,
+`real_runtime_verified=false` by default, fixture planning evidence unless a
+real benchmark report is imported, public artifact redaction, not public RPC
+safe, not production Petals/Hivemind parity, not P2P/NAT traversal, not
+training/fine-tuning, and not large-model serving SLA.
 
 Live RC anchors: Real Small-LLM Sharded Inference Live RC,
 `real_llm_live_rc_v1`, `real_llm_live_rc_check.py`,

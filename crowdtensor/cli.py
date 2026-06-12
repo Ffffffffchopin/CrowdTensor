@@ -118,6 +118,7 @@ USABLE_SWARM_INFERENCE_CLI_SCHEMA = "usable_swarm_inference_cli_v1"
 PUBLIC_SWARM_INFERENCE_V2_CLI_SCHEMA = "public_swarm_inference_v2_cli_v1"
 PUBLIC_SWARM_GPU_INFERENCE_BETA_CLI_SCHEMA = "public_swarm_gpu_inference_beta_cli_v1"
 GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
+LARGE_MODEL_SHARD_ALPHA_CLI_SCHEMA = "large_model_shard_alpha_cli_v1"
 COORDINATOR_ROUTE_CLI_SCHEMA = "crowdtensor_coordinator_route_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
 OPERATOR_STATUS_CLI_SCHEMA = "crowdtensor_operator_status_cli_v1"
@@ -3997,6 +3998,117 @@ def build_real_llm_sharded_inference(args: argparse.Namespace, *, runner: Runner
     summary["artifacts"]["real_llm_sharded_evidence_markdown"]["present"] = evidence_md.is_file()
     summary["artifacts"]["support_bundle_json"]["present"] = (output_dir / "support_bundle.json").is_file()
     summary["artifacts"]["real_llm_sharded_cli_summary"]["present"] = True
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_large_model_shard_alpha(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "large_model_shard_alpha_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "large_model_shard_alpha_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--model-id",
+        str(args.model_id),
+        "--model-path",
+        str(args.model_path),
+        "--quantization",
+        str(args.quantization),
+        "--layer-count",
+        str(args.layer_count),
+        "--context-length",
+        str(args.context_length),
+        "--model-size-mb",
+        str(args.model_size_mb),
+        "--reserved-kv-cache-mb",
+        str(args.reserved_kv_cache_mb),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--llama-cli",
+        str(args.llama_cli),
+        "--llama-rpc-server",
+        str(args.llama_rpc_server),
+        "--prompt-placeholder",
+        str(args.prompt_placeholder),
+        "--json",
+    ]
+    if getattr(args, "model_metadata", ""):
+        command.extend(["--model-metadata", args.model_metadata])
+    if getattr(args, "device_profile", ""):
+        command.extend(["--device-profile", args.device_profile])
+    if getattr(args, "real_benchmark_report", ""):
+        command.extend(["--real-benchmark-report", args.real_benchmark_report])
+    step, payload = run_json_step(
+        "large_model_shard_alpha",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": LARGE_MODEL_SHARD_ALPHA_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["large_model_shard_alpha_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="large_model_shard_alpha_cli_summary",
+        schema=LARGE_MODEL_SHARD_ALPHA_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    encoded = json.dumps(summary, sort_keys=True)
+    large_model_sensitive_fragments = (
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+    )
+    leaks = [fragment for fragment in large_model_sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "large-model shard alpha summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "large_model_shard_alpha_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "public_artifact_safe": bool((summary.get("safety") or {}).get("public_artifact_safe")) if isinstance(summary.get("safety"), dict) else False,
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["large_model_shard_alpha_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
 
@@ -22077,6 +22189,53 @@ def print_real_llm_sharded_inference(summary: dict[str, Any]) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def print_large_model_shard_alpha(summary: dict[str, Any]) -> None:
+    alpha = summary.get("alpha") if isinstance(summary.get("alpha"), dict) else {}
+    adapter = summary.get("runtime_adapter") if isinstance(summary.get("runtime_adapter"), dict) else {}
+    partition = summary.get("partition_manifest") if isinstance(summary.get("partition_manifest"), dict) else {}
+    benchmark = summary.get("benchmark") if isinstance(summary.get("benchmark"), dict) else {}
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    print("CrowdTensor large-model shard Alpha")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(f"  output: {summary.get('output_dir')}")
+    print(f"  evidence_scope: {summary.get('evidence_scope')} real_runtime_verified={bool(summary.get('real_runtime_verified'))}")
+    print(f"  adapter: {adapter.get('adapter_kind')} backend={adapter.get('runtime_backend')}")
+    model = adapter.get("model") if isinstance(adapter.get("model"), dict) else {}
+    print(f"  model: {model.get('model_id')} quant={model.get('quantization')} layers={model.get('layer_count')}")
+    print(
+        "  partition: "
+        f"runnable={bool(partition.get('runnable'))} "
+        f"assigned={partition.get('assigned_layer_count')}/{(partition.get('model') or {}).get('layer_count') if isinstance(partition.get('model'), dict) else ''} "
+        f"strategy={partition.get('strategy')}"
+    )
+    print(
+        "  benchmark: "
+        f"{benchmark.get('measurement_kind')} "
+        f"tokens_s={(benchmark.get('sharded_adapter_path') or {}).get('tokens_per_second') if isinstance(benchmark.get('sharded_adapter_path'), dict) else None} "
+        f"ttft_ms={(benchmark.get('sharded_adapter_path') or {}).get('ttft_ms') if isinstance(benchmark.get('sharded_adapter_path'), dict) else None}"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for item in summary.get("next_commands") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("command_line"):
+            print(f"  next: {item.get('label')}: {item.get('command_line')}")
+        elif item.get("commands"):
+            print(f"  next: {item.get('label')}: {len(item.get('commands') or [])} worker commands")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
 def print_micro_llm_artifact(summary: dict[str, Any]) -> None:
     print("CrowdTensor micro-LLM artifact")
     print(f"  ok: {summary.get('ok')}")
@@ -24851,6 +25010,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     real_shard.add_argument("--require-distinct-stage-miners", action="store_true")
     real_shard.add_argument("--timeout-seconds", type=int, default=240)
     real_shard.add_argument("--json", action="store_true")
+    large_model_shard = subparsers.add_parser(
+        "large-model-shard",
+        help="Build the core large-model GGUF/llama.cpp RPC sharding Alpha plan and evidence.",
+    )
+    large_model_shard.add_argument("--output-dir", default="dist/large-model-shard-alpha")
+    large_model_shard.add_argument("--model-id", default="gguf-7b-alpha-fixture")
+    large_model_shard.add_argument("--model-path", default="models/gguf-7b-alpha.Q4_K_M.gguf")
+    large_model_shard.add_argument("--quantization", default="Q4_K_M")
+    large_model_shard.add_argument("--layer-count", type=int, default=32)
+    large_model_shard.add_argument("--context-length", type=int, default=4096)
+    large_model_shard.add_argument("--model-size-mb", type=int, default=7168)
+    large_model_shard.add_argument("--reserved-kv-cache-mb", type=int, default=512)
+    large_model_shard.add_argument("--max-new-tokens", type=int, default=16)
+    large_model_shard.add_argument("--model-metadata", default="")
+    large_model_shard.add_argument("--device-profile", default="")
+    large_model_shard.add_argument("--real-benchmark-report", default="")
+    large_model_shard.add_argument("--llama-cli", default="llama-cli")
+    large_model_shard.add_argument("--llama-rpc-server", default="rpc-server")
+    large_model_shard.add_argument("--prompt-placeholder", default="PROMPT_FILE")
+    large_model_shard.add_argument("--timeout-seconds", type=int, default=60)
+    large_model_shard.add_argument("--json", action="store_true")
     micro_artifact = subparsers.add_parser(
         "micro-llm-artifact",
         help="Build or inspect the dependency-free file-backed Micro-LLM artifact.",
@@ -26660,7 +26840,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-tunnel-doctor", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-tunnel-doctor", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "large-model-shard", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -27570,6 +27750,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--max-new-tokens must be between 1 and 32")
         if args.failure_mode != "none" and args.max_new_tokens != 1:
             raise SystemExit("--max-new-tokens greater than 1 is only supported with --failure-mode none")
+    if args.command == "large-model-shard":
+        if args.layer_count < 1:
+            raise SystemExit("--layer-count must be positive")
+        if args.context_length < 1:
+            raise SystemExit("--context-length must be positive")
+        if args.model_size_mb < 1:
+            raise SystemExit("--model-size-mb must be positive")
+        if args.reserved_kv_cache_mb < 0:
+            raise SystemExit("--reserved-kv-cache-mb must be non-negative")
+        if args.max_new_tokens < 1 or args.max_new_tokens > 4096:
+            raise SystemExit("--max-new-tokens must be between 1 and 4096")
+        if args.real_benchmark_report and not Path(args.real_benchmark_report).is_file():
+            raise SystemExit("--real-benchmark-report must point to an existing JSON file")
     if args.command == "micro-llm-artifact":
         if args.version < 1:
             raise SystemExit("--version must be at least 1")
@@ -27992,6 +28185,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(summary, sort_keys=True))
         else:
             print_real_llm_sharded_inference(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "large-model-shard":
+        summary = build_large_model_shard_alpha(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_large_model_shard_alpha(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "micro-llm-artifact":
         summary = build_micro_llm_artifact(args)

@@ -2,6 +2,53 @@
 
 This document collects common commands for local Alpha operation.
 
+## Large-Model Shard Alpha
+
+Use this when working on the core technology layer: cross-device large-model
+inference planning and evidence. It is separate from the current
+Coordinator-backed tiny/small-model Public Swarm route.
+
+```bash
+crowdtensor large-model-shard --output-dir dist/large-model-shard-alpha --json
+python scripts/large_model_shard_alpha_check.py \
+  --report dist/large-model-shard-alpha/large_model_shard_alpha.json \
+  --json
+```
+
+The report schema is `large_model_shard_alpha_v1`. The default run builds a
+7B-class GGUF / llama.cpp RPC adapter plan with two controlled local/LAN-style
+RPC workers, a `large_model_partition_manifest_v1` layer-range placement, a
+`large_model_sharded_generate_v1` workload contract, serving-readiness hooks for
+stream events, bounded batch requests, cancellation, KV/prefix cache metadata,
+and health-aware route metadata, plus a benchmark harness comparing a
+single-device fallback to the sharded adapter path.
+
+By default this is CI-safe planning evidence only. It does not require a GGUF
+file or real 7B hardware and must keep `real_runtime_verified=false`,
+`evidence_scope=fixture-contract-plan`, and `large_model_7b_real_runtime_deferred`.
+For a real controlled LAN/VPN run, provide a model path, optional model/device
+metadata, and a real benchmark JSON:
+
+```bash
+crowdtensor large-model-shard \
+  --model-id llama-7b-q4-lan \
+  --model-path /models/llama-7b.Q4_K_M.gguf \
+  --device-profile /secure/private/device_profiles.json \
+  --real-benchmark-report /secure/private/large_model_benchmark.json \
+  --output-dir dist/large-model-shard-alpha-real \
+  --json
+```
+
+The imported benchmark must include `ttft_ms`, `tokens_per_second`,
+`memory_peak_mb`, and `network_bytes_per_token`; optional p50/p95/cache metrics
+are preserved. Only that import path may set `real_runtime_verified=true`.
+Public JSON, Markdown, terminal summaries, and support bundles must not include
+raw prompts, generated text, generated token ids, activations, KV cache,
+credentials, leases, idempotency material, private env files, or registries.
+This Alpha remains controlled LAN/VPN/local-process only: not public RPC safe,
+not production Petals/Hivemind parity, not P2P/NAT traversal, not training or
+fine-tuning, and not a large-model serving SLA.
+
 ## Public Swarm Inference v2
 
 Use this first when validating the current public-preview inference path. It uses P2P discovery for route lookup, keeps the Coordinator as the execution authority, and validates real small Hugging Face split inference with distinct stage Miners.
