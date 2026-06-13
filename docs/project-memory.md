@@ -208,12 +208,15 @@ The project currently includes:
   attempts verified `CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_NO_VMM=ON`,
   `GGML_RPC=ON`, successful CUDA llama.cpp build with
   `--cuda-build-jobs 2 --cuda-build-timeout-seconds 5400`, and two live RPC
-  workers; the strongest retained report is
-  `dist/large-model-kaggle-validation-t4x2-rpc-7b-clientcpu-20260613/large_model_kaggle_validation.json`.
-  It hides CUDA from the local llama.cpp client in RPC mode so only RPC workers
-  own GPU placement, but Kaggle still killed the kernel before any small or 7B
-  tier result was retained. Keep `core_validation_ready=false` for those
-  reports. The 2026-06-12 retained P100 attempts
+  workers. The current strongest retained report is
+  `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-20260613/large_model_kaggle_validation.json`:
+  it hides CUDA from the local llama.cpp client in RPC mode so only RPC workers
+  own GPU placement, verifies successful 1.5B GGUF download, reaches
+  `large_model_kaggle_tier_run_start` for `llama-cli --rpc`, and is then killed
+  by Kaggle before generated tokens are retained. This localizes the current
+  blocker to RPC inference execution on Kaggle rather than T4 assignment, CUDA
+  build, model download, or 7B size alone. Keep `core_validation_ready=false`
+  for those reports. The 2026-06-12 retained P100 attempts
   verified GPU hardware and kernel cleanup but did not complete the required
   7B/8B sharded/RPC proof: the initial GGUF release path exposed
   missing/shared-library and non-CUDA-runtime issues, the `source-cuda`

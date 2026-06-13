@@ -220,7 +220,8 @@ crowdtensor large-model-kaggle-validate \
   --llama-build-mode source-cuda \
   --cuda-architectures native \
   --cuda-no-vmm \
-  --cuda-build-jobs 1 \
+  --cuda-build-jobs 2 \
+  --cuda-build-timeout-seconds 5400 \
   --output-dir dist/large-model-kaggle-validation \
   --json
 python scripts/large_model_kaggle_validation_check.py \
@@ -274,6 +275,13 @@ completion:
   Kaggle still killed the kernel before a small or 7B model result was retained.
   This is the strongest current T4 x2 artifact, but it keeps
   `core_validation_ready=false`.
+- `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-20260613/large_model_kaggle_validation.json`
+  added tier-stage telemetry and ran only the small GGUF tier. It verified T4
+  x2, CUDA build, RPC workers, successful 1.5B GGUF download, and
+  `llama-cli --rpc` run start with `client_cuda_hidden=true`; Kaggle then killed
+  the kernel before generated tokens were retained. This localizes the current
+  blocker to RPC inference execution on Kaggle, not to model download, T4
+  assignment, CUDA build, or 7B model size alone.
 
 Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
 

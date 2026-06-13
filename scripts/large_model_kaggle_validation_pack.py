@@ -958,7 +958,11 @@ def stop_rpc_servers(rpc_info):
                 pass
 
 
-def run_tier(tier, llama_info, hardware, rpc_info):
+def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
+    def publish(stage):
+        if callable(progress):
+            progress(result, stage)
+
     llama_cli = str(llama_info.get("llama_cli") or "")
     model_dir = OUT / "models" / tier["tier"]
     model_path = model_dir / tier["filename"]
@@ -999,13 +1003,19 @@ def run_tier(tier, llama_info, hardware, rpc_info):
         "metrics": {{}},
         "diagnosis_codes": [],
     }}
+    result["diagnosis_codes"].append("large_model_kaggle_tier_download_start")
+    publish("large_model_kaggle_tier_download_start")
     try:
         download_info = download(model_url(tier["repo"], tier["filename"]), model_path, timeout=3600)
     except Exception as exc:
         result["blockers"] = ["large_model_kaggle_model_download_failed"]
         result["error_type"] = type(exc).__name__
         result["diagnosis_codes"].append("large_model_kaggle_model_download_failed")
+        publish("large_model_kaggle_tier_download_failed")
         return result
+    result["download"] = download_info
+    result["diagnosis_codes"].append("large_model_kaggle_tier_download_complete")
+    publish("large_model_kaggle_tier_download_complete")
     prompt_path = OUT / ("prompt-" + tier["tier"] + ".txt")
     prompt_path.write_text(PROMPT_TEXT + "\\n", encoding="utf-8")
     command = [
@@ -1029,6 +1039,14 @@ def run_tier(tier, llama_info, hardware, rpc_info):
         command.extend(["--rpc", ",".join(rpc_endpoints)])
         if len(rpc_endpoints) > 1:
             command.extend(["-ts", ",".join(["1"] * len(rpc_endpoints))])
+    result["runner_step"] = {{
+        "ok": False,
+        "pending": True,
+        "command_public": public_command(command),
+        "client_cuda_hidden": bool(rpc_enabled),
+    }}
+    result["diagnosis_codes"].append("large_model_kaggle_tier_run_start")
+    publish("large_model_kaggle_tier_run_start")
     started = time.monotonic()
     step, stdout, stderr = run(command, timeout=1200, env=client_env_for_binary(Path(llama_cli), rpc_enabled=rpc_enabled))
     wall = round(time.monotonic() - started, 3)
@@ -1049,7 +1067,6 @@ def run_tier(tier, llama_info, hardware, rpc_info):
         diagnosis.append(str(step["stderr_hint"]))
     result.update({{
         "ok": ok,
-        "download": download_info,
         "runner_step": step,
         "metrics": {{
             "ttft_ms": None,
@@ -1085,6 +1102,7 @@ def run_tier(tier, llama_info, hardware, rpc_info):
         }},
         "diagnosis_codes": diagnosis,
     }})
+    publish("large_model_kaggle_tier_run_complete")
     return result
 
 
@@ -1170,7 +1188,39 @@ def main():
         write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_rpc_start_complete"))
         try:
             for tier in TIERS:
-                tier_results.append(run_tier(tier, llama, hardware, rpc_info))
+                pending_result = {{
+                    "schema": SCHEMA,
+                    "ok": False,
+                    "tier": tier["tier"],
+                    "model": {{
+                        "model_id": tier["model_id"],
+                        "repo": tier["repo"],
+                        "filename": tier["filename"],
+                        "parameter_count_b": tier["parameter_count_b"],
+                        "quantization": tier["quantization"],
+                        "model_size_mb": tier["model_size_mb"],
+                        "layer_count": tier["layer_count"],
+                        "model_path_public": False,
+                    }},
+                    "runtime": {{
+                        "backend": "llama_cpp_rpc" if rpc_info.get("ok") else "llama_cpp_cli",
+                        "intended_backend": "llama_cpp_rpc",
+                        "runtime_path": RUNTIME_PATH,
+                        "rpc_enabled": bool(RUNTIME_PATH == "rpc" and rpc_info.get("ok")),
+                        "worker_count": int(rpc_info.get("worker_count") or 0),
+                        "stage_count": int(rpc_info.get("worker_count") or 0),
+                    }},
+                    "hardware": hardware,
+                    "metrics": {{}},
+                    "diagnosis_codes": ["large_model_kaggle_tier_attempt_start"],
+                }}
+                tier_results.append(pending_result)
+                write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_start"))
+                def update_tier_progress(result, partial_stage):
+                    tier_results[-1] = result
+                    write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage=partial_stage))
+
+                tier_results[-1] = run_tier(tier, llama, hardware, rpc_info, progress=update_tier_progress)
                 write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_complete"))
                 if tier["tier"] == "7b" and tier_results[-1].get("ok"):
                     break

@@ -480,7 +480,11 @@ proved T4 x2 hardware, `CMAKE_CUDA_ARCHITECTURES=75`, CUDA llama.cpp build, and
 two live RPC workers, but Kaggle killed the kernel as it entered model-tier
 execution before any small or 7B tier result was written. Those reports remain
 `core_validation_ready=false`: the strongest retained artifact is
-`dist/large-model-kaggle-validation-t4x2-rpc-7b-clientcpu-20260613/large_model_kaggle_validation.json`.
+`dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-20260613/large_model_kaggle_validation.json`,
+which verifies successful small GGUF download and reaches `llama-cli --rpc` run
+start before the Kaggle kill. That localizes the current blocker to RPC
+inference execution on Kaggle, not T4 assignment, CUDA build, model download, or
+7B model size alone.
 The retained 2026-06-12 P100 attempts verified Kaggle GPU hardware and cleanup
 but did not produce generated tokens through the sharded/RPC path. The latest
 P100 source-CUDA/RPC attempts showed
