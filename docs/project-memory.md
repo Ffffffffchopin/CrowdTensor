@@ -251,21 +251,26 @@ The project currently includes:
   reported as a GPT-2-family 1.5B small-tier candidate via `execution_support`.
   If that succeeds, it is real Kaggle GPU sharded small-tier evidence only, not
   7B/8B completion. Keep `core_validation_ready=false` for these reports.
-  The first two `gpt2-xl` Kaggle GPU small-tier attempts on 2026-06-13 are not
+  The first three `gpt2-xl` Kaggle GPU small-tier attempts on 2026-06-13 are not
   successful inference evidence. The retained blocked reports are
   `dist/gpt2-xl-small-tier-kaggle-20260613201430/public_swarm_gpu_inference_beta_kaggle_auto.json`
+  `dist/gpt2-xl-small-tier-kaggle-timeoutfix-20260613202418/public_swarm_gpu_inference_beta_kaggle_auto.json`,
   and
-  `dist/gpt2-xl-small-tier-kaggle-timeoutfix-20260613202418/public_swarm_gpu_inference_beta_kaggle_auto.json`;
-  both packaged private CUDA stage kernels, saw them running, deleted the
-  temporary kernels, and ended with `external_runtime_blocked`,
-  `remote_real_llm_sharded_failed`, and `remote_stage_wait_failed` before any
-  generated token evidence. The first attempt exposed a timeout passthrough gap
-  in `remote_real_llm_sharded_beta_pack.py`. The follow-up showed that a single
-  `/state` HTTP timeout during external stage polling could still abort the
-  wait around 356 seconds despite larger outer timeouts. The remote sharded
-  wrappers now preserve timeout arguments in recommended rerun commands, retry
-  transient `/state` poll failures until `remote_timeout_seconds`, and surface
-  `remote_state_poll_retry` without weakening readiness. These changes improve
+  `dist/gpt2-xl-small-tier-kaggle-pollfix-20260613204918/public_swarm_gpu_inference_beta_kaggle_auto.json`;
+  all packaged private CUDA stage kernels, deleted the temporary kernels, and
+  ended before any generated token evidence. The first attempt exposed a
+  timeout passthrough gap in `remote_real_llm_sharded_beta_pack.py`. The second
+  showed that a single `/state` HTTP timeout during external stage polling could
+  still abort the wait around 356 seconds despite larger outer timeouts. The
+  remote sharded wrappers now preserve timeout arguments in recommended rerun
+  commands, retry transient `/state` poll failures until
+  `remote_timeout_seconds`, and surface `remote_state_poll_retry` without
+  weakening readiness. The post-fix third run reached live Kaggle P100 CUDA
+  stage kernels but the Coordinator repeatedly recorded
+  `join_policy_backend_mismatch`: the generated stage invite registry defaulted
+  to CPU policy while the CUDA miners advertised `backend=cuda`. The generated
+  real-LLM Live RC registry policy now writes per-stage `stage`, backend
+  `cuda`/`cpu`, and `hf_model_id` into `create_invite()`. These changes improve
   Kaggle external-runtime reliability but still do not validate `gpt2-xl` or
   the 7B/8B target.
   The 2026-06-12 retained P100 attempts

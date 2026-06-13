@@ -192,6 +192,42 @@ class RealLlmLiveRcPackTests(unittest.TestCase):
         for package in report["stage_packages"]:
             self.assertTrue(package["launcher_syntax_valid"])
 
+    def test_kaggle_generated_registry_policy_matches_cuda_stage_packages(self) -> None:
+        output_dir = self._tmp_dir()
+        args = pack.parse_args([
+            "--mode",
+            "kaggle-generated",
+            "--output-dir",
+            str(output_dir),
+            "--public-host",
+            "24.199.118.54",
+            "--real-llm-backend",
+            "hf_transformers_cuda",
+            "--hf-model-id",
+            "gpt2-xl",
+        ])
+
+        with mock.patch.object(pack, "inspect_real_llm_artifact", return_value={
+            **self._artifact(),
+            "model_id": "gpt2-xl",
+            "backend": "hf_transformers_cuda",
+        }):
+            report = pack.build_report(args, popen_factory=FakeProcess)
+
+        self.assertTrue(report["ok"], report)
+        registry_path = output_dir / "remote-real-llm-runtime" / "miner_registry.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        policies = {
+            item["miner_id"]: item["join_policy"]
+            for item in registry["miners"]
+        }
+        for stage in ["stage0", "stage1"]:
+            policy = policies[f"kaggle-real-llm-{stage}"]
+            self.assertEqual(policy["stage"], stage)
+            self.assertEqual(policy["backend"], "cuda")
+            self.assertEqual(policy["hf_model_id"], "gpt2-xl")
+            self.assertEqual(policy["read_only_workload"], "real_llm_sharded_infer")
+
     def test_external_existing_marks_external_runtime_verified_and_redacts_tokens(self) -> None:
         output_dir = self._tmp_dir()
         inspect_calls: list[dict] = []

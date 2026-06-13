@@ -797,6 +797,7 @@ def prepare_generated_artifacts(args: argparse.Namespace, *, output_dir: Path) -
     stage0_token = secrets.token_urlsafe(32)
     stage1_token = secrets.token_urlsafe(32)
     registry = runtime_dir / "miner_registry.json"
+    runtime_backend = "cuda" if args.real_llm_backend == REAL_LLM_BACKEND_CUDA else "cpu"
     for stage_role, token in [("stage0", stage0_token), ("stage1", stage1_token)]:
         create_invite(
             registry_path=registry,
@@ -805,6 +806,9 @@ def prepare_generated_artifacts(args: argparse.Namespace, *, output_dir: Path) -
             label=f"Real LLM {stage_role} Miner",
             token=token,
             replace=True,
+            stage=stage_role,
+            backend=runtime_backend,
+            hf_model_id=args.hf_model_id,
         )
         write_private_env(runtime_dir / f"miner.{stage_role}.private.env", {"CROWDTENSOR_MINER_TOKEN": token})
 

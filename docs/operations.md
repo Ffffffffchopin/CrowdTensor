@@ -139,12 +139,21 @@ not successful inference evidence:
   generated-token evidence. The child `remote_existing_real_llm_sharded_inference`
   step ended around 356 seconds, consistent with transient `/state` polling
   timeout behavior rather than a completed `remote_timeout_seconds` window.
+- `dist/gpt2-xl-small-tier-kaggle-pollfix-20260613204918/public_swarm_gpu_inference_beta_kaggle_auto.json`
+  used the hardened poll path and cleaned up the private Kaggle kernels, but it
+  still did not generate tokens. The generated package reached live Kaggle P100
+  CUDA stage kernels and then repeatedly hit `join_policy_backend_mismatch`
+  because the stage invite registry had defaulted to CPU policy while the
+  Miners advertised `backend=cuda`.
 
 Remote sharded wrappers now keep `--timeout-seconds`, `--remote-timeout-seconds`,
 and `--http-timeout` in recommended rerun commands, retry transient `/state`
 poll failures until the remote timeout window expires, and surface
 `remote_state_poll_retry` in wrapper diagnostics. This improves external
-runtime reliability only; it does not change readiness rules or make either
+runtime reliability only. Generated real-LLM Live RC stage invites now also
+write per-stage `stage`, backend `cuda`/`cpu`, and `hf_model_id` policy into
+`miner_registry.json`, so CUDA stage Miners are not rejected by CPU-default join
+policy. These fixes do not change readiness rules or make any retained
 `gpt2-xl` attempt a successful Kaggle GPU LLM proof.
 
 If the real run happened outside the current process, import a public-safe
