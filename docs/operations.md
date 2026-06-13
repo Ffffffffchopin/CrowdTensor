@@ -215,6 +215,7 @@ instead of local fixture/plan evidence:
 crowdtensor large-model-kaggle-validate \
   --mode kaggle-auto \
   --tiers small,7b \
+  --accelerator NvidiaTeslaT4 \
   --runtime-path rpc \
   --llama-build-mode source-cuda \
   --cuda-architectures native \
@@ -249,6 +250,13 @@ through a CUDA-capable Kaggle runtime, not just that `nvidia-smi` saw a GPU.
 sharded/RPC path. `core_validation_ready` requires all three: 7B/8B, Kaggle GPU
 runtime, and sharded/RPC path. Single-process, CPU-only, or failed runs must
 leave `core_validation_ready=false` with explicit blockers.
+
+Use `--accelerator NvidiaTeslaT4` for the main validation. A 2026-06-13
+hardware probe retained at
+`dist/kaggle-gpu-shape-probe-20260613073043/attempt_summary.json` verified that
+Kaggle accepted this machine shape and returned two `Tesla T4` devices with
+Torch CUDA visible. The generic `GPU` request previously assigned single P100
+runs, so it is only a fallback when T4 x2 is unavailable.
 
 Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
 

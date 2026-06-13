@@ -38,6 +38,8 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
             "large_model_kaggle_validation_run_normalized.json",
         ]:
             self.assertTrue((output_dir / name).is_file(), name)
+        metadata = json.loads((output_dir / "kaggle-kernel" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["machine_shape"], "NvidiaTeslaT4")
 
     def test_real_7b_import_builds_rc_and_handoff_chain(self) -> None:
         output_dir = self._tmp_dir()

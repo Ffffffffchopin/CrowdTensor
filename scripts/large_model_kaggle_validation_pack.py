@@ -39,6 +39,7 @@ DEFAULT_THIRTEEN_B_REPO = "Qwen/Qwen2.5-7B-Instruct-GGUF"
 DEFAULT_THIRTEEN_B_FILE = "qwen2.5-7b-instruct-q2_k.gguf"
 DEFAULT_LLAMA_RELEASE = "b9611"
 DEFAULT_MAX_NEW_TOKENS = 8
+DEFAULT_ACCELERATOR = "NvidiaTeslaT4"
 MODES = ("package", "kaggle-auto", "evidence-import", "fixture")
 TIERS = ("small", "7b", "13b")
 LLAMA_BUILD_MODES = ("auto", "source-cuda", "release")
@@ -1191,7 +1192,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
         "kernel_sources": [],
         "competition_sources": [],
         "model_sources": [],
-        "machine_shape": args.accelerator or "GPU",
+        "machine_shape": args.accelerator or DEFAULT_ACCELERATOR,
     }
     write_json(kernel_dir / "kernel-metadata.json", metadata)
     runbook = output_dir / "KAGGLE_LARGE_MODEL_VALIDATION.md"
@@ -1721,7 +1722,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--kaggle-owner", default=default_kaggle_owner())
     parser.add_argument("--kernel-slug-prefix", default=DEFAULT_KERNEL_SLUG_PREFIX)
     parser.add_argument("--kernel-title-prefix", default=DEFAULT_KERNEL_TITLE_PREFIX)
-    parser.add_argument("--accelerator", default="GPU")
+    parser.add_argument("--accelerator", default=DEFAULT_ACCELERATOR)
     parser.add_argument("--tiers", default="")
     parser.add_argument("--include-13b", action="store_true")
     parser.add_argument("--run-report", default="")

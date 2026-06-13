@@ -200,7 +200,11 @@ The project currently includes:
   `real_7b_runtime_verified`,
   `gpu_runtime_verified`, `sharded_path_verified`,
   `multi_worker_sharded_path_verified`, and `core_validation_ready` separate so
-  partial evidence cannot overclaim. The 2026-06-12 retained P100 attempts
+  partial evidence cannot overclaim. Prefer `--accelerator NvidiaTeslaT4` for
+  the main Kaggle validation; a 2026-06-13 hardware probe at
+  `dist/kaggle-gpu-shape-probe-20260613073043/attempt_summary.json` verified two
+  `Tesla T4` devices and Torch CUDA visibility, while the generic `GPU` request
+  previously assigned single P100 runs. The 2026-06-12 retained P100 attempts
   verified GPU hardware and kernel cleanup but did not complete the required
   7B/8B sharded/RPC proof: the initial GGUF release path exposed
   missing/shared-library and non-CUDA-runtime issues, the `source-cuda`
