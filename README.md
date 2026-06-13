@@ -510,7 +510,15 @@ sharded/RPC path; the successful Hugging Face CUDA compatibility smoke at
 proved only tiny-model GPU generation, not 7B/8B and not the sharded/RPC path.
 Treat the retained Kaggle artifacts as partial evidence with blockers, not
 completion of the core large-model validation goal; further single-Notebook
-llama.cpp retries are not the right next route.
+llama.cpp retries are not the right next route. The HF `real_llm_sharded_infer`
+path now records an `execution_support` summary on `real_llm_artifact_v1` and
+workload specs. Today it supports only the GPT-2/tiny-GPT module family for
+stage execution; Llama/Qwen/Mistral/Gemma/Phi-style 7B/8B candidates are
+classified as `llama_like` and fail before runtime load with
+`real_llm_llama_like_stage_adapter_missing`. That is intentional: the next core
+implementation step is a true partial-weight stage adapter for those
+architectures, not routing large models through the existing tiny-GPT splitter
+or a single Kaggle Notebook cgroup.
 
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 

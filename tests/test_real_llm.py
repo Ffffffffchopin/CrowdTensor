@@ -25,8 +25,69 @@ class RealLlmTests(unittest.TestCase):
         self.assertTrue(artifact["metadata_only"])
         self.assertEqual(artifact["num_hidden_layers"], 2)
         self.assertEqual(artifact["split_index"], 1)
+        self.assertEqual(artifact["execution_family"], real_llm.EXECUTION_FAMILY_GPT2)
+        self.assertTrue(artifact["execution_support"]["current_stage_split_supported"])
+        self.assertFalse(artifact["execution_support"]["large_model_sharded_execution_ready"])
+        self.assertIn(
+            "real_llm_true_partial_weight_loading_missing",
+            artifact["execution_support"]["large_model_blockers"],
+        )
         self.assertEqual(artifact["cuda_runtime"]["diagnosis_codes"], ["cuda_runtime_deferred_to_miner"])
         self.assertTrue(str(artifact["artifact_hash"]).startswith("sha256:"))
+
+    def test_large_llama_like_metadata_reports_stage_adapter_gap(self) -> None:
+        summary = real_llm.real_llm_execution_support_summary(
+            {
+                "model_id": "Qwen/Qwen2.5-7B-Instruct",
+                "model_type": "qwen2",
+                "architectures": ["Qwen2ForCausalLM"],
+                "num_hidden_layers": 28,
+                "hidden_size": 3584,
+                "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            }
+        )
+
+        self.assertEqual(summary["execution_family"], real_llm.EXECUTION_FAMILY_LLAMA_LIKE)
+        self.assertFalse(summary["current_stage_split_supported"])
+        self.assertFalse(summary["large_model_sharded_execution_ready"])
+        self.assertTrue(summary["large_model_candidate"])
+        self.assertEqual(summary["stage_local_load_strategy"], "full_model_cpu_load_then_stage_module_device_move")
+        self.assertIn("real_llm_llama_like_stage_adapter_missing", summary["blockers"])
+        self.assertIn("real_llm_large_model_stage_adapter_missing", summary["diagnosis_codes"])
+
+    def test_gpt2_model_id_variant_stays_supported_without_config_metadata(self) -> None:
+        summary = real_llm.real_llm_execution_support_summary({"model_id": "distilgpt2"})
+
+        self.assertEqual(summary["execution_family"], real_llm.EXECUTION_FAMILY_GPT2)
+        self.assertTrue(summary["current_stage_split_supported"])
+        self.assertIn("real_llm_current_stage_split_supported", summary["diagnosis_codes"])
+
+    def test_non_gpt2_workload_fails_before_runtime_load(self) -> None:
+        artifact = {
+            "schema": real_llm.REAL_LLM_ARTIFACT_SCHEMA_VERSION,
+            "artifact_hash": "sha256:qwen-test",
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "backend": real_llm.BACKEND_CPU,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "split_index": 14,
+            "num_hidden_layers": 28,
+            "hidden_size": 3584,
+        }
+        spec = real_llm.real_llm_sharded_inference_spec_for(
+            "task-qwen",
+            "miner-qwen",
+            artifact,
+            request_count=1,
+            stage_id=0,
+        )
+
+        with mock.patch.object(real_llm, "_load_model_and_tokenizer") as load_model:
+            with self.assertRaisesRegex(ValueError, "execution_family=llama_like"):
+                real_llm.run_real_llm_sharded_inference(spec)
+
+        load_model.assert_not_called()
 
     def test_sharded_spec_preserves_generation_controls(self) -> None:
         artifact = {

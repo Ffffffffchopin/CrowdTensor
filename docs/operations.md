@@ -109,6 +109,18 @@ controlled endpoints are already configured. The runner stores digests and
 metrics, not raw prompts, generated text, or token ids, and it must clean up any
 worker processes it starts.
 
+When comparing this GGUF/llama.cpp route with the optional Hugging Face
+`real_llm_sharded_infer` route, read `execution_support` in
+`real_llm_artifact_v1` and workload specs. The current HF splitter supports the
+GPT-2/tiny-GPT module family only. Its `stage-local` mode loads the model object
+on CPU and then moves stage-owned modules to the selected device; it does not
+yet implement true partial-weight loading for Llama/Qwen/Mistral/Gemma/Phi
+families. Those large-model candidates are classified as `llama_like` and fail
+closed with `real_llm_llama_like_stage_adapter_missing` before runtime loading.
+For 7B/8B validation, do not treat the tiny-GPT splitter as a large-model path;
+implement a true partial-weight stage adapter or use a validated GGUF/llama.cpp
+multi-host path.
+
 If the real run happened outside the current process, import a public-safe
 runner report instead:
 

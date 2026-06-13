@@ -43,6 +43,22 @@ DEFAULT_PROMPTS = [
     "CrowdTensor routes home CPU",
     "A miner returns one token",
 ]
+EXECUTION_FAMILY_GPT2 = "gpt2"
+EXECUTION_FAMILY_LLAMA_LIKE = "llama_like"
+EXECUTION_FAMILY_UNSUPPORTED_HF_CAUSAL_LM = "unsupported_hf_causal_lm"
+EXECUTION_FAMILY_UNKNOWN = "unknown"
+SUPPORTED_EXECUTION_FAMILIES = {EXECUTION_FAMILY_GPT2}
+LLAMA_LIKE_MODEL_TYPES = {
+    "gemma",
+    "gemma2",
+    "llama",
+    "mistral",
+    "mixtral",
+    "phi",
+    "phi3",
+    "qwen2",
+    "qwen3",
+}
 MAX_REQUESTS = 4
 MAX_PROMPT_CHARS = 256
 MAX_NEW_TOKENS = 32
@@ -157,6 +173,120 @@ def normalize_partition_mode(mode: str | None = None) -> str:
     if normalized in {"stage-local", "stage", "partitioned"}:
         return PARTITION_MODE_STAGE_LOCAL
     raise ValueError(f"unsupported real_llm_sharded_infer partition_mode: {mode}")
+
+
+def execution_family_from_metadata(
+    metadata: dict[str, Any] | None = None,
+    *,
+    model_id: str = "",
+    model_type: str = "",
+    architectures: list[Any] | tuple[Any, ...] | None = None,
+) -> str:
+    """Return the execution family supported by the current stage splitter."""
+
+    source = dict(metadata or {})
+    raw_model_id = str(model_id or source.get("model_id") or "").strip().lower()
+    raw_model_type = str(model_type or source.get("model_type") or "").strip().lower()
+    raw_architectures = architectures if architectures is not None else source.get("architectures")
+    arch_text = " ".join(str(item).strip().lower() for item in list(raw_architectures or []))
+    combined = " ".join(item for item in [raw_model_id, raw_model_type, arch_text] if item)
+    if raw_model_type == "gpt2" or "gpt2" in arch_text or "gpt2" in raw_model_id:
+        return EXECUTION_FAMILY_GPT2
+    if raw_model_type in LLAMA_LIKE_MODEL_TYPES or any(
+        marker in combined
+        for marker in (
+            "gemma",
+            "llama",
+            "mistral",
+            "mixtral",
+            "phi",
+            "qwen",
+        )
+    ):
+        return EXECUTION_FAMILY_LLAMA_LIKE
+    if raw_model_type or arch_text:
+        return EXECUTION_FAMILY_UNSUPPORTED_HF_CAUSAL_LM
+    return EXECUTION_FAMILY_UNKNOWN
+
+
+def _large_model_candidate_from_metadata(metadata: dict[str, Any], *, family: str) -> bool:
+    model_id = str(metadata.get("model_id") or "").lower()
+    if any(marker in model_id for marker in ("7b", "8b", "13b", "14b", "70b")):
+        return True
+    try:
+        layer_count = int(metadata.get("num_hidden_layers") or 0)
+    except (TypeError, ValueError):
+        layer_count = 0
+    try:
+        hidden_size = int(metadata.get("hidden_size") or 0)
+    except (TypeError, ValueError):
+        hidden_size = 0
+    return bool(family == EXECUTION_FAMILY_LLAMA_LIKE or (layer_count >= 16 and hidden_size >= 2048))
+
+
+def real_llm_execution_support_summary(
+    metadata: dict[str, Any] | None = None,
+    *,
+    partition_mode: str | None = None,
+) -> dict[str, Any]:
+    source = dict(metadata or {})
+    mode = normalize_partition_mode(partition_mode or source.get("partition_mode") or PARTITION_MODE_FULL)
+    family = execution_family_from_metadata(source)
+    current_supported = family in SUPPORTED_EXECUTION_FAMILIES
+    large_candidate = _large_model_candidate_from_metadata(source, family=family)
+    diagnosis_codes: list[str] = []
+    blockers: list[str] = []
+    large_model_blockers: list[str] = ["real_llm_true_partial_weight_loading_missing"]
+    if family == EXECUTION_FAMILY_GPT2:
+        diagnosis_codes.extend([
+            "real_llm_gpt2_execution_family",
+            "real_llm_current_stage_split_supported",
+        ])
+    elif family == EXECUTION_FAMILY_LLAMA_LIKE:
+        diagnosis_codes.extend([
+            "real_llm_llama_like_execution_family",
+            "real_llm_current_stage_split_unsupported",
+        ])
+        blockers.append("real_llm_llama_like_stage_adapter_missing")
+        large_model_blockers.append("real_llm_llama_like_stage_adapter_missing")
+    elif family == EXECUTION_FAMILY_UNKNOWN:
+        diagnosis_codes.extend([
+            "real_llm_unknown_execution_family",
+            "real_llm_current_stage_split_unsupported",
+        ])
+        blockers.append("real_llm_execution_family_unknown")
+        large_model_blockers.append("real_llm_execution_family_unknown")
+    else:
+        diagnosis_codes.extend([
+            "real_llm_unsupported_hf_execution_family",
+            "real_llm_current_stage_split_unsupported",
+        ])
+        blockers.append("real_llm_execution_architecture_unsupported")
+        large_model_blockers.append("real_llm_execution_architecture_unsupported")
+    if mode == PARTITION_MODE_STAGE_LOCAL:
+        diagnosis_codes.append("real_llm_stage_local_full_model_cpu_load_required")
+    if large_candidate:
+        diagnosis_codes.append("real_llm_large_model_candidate_detected")
+        if not current_supported:
+            diagnosis_codes.append("real_llm_large_model_stage_adapter_missing")
+    else:
+        diagnosis_codes.append("real_llm_tiny_or_small_model_candidate")
+    return {
+        "execution_family": family,
+        "current_stage_split_supported": current_supported,
+        "supported_execution_families": sorted(SUPPORTED_EXECUTION_FAMILIES),
+        "stage_local_load_strategy": (
+            "full_model_cpu_load_then_stage_module_device_move"
+            if mode == PARTITION_MODE_STAGE_LOCAL
+            else "full_model_load"
+        ),
+        "true_partial_weight_loading_ready": False,
+        "large_model_candidate": large_candidate,
+        "large_model_sharded_execution_ready": False,
+        "large_model_blockers": sorted(set(large_model_blockers)),
+        "blockers": sorted(set(blockers)),
+        "diagnosis_codes": sorted(set(diagnosis_codes)),
+    }
 
 
 def _json_payload(value: Any) -> str:
@@ -410,6 +540,8 @@ def _default_model_metadata_artifact(*, model_id: str, split_index: int | None, 
         "metadata_only": True,
         "metadata_source": "built_in_default_model_manifest",
     }
+    artifact["execution_support"] = real_llm_execution_support_summary(artifact)
+    artifact["execution_family"] = artifact["execution_support"]["execution_family"]
     if backend == BACKEND_CUDA:
         artifact["cuda_runtime"] = {
             "backend": BACKEND_CUDA,
@@ -481,6 +613,8 @@ def inspect_real_llm_artifact(
         "read_only": True,
         "metadata_only": not require_runtime,
     }
+    artifact["execution_support"] = real_llm_execution_support_summary(artifact)
+    artifact["execution_family"] = artifact["execution_support"]["execution_family"]
     if resolved_backend == BACKEND_CUDA:
         artifact["cuda_runtime"] = (
             cuda_runtime_summary()
@@ -698,6 +832,15 @@ def real_llm_sharded_inference_spec_for(
     stage = int(stage_id)
     if stage not in {0, 1}:
         raise ValueError("real LLM sharded inference stage_id must be 0 or 1")
+    partition_mode = normalize_partition_mode(artifact.get("partition_mode") or PARTITION_MODE_FULL)
+    artifact_snapshot = dict(artifact)
+    artifact_snapshot["partition_mode"] = partition_mode
+    execution_support = real_llm_execution_support_summary(
+        artifact_snapshot,
+        partition_mode=partition_mode,
+    )
+    artifact_snapshot["execution_support"] = execution_support
+    artifact_snapshot["execution_family"] = execution_support["execution_family"]
     prompt_rows = _normalized_requests(
         request_count=request_count,
         max_new_tokens=max_new_tokens,
@@ -711,10 +854,12 @@ def real_llm_sharded_inference_spec_for(
         "schema_version": REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
         "artifact_schema": artifact.get("schema") or REAL_LLM_ARTIFACT_SCHEMA_VERSION,
         "artifact_hash": artifact.get("artifact_hash"),
-        "artifact": dict(artifact),
+        "artifact": artifact_snapshot,
         "model_id": artifact.get("model_id") or DEFAULT_MODEL_ID,
         "backend": artifact.get("backend") or "hf_transformers_cpu",
-        "partition_mode": normalize_partition_mode(artifact.get("partition_mode") or PARTITION_MODE_FULL),
+        "partition_mode": partition_mode,
+        "execution_family": execution_support["execution_family"],
+        "execution_support": execution_support,
         "session_id": str(session_id or task_id),
         "stage_id": stage,
         "stage_count": 2,
@@ -1020,6 +1165,23 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
     model_id = str(spec.get("model_id") or DEFAULT_MODEL_ID)
     backend = resolve_backend(str(spec.get("backend") or BACKEND_CPU))
     partition_mode = normalize_partition_mode(spec.get("partition_mode") or PARTITION_MODE_FULL)
+    artifact_metadata = dict(spec.get("artifact") or {})
+    artifact_metadata.setdefault("model_id", model_id)
+    artifact_metadata.setdefault("partition_mode", partition_mode)
+    artifact_metadata.setdefault("model_type", spec.get("model_type") or "")
+    artifact_metadata.setdefault("architectures", spec.get("architectures") or [])
+    artifact_metadata.setdefault("num_hidden_layers", spec.get("num_hidden_layers") or 0)
+    artifact_metadata.setdefault("hidden_size", spec.get("hidden_size") or 0)
+    execution_support = real_llm_execution_support_summary(
+        artifact_metadata,
+        partition_mode=partition_mode,
+    )
+    if not execution_support["current_stage_split_supported"]:
+        raise ValueError(
+            "real_llm_sharded_infer currently supports GPT-2 style causal LM modules; "
+            f"execution_family={execution_support['execution_family']} blockers="
+            + ",".join(execution_support["blockers"])
+        )
     tokenizer, model, device = _load_model_and_tokenizer(
         model_id,
         cache_dir=cache_dir,
@@ -1063,6 +1225,8 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
             "backend": backend,
             "device": str(device),
             **partition,
+            "execution_family": execution_support["execution_family"],
+            "execution_support": execution_support,
             "artifact_schema": spec.get("artifact_schema"),
             "artifact_hash": spec.get("artifact_hash"),
             "split_index": split_index,
@@ -1114,6 +1278,8 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
         "backend": backend,
         "device": str(device),
         **partition,
+        "execution_family": execution_support["execution_family"],
+        "execution_support": execution_support,
         "artifact_schema": spec.get("artifact_schema"),
         "artifact_hash": spec.get("artifact_hash"),
         "split_index": split_index,
