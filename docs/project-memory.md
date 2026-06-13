@@ -208,7 +208,7 @@ The project currently includes:
   attempts verified `CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_NO_VMM=ON`,
   `GGML_RPC=ON`, successful CUDA llama.cpp build with
   `--cuda-build-jobs 2 --cuda-build-timeout-seconds 5400`, and live RPC workers.
-  The current strongest retained blocked report is
+  The strongest retained RPC blocked report is
   `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-inplace-20260613/large_model_kaggle_validation.json`:
   it hides CUDA from the local llama.cpp client in RPC mode so only RPC workers
   own GPU placement, verifies one live CUDA0 RPC worker, downloads the 1.5B GGUF,
@@ -220,11 +220,23 @@ The project currently includes:
   `large_model_kaggle_container_memory_pressure_not_vram`. The blocker is Kaggle
   container memory pressure during single-Notebook llama.cpp RPC execution, not
   T4 assignment, CUDA build, model download, 7B size alone, or two-worker tensor
-  split startup. The telemetry2 run also exposed `No space left on device` while
-  writing a partial raw report; the runner now uses atomic raw-report writes,
-  bounded telemetry samples, invalid-JSON blocker handling, and in-place
-  source/archive cleanup after successful source-CUDA builds. Keep
-  `core_validation_ready=false` for those reports.
+  split startup. The 7B CLI fallback evidence at
+  `dist/large-model-kaggle-validation-t4x2-cli-7b-20260613-r1/large_model_kaggle_validation.json`
+  verified T4 x2 hardware, CUDA llama.cpp build, Qwen2.5 7B Q2_K GGUF download,
+  and `llama_cpp_cli` run start, but failed before token generation with
+  `cgroup_memory_peak_ratio=0.9335`, `disk_min_free_bytes=335552512`, and
+  `large_model_kaggle_disk_pressure`; GPU memory stayed low
+  (`gpu_memory_used_peak_ratio=0.1075`). The bounded r2 retry at
+  `dist/large-model-kaggle-validation-t4x2-cli-7b-20260613-r2/large_model_kaggle_validation.json`
+  added real Kaggle slug resolution, minimal `llama-runtime` compaction,
+  `CUDA_CACHE_DISABLE=1`, `CUDA_MODULE_LOADING=LAZY`, small `-b/-ub 32`
+  llama.cpp batches, and report-write fallback. It still ended with Kaggle
+  `Killed` plus `No space left on device`, and the temporary kernel was deleted.
+  Current conclusion: a single Kaggle Notebook cgroup is not a reliable place to
+  validate llama.cpp RPC or 7B GGUF CLI execution for this goal. The next aligned
+  route is multi-kernel or true partial-weight stage-local loading, not more
+  single-container retries. Keep `core_validation_ready=false` for these
+  reports.
   The 2026-06-12 retained P100 attempts
   verified GPU hardware and kernel cleanup but did not complete the required
   7B/8B sharded/RPC proof: the initial GGUF release path exposed

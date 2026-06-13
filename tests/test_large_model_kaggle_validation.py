@@ -381,14 +381,23 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         self.assertIn("def update_tier_progress", source)
         self.assertIn("def resource_snapshot", source)
         self.assertIn("def run_monitored", source)
+        self.assertIn("supports_batch_size", source)
+        self.assertIn('command.extend(["-b", "32"])', source)
+        self.assertIn('command.extend(["-ub", "32"])', source)
         self.assertIn("import shutil", source)
         self.assertIn("cgroup_memory_snapshot", source)
         self.assertIn("disk_snapshot", source)
         self.assertIn("compact_llama_runtime", source)
+        self.assertIn('runtime_dir = OUT / "llama-runtime"', source)
+        self.assertIn("shutil.rmtree(build_path)", source)
+        self.assertIn('env.setdefault("CUDA_CACHE_DISABLE", "1")', source)
         self.assertIn("rpc-server-", source)
         self.assertIn("tier_before_run", source)
         self.assertIn("include_tail=False", source)
+        self.assertIn("progress_publish_error", source)
         self.assertIn("os.replace(tmp, target)", source)
+        self.assertIn("large_model_kaggle_report_write_failed", source)
+        self.assertIn("model_file_removed", source)
         self.assertIn("-DGGML_RPC=ON", source)
         self.assertIn("-DGGML_CUDA_NO_VMM=ON", source)
         self.assertIn("-DCMAKE_CUDA_ARCHITECTURES=", source)
@@ -437,6 +446,93 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         output_calls = [call for call in calls if call[:3] == ["kaggle", "kernels", "output"]]
         self.assertEqual(len(output_calls), 2)
         self.assertIn("--file-pattern", output_calls[0])
+
+    def test_kaggle_auto_resolves_actual_slug_from_kernel_list(self) -> None:
+        output_dir = self._tmp_dir()
+        calls: list[list[str]] = []
+        resolved_ref = {"value": ""}
+
+        def fake_runner(command, **kwargs):  # type: ignore[no-untyped-def]
+            del kwargs
+            calls.append([str(item) for item in command])
+            command_line = " ".join(str(item) for item in command)
+            if "kernels push" in command_line:
+                return pack.subprocess.CompletedProcess(command, 0, stdout="Kernel version 1 successfully pushed", stderr="")
+            if "kernels list" in command_line:
+                metadata = json.loads((output_dir / "kaggle-kernel" / "kernel-metadata.json").read_text(encoding="utf-8"))
+                title = metadata["title"]
+                suffix = title.rsplit(" ", 1)[-1]
+                resolved_ref["value"] = f"tester/crowdtensor-large-model-cli-7b-{suffix}"
+                return pack.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=(
+                        "ref                                               title                                    author\n"
+                        "------------------------------------------------  ---------------------------------------  -------\n"
+                        f"{resolved_ref['value']}   {title}  Tester\n"
+                    ),
+                    stderr="",
+                )
+            if "kernels status" in command_line:
+                self.assertIn(resolved_ref["value"], command)
+                return pack.subprocess.CompletedProcess(command, 0, stdout="KernelWorkerStatus.ERROR", stderr="")
+            if "kernels output" in command_line:
+                self.assertIn(resolved_ref["value"], command)
+                return pack.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if "kernels delete" in command_line:
+                self.assertIn(resolved_ref["value"], command)
+                return pack.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            return pack.subprocess.CompletedProcess(command, 1, stdout="", stderr="unexpected")
+
+        args = pack.parse_args([
+            "--mode",
+            "kaggle-auto",
+            "--output-dir",
+            str(output_dir),
+            "--kaggle-owner",
+            "tester",
+            "--kernel-slug-prefix",
+            "ct-lm-cli7b",
+            "--kernel-title-prefix",
+            "CrowdTensor large model cli 7b",
+            "--kaggle-status-timeout-seconds",
+            "1",
+            "--kaggle-status-poll-interval",
+            "1",
+        ])
+        steps, package, _run_report_path = pack.run_kaggle_auto(args, output_dir=output_dir, runner=fake_runner)
+
+        self.assertEqual(package["declared_kernel_ref"].split("/", 1)[0], "tester")
+        self.assertEqual(package["kernel_ref"], resolved_ref["value"])
+        self.assertIn("kaggle_kernel_ref_resolve", [step["name"] for step in steps])
+        self.assertTrue(any(call[:3] == ["kaggle", "kernels", "list"] for call in calls))
+
+    def test_kaggle_status_access_error_returns_without_long_poll(self) -> None:
+        attempts = 0
+
+        def fake_runner(command, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal attempts
+            del kwargs
+            attempts += 1
+            return pack.subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr="Cannot access kernel 'owner/bad' (Permission 'kernels.get' was denied). The most likely cause is a wrong kernel slug.",
+            )
+
+        step = pack.wait_kaggle_terminal(
+            "owner/bad",
+            runner=fake_runner,
+            timeout_seconds=60,
+            poll_interval=30,
+        )
+
+        self.assertEqual(attempts, 1)
+        self.assertFalse(step["ok"])
+        self.assertFalse(step["terminal"])
+        self.assertEqual(step["status"], "INACCESSIBLE")
+        self.assertEqual(step["error"], "kaggle_kernel_status_inaccessible")
 
     def test_kaggle_auto_invalid_run_report_becomes_blocked_report(self) -> None:
         output_dir = self._tmp_dir()

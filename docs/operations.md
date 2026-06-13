@@ -311,6 +311,24 @@ completion:
   split startup as the sole blockers; the current blocker is Kaggle container
   memory pressure while executing llama.cpp RPC in one Notebook cgroup. Keep
   `core_validation_ready=false`.
+- `dist/large-model-kaggle-validation-t4x2-cli-7b-20260613-r1/large_model_kaggle_validation.json`
+  is the first 7B single-process CLI fallback diagnostic. It verifies T4 x2
+  hardware, successful source-CUDA llama.cpp build, Qwen2.5 7B Q2_K GGUF
+  download, and `llama_cpp_cli` run start with `runtime_path=cli`; it is not a
+  sharded/RPC proof. The run failed before generated tokens were retained with
+  `cgroup_memory_peak_ratio=0.9335`, `disk_min_free_bytes=335552512`,
+  `large_model_kaggle_disk_pressure`, and low T4 memory pressure
+  (`gpu_memory_used_peak_ratio=0.1075`).
+- `dist/large-model-kaggle-validation-t4x2-cli-7b-20260613-r2/large_model_kaggle_validation.json`
+  is the bounded retry after lifecycle and resource-pressure mitigations. It
+  fixed actual Kaggle slug tracking, compacted the source-CUDA build into a
+  minimal `/kaggle/working/llama-runtime`, disabled the CUDA cache, used small
+  `-b/-ub 32` llama.cpp batches, and added fail-soft run-report writes. Kaggle
+  still returned `KernelWorkerStatus.ERROR`; the raw report was a 4096-byte
+  truncated fallback JSON and the kernel log showed `Killed` followed by
+  `No space left on device`. The temporary kernel was deleted. Treat this as the
+  bounded 7B single-Notebook blocker and do not keep retrying the same Kaggle
+  shape.
 
 Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
 

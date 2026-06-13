@@ -271,6 +271,7 @@ def run_step(
 
 
 KAGGLE_CODE_URL = re.compile(r"https://www\.kaggle\.com/code/([^/\s]+)/([^/\s]+)")
+KAGGLE_TABLE_SPLIT = re.compile(r"\s{2,}")
 
 
 def extract_kernel_ref(text: str) -> str:
@@ -278,6 +279,38 @@ def extract_kernel_ref(text: str) -> str:
     if match:
         return f"{match.group(1)}/{match.group(2)}"
     return ""
+
+
+def extract_kernel_list_ref(text: str, *, owner: str, title: str) -> str:
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("Warning:") or line.startswith("ref "):
+            continue
+        if set(line) <= {"-", " "}:
+            continue
+        parts = KAGGLE_TABLE_SPLIT.split(line)
+        if len(parts) < 2:
+            continue
+        ref, row_title = parts[0], parts[1]
+        if "/" not in ref:
+            continue
+        if owner and not ref.startswith(f"{owner}/"):
+            continue
+        if row_title == title:
+            return ref
+    return ""
+
+
+def status_access_error(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(
+        fragment in lowered
+        for fragment in [
+            "permission 'kernels.get' was denied",
+            "cannot access kernel",
+            "wrong kernel slug",
+        ]
+    )
 
 
 def extract_status(text: str) -> str:
@@ -308,6 +341,15 @@ def wait_kaggle_terminal(
         )
         output = f"{last_step.get('stdout_tail') or ''}\n{last_step.get('stderr_tail') or ''}"
         status = extract_status(output)
+        if not last_step.get("ok") and status_access_error(output):
+            last_step["duration_seconds"] = round(time.monotonic() - started, 3)
+            last_step["attempts"] = attempts
+            last_step["status"] = "INACCESSIBLE"
+            last_step["terminal"] = False
+            last_step["kernel_ref"] = kernel_ref
+            last_step["ok"] = False
+            last_step["error"] = "kaggle_kernel_status_inaccessible"
+            return last_step
         if status in {"COMPLETE", "ERROR", "FAILED", "CANCELLED", "CANCELED"}:
             last_step["duration_seconds"] = round(time.monotonic() - started, 3)
             last_step["attempts"] = attempts
@@ -591,14 +633,20 @@ def run_monitored(command, *, timeout=1200, env=None, progress=None, label="runn
             append_telemetry_sample(telemetry, resource_snapshot(label + "_running", pids=watched_pids))
             last_publish = now
             if callable(progress):
-                progress({{
-                    "ok": False,
-                    "pending": True,
-                    "pid": proc.pid,
-                    "duration_seconds": round(now - started, 3),
-                    "command_public": public_command(command),
-                    "telemetry": telemetry,
-                }}, label + "_running")
+                try:
+                    progress({{
+                        "ok": False,
+                        "pending": True,
+                        "pid": proc.pid,
+                        "duration_seconds": round(now - started, 3),
+                        "command_public": public_command(command),
+                        "telemetry": telemetry,
+                    }}, label + "_running")
+                except Exception as exc:
+                    telemetry["progress_publish_error"] = {{
+                        "error_type": type(exc).__name__,
+                        "error_digest": sha_text(str(exc)),
+                    }}
         if proc.poll() is not None:
             break
         if now - started >= timeout:
@@ -828,6 +876,8 @@ def env_for_binary(binary: Path):
     if sibling_lib.is_dir():
         library_dirs.append(str(sibling_lib))
     env["LD_LIBRARY_PATH"] = ":".join(library_dirs + ([current] if current else []))
+    env.setdefault("CUDA_CACHE_DISABLE", "1")
+    env.setdefault("CUDA_MODULE_LOADING", "LAZY")
     return env
 
 
@@ -841,12 +891,15 @@ def client_env_for_binary(binary: Path, *, rpc_enabled: bool):
 def probe_llama_binary(binary: Path, *, env):
     version_step, version_stdout, version_stderr = run([str(binary), "--version"], timeout=60, env=env)
     help_step, help_stdout, help_stderr = run([str(binary), "--help"], timeout=60, env=env)
+    help_text = help_stdout or ""
     return {{
         "version_step": version_step,
         "help_step": help_step,
-        "supports_rpc": "--rpc" in help_stdout,
-        "supports_file_prompt": "--file" in help_stdout or "-f," in help_stdout,
-        "supports_prompt_file": "--prompt-file" in help_stdout,
+        "supports_rpc": "--rpc" in help_text,
+        "supports_file_prompt": "--file" in help_text or "-f," in help_text,
+        "supports_prompt_file": "--prompt-file" in help_text,
+        "supports_batch_size": "--batch-size" in help_text or "-b " in help_text or "-b," in help_text,
+        "supports_ubatch_size": "--ubatch-size" in help_text or "-ub " in help_text or "-ub," in help_text,
         "version_digest": sha_text(version_stdout),
         "help_digest": sha_text(help_stdout),
     }}
@@ -896,6 +949,29 @@ def compact_llama_runtime(cli, rpc, archive, source_root, build_dir):
         cleanup["enabled"] = False
         cleanup["reason"] = "llama_cli_missing"
         return cli, rpc, cleanup
+    runtime_dir = OUT / "llama-runtime"
+    try:
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        binaries = [Path(cli)]
+        if rpc:
+            binaries.append(Path(rpc))
+        for binary in binaries:
+            target = runtime_dir / binary.name
+            shutil.copy2(binary, target)
+            target.chmod(target.stat().st_mode | 0o111)
+            if binary == Path(cli):
+                cli = target
+            elif rpc and binary == Path(rpc):
+                rpc = target
+        for lib_dir in [Path(build_dir) / "bin", Path(build_dir) / "lib"]:
+            if lib_dir.is_dir():
+                for lib in lib_dir.glob("*.so*"):
+                    if lib.is_file():
+                        shutil.copy2(lib, runtime_dir / lib.name)
+        link_release_libraries(runtime_dir)
+        cleanup["runtime_dir"] = str(runtime_dir)
+    except Exception as exc:
+        cleanup["errors"].append({{"path": str(runtime_dir), "error_type": type(exc).__name__}})
     for path in [archive, source_root]:
         try:
             path = Path(path)
@@ -906,6 +982,14 @@ def compact_llama_runtime(cli, rpc, archive, source_root, build_dir):
             cleanup["removed_paths"].append(str(path))
         except Exception as exc:
             cleanup["errors"].append({{"path": str(path), "error_type": type(exc).__name__}})
+    if runtime_dir.is_dir():
+        try:
+            build_path = Path(build_dir)
+            if build_path.exists():
+                shutil.rmtree(build_path)
+                cleanup["removed_paths"].append(str(build_path))
+        except Exception as exc:
+            cleanup["errors"].append({{"path": str(build_dir), "error_type": type(exc).__name__}})
     cleanup["disk_after"] = disk_snapshot()
     return cli, rpc, cleanup
 
@@ -1368,6 +1452,11 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
         "--log-disable",
         "-no-cnv",
     ]
+    probe = llama_info.get("probe") if isinstance(llama_info.get("probe"), dict) else {{}}
+    if probe.get("supports_batch_size"):
+        command.extend(["-b", "32"])
+    if probe.get("supports_ubatch_size"):
+        command.extend(["-ub", "32"])
     if rpc_enabled:
         command.extend(["--rpc", ",".join(rpc_endpoints)])
         if len(rpc_endpoints) > 1:
@@ -1404,6 +1493,14 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
     wall = round(time.monotonic() - started, 3)
     token_count = generated_token_estimate(stdout, MAX_NEW_TOKENS)
     ok = bool(step.get("ok") and token_count > 0)
+    model_cleanup = {{"enabled": True, "path_public": "models/" + tier["tier"] + "/" + tier["filename"], "ok": False}}
+    try:
+        if model_path.exists():
+            model_path.unlink()
+            model_cleanup["ok"] = True
+    except Exception as exc:
+        model_cleanup["error_type"] = type(exc).__name__
+        model_cleanup["error_digest"] = sha_text(str(exc))
     sharded_path_verified = bool(ok and rpc_enabled)
     multi_worker_verified = bool(sharded_path_verified and len(rpc_endpoints) >= 2)
     gpu_runtime_verified = bool(ok and cuda_runtime_available)
@@ -1436,6 +1533,10 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
             "network_bytes_per_token": None,
             "cache_hits": 0,
             "cache_misses": token_count,
+        }},
+        "cleanup": {{
+            "model_file_removed": model_cleanup,
+            "disk_after_model_cleanup": disk_snapshot(),
         }},
         "telemetry": {{
             **result.get("telemetry", {{}}),
@@ -1515,8 +1616,44 @@ def build_run_report(started, hardware, llama, rpc_info, tier_results, blockers,
 def write_run_report(report):
     target = OUT / "large_model_kaggle_validation_run.json"
     tmp = OUT / "large_model_kaggle_validation_run.json.tmp"
-    tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
-    os.replace(tmp, target)
+    try:
+        tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+        os.replace(tmp, target)
+        return True
+    except OSError as exc:
+        fallback = {{
+            "schema": report.get("schema") or SCHEMA,
+            "ok": False,
+            "generated_at": report.get("generated_at") or utc_now(),
+            "partial_stage": report.get("partial_stage") or "large_model_kaggle_report_write_failed",
+            "hardware": report.get("hardware") if isinstance(report.get("hardware"), dict) else {{}},
+            "llama_cpp": report.get("llama_cpp") if isinstance(report.get("llama_cpp"), dict) else {{}},
+            "rpc": report.get("rpc") if isinstance(report.get("rpc"), dict) else {{}},
+            "tier_results": report.get("tier_results") if isinstance(report.get("tier_results"), list) else [],
+            "real_runtime_verified": False,
+            "real_7b_runtime_verified": False,
+            "gpu_runtime_verified": False,
+            "sharded_path_verified": False,
+            "multi_worker_sharded_path_verified": False,
+            "blockers": ["large_model_kaggle_report_write_failed"],
+            "diagnosis_codes": list(report.get("diagnosis_codes") or []) + ["large_model_kaggle_report_write_failed"],
+            "report_write_error": {{
+                "error_type": type(exc).__name__,
+                "errno": getattr(exc, "errno", None),
+                "error_digest": sha_text(str(exc)),
+                "disk": disk_snapshot(),
+            }},
+        }}
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        try:
+            target.write_text(json.dumps(fallback, separators=(",", ":"), sort_keys=True) + "\\n", encoding="utf-8")
+        except Exception:
+            return False
+        return False
 
 
 def main():
@@ -1649,11 +1786,42 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
     return {
         "kernel_dir": kernel_dir,
         "kernel_ref": metadata["id"],
+        "declared_kernel_ref": metadata["id"],
         "kernel_slug": slug,
         "metadata": metadata,
         "tiers": tiers,
         "runbook": runbook,
     }
+
+
+def resolve_pushed_kernel_ref(
+    package: dict[str, Any],
+    push_step: dict[str, Any],
+    *,
+    runner: Runner,
+    timeout_seconds: float,
+) -> tuple[str, dict[str, Any] | None]:
+    declared_ref = str(package.get("kernel_ref") or "")
+    actual_ref = str(push_step.get("actual_kernel_ref") or "")
+    if actual_ref:
+        return actual_ref, None
+    metadata = package.get("metadata") if isinstance(package.get("metadata"), dict) else {}
+    title = str(metadata.get("title") or "")
+    owner = str(metadata.get("id") or declared_ref).split("/", 1)[0]
+    command = ["kaggle", "kernels", "list", "--user", owner, "--sort-by", "dateRun", "--page-size", "20"]
+    step = run_step(
+        "kaggle_kernel_ref_resolve",
+        command,
+        runner=runner,
+        timeout_seconds=min(60.0, max(5.0, timeout_seconds)),
+    )
+    output = f"{step.get('stdout_tail') or ''}\n{step.get('stderr_tail') or ''}"
+    resolved = extract_kernel_list_ref(output, owner=owner, title=title)
+    step["declared_kernel_ref"] = declared_ref
+    step["resolved_kernel_ref"] = resolved
+    step["resolved"] = bool(resolved)
+    step["title"] = title
+    return (resolved or declared_ref), step
 
 
 def run_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> tuple[list[dict[str, Any]], dict[str, Any], Path]:
@@ -1664,9 +1832,18 @@ def run_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Runne
         push_command.extend(["--accelerator", args.accelerator])
     push_step = run_step("kaggle_kernel_push", push_command, runner=runner, timeout_seconds=args.kaggle_push_timeout_seconds)
     steps.append(push_step)
-    kernel_ref = push_step.get("actual_kernel_ref") or package["kernel_ref"]
     if not push_step.get("ok"):
         return steps, package, Path("")
+    kernel_ref, resolve_step = resolve_pushed_kernel_ref(
+        package,
+        push_step,
+        runner=runner,
+        timeout_seconds=args.kaggle_push_timeout_seconds,
+    )
+    if resolve_step:
+        steps.append(resolve_step)
+    package["kernel_ref"] = str(kernel_ref)
+    package["resolved_kernel_ref"] = str(kernel_ref)
     status_step = wait_kaggle_terminal(
         str(kernel_ref),
         runner=runner,

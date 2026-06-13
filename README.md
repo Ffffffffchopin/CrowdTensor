@@ -480,7 +480,7 @@ assigned single P100 runs. The retained T4 x2 source-CUDA/RPC attempts proved
 T4 x2 hardware, `CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_NO_VMM=ON`,
 `GGML_RPC=ON`, CUDA llama.cpp build, and live RPC workers, but no GGUF tier has
 successfully generated tokens through llama.cpp RPC on Kaggle. The strongest
-blocked artifact is now
+RPC blocked artifact is
 `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-inplace-20260613/large_model_kaggle_validation.json`:
 it verifies one CUDA0 RPC worker, successful 1.5B GGUF download, and monitored
 `llama-cli --rpc` execution for about 451 seconds. Re-importing its raw report
@@ -491,13 +491,26 @@ assignment, CUDA build, model download, 7B size alone, or two-worker tensor
 split startup. The runner now records cgroup/GPU/process/disk telemetry, writes
 run reports atomically, limits telemetry sample growth, handles invalid raw JSON
 as a blocked report, and cleans source/archive build inputs in place after a
-successful source-CUDA build. The retained 2026-06-12 P100 attempts verified GPU
+successful source-CUDA build. The 7B CLI fallback evidence at
+`dist/large-model-kaggle-validation-t4x2-cli-7b-20260613-r1/large_model_kaggle_validation.json`
+verified T4 x2 hardware, CUDA llama.cpp build, Qwen2.5 7B Q2_K GGUF download,
+and `llama_cpp_cli` run start, but no generated tokens were retained:
+`cgroup_memory_peak_ratio=0.9335`, `disk_min_free_bytes=335552512`,
+`large_model_kaggle_disk_pressure`, and low GPU memory
+(`gpu_memory_used_peak_ratio=0.1075`) show Kaggle container pressure rather than
+VRAM exhaustion. The bounded r2 retry at
+`dist/large-model-kaggle-validation-t4x2-cli-7b-20260613-r2/large_model_kaggle_validation.json`
+used the repaired actual-slug lifecycle, minimal `llama-runtime` compaction,
+disabled CUDA cache, small `-b/-ub 32` batches, and report-write fallback; it
+still ended with Kaggle `Killed` plus `No space left on device`, and cleanup
+deleted the temporary kernel. The retained 2026-06-12 P100 attempts verified GPU
 hardware and cleanup but did not produce generated tokens through the
 sharded/RPC path; the successful Hugging Face CUDA compatibility smoke at
 `dist/large-model-kaggle-validation-small-hf-cuda-compat-import-20260612/large_model_kaggle_validation.json`
 proved only tiny-model GPU generation, not 7B/8B and not the sharded/RPC path.
 Treat the retained Kaggle artifacts as partial evidence with blockers, not
-completion of the core large-model validation goal.
+completion of the core large-model validation goal; further single-Notebook
+llama.cpp retries are not the right next route.
 
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 
