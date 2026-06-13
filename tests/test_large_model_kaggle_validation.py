@@ -238,6 +238,29 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
                         "worker_count": 1,
                         "stage_count": 1,
                     },
+                    "runner_step": {
+                        "telemetry": {
+                            "samples": [{
+                                "cgroup_memory": {
+                                    "memory.current": 30_000_000_000,
+                                    "memory.max": 32_000_000_000,
+                                    "memory.peak": 30_500_000_000,
+                                    "memory.events": {"oom": 0, "oom_kill": 0},
+                                },
+                                "gpu_memory": {
+                                    "devices": [{
+                                        "index": 0,
+                                        "memory_total_mb": 15360,
+                                        "memory_used_mb": 1024,
+                                    }],
+                                },
+                                "disk": {"free_bytes": 2_000_000_000},
+                                "processes": {
+                                    "100": {"Name": "llama-cli", "VmRSS": "372000 kB", "VmHWM": "1506508 kB"},
+                                },
+                            }],
+                        },
+                    },
                     "diagnosis_codes": ["large_model_kaggle_tier_run_start"],
                 }],
                 "diagnosis_codes": ["large_model_kaggle_tier_run_start"],
@@ -256,9 +279,15 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         ]))
 
         self.assertFalse(report["ok"])
+        self.assertEqual(report["largest_successful_tier"], "")
+        self.assertEqual(report["run_report"]["validation"]["attempted_scale_tier"], "small")
         self.assertEqual(report["rpc"]["worker_count"], 1)
         self.assertEqual(report["rpc"]["rpc_worker_limit"], 1)
         self.assertEqual(report["run_report"]["rpc"]["requested_worker_count"], 1)
+        self.assertTrue(report["resource_pressure_summary"]["cgroup_memory_pressure"])
+        self.assertTrue(report["resource_pressure_summary"]["gpu_memory_low_pressure"])
+        self.assertIn("large_model_kaggle_cgroup_memory_pressure", report["diagnosis_codes"])
+        self.assertIn("large_model_kaggle_container_memory_pressure_not_vram", report["blockers"])
         self.assertEqual(json.loads((output_dir / "blocked-import" / "support_bundle.json").read_text(encoding="utf-8"))["rpc"]["worker_count"], 1)
         check.validate_report(report)
 
@@ -350,6 +379,16 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         self.assertIn("large_model_kaggle_tier_download_start", source)
         self.assertIn("large_model_kaggle_tier_run_start", source)
         self.assertIn("def update_tier_progress", source)
+        self.assertIn("def resource_snapshot", source)
+        self.assertIn("def run_monitored", source)
+        self.assertIn("import shutil", source)
+        self.assertIn("cgroup_memory_snapshot", source)
+        self.assertIn("disk_snapshot", source)
+        self.assertIn("compact_llama_runtime", source)
+        self.assertIn("rpc-server-", source)
+        self.assertIn("tier_before_run", source)
+        self.assertIn("include_tail=False", source)
+        self.assertIn("os.replace(tmp, target)", source)
         self.assertIn("-DGGML_RPC=ON", source)
         self.assertIn("-DGGML_CUDA_NO_VMM=ON", source)
         self.assertIn("-DCMAKE_CUDA_ARCHITECTURES=", source)
@@ -398,7 +437,49 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         output_calls = [call for call in calls if call[:3] == ["kaggle", "kernels", "output"]]
         self.assertEqual(len(output_calls), 2)
         self.assertIn("--file-pattern", output_calls[0])
-        self.assertNotIn("--file-pattern", output_calls[1])
+
+    def test_kaggle_auto_invalid_run_report_becomes_blocked_report(self) -> None:
+        output_dir = self._tmp_dir()
+
+        def fake_runner(command, **kwargs):  # type: ignore[no-untyped-def]
+            del kwargs
+            command_line = " ".join(str(item) for item in command)
+            if "kernels push" in command_line:
+                return pack.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout="https://www.kaggle.com/code/tester/ct-large-llm-invalid-json",
+                    stderr="",
+                )
+            if "kernels status" in command_line:
+                return pack.subprocess.CompletedProcess(command, 0, stdout="KernelWorkerStatus.ERROR", stderr="")
+            if "kernels output" in command_line:
+                output_path = Path(command[command.index("-p") + 1])
+                output_path.mkdir(parents=True, exist_ok=True)
+                (output_path / "large_model_kaggle_validation_run.json").write_text('{"schema": ', encoding="utf-8")
+                return pack.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if "kernels delete" in command_line:
+                return pack.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            return pack.subprocess.CompletedProcess(command, 1, stdout="", stderr="unexpected")
+
+        args = pack.parse_args([
+            "--mode",
+            "kaggle-auto",
+            "--output-dir",
+            str(output_dir),
+            "--kaggle-owner",
+            "tester",
+            "--kaggle-status-timeout-seconds",
+            "1",
+            "--kaggle-status-poll-interval",
+            "1",
+        ])
+        report = pack.build_report(args, runner=fake_runner)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("large_model_kaggle_run_report_invalid_json", report["blockers"])
+        self.assertEqual(report["run_report"]["run_report_load"]["reason"], "invalid_json")
+        check.validate_report(report)
 
 
 if __name__ == "__main__":

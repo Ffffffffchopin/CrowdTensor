@@ -207,23 +207,24 @@ The project currently includes:
   previously assigned single P100 runs. The 2026-06-13 T4 x2 source-CUDA/RPC
   attempts verified `CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_NO_VMM=ON`,
   `GGML_RPC=ON`, successful CUDA llama.cpp build with
-  `--cuda-build-jobs 2 --cuda-build-timeout-seconds 5400`, and two live RPC
-  workers. The current strongest retained report is
-  `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-20260613/large_model_kaggle_validation.json`:
+  `--cuda-build-jobs 2 --cuda-build-timeout-seconds 5400`, and live RPC workers.
+  The current strongest retained blocked report is
+  `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-inplace-20260613/large_model_kaggle_validation.json`:
   it hides CUDA from the local llama.cpp client in RPC mode so only RPC workers
-  own GPU placement, verifies successful 1.5B GGUF download, reaches
-  `large_model_kaggle_tier_run_start` for `llama-cli --rpc`, and is then killed
-  by Kaggle before generated tokens are retained. This localizes the current
-  blocker to RPC inference execution on Kaggle rather than T4 assignment, CUDA
-  build, model download, or 7B size alone. A follow-up retained single-worker
-  diagnostic at
-  `dist/large-model-kaggle-validation-t4x2-rpc-small-singleworker-20260613/large_model_kaggle_validation.json`
-  uses `--rpc-worker-limit 1`, preserves top-level `rpc.worker_count: 1`, proves
-  one live CUDA0 RPC worker and the same small GGUF download, then is also
-  killed at `llama-cli --rpc 127.0.0.1:50052` run start. Its live CLI sidecar
-  records temporary Kaggle kernel deletion. Keep `core_validation_ready=false`
-  for those reports; this is evidence that llama.cpp RPC inference execution on
-  Kaggle is the unresolved blocker, not merely two-worker tensor split startup.
+  own GPU placement, verifies one live CUDA0 RPC worker, downloads the 1.5B GGUF,
+  and monitors `llama-cli --rpc 127.0.0.1:50052` for about 451 seconds before
+  Kaggle terminates the run without generated tokens. Re-importing the raw report
+  now emits `resource_pressure_summary` and diagnosis codes showing
+  `cgroup_memory_peak_ratio=0.9345`, `gpu_memory_used_peak_ratio=0.0702`,
+  `large_model_kaggle_cgroup_memory_pressure`, and
+  `large_model_kaggle_container_memory_pressure_not_vram`. The blocker is Kaggle
+  container memory pressure during single-Notebook llama.cpp RPC execution, not
+  T4 assignment, CUDA build, model download, 7B size alone, or two-worker tensor
+  split startup. The telemetry2 run also exposed `No space left on device` while
+  writing a partial raw report; the runner now uses atomic raw-report writes,
+  bounded telemetry samples, invalid-JSON blocker handling, and in-place
+  source/archive cleanup after successful source-CUDA builds. Keep
+  `core_validation_ready=false` for those reports.
   The 2026-06-12 retained P100 attempts
   verified GPU hardware and kernel cleanup but did not complete the required
   7B/8B sharded/RPC proof: the initial GGUF release path exposed

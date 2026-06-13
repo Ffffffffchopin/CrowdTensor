@@ -280,15 +280,11 @@ completion:
   repeated the successful T4 x2 build and two-worker RPC startup while hiding
   CUDA from the local llama.cpp client so the client would use RPC workers only;
   Kaggle still killed the kernel before a small or 7B model result was retained.
-  This is the strongest current T4 x2 artifact, but it keeps
-  `core_validation_ready=false`.
 - `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-20260613/large_model_kaggle_validation.json`
   added tier-stage telemetry and ran only the small GGUF tier. It verified T4
   x2, CUDA build, RPC workers, successful 1.5B GGUF download, and
   `llama-cli --rpc` run start with `client_cuda_hidden=true`; Kaggle then killed
-  the kernel before generated tokens were retained. This localizes the current
-  blocker to RPC inference execution on Kaggle, not to model download, T4
-  assignment, CUDA build, or 7B model size alone.
+  the kernel before generated tokens were retained.
 - `dist/large-model-kaggle-validation-t4x2-rpc-small-singleworker-20260613/large_model_kaggle_validation.json`
   imports the follow-up live diagnostic raw run report with `--rpc-worker-limit
   1`. The raw run verified T4 x2 hardware, source-CUDA/RPC build, one live RPC
@@ -296,8 +292,25 @@ completion:
   127.0.0.1:50052` run start with `client_cuda_hidden=true`; Kaggle still
   killed the kernel before generated tokens were retained. The live CLI sidecar
   `large_model_kaggle_validation_cli_summary.json` in the same directory records
-  `kernels_deleted=true`. This rules out two-worker tensor split startup as the
-  sole blocker and keeps `core_validation_ready=false`.
+  `kernels_deleted=true`.
+- `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry2-20260613/large_model_kaggle_validation_cli_summary.json`
+  captured the first richer telemetry failure: `large_model_kaggle_validation_run.json`
+  became invalid because Kaggle reported `No space left on device` while writing
+  the partial report and copying notebook output. The runner now uses atomic run
+  report writes, bounded telemetry samples, invalid-JSON blocker handling, and
+  in-place source/archive cleanup after successful source-CUDA builds.
+- `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-inplace-20260613/large_model_kaggle_validation.json`
+  is the current strongest blocked T4 artifact. It preserves one live RPC worker,
+  the small GGUF download, and monitored `llama-cli --rpc` execution for about
+  451 seconds. Re-importing the raw report now yields `resource_pressure_summary`
+  with `cgroup_memory_peak_ratio=0.9345`, `cgroup_memory_max_bytes=32212254720`,
+  `gpu_memory_used_peak_ratio=0.0702`, and diagnosis codes
+  `large_model_kaggle_cgroup_memory_pressure` plus
+  `large_model_kaggle_container_memory_pressure_not_vram`. This rules out T4
+  assignment, CUDA build, model download, 7B size alone, and two-worker tensor
+  split startup as the sole blockers; the current blocker is Kaggle container
+  memory pressure while executing llama.cpp RPC in one Notebook cgroup. Keep
+  `core_validation_ready=false`.
 
 Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
 

@@ -476,37 +476,28 @@ but must keep `core_validation_ready=false`. A 2026-06-13 hardware probe found
 that Kaggle CLI accepts `--accelerator NvidiaTeslaT4` and returned two `Tesla
 T4` devices with Torch CUDA visible. Use that accelerator for the main
 large-model validation instead of the generic `GPU` request, which previously
-assigned single P100 runs. The retained T4 x2 source-CUDA/RPC attempts then
-proved T4 x2 hardware, `CMAKE_CUDA_ARCHITECTURES=75`, CUDA llama.cpp build, and
-two live RPC workers, but Kaggle killed the kernel as it entered model-tier
-execution before any small or 7B tier result was written. Those reports remain
-`core_validation_ready=false`: the strongest retained artifact is
-`dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-20260613/large_model_kaggle_validation.json`,
-which verifies successful small GGUF download and reaches `llama-cli --rpc` run
-start before the Kaggle kill. That localizes the current blocker to RPC
-inference execution on Kaggle, not T4 assignment, CUDA build, model download, or
-7B model size alone. The follow-up single-worker diagnostic at
-`dist/large-model-kaggle-validation-t4x2-rpc-small-singleworker-20260613/large_model_kaggle_validation.json`
-uses `--rpc-worker-limit 1`, verifies one live RPC worker on CUDA0 plus the same
-small GGUF download, and is also killed at `llama-cli --rpc` run start. That
-rules out two-worker tensor-split startup as the sole blocker; the current
-unresolved issue is Kaggle execution of llama.cpp RPC inference itself. The
-live CLI sidecar in that directory records that the temporary Kaggle kernel was
-deleted.
-The retained 2026-06-12 P100 attempts verified Kaggle GPU hardware and cleanup
-but did not produce generated tokens through the sharded/RPC path. The latest
-P100 source-CUDA/RPC attempts showed
-that P100 needs explicit CUDA architecture selection, `GGML_CUDA_NO_VMM=ON`,
-and `GGML_RPC=ON`; with those fixes the next retained run was killed by Kaggle
-before it produced a public-safe run report. The runner now writes partial run
-reports after hardware/runtime/tier milestones and falls back to a full Kaggle
-output download if the targeted report download misses the file. A fallback
-Hugging Face CUDA compatibility smoke proved tiny-model GPU generation on the
-same class of P100 hardware; the public-safe import is
-`dist/large-model-kaggle-validation-small-hf-cuda-compat-import-20260612/large_model_kaggle_validation.json`.
-It is not 7B/8B-class and not the sharded/RPC path. Treat the retained Kaggle
-artifacts as partial evidence with blockers, not completion of the core
-large-model validation goal.
+assigned single P100 runs. The retained T4 x2 source-CUDA/RPC attempts proved
+T4 x2 hardware, `CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_NO_VMM=ON`,
+`GGML_RPC=ON`, CUDA llama.cpp build, and live RPC workers, but no GGUF tier has
+successfully generated tokens through llama.cpp RPC on Kaggle. The strongest
+blocked artifact is now
+`dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-inplace-20260613/large_model_kaggle_validation.json`:
+it verifies one CUDA0 RPC worker, successful 1.5B GGUF download, and monitored
+`llama-cli --rpc` execution for about 451 seconds. Re-importing its raw report
+produces `resource_pressure_summary` with `cgroup_memory_peak_ratio=0.9345` and
+`gpu_memory_used_peak_ratio=0.0702`, so the current blocker is Kaggle container
+memory pressure while executing llama.cpp RPC in one Notebook cgroup, not T4
+assignment, CUDA build, model download, 7B size alone, or two-worker tensor
+split startup. The runner now records cgroup/GPU/process/disk telemetry, writes
+run reports atomically, limits telemetry sample growth, handles invalid raw JSON
+as a blocked report, and cleans source/archive build inputs in place after a
+successful source-CUDA build. The retained 2026-06-12 P100 attempts verified GPU
+hardware and cleanup but did not produce generated tokens through the
+sharded/RPC path; the successful Hugging Face CUDA compatibility smoke at
+`dist/large-model-kaggle-validation-small-hf-cuda-compat-import-20260612/large_model_kaggle_validation.json`
+proved only tiny-model GPU generation, not 7B/8B and not the sharded/RPC path.
+Treat the retained Kaggle artifacts as partial evidence with blockers, not
+completion of the core large-model validation goal.
 
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 

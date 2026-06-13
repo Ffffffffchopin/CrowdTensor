@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import shlex
 import subprocess
 import sys
@@ -85,6 +86,23 @@ def load_json(path: Path) -> dict[str, Any]:
         return {}
     loaded = json.loads(path.read_text(encoding="utf-8"))
     return loaded if isinstance(loaded, dict) else {}
+
+
+def try_load_json(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not path.is_file():
+        return {}, {"ok": False, "reason": "missing"}
+    try:
+        return load_json(path), {"ok": True}
+    except json.JSONDecodeError as exc:
+        return {}, {
+            "ok": False,
+            "reason": "invalid_json",
+            "error_type": type(exc).__name__,
+            "line": exc.lineno,
+            "column": exc.colno,
+            "char": exc.pos,
+            "size_bytes": path.stat().st_size,
+        }
 
 
 def stable_hash_payload(value: Any) -> str:
@@ -318,6 +336,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -378,6 +397,254 @@ def safe_tail(value: str, limit: int = 2400) -> str:
     ]:
         text = text.replace(fragment, "<redacted>")
     return text
+
+
+def read_text_limited(path: Path, limit: int = 4096) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+    except Exception:
+        return ""
+
+
+def read_int_file(path: Path):
+    text = read_text_limited(path, limit=128).strip()
+    if not text or text == "max":
+        return text
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
+def cgroup_memory_snapshot():
+    candidates = [
+        Path("/sys/fs/cgroup"),
+        Path("/sys/fs/cgroup/memory"),
+    ]
+    values = {{}}
+    for root in candidates:
+        if not root.exists():
+            continue
+        for name in [
+            "memory.current",
+            "memory.max",
+            "memory.high",
+            "memory.peak",
+            "memory.events",
+            "memory/memory.usage_in_bytes",
+            "memory/memory.limit_in_bytes",
+            "memory/memory.max_usage_in_bytes",
+            "memory/memory.failcnt",
+        ]:
+            path = root / name
+            if path.exists():
+                value = read_int_file(path)
+                if name.endswith("memory.events"):
+                    events = {{}}
+                    for line in str(value).splitlines():
+                        parts = line.split()
+                        if len(parts) == 2:
+                            try:
+                                events[parts[0]] = int(parts[1])
+                            except ValueError:
+                                events[parts[0]] = parts[1]
+                    values[name.replace("/", "_")] = events
+                else:
+                    values[name.replace("/", "_")] = value
+    return values
+
+
+def proc_status_snapshot(pid: int):
+    status_text = read_text_limited(Path("/proc") / str(pid) / "status", limit=8192)
+    wanted = {{
+        "Name",
+        "State",
+        "VmPeak",
+        "VmSize",
+        "VmRSS",
+        "VmHWM",
+        "VmSwap",
+        "Threads",
+        "voluntary_ctxt_switches",
+        "nonvoluntary_ctxt_switches",
+    }}
+    parsed = {{}}
+    for line in status_text.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key in wanted:
+            parsed[key] = value.strip()
+    return parsed
+
+
+def gpu_memory_snapshot():
+    step, stdout, stderr = run([
+        "nvidia-smi",
+        "--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory",
+        "--format=csv,noheader,nounits",
+    ], timeout=30)
+    devices = []
+    if step.get("ok"):
+        for line in stdout.splitlines():
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) >= 7:
+                try:
+                    devices.append({{
+                        "index": int(parts[0]),
+                        "name": parts[1],
+                        "memory_total_mb": int(float(parts[2])),
+                        "memory_used_mb": int(float(parts[3])),
+                        "memory_free_mb": int(float(parts[4])),
+                        "utilization_gpu_percent": int(float(parts[5])),
+                        "utilization_memory_percent": int(float(parts[6])),
+                    }})
+                except ValueError:
+                    pass
+    return {{
+        "step": step,
+        "devices": devices,
+    }}
+
+
+def resource_snapshot(label: str, *, pids=None):
+    pids = [int(pid) for pid in (pids or []) if pid]
+    return {{
+        "label": label,
+        "captured_at_monotonic": round(time.monotonic(), 3),
+        "cgroup_memory": cgroup_memory_snapshot(),
+        "disk": disk_snapshot(),
+        "gpu_memory": gpu_memory_snapshot(),
+        "processes": {{str(pid): proc_status_snapshot(pid) for pid in pids}},
+    }}
+
+
+def disk_snapshot():
+    try:
+        usage = shutil.disk_usage(str(OUT))
+        return {{
+            "path": str(OUT),
+            "total_bytes": int(usage.total),
+            "used_bytes": int(usage.used),
+            "free_bytes": int(usage.free),
+        }}
+    except Exception as exc:
+        return {{"error_type": type(exc).__name__, "error_digest": sha_text(str(exc))}}
+
+
+def append_telemetry_sample(telemetry, sample, *, limit=5):
+    samples = telemetry.setdefault("samples", [])
+    samples.append(sample)
+    if len(samples) > limit:
+        dropped = len(samples) - limit
+        telemetry["dropped_sample_count"] = int(telemetry.get("dropped_sample_count") or 0) + dropped
+        del samples[:dropped]
+
+
+def file_log_summary(path: Path, *, include_tail: bool = True):
+    text = read_text_limited(path, limit=2400)
+    summary = {{
+        "path_public": str(path.name),
+        "present": path.is_file(),
+        "size_bytes": path.stat().st_size if path.is_file() else 0,
+        "digest": sha_text(text),
+    }}
+    if include_tail:
+        summary["tail"] = safe_tail(text)
+    return summary
+
+
+def rpc_log_summaries(rpc_info):
+    summaries = []
+    for server in rpc_info.get("servers") or []:
+        if not isinstance(server, dict):
+            continue
+        stdout_path = Path(str(server.get("stdout_log_path") or ""))
+        stderr_path = Path(str(server.get("stderr_log_path") or ""))
+        summaries.append({{
+            "index": server.get("index"),
+            "endpoint": server.get("endpoint"),
+            "stdout": file_log_summary(stdout_path) if str(stdout_path) else {{"present": False}},
+            "stderr": file_log_summary(stderr_path) if str(stderr_path) else {{"present": False}},
+        }})
+    return summaries
+
+
+def run_monitored(command, *, timeout=1200, env=None, progress=None, label="runner", pids=None):
+    started = time.monotonic()
+    stdout_log = OUT / (label + ".stdout.log")
+    stderr_log = OUT / (label + ".stderr.log")
+    stdout_handle = stdout_log.open("w", encoding="utf-8", errors="replace")
+    stderr_handle = stderr_log.open("w", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(command, stdout=stdout_handle, stderr=stderr_handle, text=True, env=env)
+    watched_pids = [proc.pid] + [int(pid) for pid in (pids or []) if pid]
+    telemetry = {{
+        "samples": [],
+        "stdout_log": file_log_summary(stdout_log, include_tail=False),
+        "stderr_log": file_log_summary(stderr_log),
+    }}
+    last_publish = 0.0
+    timed_out = False
+    while True:
+        now = time.monotonic()
+        if now - last_publish >= 30.0:
+            append_telemetry_sample(telemetry, resource_snapshot(label + "_running", pids=watched_pids))
+            last_publish = now
+            if callable(progress):
+                progress({{
+                    "ok": False,
+                    "pending": True,
+                    "pid": proc.pid,
+                    "duration_seconds": round(now - started, 3),
+                    "command_public": public_command(command),
+                    "telemetry": telemetry,
+                }}, label + "_running")
+        if proc.poll() is not None:
+            break
+        if now - started >= timeout:
+            timed_out = True
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            time.sleep(2)
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            break
+        time.sleep(2)
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+    stdout_handle.close()
+    stderr_handle.close()
+    duration = round(time.monotonic() - started, 3)
+    append_telemetry_sample(telemetry, resource_snapshot(label + "_complete", pids=watched_pids))
+    telemetry["stdout_log"] = file_log_summary(stdout_log, include_tail=False)
+    telemetry["stderr_log"] = file_log_summary(stderr_log)
+    stdout_text = read_text_limited(stdout_log, limit=8192)
+    stderr_text = read_text_limited(stderr_log, limit=8192)
+    step = {{
+        "ok": (proc.returncode == 0 and not timed_out),
+        "returncode": proc.returncode,
+        "duration_seconds": duration,
+        "stdout_digest": sha_text(stdout_text),
+        "stderr_digest": sha_text(stderr_text),
+        "stdout_chars": stdout_log.stat().st_size if stdout_log.is_file() else 0,
+        "stderr_chars": stderr_log.stat().st_size if stderr_log.is_file() else 0,
+        "stderr_hint": "timeout" if timed_out else classify_stderr(stderr_text),
+        "stderr_tail": safe_tail(stderr_text),
+        "stdout_public": False,
+        "stderr_public": False,
+        "command_public": public_command(command),
+        "telemetry": telemetry,
+    }}
+    if timed_out:
+        step["error"] = "timeout"
+    return step, stdout_text, stderr_text
 
 
 def setup_stdout_public(command) -> bool:
@@ -556,7 +823,11 @@ def link_release_libraries(bin_dir: Path):
 def env_for_binary(binary: Path):
     env = os.environ.copy()
     current = env.get("LD_LIBRARY_PATH", "")
-    env["LD_LIBRARY_PATH"] = str(binary.parent) + ((":" + current) if current else "")
+    library_dirs = [str(binary.parent)]
+    sibling_lib = binary.parent.parent / "lib"
+    if sibling_lib.is_dir():
+        library_dirs.append(str(sibling_lib))
+    env["LD_LIBRARY_PATH"] = ":".join(library_dirs + ([current] if current else []))
     return env
 
 
@@ -613,6 +884,32 @@ def prepare_llama_release():
     }}
 
 
+def compact_llama_runtime(cli, rpc, archive, source_root, build_dir):
+    cleanup = {{
+        "enabled": True,
+        "mode": "in_place_build_cleanup",
+        "removed_paths": [],
+        "errors": [],
+        "disk_before": disk_snapshot(),
+    }}
+    if not cli:
+        cleanup["enabled"] = False
+        cleanup["reason"] = "llama_cli_missing"
+        return cli, rpc, cleanup
+    for path in [archive, source_root]:
+        try:
+            path = Path(path)
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+            cleanup["removed_paths"].append(str(path))
+        except Exception as exc:
+            cleanup["errors"].append({{"path": str(path), "error_type": type(exc).__name__}})
+    cleanup["disk_after"] = disk_snapshot()
+    return cli, rpc, cleanup
+
+
 def prepare_llama_source_cuda(hardware):
     archive = OUT / ("llama-source-" + LLAMA_RELEASE + ".tar.gz")
     info = download(LLAMA_SOURCE_URL, archive, timeout=900)
@@ -655,6 +952,9 @@ def prepare_llama_source_cuda(hardware):
     rpc = find_binary(build_dir, ["rpc-server", "llama-rpc-server"])
     if not rpc:
         rpc = find_binary(source_root, ["rpc-server", "llama-rpc-server"])
+    cleanup = {{"enabled": False}}
+    if cli and build_step.get("ok"):
+        cli, rpc, cleanup = compact_llama_runtime(cli, rpc, archive, source_root, build_dir)
     binary_env = env_for_binary(cli) if cli else os.environ.copy()
     probe = probe_llama_binary(cli, env=binary_env) if cli else {{}}
     return {{
@@ -666,6 +966,7 @@ def prepare_llama_source_cuda(hardware):
         "llama_cli": str(cli) if cli else "",
         "rpc_server": str(rpc) if rpc else "",
         "probe": probe,
+        "runtime_compaction": cleanup,
         "backend": "llama.cpp",
         "build_mode": "source-cuda",
         "cuda_architectures": cuda_architectures,
@@ -681,7 +982,13 @@ def prepare_llama(hardware):
         try:
             source = prepare_llama_source_cuda(hardware)
         except Exception as exc:
-            source = {{"ok": False, "build_mode": "source-cuda", "error_type": type(exc).__name__}}
+            source = {{
+                "ok": False,
+                "build_mode": "source-cuda",
+                "error_type": type(exc).__name__,
+                "error_digest": sha_text(str(exc)),
+                "disk": disk_snapshot(),
+            }}
         attempts.append(attempt_summary(source))
         if source.get("ok") or LLAMA_BUILD_MODE == "source-cuda":
             source["attempts"] = attempts
@@ -711,7 +1018,11 @@ def start_rpc_servers(llama_info, hardware):
         command = [rpc_path, "-H", "127.0.0.1", "-p", str(port)]
         if gpu_count > 0 and llama_info.get("gpu_runtime_capable"):
             command.extend(["-d", "CUDA" + str(index)])
-        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        stdout_log = OUT / ("rpc-server-" + str(index) + ".stdout.log")
+        stderr_log = OUT / ("rpc-server-" + str(index) + ".stderr.log")
+        stdout_handle = stdout_log.open("w", encoding="utf-8", errors="replace")
+        stderr_handle = stderr_log.open("w", encoding="utf-8", errors="replace")
+        proc = subprocess.Popen(command, stdout=stdout_handle, stderr=stderr_handle, text=True, env=env)
         processes.append(proc)
         servers.append({{
             "index": index,
@@ -719,9 +1030,16 @@ def start_rpc_servers(llama_info, hardware):
             "command_public": public_command(command),
             "device_index": index if gpu_count > 0 and llama_info.get("gpu_runtime_capable") else None,
             "pid_recorded": True,
+            "pid": proc.pid,
+            "stdout_log_path": str(stdout_log),
+            "stderr_log_path": str(stderr_log),
         }})
     time.sleep(3)
     alive = [proc.poll() is None for proc in processes]
+    telemetry = {{
+        "after_start": resource_snapshot("rpc_after_start", pids=[proc.pid for proc in processes]),
+        "logs": rpc_log_summaries({{"servers": servers}}),
+    }}
     return {{
         "ok": bool(servers and all(alive)),
         "enabled": True,
@@ -731,6 +1049,7 @@ def start_rpc_servers(llama_info, hardware):
         "requested_worker_count": requested_count,
         "rpc_worker_limit": int(RPC_WORKER_LIMIT or 0),
         "alive_count": sum(1 for item in alive if item),
+        "telemetry": telemetry,
     }}
 
 
@@ -1007,8 +1326,14 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
         }},
         "hardware": hardware,
         "metrics": {{}},
+        "telemetry": {{
+            "resource_snapshots": [],
+            "rpc_logs": rpc_log_summaries(rpc_info),
+        }},
         "diagnosis_codes": [],
     }}
+    rpc_pids = [int(server.get("pid") or 0) for server in rpc_info.get("servers") or [] if isinstance(server, dict) and server.get("pid")]
+    result["telemetry"]["resource_snapshots"].append(resource_snapshot("tier_before_download", pids=rpc_pids))
     result["diagnosis_codes"].append("large_model_kaggle_tier_download_start")
     publish("large_model_kaggle_tier_download_start")
     try:
@@ -1020,6 +1345,8 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
         publish("large_model_kaggle_tier_download_failed")
         return result
     result["download"] = download_info
+    result["telemetry"]["resource_snapshots"].append(resource_snapshot("tier_after_download", pids=rpc_pids))
+    result["telemetry"]["rpc_logs"] = rpc_log_summaries(rpc_info)
     result["diagnosis_codes"].append("large_model_kaggle_tier_download_complete")
     publish("large_model_kaggle_tier_download_complete")
     prompt_path = OUT / ("prompt-" + tier["tier"] + ".txt")
@@ -1051,10 +1378,29 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
         "command_public": public_command(command),
         "client_cuda_hidden": bool(rpc_enabled),
     }}
+    result["telemetry"]["resource_snapshots"].append(resource_snapshot("tier_before_run", pids=rpc_pids))
+    result["telemetry"]["rpc_logs"] = rpc_log_summaries(rpc_info)
     result["diagnosis_codes"].append("large_model_kaggle_tier_run_start")
     publish("large_model_kaggle_tier_run_start")
+    def runner_progress(step, partial_stage):
+        result["runner_step"] = {{
+            **result.get("runner_step", {{}}),
+            **step,
+            "client_cuda_hidden": bool(rpc_enabled),
+        }}
+        result["telemetry"]["runner"] = step.get("telemetry") or {{}}
+        result["telemetry"]["rpc_logs"] = rpc_log_summaries(rpc_info)
+        publish(partial_stage)
+
     started = time.monotonic()
-    step, stdout, stderr = run(command, timeout=1200, env=client_env_for_binary(Path(llama_cli), rpc_enabled=rpc_enabled))
+    step, stdout, stderr = run_monitored(
+        command,
+        timeout=1200,
+        env=client_env_for_binary(Path(llama_cli), rpc_enabled=rpc_enabled),
+        progress=runner_progress,
+        label="llama_cli_" + tier["tier"],
+        pids=rpc_pids,
+    )
     wall = round(time.monotonic() - started, 3)
     token_count = generated_token_estimate(stdout, MAX_NEW_TOKENS)
     ok = bool(step.get("ok") and token_count > 0)
@@ -1073,7 +1419,10 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
         diagnosis.append(str(step["stderr_hint"]))
     result.update({{
         "ok": ok,
-        "runner_step": step,
+        "runner_step": {{
+            **step,
+            "client_cuda_hidden": bool(rpc_enabled),
+        }},
         "metrics": {{
             "ttft_ms": None,
             "tokens_per_second": round(token_count / wall, 4) if wall > 0 and token_count else 0.0,
@@ -1087,6 +1436,11 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
             "network_bytes_per_token": None,
             "cache_hits": 0,
             "cache_misses": token_count,
+        }},
+        "telemetry": {{
+            **result.get("telemetry", {{}}),
+            "runner": step.get("telemetry") or {{}},
+            "rpc_logs": rpc_log_summaries(rpc_info),
         }},
         "validation": {{
             "real_runtime_verified": ok,
@@ -1159,7 +1513,10 @@ def build_run_report(started, hardware, llama, rpc_info, tier_results, blockers,
 
 
 def write_run_report(report):
-    (OUT / "large_model_kaggle_validation_run.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    target = OUT / "large_model_kaggle_validation_run.json"
+    tmp = OUT / "large_model_kaggle_validation_run.json.tmp"
+    tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    os.replace(tmp, target)
 
 
 def main():
@@ -1368,11 +1725,143 @@ def run_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Runne
     return steps, package, run_report_path
 
 
+def int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == "max" or not stripped:
+            return None
+        if stripped.endswith(" kB"):
+            stripped = stripped[:-3].strip()
+        try:
+            return int(float(stripped))
+        except ValueError:
+            return None
+    return None
+
+
+def iter_resource_snapshots(value: Any):
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, dict):
+            if {"cgroup_memory", "gpu_memory", "processes"} & set(current):
+                yield current
+            stack.extend(current.values())
+        elif isinstance(current, list):
+            stack.extend(current)
+
+
+def summarize_resource_pressure(payload: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "sample_count": 0,
+        "cgroup_memory_peak_bytes": 0,
+        "cgroup_memory_max_bytes": 0,
+        "cgroup_memory_peak_ratio": 0.0,
+        "cgroup_oom_events": 0,
+        "cgroup_oom_kill_events": 0,
+        "disk_min_free_bytes": None,
+        "disk_snapshot_error_types": [],
+        "gpu_memory_used_peak_mb": 0,
+        "gpu_memory_total_peak_mb": 0,
+        "gpu_memory_used_peak_ratio": 0.0,
+        "process_vm_rss_peak_kb": 0,
+        "process_vm_hwm_peak_kb": 0,
+    }
+    disk_errors: set[str] = set()
+    disk_min_free: int | None = None
+    for snapshot in iter_resource_snapshots(payload):
+        summary["sample_count"] += 1
+        cgroup = snapshot.get("cgroup_memory") if isinstance(snapshot.get("cgroup_memory"), dict) else {}
+        current_bytes = int_or_none(cgroup.get("memory.current") or cgroup.get("memory_memory.usage_in_bytes")) or 0
+        peak_bytes = int_or_none(cgroup.get("memory.peak") or cgroup.get("memory_memory.max_usage_in_bytes")) or current_bytes
+        max_bytes = int_or_none(cgroup.get("memory.max") or cgroup.get("memory_memory.limit_in_bytes")) or 0
+        if max_bytes > 0 and max_bytes < 10**15:
+            summary["cgroup_memory_max_bytes"] = max(int(summary["cgroup_memory_max_bytes"] or 0), max_bytes)
+        summary["cgroup_memory_peak_bytes"] = max(int(summary["cgroup_memory_peak_bytes"] or 0), peak_bytes, current_bytes)
+        events = cgroup.get("memory.events") or cgroup.get("memory_events")
+        if isinstance(events, dict):
+            summary["cgroup_oom_events"] += int_or_none(events.get("oom")) or 0
+            summary["cgroup_oom_kill_events"] += int_or_none(events.get("oom_kill")) or 0
+        failcnt = int_or_none(cgroup.get("memory_memory.failcnt"))
+        if failcnt:
+            summary["cgroup_oom_events"] += failcnt
+
+        disk = snapshot.get("disk") if isinstance(snapshot.get("disk"), dict) else {}
+        free_bytes = int_or_none(disk.get("free_bytes"))
+        if free_bytes is not None:
+            disk_min_free = free_bytes if disk_min_free is None else min(disk_min_free, free_bytes)
+        if disk.get("error_type"):
+            disk_errors.add(str(disk["error_type"]))
+
+        gpu = snapshot.get("gpu_memory") if isinstance(snapshot.get("gpu_memory"), dict) else {}
+        for device in gpu.get("devices") or []:
+            if not isinstance(device, dict):
+                continue
+            used_mb = int_or_none(device.get("memory_used_mb")) or 0
+            total_mb = int_or_none(device.get("memory_total_mb")) or 0
+            summary["gpu_memory_used_peak_mb"] = max(int(summary["gpu_memory_used_peak_mb"] or 0), used_mb)
+            summary["gpu_memory_total_peak_mb"] = max(int(summary["gpu_memory_total_peak_mb"] or 0), total_mb)
+
+        processes = snapshot.get("processes") if isinstance(snapshot.get("processes"), dict) else {}
+        for process in processes.values():
+            if not isinstance(process, dict):
+                continue
+            summary["process_vm_rss_peak_kb"] = max(
+                int(summary["process_vm_rss_peak_kb"] or 0),
+                int_or_none(process.get("VmRSS")) or 0,
+            )
+            summary["process_vm_hwm_peak_kb"] = max(
+                int(summary["process_vm_hwm_peak_kb"] or 0),
+                int_or_none(process.get("VmHWM")) or 0,
+            )
+
+    max_bytes = int(summary.get("cgroup_memory_max_bytes") or 0)
+    peak_bytes = int(summary.get("cgroup_memory_peak_bytes") or 0)
+    if max_bytes > 0 and peak_bytes > 0:
+        summary["cgroup_memory_peak_ratio"] = round(peak_bytes / max_bytes, 4)
+    gpu_total = int(summary.get("gpu_memory_total_peak_mb") or 0)
+    gpu_used = int(summary.get("gpu_memory_used_peak_mb") or 0)
+    if gpu_total > 0 and gpu_used > 0:
+        summary["gpu_memory_used_peak_ratio"] = round(gpu_used / gpu_total, 4)
+    summary["disk_min_free_bytes"] = disk_min_free
+    summary["disk_snapshot_error_types"] = sorted(disk_errors)
+    summary["cgroup_memory_pressure"] = bool(float(summary.get("cgroup_memory_peak_ratio") or 0.0) >= 0.9)
+    summary["gpu_memory_low_pressure"] = bool(
+        gpu_total > 0 and float(summary.get("gpu_memory_used_peak_ratio") or 0.0) <= 0.25
+    )
+    summary["disk_pressure"] = bool(disk_min_free is not None and disk_min_free < 512 * 1024 * 1024)
+    return summary
+
+
+def resource_pressure_diagnosis(summary: dict[str, Any]) -> list[str]:
+    codes: list[str] = []
+    if summary.get("cgroup_memory_pressure"):
+        codes.append("large_model_kaggle_cgroup_memory_pressure")
+    if summary.get("cgroup_oom_events") or summary.get("cgroup_oom_kill_events"):
+        codes.append("large_model_kaggle_cgroup_oom_observed")
+    if summary.get("cgroup_memory_pressure") and summary.get("gpu_memory_low_pressure"):
+        codes.append("large_model_kaggle_container_memory_pressure_not_vram")
+    if summary.get("disk_pressure"):
+        codes.append("large_model_kaggle_disk_pressure")
+    if summary.get("disk_snapshot_error_types"):
+        codes.append("large_model_kaggle_disk_snapshot_unavailable")
+    return codes
+
+
 def normalize_run_report(payload: dict[str, Any]) -> dict[str, Any]:
     tier_results = payload.get("tier_results") if isinstance(payload.get("tier_results"), list) else []
     successes = [item for item in tier_results if isinstance(item, dict) and item.get("ok")]
     largest = successes[-1] if successes else {}
-    metrics = largest.get("metrics") if isinstance(largest.get("metrics"), dict) else payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    attempts = [item for item in tier_results if isinstance(item, dict)]
+    latest = attempts[-1] if attempts else {}
+    evidence_item = largest or latest
+    metrics = evidence_item.get("metrics") if isinstance(evidence_item.get("metrics"), dict) else payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
     metrics = dict(metrics)
     if metrics and metrics.get("ttft_ms") is None:
         metrics["ttft_ms"] = 0.0
@@ -1382,9 +1871,9 @@ def normalize_run_report(payload: dict[str, Any]) -> dict[str, Any]:
         metrics["wall_time_seconds"] = 0.0
     if metrics and metrics.get("output_digest") is None:
         metrics["output_digest"] = ""
-    model = largest.get("model") if isinstance(largest.get("model"), dict) else payload.get("model") if isinstance(payload.get("model"), dict) else {}
-    runtime = largest.get("runtime") if isinstance(largest.get("runtime"), dict) else payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
-    hardware = payload.get("hardware") if isinstance(payload.get("hardware"), dict) else largest.get("hardware") if isinstance(largest.get("hardware"), dict) else {}
+    model = evidence_item.get("model") if isinstance(evidence_item.get("model"), dict) else payload.get("model") if isinstance(payload.get("model"), dict) else {}
+    runtime = evidence_item.get("runtime") if isinstance(evidence_item.get("runtime"), dict) else payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    hardware = payload.get("hardware") if isinstance(payload.get("hardware"), dict) else evidence_item.get("hardware") if isinstance(evidence_item.get("hardware"), dict) else {}
     validation = largest.get("validation") if isinstance(largest.get("validation"), dict) else payload.get("validation") if isinstance(payload.get("validation"), dict) else {}
     rpc = payload.get("rpc") if isinstance(payload.get("rpc"), dict) else {}
     real_runtime_verified = bool(payload.get("real_runtime_verified") or validation.get("real_runtime_verified") or payload.get("ok") or successes)
@@ -1396,13 +1885,20 @@ def normalize_run_report(payload: dict[str, Any]) -> dict[str, Any]:
     blockers = list(payload.get("blockers") or [])
     if real_runtime_verified:
         blockers = [item for item in blockers if item != "large_model_kaggle_no_successful_real_run"]
+    resource_pressure_summary = summarize_resource_pressure(payload)
+    diagnosis_codes = list(payload.get("diagnosis_codes") or [])
+    for code in resource_pressure_diagnosis(resource_pressure_summary):
+        if code not in diagnosis_codes:
+            diagnosis_codes.append(code)
     return {
         "schema": RUN_SCHEMA,
         "ok": real_runtime_verified,
         "generated_at": payload.get("generated_at") or utc_now(),
+        "partial_stage": payload.get("partial_stage") or "",
         "model": model,
         "runtime": runtime,
         "rpc": rpc,
+        "llama_cpp": payload.get("llama_cpp") if isinstance(payload.get("llama_cpp"), dict) else {},
         "hardware": hardware,
         "validation": {
             **validation,
@@ -1418,18 +1914,21 @@ def normalize_run_report(payload: dict[str, Any]) -> dict[str, Any]:
             "sharded_path_verified": sharded_path_verified,
             "multi_worker_sharded_path_verified": multi_worker_sharded_path_verified,
             "core_validation_ready": core_validation_ready,
-            "scale_tier": largest.get("tier") or payload.get("largest_successful_tier") or "",
+            "scale_tier": largest.get("tier") or payload.get("largest_successful_tier") or validation.get("scale_tier") or "",
+            "attempted_scale_tier": latest.get("tier") or "",
         },
         "metrics": metrics,
         "tier_results": tier_results,
+        "largest_successful_tier": largest.get("tier") or payload.get("largest_successful_tier") or "",
         "real_runtime_verified": real_runtime_verified,
         "real_7b_runtime_verified": real_7b_runtime_verified,
         "gpu_runtime_verified": gpu_runtime_verified,
         "sharded_path_verified": sharded_path_verified,
         "multi_worker_sharded_path_verified": multi_worker_sharded_path_verified,
         "core_validation_ready": core_validation_ready,
+        "resource_pressure_summary": resource_pressure_summary,
         "blockers": blockers or ([] if real_runtime_verified else ["large_model_kaggle_no_successful_real_run"]),
-        "diagnosis_codes": payload.get("diagnosis_codes") or [],
+        "diagnosis_codes": diagnosis_codes,
         "safety": payload.get("safety") if isinstance(payload.get("safety"), dict) else {},
     }
 
@@ -1537,6 +2036,9 @@ def build_support_bundle(report: dict[str, Any]) -> dict[str, Any]:
         "multi_worker_sharded_path_verified": bool(report.get("multi_worker_sharded_path_verified")),
         "core_validation_ready": bool(report.get("core_validation_ready")),
         "rpc": report.get("rpc") if isinstance(report.get("rpc"), dict) else {},
+        "resource_pressure_summary": report.get("resource_pressure_summary")
+        if isinstance(report.get("resource_pressure_summary"), dict)
+        else {},
         "largest_successful_tier": report.get("largest_successful_tier"),
         "diagnosis_codes": report.get("diagnosis_codes") or [],
         "blockers": report.get("blockers") or [],
@@ -1570,6 +2072,23 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- provider: `{hardware.get('provider')}`",
         f"- GPU count: `{hardware.get('gpu_count')}`",
         f"- GPU names: `{', '.join(str(item) for item in hardware.get('gpu_names') or [])}`",
+        "",
+        "## Resource Pressure",
+        "",
+    ])
+    pressure = report.get("resource_pressure_summary") if isinstance(report.get("resource_pressure_summary"), dict) else {}
+    if pressure:
+        lines.extend([
+            f"- cgroup memory peak ratio: `{pressure.get('cgroup_memory_peak_ratio')}`",
+            f"- cgroup memory peak bytes: `{pressure.get('cgroup_memory_peak_bytes')}`",
+            f"- cgroup memory max bytes: `{pressure.get('cgroup_memory_max_bytes')}`",
+            f"- GPU memory peak ratio: `{pressure.get('gpu_memory_used_peak_ratio')}`",
+            f"- GPU memory peak MB: `{pressure.get('gpu_memory_used_peak_mb')}`",
+            f"- disk min free bytes: `{pressure.get('disk_min_free_bytes')}`",
+        ])
+    else:
+        lines.append("- none")
+    lines.extend([
         "",
         "## Tiers",
         "",
@@ -1680,16 +2199,25 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
             write_json(run_report_path, run_report)
     elif args.mode == "kaggle-auto":
         steps, package, run_report_path = run_kaggle_auto(args, output_dir=output_dir, runner=runner)
-        run_report = normalize_run_report(load_json(run_report_path)) if run_report_path.is_file() else {
-            "schema": RUN_SCHEMA,
-            "ok": False,
-            "blockers": ["large_model_kaggle_run_report_missing"],
-            "diagnosis_codes": ["large_model_kaggle_run_report_missing"],
-        }
+        loaded_run_report, load_status = try_load_json(run_report_path)
+        if loaded_run_report:
+            run_report = normalize_run_report(loaded_run_report)
+        else:
+            diagnosis = "large_model_kaggle_run_report_invalid_json" if load_status.get("reason") == "invalid_json" else "large_model_kaggle_run_report_missing"
+            run_report = {
+                "schema": RUN_SCHEMA,
+                "ok": False,
+                "blockers": [diagnosis],
+                "diagnosis_codes": [diagnosis],
+                "run_report_load": load_status,
+            }
     else:
         if not run_report_path.is_file():
             raise SystemExit("--run-report is required for evidence-import and must exist")
-        run_report = normalize_run_report(load_json(run_report_path))
+        loaded_run_report, load_status = try_load_json(run_report_path)
+        if not loaded_run_report:
+            raise SystemExit(f"--run-report could not be loaded: {load_status.get('reason')}")
+        run_report = normalize_run_report(loaded_run_report)
 
     normalized_path = output_dir / "large_model_kaggle_validation_run_normalized.json"
     write_json(normalized_path, run_report)
@@ -1701,12 +2229,15 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
             output_dir=output_dir,
             run_report_path=normalized_path,
             run_report=run_report,
-        )
+    )
     hardware = run_report.get("hardware") if isinstance(run_report.get("hardware"), dict) else {}
     tier_results = run_report.get("tier_results") if isinstance(run_report.get("tier_results"), list) else []
-    largest_successful_tier = str(run_report.get("validation", {}).get("scale_tier") if isinstance(run_report.get("validation"), dict) else "")
     real_runtime_verified = bool(run_report.get("real_runtime_verified") or run_report.get("ok"))
     validation = run_report.get("validation") if isinstance(run_report.get("validation"), dict) else {}
+    largest_successful_tier = str(
+        run_report.get("largest_successful_tier")
+        or (validation.get("scale_tier") if real_runtime_verified else "")
+    )
     real_7b_runtime_verified = bool(run_report.get("real_7b_runtime_verified") or validation.get("real_7b_runtime_verified"))
     real_13b_runtime_verified = bool(validation.get("real_13b_runtime_verified"))
     gpu_runtime_verified = bool(run_report.get("gpu_runtime_verified") or validation.get("gpu_runtime_verified"))
@@ -1735,6 +2266,12 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         blockers.append("large_model_kaggle_gpu_runtime_not_verified")
     if not sharded_path_verified and "large_model_sharded_runtime_path_not_verified" not in blockers:
         blockers.append("large_model_sharded_runtime_path_not_verified")
+    resource_pressure_summary = run_report.get("resource_pressure_summary") if isinstance(run_report.get("resource_pressure_summary"), dict) else {}
+    resource_codes = resource_pressure_diagnosis(resource_pressure_summary)
+    codes.update(resource_codes)
+    for code in resource_codes:
+        if code not in blockers:
+            blockers.append(code)
     model_summary = run_report.get("model") if isinstance(run_report.get("model"), dict) else {}
     runtime_summary = run_report.get("runtime") if isinstance(run_report.get("runtime"), dict) else {}
     rpc_summary = run_report.get("rpc") if isinstance(run_report.get("rpc"), dict) else {}
@@ -1758,6 +2295,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         "rpc": rpc_summary,
         "metrics": metrics_summary,
         "hardware": hardware,
+        "resource_pressure_summary": resource_pressure_summary,
         "tier_results": tier_results,
         "run_report": run_report,
         "inference_rc_report": inference_report,
