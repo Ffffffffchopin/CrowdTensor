@@ -204,7 +204,16 @@ The project currently includes:
   the main Kaggle validation; a 2026-06-13 hardware probe at
   `dist/kaggle-gpu-shape-probe-20260613073043/attempt_summary.json` verified two
   `Tesla T4` devices and Torch CUDA visibility, while the generic `GPU` request
-  previously assigned single P100 runs. The 2026-06-12 retained P100 attempts
+  previously assigned single P100 runs. The 2026-06-13 T4 x2 source-CUDA/RPC
+  attempts verified `CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_NO_VMM=ON`,
+  `GGML_RPC=ON`, successful CUDA llama.cpp build with
+  `--cuda-build-jobs 2 --cuda-build-timeout-seconds 5400`, and two live RPC
+  workers; the strongest retained report is
+  `dist/large-model-kaggle-validation-t4x2-rpc-7b-clientcpu-20260613/large_model_kaggle_validation.json`.
+  It hides CUDA from the local llama.cpp client in RPC mode so only RPC workers
+  own GPU placement, but Kaggle still killed the kernel before any small or 7B
+  tier result was retained. Keep `core_validation_ready=false` for those
+  reports. The 2026-06-12 retained P100 attempts
   verified GPU hardware and kernel cleanup but did not complete the required
   7B/8B sharded/RPC proof: the initial GGUF release path exposed
   missing/shared-library and non-CUDA-runtime issues, the `source-cuda`

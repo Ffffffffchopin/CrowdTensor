@@ -258,6 +258,23 @@ Kaggle accepted this machine shape and returned two `Tesla T4` devices with
 Torch CUDA visible. The generic `GPU` request previously assigned single P100
 runs, so it is only a fallback when T4 x2 is unavailable.
 
+Retained 2026-06-13 T4 x2 evidence currently shows runtime progress but not
+completion:
+
+- `dist/large-model-kaggle-validation-t4x2-rpc-7b-20260613/large_model_kaggle_validation.json`
+  verified two T4 GPUs and `CMAKE_CUDA_ARCHITECTURES=75`, but `cmake --build`
+  timed out after 3600 seconds with `--cuda-build-jobs 1`, so no tier ran.
+- `dist/large-model-kaggle-validation-t4x2-rpc-7b-build5400-20260613/large_model_kaggle_validation.json`
+  verified two T4 GPUs, completed the source CUDA build with
+  `--cuda-build-jobs 2 --cuda-build-timeout-seconds 5400`, and started two RPC
+  workers, then Kaggle killed the kernel before any tier result was retained.
+- `dist/large-model-kaggle-validation-t4x2-rpc-7b-clientcpu-20260613/large_model_kaggle_validation.json`
+  repeated the successful T4 x2 build and two-worker RPC startup while hiding
+  CUDA from the local llama.cpp client so the client would use RPC workers only;
+  Kaggle still killed the kernel before a small or 7B model result was retained.
+  This is the strongest current T4 x2 artifact, but it keeps
+  `core_validation_ready=false`.
+
 Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
 
 - `dist/large-model-kaggle-validation-kaggle-auto-20260612/large_model_kaggle_validation.json`

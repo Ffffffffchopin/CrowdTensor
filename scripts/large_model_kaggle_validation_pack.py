@@ -337,6 +337,7 @@ HF_CUDA_INSTALL_COMPAT = {str(bool(args.hf_cuda_install_compat))}
 CUDA_ARCHITECTURES = "{args.cuda_architectures}"
 CUDA_NO_VMM = {str(bool(args.cuda_no_vmm))}
 CUDA_BUILD_JOBS = {int(args.cuda_build_jobs)}
+CUDA_BUILD_TIMEOUT_SECONDS = {int(args.cuda_build_timeout_seconds)}
 LLAMA_ASSET = "llama-" + LLAMA_RELEASE + "-bin-ubuntu-x64.tar.gz"
 LLAMA_URL = "https://github.com/ggml-org/llama.cpp/releases/download/" + LLAMA_RELEASE + "/" + LLAMA_ASSET
 OUT = Path("/kaggle/working")
@@ -428,8 +429,20 @@ def run(command, timeout=1200, env=None):
             step["stdout_tail"] = safe_tail(completed.stdout or "")
         return step, completed.stdout or "", completed.stderr or ""
     except subprocess.TimeoutExpired as exc:
-        stdout_text = exc.stdout if isinstance(exc.stdout, str) else ""
-        stderr_text = exc.stderr if isinstance(exc.stderr, str) else ""
+        stdout_text = (
+            exc.stdout.decode("utf-8", errors="replace")
+            if isinstance(exc.stdout, bytes)
+            else exc.stdout
+            if isinstance(exc.stdout, str)
+            else ""
+        )
+        stderr_text = (
+            exc.stderr.decode("utf-8", errors="replace")
+            if isinstance(exc.stderr, bytes)
+            else exc.stderr
+            if isinstance(exc.stderr, str)
+            else ""
+        )
         step = {{
             "ok": False,
             "error": "timeout",
@@ -546,6 +559,13 @@ def env_for_binary(binary: Path):
     return env
 
 
+def client_env_for_binary(binary: Path, *, rpc_enabled: bool):
+    env = env_for_binary(binary)
+    if rpc_enabled:
+        env["CUDA_VISIBLE_DEVICES"] = ""
+    return env
+
+
 def probe_llama_binary(binary: Path, *, env):
     version_step, version_stdout, version_stderr = run([str(binary), "--version"], timeout=60, env=env)
     help_step, help_stdout, help_stderr = run([str(binary), "--help"], timeout=60, env=env)
@@ -627,7 +647,7 @@ def prepare_llama_source_cuda(hardware):
         "--target",
         "llama-cli",
         "rpc-server",
-    ], timeout=3600)
+    ], timeout=max(1, int(CUDA_BUILD_TIMEOUT_SECONDS or 3600)))
     cli = find_binary(build_dir, ["llama-cli", "main"])
     if not cli:
         cli = find_binary(source_root, ["llama-cli", "main"])
@@ -1010,7 +1030,7 @@ def run_tier(tier, llama_info, hardware, rpc_info):
         if len(rpc_endpoints) > 1:
             command.extend(["-ts", ",".join(["1"] * len(rpc_endpoints))])
     started = time.monotonic()
-    step, stdout, stderr = run(command, timeout=1200, env=env_for_binary(Path(llama_cli)))
+    step, stdout, stderr = run(command, timeout=1200, env=client_env_for_binary(Path(llama_cli), rpc_enabled=rpc_enabled))
     wall = round(time.monotonic() - started, 3)
     token_count = generated_token_estimate(stdout, MAX_NEW_TOKENS)
     ok = bool(step.get("ok") and token_count > 0)
@@ -1731,6 +1751,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--runtime-path", choices=RUNTIME_PATHS, default="rpc")
     parser.add_argument("--cuda-architectures", default="native")
     parser.add_argument("--cuda-build-jobs", type=int, default=4)
+    parser.add_argument("--cuda-build-timeout-seconds", type=int, default=3600)
     parser.add_argument("--cuda-no-vmm", dest="cuda_no_vmm", action="store_true", default=True)
     parser.add_argument("--cuda-vmm", dest="cuda_no_vmm", action="store_false")
     parser.add_argument("--hf-cuda-install-compat", action="store_true")
@@ -1772,6 +1793,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit(f"--max-new-tokens must be between 1 and {inference_rc.MAX_REAL_RUN_TOKENS}")
     if args.cuda_build_jobs < 1:
         raise SystemExit("--cuda-build-jobs must be positive")
+    if args.cuda_build_timeout_seconds < 1:
+        raise SystemExit("--cuda-build-timeout-seconds must be positive")
     tiers = selected_tiers(args)
     bad = sorted(set(tiers) - set(TIERS))
     if bad:

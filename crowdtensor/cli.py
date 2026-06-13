@@ -4401,6 +4401,8 @@ def build_large_model_kaggle_validation(args: argparse.Namespace, *, runner: Run
         str(args.cuda_architectures),
         "--cuda-build-jobs",
         str(args.cuda_build_jobs),
+        "--cuda-build-timeout-seconds",
+        str(args.cuda_build_timeout_seconds),
         "--context-length",
         str(args.context_length),
         "--max-new-tokens",
@@ -25731,6 +25733,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     large_model_kaggle.add_argument("--runtime-path", choices=["rpc", "cli", "hf-cuda"], default="rpc")
     large_model_kaggle.add_argument("--cuda-architectures", default="native")
     large_model_kaggle.add_argument("--cuda-build-jobs", type=int, default=4)
+    large_model_kaggle.add_argument("--cuda-build-timeout-seconds", type=int, default=3600)
     large_model_kaggle.add_argument("--cuda-no-vmm", dest="cuda_no_vmm", action="store_true", default=True)
     large_model_kaggle.add_argument("--cuda-vmm", dest="cuda_no_vmm", action="store_false")
     large_model_kaggle.add_argument("--hf-cuda-install-compat", action="store_true")
@@ -28551,6 +28554,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--max-new-tokens must be between 1 and 8")
         if args.cuda_build_jobs < 1:
             raise SystemExit("--cuda-build-jobs must be positive")
+        if args.cuda_build_timeout_seconds < 1:
+            raise SystemExit("--cuda-build-timeout-seconds must be positive")
         if args.mode == "kaggle-auto" and not args.kaggle_owner:
             config = Path.home() / ".kaggle" / "kaggle.json"
             if config.is_file():

@@ -221,6 +221,8 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli.parse_args(["large-model-kaggle-validate", "--cuda-build-jobs", "0"])
         with self.assertRaises(SystemExit):
+            cli.parse_args(["large-model-kaggle-validate", "--cuda-build-timeout-seconds", "0"])
+        with self.assertRaises(SystemExit):
             cli.parse_args(["large-model-kaggle-validate", "--mode", "evidence-import"])
 
     def test_hf_cuda_package_uses_redacted_inline_command(self) -> None:
@@ -263,6 +265,8 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
             "60",
             "--cuda-build-jobs",
             "1",
+            "--cuda-build-timeout-seconds",
+            "5400",
         ])
         pack.build_report(args)
 
@@ -270,7 +274,9 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         compile(source, str(output_dir / "kaggle-kernel" / "kernel.py"), "exec")
         self.assertIn('CUDA_ARCHITECTURES = "60"', source)
         self.assertIn("CUDA_BUILD_JOBS = 1", source)
+        self.assertIn("CUDA_BUILD_TIMEOUT_SECONDS = 5400", source)
         self.assertIn("CUDA_NO_VMM = True", source)
+        self.assertIn('env["CUDA_VISIBLE_DEVICES"] = ""', source)
         self.assertIn("-DGGML_RPC=ON", source)
         self.assertIn("-DGGML_CUDA_NO_VMM=ON", source)
         self.assertIn("-DCMAKE_CUDA_ARCHITECTURES=", source)

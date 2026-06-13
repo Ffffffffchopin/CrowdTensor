@@ -458,7 +458,8 @@ crowdtensor large-model-kaggle-validate \
   --llama-build-mode source-cuda \
   --cuda-architectures native \
   --cuda-no-vmm \
-  --cuda-build-jobs 1 \
+  --cuda-build-jobs 2 \
+  --cuda-build-timeout-seconds 5400 \
   --output-dir dist/large-model-kaggle-validation \
   --json
 python scripts/large_model_kaggle_validation_check.py \
@@ -474,9 +475,15 @@ but must keep `core_validation_ready=false`. A 2026-06-13 hardware probe found
 that Kaggle CLI accepts `--accelerator NvidiaTeslaT4` and returned two `Tesla
 T4` devices with Torch CUDA visible. Use that accelerator for the main
 large-model validation instead of the generic `GPU` request, which previously
-assigned single P100 runs. The retained 2026-06-12 P100 attempts verified Kaggle
-GPU hardware and cleanup but did not produce generated tokens through the
-sharded/RPC path. The latest source-CUDA/RPC attempts showed
+assigned single P100 runs. The retained T4 x2 source-CUDA/RPC attempts then
+proved T4 x2 hardware, `CMAKE_CUDA_ARCHITECTURES=75`, CUDA llama.cpp build, and
+two live RPC workers, but Kaggle killed the kernel as it entered model-tier
+execution before any small or 7B tier result was written. Those reports remain
+`core_validation_ready=false`: the strongest retained artifact is
+`dist/large-model-kaggle-validation-t4x2-rpc-7b-clientcpu-20260613/large_model_kaggle_validation.json`.
+The retained 2026-06-12 P100 attempts verified Kaggle GPU hardware and cleanup
+but did not produce generated tokens through the sharded/RPC path. The latest
+P100 source-CUDA/RPC attempts showed
 that P100 needs explicit CUDA architecture selection, `GGML_CUDA_NO_VMM=ON`,
 and `GGML_RPC=ON`; with those fixes the next retained run was killed by Kaggle
 before it produced a public-safe run report. The runner now writes partial run
