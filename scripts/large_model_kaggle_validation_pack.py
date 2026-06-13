@@ -338,6 +338,7 @@ CUDA_ARCHITECTURES = "{args.cuda_architectures}"
 CUDA_NO_VMM = {str(bool(args.cuda_no_vmm))}
 CUDA_BUILD_JOBS = {int(args.cuda_build_jobs)}
 CUDA_BUILD_TIMEOUT_SECONDS = {int(args.cuda_build_timeout_seconds)}
+RPC_WORKER_LIMIT = {int(args.rpc_worker_limit)}
 LLAMA_ASSET = "llama-" + LLAMA_RELEASE + "-bin-ubuntu-x64.tar.gz"
 LLAMA_URL = "https://github.com/ggml-org/llama.cpp/releases/download/" + LLAMA_RELEASE + "/" + LLAMA_ASSET
 OUT = Path("/kaggle/working")
@@ -698,7 +699,10 @@ def start_rpc_servers(llama_info, hardware):
     if not rpc_path:
         return {{"ok": False, "enabled": True, "reason": "rpc_server_missing", "servers": [], "processes": []}}
     gpu_count = max(0, int(hardware.get("gpu_count") or 0))
-    count = max(1, gpu_count)
+    requested_count = max(1, gpu_count)
+    if int(RPC_WORKER_LIMIT or 0) > 0:
+        requested_count = max(1, min(requested_count, int(RPC_WORKER_LIMIT)))
+    count = requested_count
     servers = []
     processes = []
     env = env_for_binary(Path(rpc_path))
@@ -724,6 +728,8 @@ def start_rpc_servers(llama_info, hardware):
         "servers": servers,
         "processes": processes,
         "worker_count": len(servers),
+        "requested_worker_count": requested_count,
+        "rpc_worker_limit": int(RPC_WORKER_LIMIT or 0),
         "alive_count": sum(1 for item in alive if item),
     }}
 
@@ -1380,6 +1386,7 @@ def normalize_run_report(payload: dict[str, Any]) -> dict[str, Any]:
     runtime = largest.get("runtime") if isinstance(largest.get("runtime"), dict) else payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
     hardware = payload.get("hardware") if isinstance(payload.get("hardware"), dict) else largest.get("hardware") if isinstance(largest.get("hardware"), dict) else {}
     validation = largest.get("validation") if isinstance(largest.get("validation"), dict) else payload.get("validation") if isinstance(payload.get("validation"), dict) else {}
+    rpc = payload.get("rpc") if isinstance(payload.get("rpc"), dict) else {}
     real_runtime_verified = bool(payload.get("real_runtime_verified") or validation.get("real_runtime_verified") or payload.get("ok") or successes)
     real_7b_runtime_verified = bool(payload.get("real_7b_runtime_verified") or validation.get("real_7b_runtime_verified"))
     gpu_runtime_verified = bool(payload.get("gpu_runtime_verified") or validation.get("gpu_runtime_verified"))
@@ -1395,6 +1402,7 @@ def normalize_run_report(payload: dict[str, Any]) -> dict[str, Any]:
         "generated_at": payload.get("generated_at") or utc_now(),
         "model": model,
         "runtime": runtime,
+        "rpc": rpc,
         "hardware": hardware,
         "validation": {
             **validation,
@@ -1528,6 +1536,7 @@ def build_support_bundle(report: dict[str, Any]) -> dict[str, Any]:
         "sharded_path_verified": bool(report.get("sharded_path_verified")),
         "multi_worker_sharded_path_verified": bool(report.get("multi_worker_sharded_path_verified")),
         "core_validation_ready": bool(report.get("core_validation_ready")),
+        "rpc": report.get("rpc") if isinstance(report.get("rpc"), dict) else {},
         "largest_successful_tier": report.get("largest_successful_tier"),
         "diagnosis_codes": report.get("diagnosis_codes") or [],
         "blockers": report.get("blockers") or [],
@@ -1728,6 +1737,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         blockers.append("large_model_sharded_runtime_path_not_verified")
     model_summary = run_report.get("model") if isinstance(run_report.get("model"), dict) else {}
     runtime_summary = run_report.get("runtime") if isinstance(run_report.get("runtime"), dict) else {}
+    rpc_summary = run_report.get("rpc") if isinstance(run_report.get("rpc"), dict) else {}
     metrics_summary = run_report.get("metrics") if isinstance(run_report.get("metrics"), dict) else {}
     report = {
         "schema": SCHEMA,
@@ -1745,6 +1755,7 @@ def build_report(args: argparse.Namespace, *, runner: Runner = subprocess.run) -
         "largest_successful_tier": largest_successful_tier,
         "model": model_summary,
         "runtime": runtime_summary,
+        "rpc": rpc_summary,
         "metrics": metrics_summary,
         "hardware": hardware,
         "tier_results": tier_results,
@@ -1802,6 +1813,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cuda-architectures", default="native")
     parser.add_argument("--cuda-build-jobs", type=int, default=4)
     parser.add_argument("--cuda-build-timeout-seconds", type=int, default=3600)
+    parser.add_argument("--rpc-worker-limit", type=int, default=0)
     parser.add_argument("--cuda-no-vmm", dest="cuda_no_vmm", action="store_true", default=True)
     parser.add_argument("--cuda-vmm", dest="cuda_no_vmm", action="store_false")
     parser.add_argument("--hf-cuda-install-compat", action="store_true")
@@ -1845,6 +1857,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--cuda-build-jobs must be positive")
     if args.cuda_build_timeout_seconds < 1:
         raise SystemExit("--cuda-build-timeout-seconds must be positive")
+    if args.rpc_worker_limit < 0:
+        raise SystemExit("--rpc-worker-limit must be zero or positive")
     tiers = selected_tiers(args)
     bad = sorted(set(tiers) - set(TIERS))
     if bad:

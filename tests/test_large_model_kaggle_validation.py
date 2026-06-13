@@ -198,6 +198,70 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         self.assertEqual(report["inference_rc_report"]["alpha_report"]["model_manifest"]["model_size_mb"], 1066)
         check.validate_report(report)
 
+    def test_blocked_import_preserves_rpc_summary(self) -> None:
+        output_dir = self._tmp_dir()
+        run_report = output_dir / "blocked_run.json"
+        run_report.write_text(
+            json.dumps({
+                "schema": pack.RUN_SCHEMA,
+                "ok": False,
+                "partial_stage": "large_model_kaggle_tier_run_start",
+                "hardware": {
+                    "provider": "kaggle",
+                    "gpu_count": 2,
+                    "gpu_names": ["Tesla T4", "Tesla T4"],
+                    "devices": [
+                        {"name": "Tesla T4", "memory_total_mb": 15360, "memory_free_mb": 14913},
+                        {"name": "Tesla T4", "memory_total_mb": 15360, "memory_free_mb": 14913},
+                    ],
+                    "kaggle_gpu_verified": True,
+                },
+                "rpc": {
+                    "ok": True,
+                    "enabled": True,
+                    "worker_count": 1,
+                    "requested_worker_count": 1,
+                    "rpc_worker_limit": 1,
+                    "alive_count": 1,
+                    "servers": [{"endpoint": "127.0.0.1:50052", "device_index": 0}],
+                },
+                "tier_results": [{
+                    "schema": pack.RUN_SCHEMA,
+                    "tier": "small",
+                    "ok": False,
+                    "runtime": {
+                        "backend": "llama_cpp_rpc",
+                        "intended_backend": "llama_cpp_rpc",
+                        "runtime_path": "rpc",
+                        "rpc_enabled": True,
+                        "rpc_endpoints": ["127.0.0.1:50052"],
+                        "worker_count": 1,
+                        "stage_count": 1,
+                    },
+                    "diagnosis_codes": ["large_model_kaggle_tier_run_start"],
+                }],
+                "diagnosis_codes": ["large_model_kaggle_tier_run_start"],
+                "blockers": ["large_model_kaggle_no_successful_real_run"],
+            }),
+            encoding="utf-8",
+        )
+
+        report = pack.build_report(pack.parse_args([
+            "--mode",
+            "evidence-import",
+            "--output-dir",
+            str(output_dir / "blocked-import"),
+            "--run-report",
+            str(run_report),
+        ]))
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["rpc"]["worker_count"], 1)
+        self.assertEqual(report["rpc"]["rpc_worker_limit"], 1)
+        self.assertEqual(report["run_report"]["rpc"]["requested_worker_count"], 1)
+        self.assertEqual(json.loads((output_dir / "blocked-import" / "support_bundle.json").read_text(encoding="utf-8"))["rpc"]["worker_count"], 1)
+        check.validate_report(report)
+
     def test_cli_wrapper_and_bad_args(self) -> None:
         output_dir = self._tmp_dir()
         args = cli.parse_args(["large-model-kaggle-validate", "--mode", "package", "--output-dir", str(output_dir)])
@@ -222,6 +286,8 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
             cli.parse_args(["large-model-kaggle-validate", "--cuda-build-jobs", "0"])
         with self.assertRaises(SystemExit):
             cli.parse_args(["large-model-kaggle-validate", "--cuda-build-timeout-seconds", "0"])
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["large-model-kaggle-validate", "--rpc-worker-limit", "-1"])
         with self.assertRaises(SystemExit):
             cli.parse_args(["large-model-kaggle-validate", "--mode", "evidence-import"])
 
@@ -267,6 +333,8 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
             "1",
             "--cuda-build-timeout-seconds",
             "5400",
+            "--rpc-worker-limit",
+            "1",
         ])
         pack.build_report(args)
 
@@ -275,6 +343,8 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         self.assertIn('CUDA_ARCHITECTURES = "60"', source)
         self.assertIn("CUDA_BUILD_JOBS = 1", source)
         self.assertIn("CUDA_BUILD_TIMEOUT_SECONDS = 5400", source)
+        self.assertIn("RPC_WORKER_LIMIT = 1", source)
+        self.assertIn('"rpc_worker_limit": int(RPC_WORKER_LIMIT or 0)', source)
         self.assertIn("CUDA_NO_VMM = True", source)
         self.assertIn('env["CUDA_VISIBLE_DEVICES"] = ""', source)
         self.assertIn("large_model_kaggle_tier_download_start", source)

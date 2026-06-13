@@ -215,8 +215,16 @@ The project currently includes:
   `large_model_kaggle_tier_run_start` for `llama-cli --rpc`, and is then killed
   by Kaggle before generated tokens are retained. This localizes the current
   blocker to RPC inference execution on Kaggle rather than T4 assignment, CUDA
-  build, model download, or 7B size alone. Keep `core_validation_ready=false`
-  for those reports. The 2026-06-12 retained P100 attempts
+  build, model download, or 7B size alone. A follow-up retained single-worker
+  diagnostic at
+  `dist/large-model-kaggle-validation-t4x2-rpc-small-singleworker-20260613/large_model_kaggle_validation.json`
+  uses `--rpc-worker-limit 1`, preserves top-level `rpc.worker_count: 1`, proves
+  one live CUDA0 RPC worker and the same small GGUF download, then is also
+  killed at `llama-cli --rpc 127.0.0.1:50052` run start. Its live CLI sidecar
+  records temporary Kaggle kernel deletion. Keep `core_validation_ready=false`
+  for those reports; this is evidence that llama.cpp RPC inference execution on
+  Kaggle is the unresolved blocker, not merely two-worker tensor split startup.
+  The 2026-06-12 retained P100 attempts
   verified GPU hardware and kernel cleanup but did not complete the required
   7B/8B sharded/RPC proof: the initial GGUF release path exposed
   missing/shared-library and non-CUDA-runtime issues, the `source-cuda`

@@ -222,6 +222,7 @@ crowdtensor large-model-kaggle-validate \
   --cuda-no-vmm \
   --cuda-build-jobs 2 \
   --cuda-build-timeout-seconds 5400 \
+  --rpc-worker-limit 0 \
   --output-dir dist/large-model-kaggle-validation \
   --json
 python scripts/large_model_kaggle_validation_check.py \
@@ -242,6 +243,12 @@ counts, digests, metrics, diagnosis codes, and cleanup status only; they must
 not expose raw prompts, generated text, generated token ids, activations,
 credentials, leases, idempotency material, private Kaggle files, or model
 secrets.
+
+`--rpc-worker-limit 0` means use all visible GPUs for RPC workers. Use
+`--rpc-worker-limit 1` only as a diagnostic when a two-worker T4 x2 run is
+killed; it keeps the same llama.cpp RPC path but starts one RPC worker so the
+report can distinguish base RPC inference failure from multi-worker tensor
+split failure.
 
 Readiness flags are intentionally strict. `real_runtime_verified` means a real
 LLM run generated tokens. `real_7b_runtime_verified` means the successful run
@@ -282,6 +289,15 @@ completion:
   the kernel before generated tokens were retained. This localizes the current
   blocker to RPC inference execution on Kaggle, not to model download, T4
   assignment, CUDA build, or 7B model size alone.
+- `dist/large-model-kaggle-validation-t4x2-rpc-small-singleworker-20260613/large_model_kaggle_validation.json`
+  imports the follow-up live diagnostic raw run report with `--rpc-worker-limit
+  1`. The raw run verified T4 x2 hardware, source-CUDA/RPC build, one live RPC
+  worker on CUDA0, successful 1.5B GGUF download, and `llama-cli --rpc
+  127.0.0.1:50052` run start with `client_cuda_hidden=true`; Kaggle still
+  killed the kernel before generated tokens were retained. The live CLI sidecar
+  `large_model_kaggle_validation_cli_summary.json` in the same directory records
+  `kernels_deleted=true`. This rules out two-worker tensor split startup as the
+  sole blocker and keeps `core_validation_ready=false`.
 
 Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
 

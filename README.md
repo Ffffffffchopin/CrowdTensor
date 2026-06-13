@@ -460,6 +460,7 @@ crowdtensor large-model-kaggle-validate \
   --cuda-no-vmm \
   --cuda-build-jobs 2 \
   --cuda-build-timeout-seconds 5400 \
+  --rpc-worker-limit 0 \
   --output-dir dist/large-model-kaggle-validation \
   --json
 python scripts/large_model_kaggle_validation_check.py \
@@ -484,7 +485,14 @@ execution before any small or 7B tier result was written. Those reports remain
 which verifies successful small GGUF download and reaches `llama-cli --rpc` run
 start before the Kaggle kill. That localizes the current blocker to RPC
 inference execution on Kaggle, not T4 assignment, CUDA build, model download, or
-7B model size alone.
+7B model size alone. The follow-up single-worker diagnostic at
+`dist/large-model-kaggle-validation-t4x2-rpc-small-singleworker-20260613/large_model_kaggle_validation.json`
+uses `--rpc-worker-limit 1`, verifies one live RPC worker on CUDA0 plus the same
+small GGUF download, and is also killed at `llama-cli --rpc` run start. That
+rules out two-worker tensor-split startup as the sole blocker; the current
+unresolved issue is Kaggle execution of llama.cpp RPC inference itself. The
+live CLI sidecar in that directory records that the temporary Kaggle kernel was
+deleted.
 The retained 2026-06-12 P100 attempts verified Kaggle GPU hardware and cleanup
 but did not produce generated tokens through the sharded/RPC path. The latest
 P100 source-CUDA/RPC attempts showed
