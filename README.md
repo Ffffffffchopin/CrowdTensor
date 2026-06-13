@@ -518,7 +518,12 @@ classified as `llama_like` and fail before runtime load with
 `real_llm_llama_like_stage_adapter_missing`. That is intentional: the next core
 implementation step is a true partial-weight stage adapter for those
 architectures, not routing large models through the existing tiny-GPT splitter
-or a single Kaggle Notebook cgroup.
+or a single Kaggle Notebook cgroup. The practical next bounded Kaggle success
+attempt is `public-swarm-gpu-beta kaggle-auto --hf-model-id gpt2-xl
+--real-llm-partition-mode stage-local`, because `gpt2-xl` is a GPT-2-family
+1.5B small-tier candidate the current splitter can reason about. A successful
+run would satisfy the goal's small real-model smoke tier only; it would still
+leave 7B/8B validation incomplete.
 
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 

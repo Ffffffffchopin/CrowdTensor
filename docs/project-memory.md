@@ -245,8 +245,12 @@ The project currently includes:
   downloading/loading models the current adapter cannot partition. The core
   technical gap is therefore two-layered: Kaggle single-container resource
   pressure for llama.cpp RPC/CLI, plus missing true partial-weight stage
-  adapters for large HF causal LM families. Keep `core_validation_ready=false`
-  for these reports.
+  adapters for large HF causal LM families. The current bounded success path is
+  to use the existing Public Swarm GPU two-stage Kaggle wrapper with
+  `--hf-model-id gpt2-xl --real-llm-partition-mode stage-local`; `gpt2-xl` is
+  reported as a GPT-2-family 1.5B small-tier candidate via `execution_support`.
+  If that succeeds, it is real Kaggle GPU sharded small-tier evidence only, not
+  7B/8B completion. Keep `core_validation_ready=false` for these reports.
   The 2026-06-12 retained P100 attempts
   verified GPU hardware and kernel cleanup but did not complete the required
   7B/8B sharded/RPC proof: the initial GGUF release path exposed

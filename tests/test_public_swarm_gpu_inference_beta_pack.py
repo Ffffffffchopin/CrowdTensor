@@ -90,10 +90,31 @@ class PublicSwarmGpuInferenceBetaPackTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["schema"], "public_swarm_gpu_inference_beta_v1")
         self.assertEqual(report["beta"]["backend"], "hf_transformers_cuda")
+        self.assertEqual(report["model_execution_support"]["execution_family"], "gpt2")
+        self.assertTrue(report["model_execution_support"]["current_stage_split_supported"])
         self.assertIn("public_swarm_gpu_beta_smoke_ready", report["diagnosis_codes"])
         self.assertIn("gpu_runtime_smoke_ready", report["diagnosis_codes"])
         self.assertNotIn("public_swarm_gpu_beta_ready", report["diagnosis_codes"])
         self._assert_output_scope(report, output_dir, "local-smoke")
+
+    def test_kaggle_package_surfaces_gpt2_xl_small_tier_support(self) -> None:
+        output_dir = self._tmp_dir()
+        report = pack.build_report(pack.parse_args([
+            "kaggle-package",
+            "--output-dir",
+            str(output_dir),
+            "--hf-model-id",
+            "gpt2-xl",
+        ]))
+
+        support = report["model_execution_support"]
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(support["execution_family"], "gpt2")
+        self.assertTrue(support["small_tier_candidate"])
+        self.assertTrue(support["kaggle_small_tier_supported_by_current_split"])
+        self.assertEqual(support["parameter_count_estimate"], 1_558_000_000)
+        self.assertIn("real_llm_1b_3b_small_tier_candidate_detected", report["diagnosis_codes"])
+        self._assert_output_scope(report, output_dir, "kaggle-package")
 
     def test_local_loopback_wraps_cuda_real_llm_route(self) -> None:
         output_dir = self._tmp_dir()

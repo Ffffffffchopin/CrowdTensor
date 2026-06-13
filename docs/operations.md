@@ -119,7 +119,11 @@ families. Those large-model candidates are classified as `llama_like` and fail
 closed with `real_llm_llama_like_stage_adapter_missing` before runtime loading.
 For 7B/8B validation, do not treat the tiny-GPT splitter as a large-model path;
 implement a true partial-weight stage adapter or use a validated GGUF/llama.cpp
-multi-host path.
+multi-host path. For a bounded Kaggle small-tier proof before that adapter
+exists, use the Public Swarm GPU wrapper with `--hf-model-id gpt2-xl`; its
+`model_execution_support` should mark `small_tier_candidate=true`,
+`kaggle_small_tier_supported_by_current_split=true`, and
+`large_model_sharded_execution_ready=false`.
 
 If the real run happened outside the current process, import a public-safe
 runner report instead:

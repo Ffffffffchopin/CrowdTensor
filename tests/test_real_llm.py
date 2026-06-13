@@ -62,6 +62,24 @@ class RealLlmTests(unittest.TestCase):
         self.assertTrue(summary["current_stage_split_supported"])
         self.assertIn("real_llm_current_stage_split_supported", summary["diagnosis_codes"])
 
+    def test_gpt2_xl_metadata_marks_small_tier_candidate_not_large_ready(self) -> None:
+        summary = real_llm.real_llm_execution_support_summary(
+            {
+                "model_id": "gpt2-xl",
+                "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            }
+        )
+
+        self.assertEqual(summary["execution_family"], real_llm.EXECUTION_FAMILY_GPT2)
+        self.assertTrue(summary["current_stage_split_supported"])
+        self.assertTrue(summary["small_tier_candidate"])
+        self.assertTrue(summary["kaggle_small_tier_supported_by_current_split"])
+        self.assertEqual(summary["parameter_count_estimate"], 1_558_000_000)
+        self.assertEqual(summary["estimated_weight_bytes_fp32"], 6_232_000_000)
+        self.assertFalse(summary["large_model_candidate"])
+        self.assertFalse(summary["large_model_sharded_execution_ready"])
+        self.assertIn("real_llm_1b_3b_small_tier_candidate_detected", summary["diagnosis_codes"])
+
     def test_non_gpt2_workload_fails_before_runtime_load(self) -> None:
         artifact = {
             "schema": real_llm.REAL_LLM_ARTIFACT_SCHEMA_VERSION,

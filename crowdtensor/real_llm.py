@@ -59,6 +59,21 @@ LLAMA_LIKE_MODEL_TYPES = {
     "qwen2",
     "qwen3",
 }
+GPT2_PARAMETER_ESTIMATE_BY_MODEL_ID = {
+    "distilgpt2": 82_000_000,
+    "gpt2": 124_000_000,
+    "openai-community/gpt2": 124_000_000,
+    "gpt2-medium": 355_000_000,
+    "openai-community/gpt2-medium": 355_000_000,
+    "gpt2-large": 774_000_000,
+    "openai-community/gpt2-large": 774_000_000,
+    "gpt2-xl": 1_558_000_000,
+    "openai-community/gpt2-xl": 1_558_000_000,
+}
+SMALL_TIER_MIN_PARAMETERS = 1_000_000_000
+SMALL_TIER_MAX_PARAMETERS = 3_000_000_000
+LARGE_TIER_MIN_PARAMETERS = 6_000_000_000
+FP32_BYTES_PER_PARAMETER = 4
 MAX_REQUESTS = 4
 MAX_PROMPT_CHARS = 256
 MAX_NEW_TOKENS = 32
@@ -213,6 +228,9 @@ def _large_model_candidate_from_metadata(metadata: dict[str, Any], *, family: st
     model_id = str(metadata.get("model_id") or "").lower()
     if any(marker in model_id for marker in ("7b", "8b", "13b", "14b", "70b")):
         return True
+    estimated_parameters = estimate_parameter_count_from_metadata(metadata, family=family)
+    if estimated_parameters >= LARGE_TIER_MIN_PARAMETERS:
+        return True
     try:
         layer_count = int(metadata.get("num_hidden_layers") or 0)
     except (TypeError, ValueError):
@@ -224,6 +242,38 @@ def _large_model_candidate_from_metadata(metadata: dict[str, Any], *, family: st
     return bool(family == EXECUTION_FAMILY_LLAMA_LIKE or (layer_count >= 16 and hidden_size >= 2048))
 
 
+def _first_positive_int(metadata: dict[str, Any], *names: str) -> int:
+    for name in names:
+        try:
+            value = int(metadata.get(name) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return value
+    return 0
+
+
+def estimate_parameter_count_from_metadata(metadata: dict[str, Any], *, family: str | None = None) -> int:
+    source = dict(metadata or {})
+    resolved_family = family or execution_family_from_metadata(source)
+    model_id = str(source.get("model_id") or "").strip().lower()
+    if model_id in GPT2_PARAMETER_ESTIMATE_BY_MODEL_ID:
+        return int(GPT2_PARAMETER_ESTIMATE_BY_MODEL_ID[model_id])
+    if resolved_family != EXECUTION_FAMILY_GPT2:
+        return 0
+    layer_count = _first_positive_int(source, "num_hidden_layers", "n_layer", "n_layers")
+    hidden_size = _first_positive_int(source, "hidden_size", "n_embd")
+    vocab_size = _first_positive_int(source, "vocab_size")
+    position_count = _first_positive_int(source, "n_positions", "max_position_embeddings")
+    if layer_count <= 0 or hidden_size <= 0 or vocab_size <= 0:
+        return 0
+    embedding_parameters = vocab_size * hidden_size
+    position_parameters = position_count * hidden_size if position_count > 0 else 0
+    block_parameters = layer_count * (12 * hidden_size * hidden_size + 13 * hidden_size)
+    final_norm_parameters = 2 * hidden_size
+    return int(embedding_parameters + position_parameters + block_parameters + final_norm_parameters)
+
+
 def real_llm_execution_support_summary(
     metadata: dict[str, Any] | None = None,
     *,
@@ -233,6 +283,10 @@ def real_llm_execution_support_summary(
     mode = normalize_partition_mode(partition_mode or source.get("partition_mode") or PARTITION_MODE_FULL)
     family = execution_family_from_metadata(source)
     current_supported = family in SUPPORTED_EXECUTION_FAMILIES
+    parameter_count_estimate = estimate_parameter_count_from_metadata(source, family=family)
+    small_tier_candidate = bool(
+        SMALL_TIER_MIN_PARAMETERS <= parameter_count_estimate <= SMALL_TIER_MAX_PARAMETERS
+    )
     large_candidate = _large_model_candidate_from_metadata(source, family=family)
     diagnosis_codes: list[str] = []
     blockers: list[str] = []
@@ -271,16 +325,27 @@ def real_llm_execution_support_summary(
             diagnosis_codes.append("real_llm_large_model_stage_adapter_missing")
     else:
         diagnosis_codes.append("real_llm_tiny_or_small_model_candidate")
+    if small_tier_candidate:
+        diagnosis_codes.append("real_llm_1b_3b_small_tier_candidate_detected")
+        if current_supported:
+            diagnosis_codes.append("real_llm_1b_3b_small_tier_current_split_supported")
+    estimated_weight_bytes = parameter_count_estimate * FP32_BYTES_PER_PARAMETER
+    estimated_stage_weight_bytes = int(estimated_weight_bytes // 2) if estimated_weight_bytes else 0
     return {
         "execution_family": family,
         "current_stage_split_supported": current_supported,
         "supported_execution_families": sorted(SUPPORTED_EXECUTION_FAMILIES),
+        "parameter_count_estimate": parameter_count_estimate,
+        "estimated_weight_bytes_fp32": estimated_weight_bytes,
+        "stage_local_estimated_stage_weight_bytes_fp32": estimated_stage_weight_bytes,
         "stage_local_load_strategy": (
             "full_model_cpu_load_then_stage_module_device_move"
             if mode == PARTITION_MODE_STAGE_LOCAL
             else "full_model_load"
         ),
         "true_partial_weight_loading_ready": False,
+        "small_tier_candidate": small_tier_candidate,
+        "kaggle_small_tier_supported_by_current_split": bool(small_tier_candidate and current_supported),
         "large_model_candidate": large_candidate,
         "large_model_sharded_execution_ready": False,
         "large_model_blockers": sorted(set(large_model_blockers)),

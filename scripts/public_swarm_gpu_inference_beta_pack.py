@@ -22,7 +22,13 @@ if str(ROOT / "scripts") not in sys.path:
 
 import public_swarm_inference_beta_pack as cpu_beta  # noqa: E402
 import support_bundle  # noqa: E402
-from crowdtensor.real_llm import BACKEND_CUDA, DEFAULT_MODEL_ID, DEFAULT_PROMPTS, cuda_runtime_summary  # noqa: E402
+from crowdtensor.real_llm import (  # noqa: E402
+    BACKEND_CUDA,
+    DEFAULT_MODEL_ID,
+    DEFAULT_PROMPTS,
+    cuda_runtime_summary,
+    real_llm_execution_support_summary,
+)
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
 from kaggle_real_llm_live_package import DEFAULT_CUDA_TORCH_INDEX_URL, DEFAULT_CUDA_TORCH_RUNTIME_SPEC  # noqa: E402
 from kaggle_real_llm_live_package import DEFAULT_TRANSFORMERS_SPEC  # noqa: E402
@@ -127,6 +133,16 @@ def diagnosis_codes(*payloads: dict[str, Any], extra: list[str] | None = None) -
             if isinstance(code, str):
                 codes.add(code)
     return sorted(codes)
+
+
+def model_execution_support(args: argparse.Namespace) -> dict[str, Any]:
+    return real_llm_execution_support_summary(
+        {
+            "model_id": str(getattr(args, "hf_model_id", DEFAULT_MODEL_ID) or DEFAULT_MODEL_ID),
+            "partition_mode": str(getattr(args, "real_llm_partition_mode", "stage_local") or "stage_local"),
+        },
+        partition_mode=str(getattr(args, "real_llm_partition_mode", "stage_local") or "stage_local"),
+    )
 
 
 def artifact_entry(path: Path, output_dir: Path, *, kind: str, schema: str = "", ok: bool | None = None) -> dict[str, Any]:
@@ -798,8 +814,10 @@ def generation_summary(payload: dict[str, Any]) -> dict[str, Any]:
 
 def build_local_smoke(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
     cuda = cuda_runtime_summary()
+    execution_support = model_execution_support(args)
     available = bool(cuda.get("cuda_available"))
     codes = set(diagnosis_codes(cuda))
+    codes.update(execution_support.get("diagnosis_codes") or [])
     codes.update({
         "public_swarm_gpu_beta_smoke_ready",
         "gpu_runtime_smoke_ready",
@@ -825,7 +843,9 @@ def build_local_smoke(args: argparse.Namespace, *, output_dir: Path) -> dict[str
             "model_id": args.hf_model_id,
             "request_count": args.request_count,
             "max_new_tokens": args.max_new_tokens,
+            "model_execution_support": execution_support,
         },
+        "model_execution_support": execution_support,
         "gpu_runtime": cuda,
         "diagnosis_codes": sorted(codes),
         "safety": base_safety(),
@@ -839,6 +859,7 @@ def build_local_smoke(args: argparse.Namespace, *, output_dir: Path) -> dict[str
 
 def build_local_loopback(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> dict[str, Any]:
     child_dir = output_dir / "local-loopback-real-llm-cuda"
+    execution_support = model_execution_support(args)
     command = [
         sys.executable,
         str(ROOT / "scripts" / "remote_real_llm_sharded_beta_pack.py"),
@@ -879,6 +900,7 @@ def build_local_loopback(args: argparse.Namespace, *, output_dir: Path, runner: 
         secret_values=prompt_secret_values(args),
     )
     codes = set(diagnosis_codes(payload))
+    codes.update(execution_support.get("diagnosis_codes") or [])
     required = {
         "remote_real_llm_sharded_ready",
         "remote_real_llm_sharded_loopback_ready",
@@ -933,8 +955,10 @@ def build_local_loopback(args: argparse.Namespace, *, output_dir: Path, runner: 
             "max_new_tokens": args.max_new_tokens,
             "stage_count": 2,
             "partition_mode": args.real_llm_partition_mode,
+            "model_execution_support": execution_support,
             "missing_codes": missing,
         },
+        "model_execution_support": execution_support,
         "steps": [step],
         "payload_summaries": {"remote_real_llm_sharded_beta": remote_real_summary(payload)},
         "gpu_runtime": cuda_runtime_summary(),
@@ -965,6 +989,7 @@ def build_local_loopback(args: argparse.Namespace, *, output_dir: Path, runner: 
 def build_kaggle_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
     package_dir = output_dir / "kaggle-gpu-package"
     package_dir.mkdir(parents=True, exist_ok=True)
+    execution_support = model_execution_support(args)
     runbook = package_dir / "KAGGLE_GPU_RUNBOOK.md"
     kernel_template = package_dir / "kaggle_gpu_stage_miner.py"
     stage0_env = package_dir / "stage0.miner.private.env.example"
@@ -1023,15 +1048,17 @@ def build_kaggle_package(args: argparse.Namespace, *, output_dir: Path) -> dict[
             "request_count": args.request_count,
             "max_new_tokens": args.max_new_tokens,
             "partition_mode": args.real_llm_partition_mode,
+            "model_execution_support": execution_support,
         },
-        "diagnosis_codes": [
+        "model_execution_support": execution_support,
+        "diagnosis_codes": sorted(set([
             "public_swarm_gpu_beta_package_ready",
             "kaggle_gpu_package_ready",
             "kaggle_gpu_requires_private_kernels",
             "read_only_workload",
             "not_production",
             "not_p2p",
-        ],
+        ] + list(execution_support.get("diagnosis_codes") or []))),
         "artifacts": {
             "kaggle_gpu_runbook": artifact_entry(runbook, output_dir, kind="kaggle_gpu_runbook"),
             "kaggle_gpu_stage_miner_template": artifact_entry(kernel_template, output_dir, kind="kaggle_gpu_stage_miner_template"),
@@ -1111,6 +1138,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
 
 def build_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Runner) -> dict[str, Any]:
     child_dir = output_dir / "kaggle-auto-real-llm-cuda"
+    execution_support = model_execution_support(args)
     coordinator_url = "" if args.coordinator_url == "http://127.0.0.1:9300" else args.coordinator_url
     command = [
         sys.executable,
@@ -1204,6 +1232,7 @@ def build_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Run
         timeout_seconds=max(float(args.timeout_seconds), float(args.remote_timeout_seconds), float(args.kaggle_status_timeout_seconds)) + 240.0,
     )
     codes = set(diagnosis_codes(payload))
+    codes.update(execution_support.get("diagnosis_codes") or [])
     required = {
         "real_llm_internet_beta_ready",
         "external_runtime_verified",
@@ -1260,8 +1289,10 @@ def build_kaggle_auto(args: argparse.Namespace, *, output_dir: Path, runner: Run
             "torch_spec": args.torch_spec,
             "torch_index_url": args.torch_index_url,
             "transformers_spec": args.transformers_spec,
+            "model_execution_support": execution_support,
             "missing_codes": missing,
         },
+        "model_execution_support": execution_support,
         "steps": [step],
         "payload_summaries": {"real_llm_internet_beta": {
             "schema": payload.get("schema"),
