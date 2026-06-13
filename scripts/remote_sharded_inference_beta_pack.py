@@ -558,14 +558,29 @@ def wait_for_remote_completion(args: argparse.Namespace, session_id: str) -> tup
     deadline = time.monotonic() + args.remote_timeout_seconds
     last_state: dict[str, Any] = {}
     max_new_tokens = max(1, int(getattr(args, "max_new_tokens", 1)))
+    poll_errors: list[dict[str, Any]] = []
     while time.monotonic() < deadline:
-        last_state = request_json(
-            "GET",
-            args.coordinator_url,
-            "/state",
-            observer_token=args.observer_token,
-            timeout=args.http_timeout,
-        )
+        try:
+            last_state = request_json(
+                "GET",
+                args.coordinator_url,
+                "/state",
+                observer_token=args.observer_token,
+                timeout=args.http_timeout,
+            )
+        except Exception as exc:
+            poll_errors.append({
+                "error_type": type(exc).__name__,
+                "error": str(exc)[-240:],
+                "elapsed_seconds": round(
+                    max(0.0, args.remote_timeout_seconds - (deadline - time.monotonic())),
+                    3,
+                ),
+            })
+            poll_errors = poll_errors[-5:]
+            last_state.setdefault("remote_state_poll_errors", poll_errors)
+            time.sleep(args.poll_interval)
+            continue
         tasks = sharded_pack.session_tasks(last_state, session_id)
         completed_stage0 = {
             int((task.get("workload_metadata") or {}).get("generation_step", 0))
@@ -581,8 +596,12 @@ def wait_for_remote_completion(args: argparse.Namespace, session_id: str) -> tup
         }
         expected = set(range(max_new_tokens))
         if expected.issubset(completed_stage0) and expected.issubset(completed_stage1):
+            if poll_errors:
+                last_state["remote_state_poll_errors"] = poll_errors
             return True, last_state
         time.sleep(args.poll_interval)
+    if poll_errors:
+        last_state["remote_state_poll_errors"] = poll_errors
     return False, last_state
 
 
@@ -615,6 +634,7 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
         "ok": False,
         "returncode": None,
     }
+    poll_errors: list[dict[str, Any]] = []
     try:
         session = request_json(
             "POST",
@@ -661,6 +681,10 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
         step["ok"] = bool(completed and evidence.get("ok"))
         step["payload_schema"] = evidence.get("schema")
         step["payload_ok"] = evidence.get("ok")
+        poll_errors = state.get("remote_state_poll_errors") if isinstance(state, dict) else []
+        if poll_errors:
+            step["remote_state_poll_error_count"] = len(poll_errors)
+            step["remote_state_poll_last_error_type"] = poll_errors[-1].get("error_type")
         if not completed:
             step["error"] = "remote_timeout_waiting_for_stages"
     except Exception as exc:  # pragma: no cover - exercised through check behavior
@@ -686,7 +710,10 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
                 kind="sharded_inference_evidence_markdown",
             ),
         },
-        "diagnosis_codes": diagnosis_codes(evidence),
+        "diagnosis_codes": sorted(set(
+            diagnosis_codes(evidence)
+            + (["remote_state_poll_retry"] if poll_errors else [])
+        )),
     }
 
 
@@ -739,6 +766,12 @@ def beta_command(args: argparse.Namespace, output_dir: Path) -> list[Any]:
         getattr(args, "failure_mode", FAILURE_NONE),
         "--stage-mode",
         getattr(args, "stage_mode", "both"),
+        "--timeout-seconds",
+        getattr(args, "timeout_seconds", 180),
+        "--remote-timeout-seconds",
+        getattr(args, "remote_timeout_seconds", 90.0),
+        "--http-timeout",
+        getattr(args, "http_timeout", 5.0),
         "--json",
     ]
     if getattr(args, "scenario_id", "") and report_kind() == "model-bundle":

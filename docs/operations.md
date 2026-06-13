@@ -125,6 +125,28 @@ exists, use the Public Swarm GPU wrapper with `--hf-model-id gpt2-xl`; its
 `kaggle_small_tier_supported_by_current_split=true`, and
 `large_model_sharded_execution_ready=false`.
 
+The 2026-06-13 `gpt2-xl` Kaggle GPU small-tier attempts are blocked evidence,
+not successful inference evidence:
+
+- `dist/gpt2-xl-small-tier-kaggle-20260613201430/public_swarm_gpu_inference_beta_kaggle_auto.json`
+  packaged private CUDA stage kernels and observed them running, then failed
+  before external stage completion. It exposed a timeout passthrough bug in the
+  remote real-LLM sharded wrapper.
+- `dist/gpt2-xl-small-tier-kaggle-timeoutfix-20260613202418/public_swarm_gpu_inference_beta_kaggle_auto.json`
+  preserved the larger timeout arguments and again cleaned up the private
+  Kaggle kernels, but still ended with `external_runtime_blocked`,
+  `remote_real_llm_sharded_failed`, and `remote_stage_wait_failed` before
+  generated-token evidence. The child `remote_existing_real_llm_sharded_inference`
+  step ended around 356 seconds, consistent with transient `/state` polling
+  timeout behavior rather than a completed `remote_timeout_seconds` window.
+
+Remote sharded wrappers now keep `--timeout-seconds`, `--remote-timeout-seconds`,
+and `--http-timeout` in recommended rerun commands, retry transient `/state`
+poll failures until the remote timeout window expires, and surface
+`remote_state_poll_retry` in wrapper diagnostics. This improves external
+runtime reliability only; it does not change readiness rules or make either
+`gpt2-xl` attempt a successful Kaggle GPU LLM proof.
+
 If the real run happened outside the current process, import a public-safe
 runner report instead:
 

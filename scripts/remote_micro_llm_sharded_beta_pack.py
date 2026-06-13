@@ -225,6 +225,7 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
         "returncode": None,
     }
     started = base.time.monotonic()
+    poll_errors: list[dict[str, Any]] = []
     try:
         session_payload: dict[str, Any] = {
             "request_count": args.request_count,
@@ -243,38 +244,46 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
             timeout=args.http_timeout,
         )
         session_id = str(session.get("session_id") or "")
-        completed, state = base.wait_for_remote_completion(args, session_id)
-        rows = base.admin_results_for_session(args, session_id) if session_id else []
-        report_args = argparse.Namespace(
-            base_url=args.coordinator_url,
-            admin_token=args.admin_token,
-            observer_token=args.observer_token,
-            stage_mode=args.stage_mode,
-            require_distinct_stage_miners=args.require_distinct_stage_miners,
-        )
-        evidence = micro_pack.build_report(
-            args=report_args,
-            session=session,
-            state=state,
-            stage_processes=[],
-            requeue_summary={
-                "enabled": False,
-                "failure_mode": FAILURE_NONE,
-                "victim_stage_id": None,
-                "victim_task_id": "",
-                "rescue_miner_id": "",
-                "lease_expired": False,
-                "rescued_result": False,
-                "victim_result_accepted": False,
-            },
-            ledger_rows=rows,
-        )
+        micro_pack.configure_base_module()
+        try:
+            completed, state = base.wait_for_remote_completion(args, session_id)
+            rows = base.admin_results_for_session(args, session_id) if session_id else []
+            report_args = argparse.Namespace(
+                base_url=args.coordinator_url,
+                admin_token=args.admin_token,
+                observer_token=args.observer_token,
+                stage_mode=args.stage_mode,
+                require_distinct_stage_miners=args.require_distinct_stage_miners,
+            )
+            evidence = micro_pack.build_report(
+                args=report_args,
+                session=session,
+                state=state,
+                stage_processes=[],
+                requeue_summary={
+                    "enabled": False,
+                    "failure_mode": FAILURE_NONE,
+                    "victim_stage_id": None,
+                    "victim_task_id": "",
+                    "rescue_miner_id": "",
+                    "lease_expired": False,
+                    "rescued_result": False,
+                    "victim_result_accepted": False,
+                },
+                ledger_rows=rows,
+            )
+        finally:
+            configure_base_module()
         evidence_json.parent.mkdir(parents=True, exist_ok=True)
         evidence_json.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         evidence_md.write_text(micro_pack.render_markdown(evidence), encoding="utf-8")
         step["ok"] = bool(completed and evidence.get("ok"))
         step["payload_schema"] = evidence.get("schema")
         step["payload_ok"] = evidence.get("ok")
+        poll_errors = state.get("remote_state_poll_errors") if isinstance(state, dict) else []
+        if poll_errors:
+            step["remote_state_poll_error_count"] = len(poll_errors)
+            step["remote_state_poll_last_error_type"] = poll_errors[-1].get("error_type")
         if not completed:
             step["error"] = "remote_timeout_waiting_for_stages"
     except Exception as exc:
@@ -300,7 +309,10 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
                 kind="micro_llm_sharded_evidence_markdown",
             ),
         },
-        "diagnosis_codes": base.diagnosis_codes(evidence),
+        "diagnosis_codes": sorted(set(
+            base.diagnosis_codes(evidence)
+            + (["remote_state_poll_retry"] if poll_errors else [])
+        )),
     }
 
 

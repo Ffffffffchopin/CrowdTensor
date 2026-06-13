@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import socket
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +16,11 @@ SPEC = importlib.util.spec_from_file_location("remote_sharded_inference_beta_pac
 pack = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(pack)
+DEFAULT_SHARDED_PAYLOAD_SUMMARY = pack.sharded_payload_summary
+DEFAULT_BUILD_LOCAL = pack.build_local
+DEFAULT_BUILD_REMOTE_LOOPBACK = pack.build_remote_loopback
+DEFAULT_BUILD_REMOTE_EXISTING = pack.build_remote_existing
+DEFAULT_MODE_READY_CODE = pack.mode_ready_code
 
 
 def completed(payload: dict, returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -21,6 +28,32 @@ def completed(payload: dict, returncode: int = 0) -> subprocess.CompletedProcess
 
 
 class RemoteShardedInferenceBetaPackTests(unittest.TestCase):
+    def setUp(self) -> None:
+        pack.SCHEMA = "remote_sharded_inference_beta_v1"
+        pack.WORKLOAD_TYPE = "sharded_model_bundle_infer"
+        pack.SECRET_FRAGMENTS = (
+            "CROWDTENSOR_MINER_TOKEN",
+            "CROWDTENSOR_OBSERVER_TOKEN",
+            "CROWDTENSOR_ADMIN_TOKEN",
+            "lease_token",
+            "idempotency_key",
+            "sharded_inference_result",
+            "activation_results",
+            "activation_result",
+            "logits",
+            "inference_results",
+            "inference_result",
+            "Bearer ",
+        )
+        pack.sharded_pack.SCHEMA = "sharded_inference_evidence_v1"
+        pack.sharded_pack.OBSERVABILITY_SCHEMA = "sharded_inference_observability_v1"
+        pack.sharded_pack.WORKLOAD_TYPE = "sharded_model_bundle_infer"
+        pack.sharded_payload_summary = DEFAULT_SHARDED_PAYLOAD_SUMMARY
+        pack.build_local = DEFAULT_BUILD_LOCAL
+        pack.build_remote_loopback = DEFAULT_BUILD_REMOTE_LOOPBACK
+        pack.build_remote_existing = DEFAULT_BUILD_REMOTE_EXISTING
+        pack.mode_ready_code = DEFAULT_MODE_READY_CODE
+
     def _tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="crowdtensor_remote_sharded_beta_test_"))
 
@@ -199,6 +232,88 @@ class RemoteShardedInferenceBetaPackTests(unittest.TestCase):
         self.assertIn("<admin-token>", report["recommended_next_command"]["command_line"])
         self.assertEqual(report["user_status"]["proof_level"], "external-existing-runtime")
         self.assertTrue(report["artifacts"]["support_bundle_json"]["present"])
+
+    def test_wait_for_remote_completion_retries_transient_state_timeout(self) -> None:
+        args = pack.parse_args([
+            "--mode",
+            "remote-existing",
+            "--coordinator-url",
+            "https://coord.example",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--remote-timeout-seconds",
+            "3",
+            "--poll-interval",
+            "0.01",
+        ])
+        states = [
+            socket.timeout("state read timed out"),
+            {
+                "tasks": [
+                    {
+                        "status": "completed",
+                        "workload_type": "sharded_model_bundle_infer",
+                        "workload_metadata": {
+                            "session_id": "session-test",
+                            "stage_id": 0,
+                            "generation_step": 0,
+                        },
+                    },
+                    {
+                        "status": "completed",
+                        "workload_type": "sharded_model_bundle_infer",
+                        "workload_metadata": {
+                            "session_id": "session-test",
+                            "stage_id": 1,
+                            "generation_step": 0,
+                        },
+                    },
+                ],
+            },
+        ]
+
+        def fake_request(method: str, base_url: str, path: str, **_: object) -> dict:
+            self.assertEqual(method, "GET")
+            self.assertEqual(path, "/state")
+            state = states.pop(0)
+            if isinstance(state, BaseException):
+                raise state
+            return state
+
+        with patch.object(pack, "request_json", side_effect=fake_request), patch.object(pack.time, "sleep", return_value=None):
+            completed, state = pack.wait_for_remote_completion(args, "session-test")
+
+        self.assertTrue(completed)
+        self.assertEqual(state["remote_state_poll_errors"][0]["error_type"], "TimeoutError")
+
+    def test_recommended_remote_existing_command_preserves_timeouts(self) -> None:
+        output_dir = self._tmp_dir()
+        args = pack.parse_args([
+            "--mode",
+            "remote-existing",
+            "--output-dir",
+            str(output_dir),
+            "--coordinator-url",
+            "https://coord.example",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--timeout-seconds",
+            "900",
+            "--remote-timeout-seconds",
+            "840",
+            "--http-timeout",
+            "45",
+        ])
+
+        command = pack.beta_command(args, output_dir)
+
+        self.assertEqual(command[command.index("--timeout-seconds") + 1], 900)
+        self.assertEqual(command[command.index("--remote-timeout-seconds") + 1], 840.0)
+        self.assertEqual(command[command.index("--http-timeout") + 1], 45.0)
 
 
 if __name__ == "__main__":

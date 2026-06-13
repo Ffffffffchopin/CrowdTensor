@@ -288,6 +288,7 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
     }
     started = base.time.monotonic()
     error_codes: list[str] = []
+    poll_errors: list[dict[str, Any]] = []
     try:
         session_payload: dict[str, Any] = {
             "request_count": args.request_count,
@@ -326,40 +327,49 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
     else:
         try:
             session_id = str(session.get("session_id") or "")
-            completed, state = base.wait_for_remote_completion(args, session_id)
-            rows = base.admin_results_for_session(args, session_id) if session_id else []
-            report_args = argparse.Namespace(
-                base_url=args.coordinator_url,
-                admin_token=args.admin_token,
-                observer_token=args.observer_token,
-                stage_mode=args.stage_mode,
-                require_distinct_stage_miners=args.require_distinct_stage_miners,
-                max_new_tokens=args.max_new_tokens,
-                real_llm_partition_mode=args.real_llm_partition_mode,
-            )
-            evidence = real_pack.build_report(
-                args=report_args,
-                session=session,
-                state=state,
-                stage_processes=[],
-                requeue_summary={
-                    "enabled": False,
-                    "failure_mode": FAILURE_NONE,
-                    "victim_stage_id": None,
-                    "victim_task_id": "",
-                    "rescue_miner_id": "",
-                    "lease_expired": False,
-                    "rescued_result": False,
-                    "victim_result_accepted": False,
-                },
-                ledger_rows=rows,
-            )
+            real_pack.configure_base_module()
+            try:
+                completed, state = base.wait_for_remote_completion(args, session_id)
+                rows = base.admin_results_for_session(args, session_id) if session_id else []
+                report_args = argparse.Namespace(
+                    base_url=args.coordinator_url,
+                    admin_token=args.admin_token,
+                    observer_token=args.observer_token,
+                    stage_mode=args.stage_mode,
+                    require_distinct_stage_miners=args.require_distinct_stage_miners,
+                    max_new_tokens=args.max_new_tokens,
+                    real_llm_partition_mode=args.real_llm_partition_mode,
+                )
+                evidence = real_pack.build_report(
+                    args=report_args,
+                    session=session,
+                    state=state,
+                    stage_processes=[],
+                    requeue_summary={
+                        "enabled": False,
+                        "failure_mode": FAILURE_NONE,
+                        "victim_stage_id": None,
+                        "victim_task_id": "",
+                        "rescue_miner_id": "",
+                        "lease_expired": False,
+                        "rescued_result": False,
+                        "victim_result_accepted": False,
+                    },
+                    ledger_rows=rows,
+                )
+            finally:
+                configure_base_module()
             evidence_json.parent.mkdir(parents=True, exist_ok=True)
             evidence_json.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             evidence_md.write_text(real_pack.render_markdown(evidence), encoding="utf-8")
             step["ok"] = bool(completed and evidence.get("ok"))
             step["payload_schema"] = evidence.get("schema")
             step["payload_ok"] = evidence.get("ok")
+            poll_errors = state.get("remote_state_poll_errors") if isinstance(state, dict) else []
+            if poll_errors:
+                step["remote_state_poll_error_count"] = len(poll_errors)
+                step["remote_state_poll_last_error_type"] = poll_errors[-1].get("error_type")
+                error_codes.append("remote_state_poll_retry")
             if not completed:
                 step["error"] = "remote_timeout_waiting_for_stages"
                 error_codes.append("remote_timeout_waiting_for_stages")
@@ -572,6 +582,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             max_new_tokens = int(raw[index])
         elif item.startswith("--max-new-tokens="):
             max_new_tokens = int(item.split("=", 1)[1])
+        elif item == "--timeout-seconds":
+            cleaned.append(item)
+            index += 1
+            if index >= len(raw):
+                raise SystemExit("--timeout-seconds requires a value")
+            cleaned.append(str(raw[index]))
+        elif item.startswith("--timeout-seconds="):
+            cleaned.append(item)
+        elif item == "--remote-timeout-seconds":
+            cleaned.append(item)
+            index += 1
+            if index >= len(raw):
+                raise SystemExit("--remote-timeout-seconds requires a value")
+            cleaned.append(str(raw[index]))
+        elif item.startswith("--remote-timeout-seconds="):
+            cleaned.append(item)
         else:
             cleaned.append(item)
         index += 1

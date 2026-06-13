@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -164,6 +165,31 @@ class RemoteRealLlmShardedBetaPackTests(unittest.TestCase):
         self.assertEqual(args.prompt_texts_list, ["first, comma prompt", "second prompt"])
         self.assertEqual(pack.prompt_list_from_args(args), ["first, comma prompt", "second prompt"])
 
+    def test_parse_args_preserves_remote_existing_timeouts(self) -> None:
+        args = pack.parse_args([
+            "--mode",
+            "remote-existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8951",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--timeout-seconds",
+            "900",
+            "--remote-timeout-seconds",
+            "840",
+            "--hf-model-id",
+            "gpt2-xl",
+            "--real-llm-backend",
+            "hf_transformers_cuda",
+        ])
+
+        self.assertEqual(args.timeout_seconds, 900)
+        self.assertEqual(args.remote_timeout_seconds, 840)
+        self.assertEqual(args.hf_model_id, "gpt2-xl")
+        self.assertEqual(args.real_llm_backend, "hf_transformers_cuda")
+
     def test_parse_args_rejects_inline_and_file_prompt_batch(self) -> None:
         prompt_file = Path(tempfile.mkdtemp(prefix="crowdtensor_remote_real_llm_prompts_test_")) / "prompts.txt"
         prompt_file.write_text("first prompt\nsecond prompt\n", encoding="utf-8")
@@ -236,6 +262,66 @@ class RemoteRealLlmShardedBetaPackTests(unittest.TestCase):
         step = report["steps"][0]
         self.assertEqual(step["http_status"], 500)
         self.assertIn("python -m pip install -e .[hf]", step["error"])
+
+    def test_remote_existing_records_transient_state_poll_retry(self) -> None:
+        output_dir = Path(tempfile.mkdtemp(prefix="crowdtensor_remote_real_llm_beta_test_"))
+        args = pack.parse_args([
+            "--mode",
+            "remote-existing",
+            "--coordinator-url",
+            "http://127.0.0.1:8951",
+            "--observer-token",
+            "observer-secret",
+            "--admin-token",
+            "admin-secret",
+            "--output-dir",
+            str(output_dir),
+            "--request-count",
+            "1",
+            "--remote-timeout-seconds",
+            "3",
+            "--poll-interval",
+            "0.01",
+        ])
+        session = {
+            "schema": "real_llm_sharded_session_v1",
+            "session_id": "session-test",
+            "stage_count": 2,
+            "request_count": 1,
+            "model_id": "sshleifer/tiny-gpt2",
+            "max_new_tokens": 1,
+        }
+        state = {
+            "tasks": [
+                {
+                    "status": "completed",
+                    "workload_type": "real_llm_sharded_infer",
+                    "workload_metadata": {"session_id": "session-test", "stage_id": 0, "generation_step": 0},
+                    "validation": {"code": "ok", "activation_transport_ready": True, "activation_count": 1},
+                },
+                {
+                    "status": "completed",
+                    "workload_type": "real_llm_sharded_infer",
+                    "workload_metadata": {"session_id": "session-test", "stage_id": 1, "generation_step": 0},
+                    "validation": {
+                        "code": "ok",
+                        "baseline_match": True,
+                        "decoded_tokens_match": True,
+                        "activation_transport_ready": True,
+                        "request_count": 1,
+                    },
+                },
+            ],
+            "model": {"model_bundle": {"version": 0, "optimizer_step": 0}, "global_step": 0},
+            "model_updates": 0,
+        }
+
+        with patch.object(pack.base, "request_json", side_effect=[session, socket.timeout("state read timed out"), state, {"results": []}]), patch.object(pack.base.time, "sleep", return_value=None):
+            report = pack.build_report(args)
+
+        self.assertIn("remote_state_poll_retry", report["diagnosis_codes"])
+        self.assertEqual(report["steps"][0]["remote_state_poll_error_count"], 1)
+        self.assertEqual(report["steps"][0]["remote_state_poll_last_error_type"], "TimeoutError")
 
 
 if __name__ == "__main__":
