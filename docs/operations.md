@@ -8,6 +8,24 @@ Use this when working on the core technology layer: cross-device large-model
 inference planning and evidence. It is separate from the current
 Coordinator-backed tiny/small-model Public Swarm route.
 
+For the current retained status across the successful small-tier GPU proof and
+the still-blocked 7B/8B validation, build or inspect:
+
+```bash
+python scripts/core_technology_validation_status_pack.py \
+  --output-dir dist/core-technology-validation-status-20260614 \
+  --json
+python scripts/core_technology_validation_status_check.py \
+  --report dist/core-technology-validation-status-20260614/core_technology_validation_status.json \
+  --json
+```
+
+The retained status artifact is
+`dist/core-technology-validation-status-20260614/core_technology_validation_status.json`.
+It should report `small_tier_gpu_validated=true`,
+`seven_b_eight_b_validated=false`, and `core_validation_ready=false` until a
+real 7B/8B sharded large-model run succeeds.
+
 ```bash
 crowdtensor large-model-shard --output-dir dist/large-model-shard-alpha --json
 python scripts/large_model_shard_alpha_check.py \

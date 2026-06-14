@@ -30,6 +30,14 @@ cross-cutting requirements across all three layers. Do not confuse control-plane
 or UX polish with completion of the core technical breakthrough: real
 cross-device large-model inference remains the main unfinished goal.
 
+The canonical current core-validation status artifact is
+`dist/core-technology-validation-status-20260614/core_technology_validation_status.json`,
+emitted by `scripts/core_technology_validation_status_pack.py` and checked by
+`scripts/core_technology_validation_status_check.py`. It currently records a
+successful fully automated `gpt2-xl` Kaggle GPU small-tier proof, but keeps
+`seven_b_eight_b_validated=false` and `core_validation_ready=false` until a real
+7B/8B sharded large-model run succeeds.
+
 ## Current Alpha Reality
 
 The current code supports:

@@ -65,6 +65,16 @@ benchmark path before claiming production Swarm Inference.
 
 The project currently includes:
 
+- Core Technology Validation Status: `scripts/core_technology_validation_status_pack.py`
+  emits `core_technology_validation_status_v1` as the canonical retained
+  status over current core validation evidence. The retained status artifact is
+  `dist/core-technology-validation-status-20260614/core_technology_validation_status.json`;
+  it imports the fully automated `gpt2-xl` Kaggle GPU small-tier proof and the
+  T4x2 7B/8B blocker evidence. It must keep
+  `small_tier_gpu_validated=true`, `seven_b_eight_b_validated=false`, and
+  `core_validation_ready=false` until a real 7B/8B sharded large-model run
+  succeeds. `scripts/core_technology_validation_status_check.py` validates that
+  a small-tier success cannot be treated as 7B/8B completion.
 - Large-Model Shard Alpha: `crowdtensor large-model-shard` emits
   `large_model_shard_alpha_v1` through
   `scripts/large_model_shard_alpha_pack.py` and is validated by
