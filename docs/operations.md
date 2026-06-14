@@ -153,8 +153,26 @@ poll failures until the remote timeout window expires, and surface
 runtime reliability only. Generated real-LLM Live RC stage invites now also
 write per-stage `stage`, backend `cuda`/`cpu`, and `hf_model_id` policy into
 `miner_registry.json`, so CUDA stage Miners are not rejected by CPU-default join
-policy. These fixes do not change readiness rules or make any retained
-`gpt2-xl` attempt a successful Kaggle GPU LLM proof.
+policy.
+
+The retained fully automated `gpt2-xl` Kaggle GPU small-tier proof is
+`dist/gpt2-xl-small-tier-kaggle-logfix-20260614172932/public_swarm_gpu_inference_beta_kaggle_auto.json`
+with SHA-256
+`83306de8c1f36e323a7ae554a76190ee8776e928ca1c0830f90142da5f6571d7`.
+It ran two private Kaggle P100 CUDA stage kernels, generated one token with
+redacted text, matched the baseline decode, loaded both stage-local partitions,
+reported `public_swarm_gpu_beta_kaggle_auto_ready`,
+`external_runtime_verified`, `cuda_runtime_available`,
+`stage0_partition_loaded`, `stage1_partition_loaded`, and deleted the temporary
+Kaggle kernels. The preceding policy-fix run proved the model path but exposed
+Coordinator stdout/stderr pipe backpressure after the stage result had been
+posted. `real_llm_internet_beta` Kaggle-auto now redirects Coordinator
+stdout/stderr to log files and includes only redacted tails in the public
+lifecycle output; the log-fix run completed without manual drain and records
+`stdout_stderr_to_files: true`. This is real small-tier GPU split evidence only:
+`large_model_sharded_execution_ready=false` and
+`true_partial_weight_loading_ready=false` still mean the 7B/8B core target needs
+a true partial-weight large-model adapter or a validated multi-host GGUF path.
 
 If the real run happened outside the current process, import a public-safe
 runner report instead:

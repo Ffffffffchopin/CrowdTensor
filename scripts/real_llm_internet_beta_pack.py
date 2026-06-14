@@ -302,6 +302,20 @@ def redact_values(value: Any, secret_values: list[str] | None = None) -> Any:
     return value
 
 
+def redacted_file_tail(path: Path, secret_values: list[str] | None = None, *, limit: int = 1200) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            data = handle.read(limit)
+    except OSError:
+        return ""
+    return redact_text(data.decode("utf-8", errors="replace"), secret_values)
+
+
 def parse_private_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.is_file():
@@ -728,6 +742,15 @@ def collect_process(
         "stdout_tail": redact_text((stdout or "")[-1200:], secret_values),
         "stderr_tail": redact_text((stderr or "")[-1200:], secret_values),
     }
+
+
+def attach_log_tails(step: dict[str, Any], *, stdout_log: Path, stderr_log: Path, secret_values: list[str]) -> dict[str, Any]:
+    step["stdout_log"] = str(stdout_log)
+    step["stderr_log"] = str(stderr_log)
+    step["stdout_tail"] = redacted_file_tail(stdout_log, secret_values)
+    step["stderr_tail"] = redacted_file_tail(stderr_log, secret_values)
+    step["stdout_stderr_to_files"] = True
+    return step
 
 
 def effective_coordinator_url(args: argparse.Namespace) -> str:
@@ -2247,6 +2270,10 @@ def build_report(
     requeue_invites: dict[str, Any] = {}
     external_process: subprocess.Popen[str] | None = None
     external_process_step: dict[str, Any] = {}
+    coordinator_stdout_handle: Any | None = None
+    coordinator_stderr_handle: Any | None = None
+    coordinator_stdout_log: Path | None = None
+    coordinator_stderr_log: Path | None = None
 
     try:
         alpha_step, alpha_payload = build_alpha_package(args, output_dir=output_dir, runner=runner)
@@ -2274,19 +2301,32 @@ def build_report(
         if kaggle_payload.get("ok") and expected_keys and all(key in stage_refs for key in expected_keys):
             coordinator_command = ["bash", str(live_dir / "start_coordinator.sh")]
             try:
+                log_dir = output_dir / "coordinator-logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                coordinator_stdout_log = log_dir / "coordinator.stdout.log"
+                coordinator_stderr_log = log_dir / "coordinator.stderr.log"
+                coordinator_stdout_handle = coordinator_stdout_log.open("w", encoding="utf-8")
+                coordinator_stderr_handle = coordinator_stderr_log.open("w", encoding="utf-8")
                 coordinator_process = popen_factory(
                     coordinator_command,
                     cwd=str(ROOT),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stdout=coordinator_stdout_handle,
+                    stderr=coordinator_stderr_handle,
                     text=True,
                     start_new_session=True,
                 )
+                coordinator_stdout_handle.close()
+                coordinator_stderr_handle.close()
+                coordinator_stdout_handle = None
+                coordinator_stderr_handle = None
                 coordinator_lifecycle = {
                     "ok": True,
                     "pid": coordinator_process.pid,
                     "command": coordinator_command,
                     "ready_url": local_ready_url(args),
+                    "stdout_log": str(coordinator_stdout_log),
+                    "stderr_log": str(coordinator_stderr_log),
+                    "stdout_stderr_to_files": True,
                 }
             except OSError as exc:
                 coordinator_lifecycle = {
@@ -2295,6 +2335,14 @@ def build_report(
                     "error": str(exc),
                     "ready_url": local_ready_url(args),
                 }
+                for handle in (coordinator_stdout_handle, coordinator_stderr_handle):
+                    if handle is not None:
+                        try:
+                            handle.close()
+                        except OSError:
+                            pass
+                coordinator_stdout_handle = None
+                coordinator_stderr_handle = None
 
             if coordinator_process is not None:
                 ready = ready_probe(local_ready_url(args), args.startup_timeout, args.poll_interval)
@@ -2528,6 +2576,21 @@ def build_report(
                 secret_values=secret_values,
                 terminate=True,
             )
+            if coordinator_stdout_log is not None and coordinator_stderr_log is not None:
+                coordinator_lifecycle["process"] = attach_log_tails(
+                    coordinator_lifecycle["process"],
+                    stdout_log=coordinator_stdout_log,
+                    stderr_log=coordinator_stderr_log,
+                    secret_values=secret_values,
+                )
+                coordinator_lifecycle["stdout_tail"] = coordinator_lifecycle["process"].get("stdout_tail", "")
+                coordinator_lifecycle["stderr_tail"] = coordinator_lifecycle["process"].get("stderr_tail", "")
+        for handle in (coordinator_stdout_handle, coordinator_stderr_handle):
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
 
     codes = diagnosis_codes(alpha_payload, kaggle_payload, external_payload, extra=["token_rotation_required"])
     if args.skip_kaggle_cleanup:

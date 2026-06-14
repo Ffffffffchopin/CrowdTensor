@@ -309,6 +309,38 @@ class RealLlmInternetBetaPackTests(unittest.TestCase):
         self.assertIn("not a local answer transcript", markdown)
         self._assert_ready_guidance(report, output_dir)
 
+    def test_kaggle_auto_redirects_coordinator_output_to_log_files(self) -> None:
+        output_dir = self._tmp_dir()
+        popen_calls: list[dict] = []
+
+        class CapturingPopen(beta_check.FakePopen):
+            def __init__(self, command: list[str], **kwargs: object) -> None:
+                popen_calls.append({"command": command, "kwargs": dict(kwargs)})
+                super().__init__(command, **kwargs)
+
+        report = pack.build_report(
+            self._args(output_dir),
+            runner=beta_check.fake_runner,
+            popen_factory=CapturingPopen,  # type: ignore[arg-type]
+            ready_probe=beta_check.ready_probe,
+        )
+
+        self.assertTrue(report["ok"], report)
+        coordinator_calls = [
+            call
+            for call in popen_calls
+            if call["command"][:1] == ["bash"] and str(call["command"][1]).endswith("start_coordinator.sh")
+        ]
+        self.assertEqual(len(coordinator_calls), 1)
+        kwargs = coordinator_calls[0]["kwargs"]
+        self.assertIsNot(kwargs.get("stdout"), subprocess.PIPE)
+        self.assertIsNot(kwargs.get("stderr"), subprocess.PIPE)
+        lifecycle = report["coordinator_lifecycle"]
+        self.assertTrue(lifecycle["stdout_stderr_to_files"])
+        self.assertIn("coordinator.stdout.log", lifecycle["stdout_log"])
+        self.assertIn("coordinator.stderr.log", lifecycle["stderr_log"])
+        self.assertTrue(lifecycle["process"]["stdout_stderr_to_files"])
+
     def test_cleanup_failure_blocks_ready_claim(self) -> None:
         output_dir = self._tmp_dir()
 

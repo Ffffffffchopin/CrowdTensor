@@ -270,9 +270,28 @@ The project currently includes:
   `join_policy_backend_mismatch`: the generated stage invite registry defaulted
   to CPU policy while the CUDA miners advertised `backend=cuda`. The generated
   real-LLM Live RC registry policy now writes per-stage `stage`, backend
-  `cuda`/`cpu`, and `hf_model_id` into `create_invite()`. These changes improve
-  Kaggle external-runtime reliability but still do not validate `gpt2-xl` or
-  the 7B/8B target.
+  `cuda`/`cpu`, and `hf_model_id` into `create_invite()`. A 2026-06-14
+  policy-fix run then completed a real Kaggle P100 CUDA small-tier split proof
+  for `gpt2-xl`, but required manually draining Coordinator stdout/stderr pipes
+  after the Kaggle stage result had already been posted. The durable retained
+  proof is the follow-up fully automated log-fix run at
+  `dist/gpt2-xl-small-tier-kaggle-logfix-20260614172932/public_swarm_gpu_inference_beta_kaggle_auto.json`
+  (`sha256:83306de8c1f36e323a7ae554a76190ee8776e928ca1c0830f90142da5f6571d7`).
+  It reported `ok: true`, `public_swarm_gpu_beta_kaggle_auto_ready`,
+  `external_runtime_verified`, `cuda_runtime_available`,
+  `decoded_tokens_match`, distinct stage Miners, valid stage assignment,
+  `stage_local_partition_ready`, `stage0_partition_loaded`,
+  `stage1_partition_loaded`, one generated token, redacted generated text,
+  `kaggle_kernels_deleted`, public leak check hits `[]`, and no matching
+  temporary Kaggle kernels after cleanup. The `real_llm_internet_beta`
+  Kaggle-auto Coordinator now redirects stdout/stderr to log files and stores
+  only redacted tails in public lifecycle output; the log-fix run shows
+  `stdout_stderr_to_files: true` and a stage result `POST ... /result` 200 in
+  the redacted tail. This is successful small-tier real GPU evidence only; it
+  still does not validate the 7B/8B target because current reports keep
+  `large_model_sharded_execution_ready=false`,
+  `true_partial_weight_loading_ready=false`, and
+  `real_llm_true_partial_weight_loading_missing`.
   The 2026-06-12 retained P100 attempts
   verified GPU hardware and kernel cleanup but did not complete the required
   7B/8B sharded/RPC proof: the initial GGUF release path exposed
