@@ -39,6 +39,11 @@ tiny Llama-like two-stage HF runtime proof at
 `dist/real-llm-llama-like-local-smoke-20260615/real_llm_sharded_evidence.json`,
 but keeps `seven_b_eight_b_validated=false` and `core_validation_ready=false`
 until a real 7B/8B sharded large-model run succeeds on external hardware.
+`scripts/stage_selective_weight_loading_check.py` is the local safetensors
+materialization proof for the next 7B/8B step: it validates that each
+Llama-like stage can load only its assigned safetensors keys and report
+public-safe counts/hashes without tensor values. Treat this as stronger than a
+partial-weight plan, but still not runtime execution and not 7B/8B completion.
 
 ## Current Alpha Reality
 

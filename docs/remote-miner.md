@@ -454,6 +454,17 @@ crowdtensor remote-demo prepare --workload real-llm-sharded --stage-role stage1 
 
 Run each generated `miner_join.sh` or Kaggle launcher on a distinct CPU host, then verify with `crowdtensor remote-demo verify --workload real-llm-sharded --stage-mode split --require-distinct-stage-miners ...` and collect with the matching `collect` command. The acceptance path emits `remote_real_llm_sharded_acceptance_v1`, `remote_real_llm_sharded_observability_v1`, `remote_real_llm_sharded_beta_v1`, route `remote_python_real_llm_sharded_infer`, and readiness code `remote_two_machine_real_llm_sharded_ready`. If `transformers` or other optional HF runtime pieces are absent, diagnostics include `hf_dependencies_missing` and the operator action to install `python -m pip install -e '.[hf]'`.
 
+For 7B/8B Llama-like work, first validate the local safetensors stage loading prerequisite:
+
+```bash
+python -m pip install -e '.[hf]'
+python scripts/stage_selective_weight_loading_check.py --output-dir dist/stage-selective-weight-loading-check --json
+python scripts/core_technology_validation_status_pack.py --output-dir dist/core-technology-validation-status-stage-selective-20260615 --json
+python scripts/core_technology_validation_status_check.py --report dist/core-technology-validation-status-stage-selective-20260615/core_technology_validation_status.json --json
+```
+
+`stage_selective_weight_loading_check_v1` proves stage-owned safetensors tensor materialization and redacted reporting only. It intentionally keeps `partial_weight_runtime_execution_ready=false` and does not prove 7B/8B Kaggle runtime success. The next large-model Kaggle attempt should build on this selective-loading path instead of repeating a full-model-in-one-container load.
+
 For an operator-owned local LLM runtime on the Miner host, use the explicit external LLM workload:
 
 ```bash

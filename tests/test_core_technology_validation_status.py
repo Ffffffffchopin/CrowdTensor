@@ -33,6 +33,10 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         self.assertEqual(report["public_leak_paths"], [])
         self.assertIn("llama_like_local_evidence", report)
         self.assertFalse(report["llama_like_local_evidence"].get("large_model_validation"))
+        self.assertIn("stage_selective_weight_loading_evidence", report)
+        self.assertIn("core_stage_selective_weight_materialization_validated", report["diagnosis_codes"])
+        self.assertTrue(report["stage_selective_weight_loading_evidence"].get("ready"))
+        self.assertFalse(report["stage_selective_weight_loading_evidence"].get("large_model_validation"))
         check.validate_report(report)
 
         for name in [
@@ -67,8 +71,9 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
                     "parameter_count_estimate": 1558000000,
                     "large_model_sharded_execution_ready": False,
                     "partial_weight_loading_plan_ready": True,
+                    "partial_weight_tensor_materialization_ready": True,
                     "partial_weight_runtime_execution_ready": False,
-                    "true_partial_weight_loading_ready": False,
+                    "true_partial_weight_loading_ready": True,
                     "large_model_blockers": ["real_llm_llama_like_runtime_execution_missing"],
                 },
                 "diagnosis_codes": [
@@ -100,6 +105,44 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
                 "diagnosis_codes": ["large_model_kaggle_gpu_hardware_verified"],
             },
         )
+        stage_selective_report = self._write_json(
+            output_dir / "stage-selective.json",
+            {
+                "schema": "stage_selective_weight_loading_check_v1",
+                "ok": True,
+                "stage_selective_weight_loading_ready": True,
+                "model_id": "Qwen/Qwen2.5-7B-Instruct",
+                "execution_family": "llama_like",
+                "stage_summaries": [
+                    {
+                        "ready": True,
+                        "stage_selective_tensor_materialization_ready": True,
+                        "loads_only_stage_weight_keys": True,
+                        "cross_stage_weight_keys_loaded": False,
+                        "loaded_weight_key_count": 3,
+                        "loaded_tensor_bytes": 64,
+                    },
+                    {
+                        "ready": True,
+                        "stage_selective_tensor_materialization_ready": True,
+                        "loads_only_stage_weight_keys": True,
+                        "cross_stage_weight_keys_loaded": False,
+                        "loaded_weight_key_count": 4,
+                        "loaded_tensor_bytes": 72,
+                    },
+                ],
+                "model_execution_support": {
+                    "partial_weight_tensor_materialization_ready": True,
+                    "true_partial_weight_loading_ready": True,
+                    "partial_weight_runtime_execution_ready": False,
+                },
+                "diagnosis_codes": [
+                    "stage_selective_weight_loading_check_ready",
+                    "real_llm_stage_selective_weight_materialization_ready",
+                ],
+                "blockers": ["real_llm_partial_weight_runtime_execution_missing"],
+            },
+        )
 
         report = pack.build_report(pack.parse_args([
             "--output-dir",
@@ -108,6 +151,8 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
             str(small_report),
             "--seven-b-blocker-report",
             str(seven_report),
+            "--stage-selective-weight-report",
+            str(stage_selective_report),
         ]))
 
         self.assertTrue(report["ok"])
@@ -141,8 +186,9 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
                     "parameter_count_estimate": 7615000000,
                     "large_model_sharded_execution_ready": False,
                     "partial_weight_loading_plan_ready": True,
+                    "partial_weight_tensor_materialization_ready": True,
                     "partial_weight_runtime_execution_ready": False,
-                    "true_partial_weight_loading_ready": False,
+                    "true_partial_weight_loading_ready": True,
                     "large_model_blockers": ["real_llm_llama_like_runtime_execution_missing"],
                 },
                 "diagnosis_codes": [
@@ -193,6 +239,44 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
                 ],
             },
         )
+        stage_selective_report = self._write_json(
+            output_dir / "stage-selective.json",
+            {
+                "schema": "stage_selective_weight_loading_check_v1",
+                "ok": True,
+                "stage_selective_weight_loading_ready": True,
+                "model_id": "Qwen/Qwen2.5-7B-Instruct",
+                "execution_family": "llama_like",
+                "stage_summaries": [
+                    {
+                        "ready": True,
+                        "stage_selective_tensor_materialization_ready": True,
+                        "loads_only_stage_weight_keys": True,
+                        "cross_stage_weight_keys_loaded": False,
+                        "loaded_weight_key_count": 3,
+                        "loaded_tensor_bytes": 64,
+                    },
+                    {
+                        "ready": True,
+                        "stage_selective_tensor_materialization_ready": True,
+                        "loads_only_stage_weight_keys": True,
+                        "cross_stage_weight_keys_loaded": False,
+                        "loaded_weight_key_count": 4,
+                        "loaded_tensor_bytes": 72,
+                    },
+                ],
+                "model_execution_support": {
+                    "partial_weight_tensor_materialization_ready": True,
+                    "true_partial_weight_loading_ready": True,
+                    "partial_weight_runtime_execution_ready": False,
+                },
+                "diagnosis_codes": [
+                    "stage_selective_weight_loading_check_ready",
+                    "real_llm_stage_selective_weight_materialization_ready",
+                ],
+                "blockers": ["real_llm_partial_weight_runtime_execution_missing"],
+            },
+        )
 
         report = pack.build_report(pack.parse_args([
             "--output-dir",
@@ -203,12 +287,17 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
             str(seven_report),
             "--llama-like-local-report",
             str(llama_report),
+            "--stage-selective-weight-report",
+            str(stage_selective_report),
         ]))
 
         self.assertFalse(report["core_validation_ready"])
         self.assertFalse(report["seven_b_eight_b_validated"])
         self.assertTrue(report["llama_like_local_evidence"]["ready"])
         self.assertFalse(report["llama_like_local_evidence"]["large_model_validation"])
+        self.assertTrue(report["stage_selective_weight_loading_evidence"]["ready"])
+        self.assertFalse(report["stage_selective_weight_loading_evidence"]["runtime_execution_validation"])
+        self.assertTrue(report["readiness_truth"]["stage_selective_weight_loading_is_not_7b_8b_completion"])
         self.assertTrue(report["readiness_truth"]["partial_weight_plan_is_not_runtime_execution"])
         self.assertIn("real_llm_partial_weight_runtime_execution_missing", report["blockers"])
         check.validate_report(report)

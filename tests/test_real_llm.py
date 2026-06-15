@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from unittest import mock
+from pathlib import Path
 
 from crowdtensor import real_llm
 
@@ -103,6 +105,109 @@ class RealLlmTests(unittest.TestCase):
         self.assertNotIn("real_llm_true_partial_weight_loading_missing", summary["large_model_blockers"])
         self.assertIn("real_llm_llama_like_runtime_execution_missing", summary["large_model_blockers"])
         self.assertIn("real_llm_llama_like_partial_weight_plan_ready", summary["diagnosis_codes"])
+
+    def test_stage_selective_safetensors_loader_materializes_only_stage_owned_keys(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        import torch  # type: ignore
+        from safetensors.torch import save_file  # type: ignore
+
+        weight_map = {
+            "model.embed_tokens.weight": "model-00001-of-00002.safetensors",
+            "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00002.safetensors",
+            "model.layers.1.self_attn.q_proj.weight": "model-00001-of-00002.safetensors",
+            "model.layers.2.self_attn.q_proj.weight": "model-00002-of-00002.safetensors",
+            "model.layers.3.self_attn.q_proj.weight": "model-00002-of-00002.safetensors",
+            "model.norm.weight": "model-00002-of-00002.safetensors",
+            "lm_head.weight": "model-00002-of-00002.safetensors",
+        }
+        metadata = {
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 4,
+            "hidden_size": 8,
+            "split_index": 2,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "weight_map": weight_map,
+        }
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_stage_weights_") as tmp:
+            root = Path(tmp)
+            save_file(
+                {
+                    "model.embed_tokens.weight": torch.ones((2, 2)),
+                    "model.layers.0.self_attn.q_proj.weight": torch.full((2, 2), 2.0),
+                    "model.layers.1.self_attn.q_proj.weight": torch.full((2, 2), 3.0),
+                    "model.layers.2.self_attn.q_proj.weight": torch.full((2, 2), 4.0),
+                },
+                root / "model-00001-of-00002.safetensors",
+            )
+            save_file(
+                {
+                    "model.layers.2.self_attn.q_proj.weight": torch.full((2, 2), 5.0),
+                    "model.layers.3.self_attn.q_proj.weight": torch.full((2, 2), 6.0),
+                    "model.norm.weight": torch.ones((2,)),
+                    "lm_head.weight": torch.full((2, 2), 7.0),
+                    "model.layers.1.self_attn.q_proj.weight": torch.full((2, 2), 8.0),
+                },
+                root / "model-00002-of-00002.safetensors",
+            )
+
+            stage0_tensors, stage0 = real_llm._load_stage_selective_safetensors(  # noqa: SLF001
+                metadata,
+                stage_id=0,
+                weight_root=root,
+            )
+            stage1 = real_llm.real_llm_stage_selective_weight_load_summary(
+                metadata,
+                stage_id=1,
+                weight_root=root,
+            )
+
+        self.assertEqual(stage0["schema"], real_llm.REAL_LLM_STAGE_SELECTIVE_WEIGHT_LOAD_SCHEMA_VERSION)
+        self.assertTrue(stage0["ready"])
+        self.assertTrue(stage0["stage_selective_tensor_materialization_ready"])
+        self.assertTrue(stage0["loads_only_stage_weight_keys"])
+        self.assertFalse(stage0["cross_stage_weight_keys_loaded"])
+        self.assertEqual(stage0["assigned_weight_key_count"], 3)
+        self.assertEqual(stage0["loaded_weight_key_count"], 3)
+        self.assertGreaterEqual(stage0["candidate_file_key_count"], 4)
+        self.assertGreater(stage0["skipped_non_stage_weight_key_count"], 0)
+        self.assertEqual(stage0["missing_weight_file_count"], 0)
+        self.assertEqual(stage0["missing_weight_key_count"], 0)
+        self.assertEqual(set(stage0_tensors), {
+            "model.embed_tokens.weight",
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.layers.1.self_attn.q_proj.weight",
+        })
+        self.assertNotIn("model.layers.2.self_attn.q_proj.weight", stage0_tensors)
+        self.assertGreater(stage0["loaded_tensor_bytes"], 0)
+
+        self.assertTrue(stage1["ready"])
+        self.assertEqual(stage1["assigned_weight_key_count"], 4)
+        self.assertEqual(stage1["loaded_weight_key_count"], 4)
+        self.assertTrue(stage1["loads_only_stage_weight_keys"])
+        self.assertFalse(stage1["cross_stage_weight_keys_loaded"])
+        self.assertIn(
+            "real_llm_stage_selective_weight_materialization_ready",
+            stage1["diagnosis_codes"],
+        )
+
+        support = real_llm.real_llm_execution_support_summary({
+            **metadata,
+            "stage_selective_weight_load_summaries": [stage0, stage1],
+        })
+        self.assertTrue(support["partial_weight_loading_plan_ready"])
+        self.assertTrue(support["partial_weight_tensor_materialization_ready"])
+        self.assertTrue(support["true_partial_weight_loading_ready"])
+        self.assertFalse(support["partial_weight_runtime_execution_ready"])
+        self.assertFalse(support["large_model_sharded_execution_ready"])
+        self.assertEqual(
+            support["stage_local_load_strategy"],
+            "stage_weight_index_selective_tensor_materialization",
+        )
 
     def test_partial_weight_plan_without_weight_index_keeps_true_partial_blocker(self) -> None:
         metadata = {

@@ -32,6 +32,10 @@ DEFAULT_LLAMA_LIKE_LOCAL_REPORT = (
     "dist/real-llm-llama-like-local-smoke-20260615/"
     "real_llm_sharded_evidence.json"
 )
+DEFAULT_STAGE_SELECTIVE_WEIGHT_REPORT = (
+    "dist/stage-selective-weight-loading-check/"
+    "stage_selective_weight_loading_check.json"
+)
 
 REDACTION_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
@@ -211,22 +215,80 @@ def summarize_llama_like_local(report: dict[str, Any], meta: dict[str, Any], pat
     }
 
 
+def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[str, Any], path: Path) -> dict[str, Any]:
+    support = report.get("model_execution_support") if isinstance(report.get("model_execution_support"), dict) else {}
+    stage_rows = report.get("stage_summaries") if isinstance(report.get("stage_summaries"), list) else []
+    codes = set(report.get("diagnosis_codes") or [])
+    ready = bool(
+        meta.get("ok")
+        and report.get("ok") is True
+        and report.get("stage_selective_weight_loading_ready") is True
+        and support.get("partial_weight_tensor_materialization_ready") is True
+        and all(
+            isinstance(row, dict)
+            and row.get("ready") is True
+            and row.get("loads_only_stage_weight_keys") is True
+            and row.get("cross_stage_weight_keys_loaded") is False
+            for row in stage_rows
+        )
+    )
+    return {
+        "ready": ready,
+        "report_path": str(path),
+        "report_sha256": sha256_file(path) if path.is_file() else "",
+        "schema": report.get("schema", ""),
+        "model_id": report.get("model_id", ""),
+        "execution_family": report.get("execution_family", ""),
+        "stage_count": len(stage_rows),
+        "stage_selective_weight_loading_ready": report.get("stage_selective_weight_loading_ready") is True,
+        "partial_weight_tensor_materialization_ready": bool(support.get("partial_weight_tensor_materialization_ready")),
+        "true_partial_weight_loading_ready": bool(support.get("true_partial_weight_loading_ready")),
+        "partial_weight_runtime_execution_ready": bool(support.get("partial_weight_runtime_execution_ready")),
+        "loaded_weight_key_count_total": sum(
+            int(row.get("loaded_weight_key_count") or 0)
+            for row in stage_rows
+            if isinstance(row, dict)
+        ),
+        "loaded_tensor_bytes_total": sum(
+            int(row.get("loaded_tensor_bytes") or 0)
+            for row in stage_rows
+            if isinstance(row, dict)
+        ),
+        "loads_only_stage_weight_keys": bool(
+            stage_rows
+            and all(isinstance(row, dict) and row.get("loads_only_stage_weight_keys") is True for row in stage_rows)
+        ),
+        "large_model_validation": False,
+        "runtime_execution_validation": False,
+        "diagnosis_codes": sorted(codes),
+        "blockers": report.get("blockers") or [],
+    }
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     small_path = Path(args.small_gpu_report)
     seven_path = Path(args.seven_b_blocker_report)
     llama_local_path = Path(args.llama_like_local_report)
+    stage_selective_path = Path(args.stage_selective_weight_report)
     small_report, small_meta = try_load(small_path)
     seven_report, seven_meta = try_load(seven_path)
     llama_local_report, llama_local_meta = try_load(llama_local_path)
+    stage_selective_report, stage_selective_meta = try_load(stage_selective_path)
     small = summarize_small_gpu(small_report, small_meta, small_path)
     seven = summarize_seven_b_blocker(seven_report, seven_meta, seven_path)
     llama_local = summarize_llama_like_local(llama_local_report, llama_local_meta, llama_local_path)
+    stage_selective = summarize_stage_selective_weight_loading(
+        stage_selective_report,
+        stage_selective_meta,
+        stage_selective_path,
+    )
     input_leaks = {
         "small_gpu_report": public_redaction_errors(small_report) if small_report else [],
         "seven_b_blocker_report": public_redaction_errors(seven_report) if seven_report else [],
         "llama_like_local_report": public_redaction_errors(llama_local_report) if llama_local_report else [],
+        "stage_selective_weight_report": public_redaction_errors(stage_selective_report) if stage_selective_report else [],
     }
 
     core_ready = bool(
@@ -244,8 +306,10 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         diagnosis_codes.append("core_7b_8b_kaggle_gpu_hardware_verified")
     if seven.get("container_memory_pressure_not_vram"):
         diagnosis_codes.append("core_7b_8b_kaggle_container_memory_pressure_not_vram")
-    if small.get("large_model_blockers"):
+    if small.get("large_model_blockers") and not stage_selective.get("ready"):
         diagnosis_codes.extend(str(code) for code in small["large_model_blockers"])
+    if stage_selective.get("ready"):
+        diagnosis_codes.append("core_stage_selective_weight_materialization_validated")
 
     blockers: list[str] = []
     if not seven.get("real_7b_runtime_verified"):
@@ -254,9 +318,14 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         blockers.append("core_7b_8b_sharded_path_not_verified")
     if seven.get("container_memory_pressure_not_vram"):
         blockers.append("kaggle_single_container_memory_pressure")
-    if "real_llm_true_partial_weight_loading_missing" in small.get("large_model_blockers", []):
+    if (
+        "real_llm_true_partial_weight_loading_missing" in small.get("large_model_blockers", [])
+        and not stage_selective.get("ready")
+    ):
         blockers.append("real_llm_true_partial_weight_loading_missing")
     if small.get("partial_weight_loading_plan_ready") and not small.get("partial_weight_runtime_execution_ready"):
+        blockers.append("real_llm_partial_weight_runtime_execution_missing")
+    if stage_selective.get("ready") and not stage_selective.get("partial_weight_runtime_execution_ready"):
         blockers.append("real_llm_partial_weight_runtime_execution_missing")
 
     report = {
@@ -270,6 +339,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "largest_successful_tier": "small" if small["ready"] else "",
         "small_tier_evidence": small,
         "llama_like_local_evidence": llama_local,
+        "stage_selective_weight_loading_evidence": stage_selective,
         "seven_b_eight_b_blocker_evidence": seven,
         "blockers": sorted(set(blockers)),
         "diagnosis_codes": sorted(set(diagnosis_codes)),
@@ -279,6 +349,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "partial_weight_plan_is_not_runtime_execution": bool(
                 small.get("partial_weight_loading_plan_ready")
                 and not small.get("partial_weight_runtime_execution_ready")
+            ),
+            "stage_selective_weight_loading_is_not_7b_8b_completion": bool(stage_selective.get("ready")),
+            "stage_selective_weight_loading_is_not_runtime_execution": bool(
+                stage_selective.get("ready")
+                and not stage_selective.get("partial_weight_runtime_execution_ready")
             ),
             "thirteen_b_validated": False,
             "production_swarm_inference_claimed": False,
@@ -350,6 +425,11 @@ def build_support_bundle(report: dict[str, Any]) -> dict[str, Any]:
         "ok": report.get("ok"),
         "core_validation_ready": report.get("core_validation_ready"),
         "small_tier_gpu_validated": report.get("small_tier_gpu_validated"),
+        "stage_selective_weight_loading_ready": (
+            report.get("stage_selective_weight_loading_evidence") or {}
+        ).get("ready")
+        if isinstance(report.get("stage_selective_weight_loading_evidence"), dict)
+        else False,
         "seven_b_eight_b_validated": report.get("seven_b_eight_b_validated"),
         "blockers": report.get("blockers"),
         "diagnosis_codes": report.get("diagnosis_codes"),
@@ -361,6 +441,7 @@ def build_support_bundle(report: dict[str, Any]) -> dict[str, Any]:
 def render_markdown(report: dict[str, Any]) -> str:
     small = report.get("small_tier_evidence") if isinstance(report.get("small_tier_evidence"), dict) else {}
     llama_local = report.get("llama_like_local_evidence") if isinstance(report.get("llama_like_local_evidence"), dict) else {}
+    stage_selective = report.get("stage_selective_weight_loading_evidence") if isinstance(report.get("stage_selective_weight_loading_evidence"), dict) else {}
     seven = report.get("seven_b_eight_b_blocker_evidence") if isinstance(report.get("seven_b_eight_b_blocker_evidence"), dict) else {}
     lines = [
         "# CrowdTensor Core Technology Validation Status",
@@ -389,6 +470,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- decoded tokens match: `{llama_local.get('decoded_tokens_match')}`",
         f"- large model validation: `{llama_local.get('large_model_validation')}`",
         "",
+        "## Stage-Selective Weight Loading Evidence",
+        "",
+        f"- report: `{stage_selective.get('report_path', '')}`",
+        f"- ready: `{stage_selective.get('ready')}`",
+        f"- loaded weight keys: `{stage_selective.get('loaded_weight_key_count_total', 0)}`",
+        f"- loads only stage keys: `{stage_selective.get('loads_only_stage_weight_keys')}`",
+        f"- runtime execution validation: `{stage_selective.get('runtime_execution_validation')}`",
+        f"- large model validation: `{stage_selective.get('large_model_validation')}`",
+        "",
         "## 7B/8B Evidence",
         "",
         f"- report: `{seven.get('report_path', '')}`",
@@ -409,6 +499,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--small-gpu-report", default=DEFAULT_SMALL_GPU_REPORT)
     parser.add_argument("--seven-b-blocker-report", default=DEFAULT_SEVEN_B_BLOCKER_REPORT)
     parser.add_argument("--llama-like-local-report", default=DEFAULT_LLAMA_LIKE_LOCAL_REPORT)
+    parser.add_argument("--stage-selective-weight-report", default=DEFAULT_STAGE_SELECTIVE_WEIGHT_REPORT)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 

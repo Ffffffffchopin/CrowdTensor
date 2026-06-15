@@ -19,6 +19,7 @@ REAL_LLM_ARTIFACT_SCHEMA_VERSION = "real_llm_artifact_v1"
 REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION = "real_llm_sharded_infer_v1"
 REAL_LLM_ACTIVATION_SCHEMA_VERSION = "real_llm_activation_v1"
 REAL_LLM_PARTIAL_WEIGHT_PLAN_SCHEMA_VERSION = "real_llm_partial_weight_plan_v1"
+REAL_LLM_STAGE_SELECTIVE_WEIGHT_LOAD_SCHEMA_VERSION = "real_llm_stage_selective_weight_load_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 BACKEND_CPU = "hf_transformers_cpu"
 BACKEND_CUDA = "hf_transformers_cuda"
@@ -109,6 +110,10 @@ def missing_hf_dependencies() -> list[str]:
         import transformers  # noqa: F401
     except ModuleNotFoundError:
         missing.append("transformers")
+    try:
+        import safetensors  # noqa: F401
+    except ModuleNotFoundError:
+        missing.append("safetensors")
     return missing
 
 
@@ -463,6 +468,258 @@ def real_llm_partial_weight_loading_plan(
     }
 
 
+def _normalize_stage_id(stage_id: int) -> int:
+    try:
+        stage = int(stage_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("real LLM stage_id must be 0 or 1") from exc
+    if stage not in {0, 1}:
+        raise ValueError("real LLM stage_id must be 0 or 1")
+    return stage
+
+
+def _stage_weight_selection(
+    metadata: dict[str, Any],
+    *,
+    stage_id: int,
+    partition_mode: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str], list[str]]:
+    stage = _normalize_stage_id(stage_id)
+    plan = real_llm_partial_weight_loading_plan(
+        metadata,
+        partition_mode=partition_mode or metadata.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL,
+    )
+    stage_plan = next(
+        (
+            row
+            for row in list(plan.get("stage_plans") or [])
+            if isinstance(row, dict) and int(row.get("stage_id", -1)) == stage
+        ),
+        {},
+    )
+    weight_map = _weight_map_from_metadata(metadata)
+    prefixes = [str(prefix) for prefix in list(stage_plan.get("expected_key_prefixes") or [])]
+    assigned = sorted(
+        key
+        for key in weight_map
+        if any(str(key).startswith(prefix) for prefix in prefixes)
+    )
+    return plan, stage_plan, weight_map, assigned
+
+
+def _tensor_nbytes(tensor: Any) -> int:
+    try:
+        return int(tensor.numel()) * int(tensor.element_size())
+    except Exception:
+        return 0
+
+
+def _load_stage_selective_safetensors(
+    metadata: dict[str, Any] | None = None,
+    *,
+    stage_id: int,
+    weight_root: str | Path,
+    partition_mode: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load only stage-owned safetensors keys into CPU tensors.
+
+    The returned tensor dictionary is intentionally kept private to callers.
+    The summary is public-safe: it contains counts, basenames, byte totals, and
+    hashes of loaded key names, but no tensor values or local cache paths.
+    """
+
+    source = dict(metadata or {})
+    stage = _normalize_stage_id(stage_id)
+    plan, stage_plan, weight_map, assigned_keys = _stage_weight_selection(
+        source,
+        stage_id=stage,
+        partition_mode=partition_mode,
+    )
+    assigned_key_set = set(assigned_keys)
+    assigned_files = sorted({weight_map[key] for key in assigned_keys if weight_map.get(key)})
+    summary: dict[str, Any] = {
+        "schema": REAL_LLM_STAGE_SELECTIVE_WEIGHT_LOAD_SCHEMA_VERSION,
+        "ready": False,
+        "stage_selective_tensor_materialization_ready": False,
+        "runtime_execution_ready": False,
+        "model_id": str(source.get("model_id") or ""),
+        "execution_family": plan.get("execution_family") or execution_family_from_metadata(source),
+        "partition_mode": plan.get("partition_mode") or normalize_partition_mode(partition_mode or source.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL),
+        "stage_id": stage,
+        "stage_count": 2,
+        "stage_layer_range": list(stage_plan.get("stage_layer_range") or []),
+        "stage_layer_range_format": "start_inclusive_end_exclusive",
+        "stage_module_kinds": list(stage_plan.get("stage_module_kinds") or []),
+        "assigned_weight_key_count": len(assigned_keys),
+        "assigned_weight_file_count": len(assigned_files),
+        "assigned_weight_files": assigned_files,
+        "opened_weight_file_count": 0,
+        "loaded_weight_key_count": 0,
+        "loaded_weight_file_count": 0,
+        "loaded_tensor_bytes": 0,
+        "candidate_file_key_count": 0,
+        "skipped_non_stage_weight_key_count": 0,
+        "missing_weight_file_count": 0,
+        "missing_weight_key_count": 0,
+        "missing_weight_files": [],
+        "missing_weight_key_count_by_file": {},
+        "loaded_weight_key_digest": _hash_payload([]),
+        "loaded_weight_file_digest": _hash_payload([]),
+        "loads_only_stage_weight_keys": False,
+        "cross_stage_weight_keys_loaded": False,
+        "public_safe": True,
+        "diagnosis_codes": [],
+        "blockers": [],
+    }
+    blockers = set(str(item) for item in list(plan.get("blockers") or []))
+    diagnosis_codes = set(str(item) for item in list(plan.get("diagnosis_codes") or []))
+    if not plan.get("ready"):
+        blockers.add("real_llm_stage_selective_weight_plan_not_ready")
+        diagnosis_codes.add("real_llm_stage_selective_weight_load_not_ready")
+        summary["blockers"] = sorted(blockers)
+        summary["diagnosis_codes"] = sorted(diagnosis_codes)
+        return {}, summary
+    try:
+        from safetensors.torch import safe_open  # type: ignore
+    except ModuleNotFoundError:
+        blockers.add("safetensors_dependency_missing")
+        diagnosis_codes.add("real_llm_stage_selective_weight_load_not_ready")
+        summary["blockers"] = sorted(blockers)
+        summary["diagnosis_codes"] = sorted(diagnosis_codes)
+        return {}, summary
+
+    root = Path(weight_root)
+    loaded: dict[str, Any] = {}
+    opened_files: set[str] = set()
+    loaded_files: set[str] = set()
+    missing_files: list[str] = []
+    missing_key_count_by_file: dict[str, int] = {}
+    candidate_file_key_count = 0
+    skipped_non_stage_key_count = 0
+    for filename in assigned_files:
+        safe_filename = Path(str(filename)).name
+        path = root / safe_filename
+        if not path.is_file():
+            missing_files.append(safe_filename)
+            missing_key_count_by_file[safe_filename] = len(
+                [key for key in assigned_keys if weight_map.get(key) == safe_filename]
+            )
+            continue
+        opened_files.add(safe_filename)
+        try:
+            with safe_open(path, framework="pt", device="cpu") as handle:
+                available_keys = set(str(key) for key in handle.keys())
+                candidate_file_key_count += len(available_keys)
+                skipped_non_stage_key_count += len(available_keys - assigned_key_set)
+                expected_in_file = [
+                    key for key in assigned_keys if weight_map.get(key) == safe_filename
+                ]
+                missing_in_file = [key for key in expected_in_file if key not in available_keys]
+                if missing_in_file:
+                    missing_key_count_by_file[safe_filename] = len(missing_in_file)
+                for key in expected_in_file:
+                    if key not in available_keys:
+                        continue
+                    loaded[key] = handle.get_tensor(key)
+                    loaded_files.add(safe_filename)
+        except Exception:
+            blockers.add("real_llm_stage_selective_weight_file_load_failed")
+            missing_files.append(safe_filename)
+            missing_key_count_by_file[safe_filename] = len(
+                [key for key in assigned_keys if weight_map.get(key) == safe_filename]
+            )
+    loaded_keys = sorted(loaded)
+    loaded_key_set = set(loaded_keys)
+    unexpected_loaded = sorted(loaded_key_set - assigned_key_set)
+    missing_key_count = sum(int(value) for value in missing_key_count_by_file.values())
+    tensor_bytes = sum(_tensor_nbytes(tensor) for tensor in loaded.values())
+    ready = bool(
+        loaded_keys
+        and not missing_files
+        and missing_key_count == 0
+        and not unexpected_loaded
+        and loaded_key_set.issubset(assigned_key_set)
+    )
+    if ready:
+        diagnosis_codes.update({
+            "real_llm_stage_selective_weight_materialization_ready",
+            "real_llm_stage_selective_weight_load_ready",
+        })
+    else:
+        diagnosis_codes.add("real_llm_stage_selective_weight_load_not_ready")
+        if not loaded_keys:
+            blockers.add("real_llm_stage_selective_weight_keys_not_loaded")
+        if missing_files:
+            blockers.add("real_llm_stage_selective_weight_files_missing")
+        if missing_key_count:
+            blockers.add("real_llm_stage_selective_weight_keys_missing")
+        if unexpected_loaded:
+            blockers.add("real_llm_stage_selective_cross_stage_weight_loaded")
+    summary.update({
+        "ready": ready,
+        "stage_selective_tensor_materialization_ready": ready,
+        "opened_weight_file_count": len(opened_files),
+        "loaded_weight_key_count": len(loaded_keys),
+        "loaded_weight_file_count": len(loaded_files),
+        "loaded_tensor_bytes": int(tensor_bytes),
+        "candidate_file_key_count": int(candidate_file_key_count),
+        "skipped_non_stage_weight_key_count": int(skipped_non_stage_key_count),
+        "missing_weight_file_count": len(missing_files),
+        "missing_weight_key_count": int(missing_key_count),
+        "missing_weight_files": sorted(set(missing_files))[:8],
+        "missing_weight_key_count_by_file": {
+            key: int(value) for key, value in sorted(missing_key_count_by_file.items())
+        },
+        "loaded_weight_key_digest": _hash_payload(loaded_keys),
+        "loaded_weight_file_digest": _hash_payload(sorted(loaded_files)),
+        "loads_only_stage_weight_keys": bool(ready and not unexpected_loaded),
+        "cross_stage_weight_keys_loaded": bool(unexpected_loaded),
+        "diagnosis_codes": sorted(diagnosis_codes),
+        "blockers": sorted(blockers),
+    })
+    return loaded, summary
+
+
+def real_llm_stage_selective_weight_load_summary(
+    metadata: dict[str, Any] | None = None,
+    *,
+    stage_id: int,
+    weight_root: str | Path,
+    partition_mode: str | None = None,
+) -> dict[str, Any]:
+    _, summary = _load_stage_selective_safetensors(
+        metadata,
+        stage_id=stage_id,
+        weight_root=weight_root,
+        partition_mode=partition_mode,
+    )
+    return summary
+
+
+def _partial_weight_tensor_materialization_ready(source: dict[str, Any]) -> bool:
+    if source.get("partial_weight_tensor_materialization_ready") is True:
+        return True
+    if source.get("stage_selective_weight_load_ready") is True:
+        return True
+    raw = source.get("stage_selective_weight_load")
+    if isinstance(raw, dict):
+        return bool(
+            raw.get("ready")
+            and raw.get("stage_selective_tensor_materialization_ready")
+            and raw.get("loads_only_stage_weight_keys")
+        )
+    raw_list = source.get("stage_selective_weight_load_summaries")
+    if isinstance(raw_list, list) and raw_list:
+        return all(
+            isinstance(item, dict)
+            and item.get("ready")
+            and item.get("stage_selective_tensor_materialization_ready")
+            and item.get("loads_only_stage_weight_keys")
+            for item in raw_list
+        )
+    return False
+
+
 def real_llm_execution_support_summary(
     metadata: dict[str, Any] | None = None,
     *,
@@ -475,6 +732,7 @@ def real_llm_execution_support_summary(
     parameter_count_estimate = estimate_parameter_count_from_metadata(source, family=family)
     partial_plan = real_llm_partial_weight_loading_plan(source, partition_mode=mode)
     partial_plan_ready = bool(partial_plan.get("ready"))
+    tensor_materialization_ready = _partial_weight_tensor_materialization_ready(source)
     small_tier_candidate = bool(
         SMALL_TIER_MIN_PARAMETERS <= parameter_count_estimate <= SMALL_TIER_MAX_PARAMETERS
     )
@@ -509,6 +767,8 @@ def real_llm_execution_support_summary(
         blockers.append("real_llm_execution_architecture_unsupported")
         large_model_blockers.append("real_llm_execution_architecture_unsupported")
     if mode == PARTITION_MODE_STAGE_LOCAL:
+        if tensor_materialization_ready:
+            diagnosis_codes.append("real_llm_stage_selective_weight_materialization_ready")
         if partial_plan_ready:
             diagnosis_codes.append("real_llm_stage_local_partial_weight_plan_ready")
         else:
@@ -540,7 +800,9 @@ def real_llm_execution_support_summary(
         "estimated_weight_bytes_fp32": estimated_weight_bytes,
         "stage_local_estimated_stage_weight_bytes_fp32": estimated_stage_weight_bytes,
         "stage_local_load_strategy": (
-            "stage_weight_index_selective_load_plan"
+            "stage_weight_index_selective_tensor_materialization"
+            if mode == PARTITION_MODE_STAGE_LOCAL and tensor_materialization_ready
+            else "stage_weight_index_selective_load_plan"
             if mode == PARTITION_MODE_STAGE_LOCAL and partial_plan_ready
             else "full_model_cpu_load_then_stage_module_device_move"
             if mode == PARTITION_MODE_STAGE_LOCAL
@@ -548,7 +810,8 @@ def real_llm_execution_support_summary(
         ),
         "partial_weight_loading_plan_ready": partial_plan_ready,
         "partial_weight_loading_plan": partial_plan,
-        "true_partial_weight_loading_ready": False,
+        "partial_weight_tensor_materialization_ready": tensor_materialization_ready,
+        "true_partial_weight_loading_ready": tensor_materialization_ready,
         "partial_weight_runtime_execution_ready": False,
         "small_tier_candidate": small_tier_candidate,
         "kaggle_small_tier_supported_by_current_split": bool(small_tier_candidate and current_supported),
