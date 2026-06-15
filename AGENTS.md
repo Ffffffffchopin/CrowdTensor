@@ -46,8 +46,14 @@ public-safe counts/hashes without tensor values. It also applies those tensors
 to matching stage-owned model `state_dict` entries in a synthetic Llama-like
 model, proves no cross-stage keys were applied, and runs a local synthetic
 stage0->stage1 activation/decode smoke that matches a baseline next token.
-Treat this as stage-selective runtime plumbing evidence, but still not Kaggle
-runtime execution and not 7B/8B completion.
+It also emits `real_llm_stage_selective_hf_runtime_v1` for an HF-style model
+directory: config/tokenizer/weight index are loaded, stage models are
+instantiated on `meta`, only stage-owned safetensors keys are materialized,
+required runtime buffers are allocated, and stage0 activation into stage1
+decode is verified without publishing prompts, generated text, token ids,
+activations, local cache paths, or tensor values. Treat this as
+stage-selective HF runtime plumbing evidence, but still not Kaggle runtime
+execution and not 7B/8B completion.
 
 ## Current Alpha Reality
 

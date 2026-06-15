@@ -220,6 +220,7 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
     stage_rows = report.get("stage_summaries") if isinstance(report.get("stage_summaries"), list) else []
     application_rows = report.get("stage_application_summaries") if isinstance(report.get("stage_application_summaries"), list) else []
     runtime = report.get("stage_selective_runtime") if isinstance(report.get("stage_selective_runtime"), dict) else {}
+    hf_runtime = report.get("stage_selective_hf_runtime") if isinstance(report.get("stage_selective_hf_runtime"), dict) else {}
     codes = set(report.get("diagnosis_codes") or [])
     ready = bool(
         meta.get("ok")
@@ -260,9 +261,16 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
             and runtime.get("stage_selective_runtime_execution_ready")
             and runtime.get("baseline_match")
         ),
+        "stage_selective_hf_runtime_ready": bool(
+            hf_runtime.get("ready")
+            and hf_runtime.get("stage_selective_runtime_execution_ready")
+        ),
         "stage_selective_runtime_scope": runtime.get("runtime_execution_scope") or "",
+        "stage_selective_hf_runtime_scope": hf_runtime.get("runtime_execution_scope") or "",
         "stage_selective_runtime_generated_token_count": int(runtime.get("generated_token_count") or 0),
+        "stage_selective_hf_runtime_generated_token_count": int(hf_runtime.get("generated_token_count") or 0),
         "stage_selective_runtime_baseline_match": bool(runtime.get("baseline_match")),
+        "stage_selective_hf_runtime_baseline_match": bool(hf_runtime.get("baseline_match")),
         "loaded_weight_key_count_total": sum(
             int(row.get("loaded_weight_key_count") or 0)
             for row in stage_rows
@@ -292,8 +300,8 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
             )
         ),
         "large_model_validation": False,
-        "runtime_execution_validation": bool(runtime.get("ready")),
-        "kaggle_runtime_validation": bool(runtime.get("kaggle_runtime_validation")),
+        "runtime_execution_validation": bool(runtime.get("ready") and hf_runtime.get("ready")),
+        "kaggle_runtime_validation": bool(runtime.get("kaggle_runtime_validation") or hf_runtime.get("kaggle_runtime_validation")),
         "diagnosis_codes": sorted(codes),
         "blockers": report.get("blockers") or [],
     }
@@ -348,6 +356,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         diagnosis_codes.append("core_stage_selective_weight_application_validated")
     if stage_selective.get("stage_selective_runtime_ready"):
         diagnosis_codes.append("core_stage_selective_runtime_validated")
+    if stage_selective.get("stage_selective_hf_runtime_ready"):
+        diagnosis_codes.append("core_stage_selective_hf_runtime_validated")
 
     blockers: list[str] = []
     if not seven.get("real_7b_runtime_verified"):
@@ -390,6 +400,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             ),
             "stage_selective_weight_loading_is_not_7b_8b_completion": bool(stage_selective.get("ready")),
             "stage_selective_runtime_is_not_7b_8b_completion": bool(stage_selective.get("stage_selective_runtime_ready")),
+            "stage_selective_hf_runtime_is_not_7b_8b_completion": bool(stage_selective.get("stage_selective_hf_runtime_ready")),
             "stage_selective_weight_loading_is_not_kaggle_runtime": bool(stage_selective.get("ready")),
             "stage_selective_weight_application_is_not_kaggle_runtime": bool(
                 stage_selective.get("partial_weight_tensor_application_ready")

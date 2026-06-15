@@ -463,7 +463,7 @@ python scripts/core_technology_validation_status_pack.py --output-dir dist/core-
 python scripts/core_technology_validation_status_check.py --report dist/core-technology-validation-status-stage-selective-20260615/core_technology_validation_status.json --json
 ```
 
-`stage_selective_weight_loading_check_v1` proves stage-owned safetensors tensor materialization, stage-owned `state_dict` application, local synthetic stage0-to-stage1 activation/decode execution, and redacted reporting. It intentionally keeps Kaggle/7B validation false and does not prove 7B/8B Kaggle runtime success. The next large-model Kaggle attempt should build on this selective-loading path instead of repeating a full-model-in-one-container load.
+`stage_selective_weight_loading_check_v1` proves stage-owned safetensors tensor materialization, stage-owned `state_dict` application, local synthetic stage0-to-stage1 activation/decode execution, and `real_llm_stage_selective_hf_runtime_v1` over an HF-style model directory. The HF runtime smoke instantiates stage models on `meta`, materializes only stage-owned safetensors keys plus required runtime buffers, and keeps prompts, generated text, token ids, activations, local cache paths, and tensor values out of public artifacts. It intentionally keeps Kaggle/7B validation false and does not prove 7B/8B Kaggle runtime success. The next large-model Kaggle attempt should build on this selective-loading path instead of repeating a full-model-in-one-container load.
 
 For an operator-owned local LLM runtime on the Miner host, use the explicit external LLM workload:
 

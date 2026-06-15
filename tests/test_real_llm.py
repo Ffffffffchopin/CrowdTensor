@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -449,6 +450,93 @@ class RealLlmTests(unittest.TestCase):
             support["stage_local_load_strategy"],
             "stage_weight_index_selective_runtime_execution",
         )
+
+    def test_stage_selective_hf_runtime_smoke_uses_meta_stage_models(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        import torch  # type: ignore
+        from safetensors.torch import save_file  # type: ignore
+        from tokenizers import Tokenizer, models, pre_tokenizers  # type: ignore
+        from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast  # type: ignore
+
+        config = LlamaConfig(
+            vocab_size=8,
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_position_embeddings=16,
+        )
+        seed_model = LlamaForCausalLM(config)
+        state = seed_model.state_dict()
+        stage0_keys = [
+            "model.embed_tokens.weight",
+            *[key for key in state if key.startswith("model.layers.0.")],
+            *[key for key in state if key.startswith("model.layers.1.")],
+        ]
+        stage1_keys = [
+            *[key for key in state if key.startswith("model.layers.2.")],
+            *[key for key in state if key.startswith("model.layers.3.")],
+            "model.norm.weight",
+            "lm_head.weight",
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_stage_hf_runtime_") as tmp:
+            root = Path(tmp)
+            config.to_json_file(root / "config.json")
+            tokenizer = Tokenizer(models.WordLevel({"<unk>": 0, "CrowdTensor": 1, "routes": 2, "home": 3, "GPU": 4}, unk_token="<unk>"))
+            tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>")
+            hf_tokenizer.save_pretrained(root)
+            save_file(
+                {key: state[key].detach().clone() for key in stage0_keys},
+                root / "model-00001-of-00002.safetensors",
+            )
+            save_file(
+                {key: state[key].detach().clone() for key in stage1_keys},
+                root / "model-00002-of-00002.safetensors",
+            )
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({
+                    "metadata": {"total_size": 1},
+                    "weight_map": {
+                        **{key: "model-00001-of-00002.safetensors" for key in stage0_keys},
+                        **{key: "model-00002-of-00002.safetensors" for key in stage1_keys},
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            runtime = real_llm.run_stage_selective_hf_runtime_smoke(
+                model_id=str(root),
+                prompt="CrowdTensor routes home GPU",
+            )
+
+        self.assertEqual(runtime["schema"], real_llm.REAL_LLM_STAGE_SELECTIVE_HF_RUNTIME_SCHEMA_VERSION)
+        self.assertTrue(runtime["ready"])
+        self.assertTrue(runtime["stage_selective_runtime_execution_ready"])
+        self.assertEqual(runtime["runtime_execution_scope"], "real_hf_stage_selective_runtime")
+        self.assertTrue(runtime["activation_transport_ready"])
+        self.assertTrue(runtime["baseline_match"])
+        self.assertTrue(runtime["decoded_tokens_match"])
+        self.assertEqual(runtime["generated_token_count"], 1)
+        self.assertTrue(runtime["stage0_remaining_meta_parameter_count"] > 0)
+        self.assertTrue(runtime["stage1_remaining_meta_parameter_count"] > 0)
+        self.assertEqual(runtime["runtime_buffers"]["stage0"]["remaining_meta_buffer_count"], 0)
+        self.assertEqual(runtime["runtime_buffers"]["stage1"]["remaining_meta_buffer_count"], 0)
+        self.assertTrue(runtime["stage_summaries"][0]["loads_only_stage_weight_keys"])
+        self.assertTrue(runtime["stage_application_summaries"][0]["loads_only_stage_weight_keys"])
+        self.assertTrue(runtime["model_execution_support"]["partial_weight_runtime_execution_ready"])
+        self.assertFalse(runtime["large_model_validation"])
+        self.assertFalse(runtime["kaggle_runtime_validation"])
+        self.assertFalse(runtime["local_weight_root_public"])
+        self.assertFalse(runtime["raw_prompt_public"])
+        self.assertFalse(runtime["raw_generated_text_public"])
+        self.assertFalse(runtime["generated_token_ids_public"])
+        self.assertFalse(runtime["activation_public"])
 
     def test_partial_weight_plan_without_weight_index_keeps_true_partial_blocker(self) -> None:
         metadata = {

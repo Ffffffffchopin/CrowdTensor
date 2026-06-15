@@ -119,12 +119,56 @@ def synthetic_stage_model() -> Any:
     return LlamaForCausalLM(synthetic_llama_config())
 
 
+def build_synthetic_hf_runtime_fixture(root: Path) -> None:
+    import torch  # type: ignore
+    from safetensors.torch import save_file  # type: ignore
+    from tokenizers import Tokenizer, models, pre_tokenizers  # type: ignore
+    from transformers import LlamaForCausalLM, PreTrainedTokenizerFast  # type: ignore
+
+    config = synthetic_llama_config()
+    config.to_json_file(root / "config.json")
+    tokenizer = Tokenizer(models.WordLevel({"<unk>": 0, "CrowdTensor": 1, "routes": 2, "home": 3, "GPU": 4}, unk_token="<unk>"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>").save_pretrained(root)
+    state = LlamaForCausalLM(config).state_dict()
+    stage0_keys = [
+        "model.embed_tokens.weight",
+        *[key for key in state if key.startswith("model.layers.0.")],
+        *[key for key in state if key.startswith("model.layers.1.")],
+    ]
+    stage1_keys = [
+        *[key for key in state if key.startswith("model.layers.2.")],
+        *[key for key in state if key.startswith("model.layers.3.")],
+        "model.norm.weight",
+        "lm_head.weight",
+    ]
+    save_file(
+        {key: torch.full_like(state[key], float(index + 1)) for index, key in enumerate(stage0_keys)},
+        root / "model-00001-of-00002.safetensors",
+    )
+    save_file(
+        {key: torch.full_like(state[key], float(index + 100)) for index, key in enumerate(stage1_keys)},
+        root / "model-00002-of-00002.safetensors",
+    )
+    write_json(
+        root / "model.safetensors.index.json",
+        {
+            "metadata": {"total_size": sum(int(state[key].numel() * state[key].element_size()) for key in stage0_keys + stage1_keys)},
+            "weight_map": {
+                **{key: "model-00001-of-00002.safetensors" for key in stage0_keys},
+                **{key: "model-00002-of-00002.safetensors" for key in stage1_keys},
+            },
+        },
+    )
+
+
 def build_report(output_dir: Path) -> dict[str, Any]:
     missing = real_llm.missing_hf_dependencies()
     metadata = synthetic_metadata()
     stage_summaries: list[dict[str, Any]] = []
     application_summaries: list[dict[str, Any]] = []
     runtime_summary: dict[str, Any] = {}
+    hf_runtime_summary: dict[str, Any] = {}
     if missing:
         support = real_llm.real_llm_execution_support_summary(metadata)
         report = {
@@ -137,6 +181,8 @@ def build_report(output_dir: Path) -> dict[str, Any]:
             "execution_family": real_llm.execution_family_from_metadata(metadata),
             "missing_dependencies": missing,
             "stage_summaries": [],
+            "stage_selective_runtime": {},
+            "stage_selective_hf_runtime": {},
             "model_execution_support": support,
             "diagnosis_codes": ["stage_selective_weight_loading_dependencies_missing"],
             "blockers": ["hf_dependencies_missing"],
@@ -194,11 +240,19 @@ def build_report(output_dir: Path) -> dict[str, Any]:
                 metadata=metadata,
                 prompt="CrowdTensor routes home GPU",
             )
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_stage_hf_runtime_") as tmp:
+            root = Path(tmp)
+            build_synthetic_hf_runtime_fixture(root)
+            hf_runtime_summary = real_llm.run_stage_selective_hf_runtime_smoke(
+                model_id=str(root),
+                prompt="CrowdTensor routes home GPU",
+            )
         support = real_llm.real_llm_execution_support_summary({
             **metadata,
             "stage_selective_weight_load_summaries": stage_summaries,
             "stage_selective_weight_application_summaries": application_summaries,
             "stage_selective_runtime": runtime_summary,
+            "stage_selective_hf_runtime": hf_runtime_summary,
         })
         ready = bool(
             stage_summaries
@@ -208,6 +262,7 @@ def build_report(output_dir: Path) -> dict[str, Any]:
             and support.get("partial_weight_tensor_materialization_ready")
             and support.get("partial_weight_tensor_application_ready")
             and runtime_summary.get("ready") is True
+            and hf_runtime_summary.get("ready") is True
             and support.get("partial_weight_runtime_execution_ready") is True
         )
         report = {
@@ -222,11 +277,13 @@ def build_report(output_dir: Path) -> dict[str, Any]:
             "stage_summaries": stage_summaries,
             "stage_application_summaries": application_summaries,
             "stage_selective_runtime": runtime_summary,
+            "stage_selective_hf_runtime": hf_runtime_summary,
             "model_execution_support": support,
             "readiness_truth": {
                 "stage_selective_weight_loading_is_not_7b_runtime": True,
                 "stage_selective_weight_application_is_not_7b_runtime": True,
                 "stage_selective_runtime_is_not_7b_runtime": True,
+                "stage_selective_hf_runtime_is_not_7b_runtime": True,
                 "partial_weight_tensor_materialization_is_not_large_model_runtime": True,
                 "partial_weight_tensor_application_is_not_large_model_runtime": True,
                 "seven_b_eight_b_validated": False,
@@ -245,6 +302,9 @@ def build_report(output_dir: Path) -> dict[str, Any]:
                 "real_llm_stage_selective_runtime_execution_ready"
                 if support.get("partial_weight_runtime_execution_ready")
                 else "real_llm_partial_weight_runtime_execution_missing",
+                "real_llm_stage_selective_hf_runtime_ready"
+                if hf_runtime_summary.get("ready")
+                else "real_llm_stage_selective_hf_runtime_not_ready",
             ],
             "blockers": [],
             "safety": {

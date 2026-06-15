@@ -22,6 +22,7 @@ REAL_LLM_PARTIAL_WEIGHT_PLAN_SCHEMA_VERSION = "real_llm_partial_weight_plan_v1"
 REAL_LLM_STAGE_SELECTIVE_WEIGHT_LOAD_SCHEMA_VERSION = "real_llm_stage_selective_weight_load_v1"
 REAL_LLM_STAGE_SELECTIVE_WEIGHT_APPLY_SCHEMA_VERSION = "real_llm_stage_selective_weight_apply_v1"
 REAL_LLM_STAGE_SELECTIVE_RUNTIME_SCHEMA_VERSION = "real_llm_stage_selective_runtime_v1"
+REAL_LLM_STAGE_SELECTIVE_HF_RUNTIME_SCHEMA_VERSION = "real_llm_stage_selective_hf_runtime_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 BACKEND_CPU = "hf_transformers_cpu"
 BACKEND_CUDA = "hf_transformers_cuda"
@@ -698,6 +699,417 @@ def real_llm_stage_selective_weight_load_summary(
     return summary
 
 
+def _materialize_runtime_buffers(model: Any, *, device: Any | None = None) -> dict[str, Any]:
+    """Materialize small non-parameter buffers needed by stage-local forwards."""
+
+    import torch  # type: ignore
+
+    target_device = torch.device(device or "cpu")
+    materialized: list[str] = []
+    blockers: list[str] = []
+    for name, buffer in list(model.named_buffers(recurse=True)):
+        if not bool(getattr(buffer, "is_meta", False)):
+            continue
+        replacement = None
+        if name.endswith("rotary_emb.inv_freq") or name.endswith("rotary_emb.original_inv_freq"):
+            config = getattr(model, "config", None)
+            try:
+                dim = int(getattr(config, "head_dim", 0) or (
+                    int(getattr(config, "hidden_size", 0)) // int(getattr(config, "num_attention_heads", 1) or 1)
+                ))
+                theta = float(getattr(config, "rope_theta", 10000.0) or 10000.0)
+                replacement = 1.0 / (
+                    theta
+                    ** (
+                        torch.arange(0, dim, 2, dtype=torch.float32, device=target_device)
+                        / max(1, dim)
+                    )
+                )
+            except Exception:
+                replacement = None
+        if replacement is None:
+            blockers.append("runtime_buffer_materialization_missing:" + name)
+            continue
+        module = model
+        parts = name.split(".")
+        for part in parts[:-1]:
+            module = getattr(module, part)
+        try:
+            module.register_buffer(parts[-1], replacement, persistent=name not in getattr(module, "_non_persistent_buffers_set", set()))
+        except Exception:
+            blockers.append("runtime_buffer_assignment_failed:" + name)
+            continue
+        materialized.append(name)
+    return {
+        "ready": not blockers,
+        "materialized_runtime_buffer_count": len(materialized),
+        "materialized_runtime_buffer_digest": _hash_payload(sorted(materialized)),
+        "remaining_meta_buffer_count": sum(1 for _name, item in model.named_buffers(recurse=True) if bool(getattr(item, "is_meta", False))),
+        "blockers": sorted(blockers),
+    }
+
+
+def _model_meta_parameter_count(model: Any) -> int:
+    return sum(1 for parameter in model.parameters() if bool(getattr(parameter, "is_meta", False)))
+
+
+def _instantiate_hf_causal_lm_from_config(config: Any, *, meta: bool = False) -> Any:
+    import torch  # type: ignore
+    from transformers import AutoModelForCausalLM  # type: ignore
+
+    if meta:
+        with torch.device("meta"):
+            return AutoModelForCausalLM.from_config(config)
+    return AutoModelForCausalLM.from_config(config)
+
+
+def _stage_selective_hf_metadata(
+    *,
+    model_id: str,
+    cache_dir: str = "",
+    split_index: int | None = None,
+    backend: str = BACKEND_CPU,
+) -> tuple[Any, dict[str, Any], Path | None]:
+    require_hf_dependencies()
+    from transformers import AutoConfig  # type: ignore
+
+    normalized_model_id = str(model_id or DEFAULT_MODEL_ID).strip() or DEFAULT_MODEL_ID
+    config = AutoConfig.from_pretrained(normalized_model_id, **_cache_kwargs(cache_dir))
+    layer_count = int(
+        getattr(config, "n_layer", None)
+        or getattr(config, "num_hidden_layers", None)
+        or 0
+    )
+    hidden_size = int(
+        getattr(config, "n_embd", None)
+        or getattr(config, "hidden_size", None)
+        or 0
+    )
+    vocab_size = int(getattr(config, "vocab_size", 0) or 0)
+    split = int(split_index) if split_index is not None else max(1, layer_count // 2)
+    if layer_count >= 2:
+        split = max(1, min(split, layer_count - 1))
+    weight_index = _safe_hf_weight_index_metadata(normalized_model_id, cache_dir=cache_dir)
+    weight_root: Path | None = None
+    for filename in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+        candidate = Path(normalized_model_id) / filename
+        if candidate.is_file():
+            weight_root = candidate.parent
+            break
+        try:
+            from transformers.utils import cached_file  # type: ignore
+
+            cached = cached_file(normalized_model_id, filename, **_cache_kwargs(cache_dir))
+        except Exception:
+            cached = None
+        if cached:
+            path = Path(str(cached))
+            if path.is_file():
+                weight_root = path.parent
+                break
+    metadata: dict[str, Any] = {
+        "schema": REAL_LLM_ARTIFACT_SCHEMA_VERSION,
+        "model_id": normalized_model_id,
+        "backend": normalize_backend(backend),
+        "partition_mode": PARTITION_MODE_STAGE_LOCAL,
+        "model_type": str(getattr(config, "model_type", "") or ""),
+        "architectures": list(getattr(config, "architectures", []) or []),
+        "num_hidden_layers": layer_count,
+        "hidden_size": hidden_size,
+        "vocab_size": vocab_size,
+        "split_index": split,
+        "read_only": True,
+        "metadata_only": False,
+    }
+    metadata.update({key: value for key, value in weight_index.items() if key != "weight_map"})
+    if weight_index.get("weight_map"):
+        metadata["weight_map"] = weight_index["weight_map"]
+    metadata["artifact_hash"] = _hash_payload({
+        key: value
+        for key, value in metadata.items()
+        if key not in {"artifact_hash", "weight_map"}
+    })
+    return config, metadata, weight_root
+
+
+def _public_model_id(model_id: str) -> str:
+    text = str(model_id or "")
+    path = Path(text)
+    if text.startswith("/tmp/") or text.startswith(str(Path.home())) or path.is_absolute():
+        return "local-hf-model-redacted"
+    return text
+
+
+def _redact_model_id_fields(value: Any, *, private_model_id: str, public_model_id: str) -> Any:
+    if isinstance(value, str):
+        return public_model_id if value == private_model_id else value
+    if isinstance(value, list):
+        return [
+            _redact_model_id_fields(item, private_model_id=private_model_id, public_model_id=public_model_id)
+            for item in value
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _redact_model_id_fields(item, private_model_id=private_model_id, public_model_id=public_model_id)
+            for key, item in value.items()
+        }
+    return value
+
+
+def run_stage_selective_hf_runtime_smoke(
+    *,
+    model_id: str = DEFAULT_MODEL_ID,
+    cache_dir: str = "",
+    prompt: str = "CrowdTensor routes home GPU",
+    backend: str = BACKEND_CPU,
+    split_index: int | None = None,
+    baseline_required: bool = True,
+) -> dict[str, Any]:
+    """Run a public-safe real HF stage-selective smoke from a model directory.
+
+    This path uses the HF weight index to materialize only stage-owned tensors
+    into separate model instances. It is designed as the bridge toward Kaggle
+    7B/8B validation without requiring every worker to load the whole model.
+    """
+
+    started = time.monotonic()
+    normalized_backend = normalize_backend(backend)
+    try:
+        import torch  # type: ignore
+        from transformers import AutoTokenizer  # type: ignore
+    except ModuleNotFoundError as exc:
+        return {
+            "schema": REAL_LLM_STAGE_SELECTIVE_HF_RUNTIME_SCHEMA_VERSION,
+            "ready": False,
+            "stage_selective_runtime_execution_ready": False,
+            "model_id": str(model_id or DEFAULT_MODEL_ID),
+            "backend": normalized_backend,
+            "diagnosis_codes": ["real_llm_stage_selective_hf_runtime_dependencies_missing"],
+            "blockers": [str(exc.name or "hf_dependency_missing")],
+            "public_safe": True,
+        }
+    try:
+        config, metadata, weight_root = _stage_selective_hf_metadata(
+            model_id=model_id,
+            cache_dir=cache_dir,
+            split_index=split_index,
+            backend=normalized_backend,
+        )
+    except Exception as exc:
+        return {
+            "schema": REAL_LLM_STAGE_SELECTIVE_HF_RUNTIME_SCHEMA_VERSION,
+            "ready": False,
+            "stage_selective_runtime_execution_ready": False,
+            "model_id": str(model_id or DEFAULT_MODEL_ID),
+            "backend": normalized_backend,
+            "diagnosis_codes": ["real_llm_stage_selective_hf_metadata_failed"],
+            "blockers": ["real_llm_stage_selective_hf_metadata_failed"],
+            "error_type": type(exc).__name__,
+            "error_digest": _hash_payload(str(exc)),
+            "public_safe": True,
+        }
+    family = execution_family_from_metadata(metadata)
+    if family not in SUPPORTED_EXECUTION_FAMILIES:
+        return {
+            "schema": REAL_LLM_STAGE_SELECTIVE_HF_RUNTIME_SCHEMA_VERSION,
+            "ready": False,
+            "stage_selective_runtime_execution_ready": False,
+            "model_id": metadata["model_id"],
+            "execution_family": family,
+            "backend": normalized_backend,
+            "partition_mode": PARTITION_MODE_STAGE_LOCAL,
+            "diagnosis_codes": ["real_llm_stage_selective_hf_runtime_family_unsupported"],
+            "blockers": ["real_llm_execution_architecture_unsupported"],
+            "public_safe": True,
+        }
+    if weight_root is None:
+        return {
+            "schema": REAL_LLM_STAGE_SELECTIVE_HF_RUNTIME_SCHEMA_VERSION,
+            "ready": False,
+            "stage_selective_runtime_execution_ready": False,
+            "model_id": metadata["model_id"],
+            "execution_family": family,
+            "backend": normalized_backend,
+            "partition_mode": PARTITION_MODE_STAGE_LOCAL,
+            "diagnosis_codes": ["real_llm_stage_selective_hf_weight_index_missing"],
+            "blockers": ["real_llm_partial_weight_plan_weight_map_missing"],
+            "public_safe": True,
+        }
+    resolved_backend = resolve_backend(normalized_backend)
+    device = torch.device("cuda:0" if resolved_backend == BACKEND_CUDA else "cpu")
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(metadata["model_id"], **_cache_kwargs(cache_dir))
+        stage0_model = _instantiate_hf_causal_lm_from_config(config, meta=True)
+        stage1_model = _instantiate_hf_causal_lm_from_config(config, meta=True)
+        baseline_model = _instantiate_hf_causal_lm_from_config(config, meta=True) if baseline_required else None
+        runtime_buffers = {
+            "stage0": _materialize_runtime_buffers(stage0_model, device=device),
+            "stage1": _materialize_runtime_buffers(stage1_model, device=device),
+        }
+        if baseline_model is not None:
+            runtime_buffers["baseline"] = _materialize_runtime_buffers(baseline_model, device=torch.device("cpu"))
+        stage0_tensors, stage0_load = _load_stage_selective_safetensors(
+            metadata,
+            stage_id=0,
+            weight_root=weight_root,
+        )
+        stage1_tensors, stage1_load = _load_stage_selective_safetensors(
+            metadata,
+            stage_id=1,
+            weight_root=weight_root,
+        )
+        stage0_apply = _apply_stage_selective_tensors_to_model(
+            stage0_model,
+            stage0_tensors,
+            metadata,
+            stage_id=0,
+            target_device=device,
+        )
+        stage1_apply = _apply_stage_selective_tensors_to_model(
+            stage1_model,
+            stage1_tensors,
+            metadata,
+            stage_id=1,
+            target_device=device,
+        )
+        baseline_applies: list[dict[str, Any]] = []
+        if baseline_model is not None:
+            baseline_applies.append(
+                _apply_stage_selective_tensors_to_model(
+                    baseline_model,
+                    stage0_tensors,
+                    metadata,
+                    stage_id=0,
+                    target_device=torch.device("cpu"),
+                )
+            )
+            baseline_applies.append(
+                _apply_stage_selective_tensors_to_model(
+                    baseline_model,
+                    stage1_tensors,
+                    metadata,
+                    stage_id=1,
+                    target_device=torch.device("cpu"),
+                )
+            )
+        if baseline_model is not None:
+            baseline_model.to(torch.device("cpu"))
+        runtime = run_stage_selective_runtime_smoke(
+            tokenizer=tokenizer,
+            stage0_model=stage0_model,
+            stage1_model=stage1_model,
+            baseline_model=baseline_model if baseline_model is not None else stage1_model,
+            metadata=metadata,
+            prompt=prompt,
+            backend=resolved_backend,
+            baseline_required=baseline_required,
+        )
+    except Exception as exc:
+        return {
+            "schema": REAL_LLM_STAGE_SELECTIVE_HF_RUNTIME_SCHEMA_VERSION,
+            "ready": False,
+            "stage_selective_runtime_execution_ready": False,
+            "runtime_execution_scope": "real_hf_stage_selective_runtime",
+            "model_id": metadata["model_id"],
+            "execution_family": family,
+            "backend": resolved_backend if "resolved_backend" in locals() else normalized_backend,
+            "partition_mode": PARTITION_MODE_STAGE_LOCAL,
+            "error_type": type(exc).__name__,
+            "error_digest": _hash_payload(str(exc)),
+            "diagnosis_codes": ["real_llm_stage_selective_hf_runtime_execution_failed"],
+            "blockers": ["real_llm_stage_selective_hf_runtime_execution_failed"],
+            "public_safe": True,
+        }
+    runtime_ready = bool(runtime.get("ready") and runtime.get("stage_selective_runtime_execution_ready"))
+    load_ready = bool(stage0_load.get("ready") and stage1_load.get("ready"))
+    apply_ready = bool(stage0_apply.get("ready") and stage1_apply.get("ready"))
+    buffer_ready = all(bool(item.get("ready")) for item in runtime_buffers.values())
+    ready = bool(runtime_ready and load_ready and apply_ready and buffer_ready)
+    support = real_llm_execution_support_summary({
+        **metadata,
+        "stage_selective_weight_load_summaries": [stage0_load, stage1_load],
+        "stage_selective_weight_application_summaries": [stage0_apply, stage1_apply],
+        "stage_selective_hf_runtime": {
+            **runtime,
+            "ready": ready,
+            "stage_selective_runtime_execution_ready": runtime_ready,
+        },
+    })
+    private_model_id = str(metadata["model_id"])
+    public_model_id = _public_model_id(private_model_id)
+    public_payload = {
+        "schema": REAL_LLM_STAGE_SELECTIVE_HF_RUNTIME_SCHEMA_VERSION,
+        "ready": ready,
+        "stage_selective_runtime_execution_ready": runtime_ready,
+        "runtime_execution_scope": "real_hf_stage_selective_runtime",
+        "model_id": public_model_id,
+        "execution_family": family,
+        "backend": resolved_backend,
+        "partition_mode": PARTITION_MODE_STAGE_LOCAL,
+        "stage_count": 2,
+        "split_index": int(metadata.get("split_index") or 0),
+        "num_hidden_layers": int(metadata.get("num_hidden_layers") or 0),
+        "hidden_size": int(metadata.get("hidden_size") or 0),
+        "weight_key_count": int(metadata.get("weight_key_count") or len(_weight_map_from_metadata(metadata))),
+        "weight_file_count": int(metadata.get("weight_file_count") or 0),
+        "stage_summaries": [stage0_load, stage1_load],
+        "stage_application_summaries": [stage0_apply, stage1_apply],
+        "runtime_buffers": runtime_buffers,
+        "stage0_remaining_meta_parameter_count": _model_meta_parameter_count(stage0_model),
+        "stage1_remaining_meta_parameter_count": _model_meta_parameter_count(stage1_model),
+        "baseline_loaded": baseline_model is not None,
+        "baseline_remaining_meta_parameter_count": _model_meta_parameter_count(baseline_model) if baseline_model is not None else 0,
+        "baseline_match": bool(runtime.get("baseline_match")),
+        "baseline_match_supported": bool(runtime.get("baseline_match_supported")),
+        "baseline_validation_skipped": bool(runtime.get("baseline_validation_skipped")),
+        "decoded_tokens_match": bool(runtime.get("decoded_tokens_match")),
+        "generated_token_count": int(runtime.get("generated_token_count") or 0),
+        "activation_transport_ready": bool(runtime.get("activation_transport_ready")),
+        "activation_hash": str(runtime.get("activation_hash") or ""),
+        "output_hash": str(runtime.get("output_hash") or ""),
+        "model_execution_support": support,
+        "elapsed_ms": round((time.monotonic() - started) * 1000.0, 6),
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "activation_public": False,
+        "local_weight_root_public": False,
+        "public_safe": True,
+        "large_model_validation": False,
+        "kaggle_runtime_validation": False,
+        "diagnosis_codes": sorted(set([
+            "real_llm_stage_selective_hf_runtime_ready"
+            if ready
+            else "real_llm_stage_selective_hf_runtime_not_ready",
+            "real_llm_stage_selective_runtime_execution_ready"
+            if runtime_ready
+            else "real_llm_stage_selective_runtime_execution_not_ready",
+            "real_llm_stage_selective_weight_materialization_ready"
+            if load_ready
+            else "real_llm_stage_selective_weight_materialization_not_ready",
+            "real_llm_stage_selective_weight_application_ready"
+            if apply_ready
+            else "real_llm_stage_selective_weight_application_not_ready",
+            "real_llm_stage_selective_runtime_buffers_ready"
+            if buffer_ready
+            else "real_llm_stage_selective_runtime_buffers_not_ready",
+        ] + list(runtime.get("diagnosis_codes") or []))),
+        "blockers": [] if ready else sorted(set(
+            list(stage0_load.get("blockers") or [])
+            + list(stage1_load.get("blockers") or [])
+            + list(stage0_apply.get("blockers") or [])
+            + list(stage1_apply.get("blockers") or [])
+            + [item for summary in runtime_buffers.values() for item in list(summary.get("blockers") or [])]
+            + list(runtime.get("blockers") or [])
+        )),
+    }
+    return _redact_model_id_fields(
+        public_payload,
+        private_model_id=private_model_id,
+        public_model_id=public_model_id,
+    )
+
+
 def _apply_stage_selective_tensors_to_model(
     model: Any,
     tensors: dict[str, Any],
@@ -705,6 +1117,7 @@ def _apply_stage_selective_tensors_to_model(
     *,
     stage_id: int,
     partition_mode: str | None = None,
+    target_device: Any | None = None,
 ) -> dict[str, Any]:
     """Apply already-loaded stage tensors to matching model state entries.
 
@@ -744,6 +1157,8 @@ def _apply_stage_selective_tensors_to_model(
         "unknown_model_key_count": 0,
         "shape_mismatch_count": 0,
         "dtype_conversion_count": 0,
+        "meta_parameter_assignment_count": 0,
+        "target_device": str(target_device or ""),
         "cross_stage_weight_keys_loaded": False,
         "applied_weight_key_digest": _hash_payload([]),
         "applied_tensor_bytes": 0,
@@ -771,6 +1186,10 @@ def _apply_stage_selective_tensors_to_model(
         import torch  # type: ignore
     except ModuleNotFoundError:
         torch = None  # type: ignore
+    assign_state: dict[str, Any] = {}
+    target_device_obj = None
+    if target_device is not None and torch is not None:
+        target_device_obj = torch.device(target_device)
     for key in provided_keys:
         tensor = tensors[key]
         if key not in assigned_key_set:
@@ -786,11 +1205,30 @@ def _apply_stage_selective_tensors_to_model(
             dtype_conversions += 1
         if torch is not None:
             with torch.no_grad():
-                target.copy_(tensor.to(device=target.device, dtype=target.dtype))
+                target_is_meta = bool(getattr(target, "is_meta", False))
+                destination = target_device_obj if target_is_meta and target_device_obj is not None else target.device
+                if target_is_meta and target_device_obj is None:
+                    destination = torch.device("cpu")
+                prepared = tensor.to(device=destination, dtype=target.dtype)
+                if target_is_meta:
+                    assign_state[key] = prepared
+                else:
+                    target.copy_(prepared.to(device=target.device, dtype=target.dtype))
         else:
             target.copy_(tensor)
         applied.append(key)
         applied_bytes += _tensor_nbytes(target)
+    if assign_state:
+        try:
+            model.load_state_dict(assign_state, strict=False, assign=True)
+        except TypeError:
+            blockers.add("real_llm_stage_selective_meta_assignment_unsupported")
+            applied = []
+            applied_bytes = 0
+        except Exception:
+            blockers.add("real_llm_stage_selective_meta_assignment_failed")
+            applied = []
+            applied_bytes = 0
     ready = bool(
         applied
         and not unexpected_keys
@@ -824,6 +1262,7 @@ def _apply_stage_selective_tensors_to_model(
         "unknown_model_key_count": len(unknown_model_keys),
         "shape_mismatch_count": len(shape_mismatches),
         "dtype_conversion_count": int(dtype_conversions),
+        "meta_parameter_assignment_count": len(assign_state),
         "cross_stage_weight_keys_loaded": bool(unexpected_keys),
         "applied_weight_key_digest": _hash_payload(sorted(applied)),
         "applied_tensor_bytes": int(applied_bytes),
@@ -843,6 +1282,7 @@ def run_stage_selective_runtime_smoke(
     metadata: dict[str, Any] | None = None,
     prompt: str = "CrowdTensor routes home GPU",
     backend: str = BACKEND_CPU,
+    baseline_required: bool = True,
 ) -> dict[str, Any]:
     """Execute a two-stage Llama-like smoke using separately loaded stage models.
 
@@ -918,10 +1358,12 @@ def run_stage_selective_runtime_smoke(
         device=device,
         baseline_device=device,
         family=family,
+        baseline_required=baseline_required,
     )
+    baseline_ok = bool(result.get("baseline_match")) if baseline_required else bool(result.get("baseline_validation_skipped"))
     ready = bool(
         activation.get("activation_hash")
-        and result.get("baseline_match")
+        and baseline_ok
         and result.get("generated_token_count") == 1
     )
     return {
@@ -936,8 +1378,10 @@ def run_stage_selective_runtime_smoke(
         "stage_count": 2,
         "split_index": split_index,
         "generated_token_count": int(result.get("generated_token_count") or 0),
-        "baseline_match": bool(result.get("baseline_match")),
-        "decoded_tokens_match": bool(result.get("baseline_match")),
+        "baseline_match": bool(result.get("baseline_match")) if baseline_required else False,
+        "baseline_match_supported": bool(baseline_required),
+        "baseline_validation_skipped": bool(result.get("baseline_validation_skipped")),
+        "decoded_tokens_match": bool(result.get("baseline_match")) if baseline_required else False,
         "activation_transport_ready": bool(activation.get("activation_hash")),
         "activation_hash": str(activation.get("activation_hash") or ""),
         "output_hash": str(result.get("output_hash") or ""),
@@ -953,8 +1397,20 @@ def run_stage_selective_runtime_smoke(
             if ready
             else "real_llm_stage_selective_runtime_execution_not_ready",
             "activation_transport_ready" if activation.get("activation_hash") else "activation_transport_missing",
-            "baseline_match" if result.get("baseline_match") else "baseline_mismatch",
-            "decoded_tokens_match" if result.get("baseline_match") else "decoded_tokens_mismatch",
+            (
+                "baseline_match"
+                if result.get("baseline_match")
+                else "baseline_validation_skipped"
+                if result.get("baseline_validation_skipped")
+                else "baseline_mismatch"
+            ),
+            (
+                "decoded_tokens_match"
+                if result.get("baseline_match")
+                else "decoded_tokens_not_validated"
+                if result.get("baseline_validation_skipped")
+                else "decoded_tokens_mismatch"
+            ),
         ],
         "blockers": [] if ready else ["real_llm_stage_selective_runtime_execution_failed"],
     }
@@ -1017,6 +1473,16 @@ def _partial_weight_runtime_execution_ready(source: dict[str, Any]) -> bool:
             and raw.get("baseline_match")
             and raw.get("decoded_tokens_match")
         )
+    raw = source.get("stage_selective_hf_runtime")
+    if isinstance(raw, dict):
+        return bool(
+            raw.get("ready")
+            and raw.get("stage_selective_runtime_execution_ready")
+            and (
+                (raw.get("baseline_match") and raw.get("decoded_tokens_match"))
+                or raw.get("baseline_validation_skipped")
+            )
+        )
     return False
 
 
@@ -1053,7 +1519,8 @@ def real_llm_execution_support_summary(
             "real_llm_current_stage_split_supported",
             "real_llm_llama_like_stage_runtime_adapter_ready",
         ])
-        large_model_blockers.append("real_llm_llama_like_runtime_execution_missing")
+        if not runtime_execution_ready:
+            large_model_blockers.append("real_llm_llama_like_runtime_execution_missing")
     elif family == EXECUTION_FAMILY_UNKNOWN:
         diagnosis_codes.extend([
             "real_llm_unknown_execution_family",
@@ -2046,6 +2513,7 @@ def _stage1_result(
     device: Any,
     baseline_device: Any | None = None,
     family: str = EXECUTION_FAMILY_GPT2,
+    baseline_required: bool = True,
 ) -> dict[str, Any]:
     import torch  # type: ignore
 
@@ -2153,12 +2621,14 @@ def _stage1_result(
         hidden = transformer.norm(hidden) if family == EXECUTION_FAMILY_LLAMA_LIKE else transformer.ln_f(hidden)
         logits = model.lm_head(hidden)
         next_token_id = int(torch.argmax(logits[0, -1, :]).item())
-        baseline_target = baseline_model if baseline_model is not None else model
-        baseline_input_ids = input_ids.to(baseline_device) if baseline_device is not None else input_ids
-        baseline = baseline_target(input_ids=baseline_input_ids)
-        baseline_next_token_id = int(torch.argmax(baseline.logits[0, -1, :]).item())
+        baseline_next_token_id: int | None = None
+        if baseline_required or baseline_model is not None:
+            baseline_target = baseline_model if baseline_model is not None else model
+            baseline_input_ids = input_ids.to(baseline_device) if baseline_device is not None else input_ids
+            baseline = baseline_target(input_ids=baseline_input_ids)
+            baseline_next_token_id = int(torch.argmax(baseline.logits[0, -1, :]).item())
     next_text = tokenizer.decode([next_token_id], skip_special_tokens=False)
-    baseline_text = tokenizer.decode([baseline_next_token_id], skip_special_tokens=False)
+    baseline_text = tokenizer.decode([baseline_next_token_id], skip_special_tokens=False) if baseline_next_token_id is not None else ""
     prior_token_ids = [int(value) for value in list(activation.get("generated_token_ids") or [])]
     prior_text = str(activation.get("generated_text") or "")
     generated_token_ids = [*prior_token_ids, next_token_id]
@@ -2179,7 +2649,8 @@ def _stage1_result(
         "generated_token_count": len(generated_token_ids),
         "generated_text": generated_text,
         "generated_text_hash": _generated_text_hash(generated_text),
-        "baseline_match": next_token_id == baseline_next_token_id and next_text == baseline_text,
+        "baseline_match": bool(baseline_next_token_id is not None and next_token_id == baseline_next_token_id and next_text == baseline_text),
+        "baseline_validation_skipped": bool(baseline_next_token_id is None and not baseline_required),
         "baseline_device": str(baseline_device or device),
         "kv_cache_schema": "real_llm_stage1_kv_cache_v1",
         "kv_cache_ready": cache_ready,

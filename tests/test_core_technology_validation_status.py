@@ -166,11 +166,22 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
                     "kaggle_runtime_validation": False,
                     "large_model_validation": False,
                 },
+                "stage_selective_hf_runtime": {
+                    "ready": True,
+                    "stage_selective_runtime_execution_ready": True,
+                    "runtime_execution_scope": "real_hf_stage_selective_runtime",
+                    "generated_token_count": 1,
+                    "baseline_match": True,
+                    "decoded_tokens_match": True,
+                    "kaggle_runtime_validation": False,
+                    "large_model_validation": False,
+                },
                 "diagnosis_codes": [
                     "stage_selective_weight_loading_check_ready",
                     "real_llm_stage_selective_weight_materialization_ready",
                     "real_llm_stage_selective_weight_application_ready",
                     "real_llm_stage_selective_runtime_execution_ready",
+                    "real_llm_stage_selective_hf_runtime_ready",
                 ],
                 "blockers": [],
             },
@@ -332,11 +343,22 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
                     "kaggle_runtime_validation": False,
                     "large_model_validation": False,
                 },
+                "stage_selective_hf_runtime": {
+                    "ready": True,
+                    "stage_selective_runtime_execution_ready": True,
+                    "runtime_execution_scope": "real_hf_stage_selective_runtime",
+                    "generated_token_count": 1,
+                    "baseline_match": True,
+                    "decoded_tokens_match": True,
+                    "kaggle_runtime_validation": False,
+                    "large_model_validation": False,
+                },
                 "diagnosis_codes": [
                     "stage_selective_weight_loading_check_ready",
                     "real_llm_stage_selective_weight_materialization_ready",
                     "real_llm_stage_selective_weight_application_ready",
                     "real_llm_stage_selective_runtime_execution_ready",
+                    "real_llm_stage_selective_hf_runtime_ready",
                 ],
                 "blockers": [],
             },
@@ -363,9 +385,11 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         self.assertTrue(report["stage_selective_weight_loading_evidence"]["partial_weight_tensor_application_ready"])
         self.assertTrue(report["stage_selective_weight_loading_evidence"]["runtime_execution_validation"])
         self.assertTrue(report["stage_selective_weight_loading_evidence"]["stage_selective_runtime_ready"])
+        self.assertTrue(report["stage_selective_weight_loading_evidence"]["stage_selective_hf_runtime_ready"])
         self.assertFalse(report["stage_selective_weight_loading_evidence"]["kaggle_runtime_validation"])
         self.assertTrue(report["readiness_truth"]["stage_selective_weight_loading_is_not_7b_8b_completion"])
         self.assertTrue(report["readiness_truth"]["stage_selective_runtime_is_not_7b_8b_completion"])
+        self.assertTrue(report["readiness_truth"]["stage_selective_hf_runtime_is_not_7b_8b_completion"])
         self.assertNotIn("real_llm_partial_weight_runtime_execution_missing", report["blockers"])
         self.assertIn("core_7b_8b_real_runtime_not_verified", report["blockers"])
         check.validate_report(report)
