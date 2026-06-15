@@ -28,6 +28,10 @@ DEFAULT_SEVEN_B_BLOCKER_REPORT = (
     "dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-inplace-20260613/"
     "large_model_kaggle_validation_run_normalized.json"
 )
+DEFAULT_LLAMA_LIKE_LOCAL_REPORT = (
+    "dist/real-llm-llama-like-local-smoke-20260615/"
+    "real_llm_sharded_evidence.json"
+)
 
 REDACTION_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
@@ -134,7 +138,9 @@ def summarize_small_gpu(report: dict[str, Any], meta: dict[str, Any], path: Path
         "kaggle_kernels_deleted": "kaggle_kernels_deleted" in codes,
         "external_runtime_verified": "external_runtime_verified" in codes,
         "large_model_sharded_execution_ready": bool(support.get("large_model_sharded_execution_ready")),
+        "partial_weight_loading_plan_ready": bool(support.get("partial_weight_loading_plan_ready")),
         "true_partial_weight_loading_ready": bool(support.get("true_partial_weight_loading_ready")),
+        "partial_weight_runtime_execution_ready": bool(support.get("partial_weight_runtime_execution_ready")),
         "large_model_blockers": support.get("large_model_blockers") or [],
         "diagnosis_codes": sorted(codes),
     }
@@ -175,18 +181,52 @@ def summarize_seven_b_blocker(report: dict[str, Any], meta: dict[str, Any], path
     }
 
 
+def summarize_llama_like_local(report: dict[str, Any], meta: dict[str, Any], path: Path) -> dict[str, Any]:
+    artifact = report.get("artifact") if isinstance(report.get("artifact"), dict) else {}
+    generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
+    codes = set(report.get("diagnosis_codes") or [])
+    model_id = str(artifact.get("model_id") or (report.get("session") or {}).get("model_id") or "")
+    ready = bool(
+        meta.get("ok")
+        and report.get("ok") is True
+        and "real_llm_sharded_ready" in codes
+        and "stage_local_partition_ready" in codes
+        and "decoded_tokens_match" in codes
+        and model_id
+        and model_id != "gpt2-xl"
+    )
+    return {
+        "ready": ready,
+        "report_path": str(path),
+        "report_sha256": sha256_file(path) if path.is_file() else "",
+        "schema": report.get("schema", ""),
+        "model_id": model_id,
+        "backend": artifact.get("backend") or "",
+        "partition_mode": artifact.get("partition_mode") or "",
+        "stage_local_partition_ready": "stage_local_partition_ready" in codes,
+        "decoded_tokens_match": "decoded_tokens_match" in codes,
+        "generated_token_count": int(generation.get("generated_token_count") or 0),
+        "large_model_validation": False,
+        "diagnosis_codes": sorted(codes),
+    }
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     small_path = Path(args.small_gpu_report)
     seven_path = Path(args.seven_b_blocker_report)
+    llama_local_path = Path(args.llama_like_local_report)
     small_report, small_meta = try_load(small_path)
     seven_report, seven_meta = try_load(seven_path)
+    llama_local_report, llama_local_meta = try_load(llama_local_path)
     small = summarize_small_gpu(small_report, small_meta, small_path)
     seven = summarize_seven_b_blocker(seven_report, seven_meta, seven_path)
+    llama_local = summarize_llama_like_local(llama_local_report, llama_local_meta, llama_local_path)
     input_leaks = {
         "small_gpu_report": public_redaction_errors(small_report) if small_report else [],
         "seven_b_blocker_report": public_redaction_errors(seven_report) if seven_report else [],
+        "llama_like_local_report": public_redaction_errors(llama_local_report) if llama_local_report else [],
     }
 
     core_ready = bool(
@@ -216,6 +256,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         blockers.append("kaggle_single_container_memory_pressure")
     if "real_llm_true_partial_weight_loading_missing" in small.get("large_model_blockers", []):
         blockers.append("real_llm_true_partial_weight_loading_missing")
+    if small.get("partial_weight_loading_plan_ready") and not small.get("partial_weight_runtime_execution_ready"):
+        blockers.append("real_llm_partial_weight_runtime_execution_missing")
 
     report = {
         "schema": SCHEMA,
@@ -227,12 +269,17 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "seven_b_eight_b_validated": bool(seven["real_7b_runtime_verified"]),
         "largest_successful_tier": "small" if small["ready"] else "",
         "small_tier_evidence": small,
+        "llama_like_local_evidence": llama_local,
         "seven_b_eight_b_blocker_evidence": seven,
         "blockers": sorted(set(blockers)),
         "diagnosis_codes": sorted(set(diagnosis_codes)),
         "readiness_truth": {
             "do_not_treat_core_layer_complete": not core_ready,
             "small_tier_success_is_not_7b_8b_completion": bool(small["ready"] and not seven["real_7b_runtime_verified"]),
+            "partial_weight_plan_is_not_runtime_execution": bool(
+                small.get("partial_weight_loading_plan_ready")
+                and not small.get("partial_weight_runtime_execution_ready")
+            ),
             "thirteen_b_validated": False,
             "production_swarm_inference_claimed": False,
         },
@@ -313,6 +360,7 @@ def build_support_bundle(report: dict[str, Any]) -> dict[str, Any]:
 
 def render_markdown(report: dict[str, Any]) -> str:
     small = report.get("small_tier_evidence") if isinstance(report.get("small_tier_evidence"), dict) else {}
+    llama_local = report.get("llama_like_local_evidence") if isinstance(report.get("llama_like_local_evidence"), dict) else {}
     seven = report.get("seven_b_eight_b_blocker_evidence") if isinstance(report.get("seven_b_eight_b_blocker_evidence"), dict) else {}
     lines = [
         "# CrowdTensor Core Technology Validation Status",
@@ -331,6 +379,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- backend: `{small.get('backend', '')}`",
         f"- generated tokens: `{small.get('generated_token_count', 0)}`",
         f"- cleanup: `{small.get('kaggle_kernels_deleted')}`",
+        "",
+        "## Llama-Like Local Stage Runtime Evidence",
+        "",
+        f"- report: `{llama_local.get('report_path', '')}`",
+        f"- model: `{llama_local.get('model_id', '')}`",
+        f"- backend: `{llama_local.get('backend', '')}`",
+        f"- stage-local partition ready: `{llama_local.get('stage_local_partition_ready')}`",
+        f"- decoded tokens match: `{llama_local.get('decoded_tokens_match')}`",
+        f"- large model validation: `{llama_local.get('large_model_validation')}`",
         "",
         "## 7B/8B Evidence",
         "",
@@ -351,6 +408,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--small-gpu-report", default=DEFAULT_SMALL_GPU_REPORT)
     parser.add_argument("--seven-b-blocker-report", default=DEFAULT_SEVEN_B_BLOCKER_REPORT)
+    parser.add_argument("--llama-like-local-report", default=DEFAULT_LLAMA_LIKE_LOCAL_REPORT)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 

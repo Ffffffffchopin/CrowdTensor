@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import scripts.real_llm_sharded_inference_evidence_pack as pack
 
@@ -36,6 +37,47 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
             str(raised.exception),
             "real_llm_sharded_inference_evidence accepts either --prompt-texts or --prompt-texts-file, not both",
         )
+
+    def test_base_invite_kwargs_forwards_non_default_real_llm_model_policy(self) -> None:
+        args = pack.parse_args([
+            "--hf-model-id",
+            "hf-internal-testing/tiny-random-LlamaForCausalLM",
+            "--real-llm-backend",
+            "hf_transformers_cpu",
+        ])
+
+        kwargs = pack.base.invite_kwargs(args)
+
+        self.assertEqual(kwargs["hf_model_id"], "hf-internal-testing/tiny-random-LlamaForCausalLM")
+        self.assertEqual(kwargs["backend"], "cpu")
+
+    def test_run_evidence_creates_real_llm_invites_with_requested_hf_model(self) -> None:
+        args = pack.parse_args([
+            "--hf-model-id",
+            "hf-internal-testing/tiny-random-LlamaForCausalLM",
+            "--real-llm-backend",
+            "hf_transformers_cpu",
+            "--state-dir",
+            tempfile.mkdtemp(prefix="crowdtensor_real_llm_invite_test_"),
+        ])
+
+        created: list[dict] = []
+
+        def fake_create_invite(**kwargs):  # noqa: ANN001, ANN202
+            created.append(dict(kwargs))
+            return {"miner_id": kwargs["miner_id"], "token": "token", "join_policy": kwargs}
+
+        def stop_run(*_: object, **__: object) -> None:
+            raise RuntimeError("stop after invite creation")
+
+        with mock.patch.object(pack.base, "create_invite", side_effect=fake_create_invite):
+            with mock.patch.object(pack.base, "start_coordinator", side_effect=stop_run):
+                with self.assertRaisesRegex(RuntimeError, "stop after invite creation"):
+                    pack.run_evidence(args)
+
+        self.assertEqual(len(created), 3)
+        self.assertTrue(all(row["hf_model_id"] == "hf-internal-testing/tiny-random-LlamaForCausalLM" for row in created))
+        self.assertTrue(all(row["backend"] == "cpu" for row in created))
 
     def test_report_redacts_generated_text_and_token_payloads(self) -> None:
         args = type("Args", (), {

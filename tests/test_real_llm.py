@@ -35,7 +35,7 @@ class RealLlmTests(unittest.TestCase):
         self.assertEqual(artifact["cuda_runtime"]["diagnosis_codes"], ["cuda_runtime_deferred_to_miner"])
         self.assertTrue(str(artifact["artifact_hash"]).startswith("sha256:"))
 
-    def test_large_llama_like_metadata_reports_stage_adapter_gap(self) -> None:
+    def test_large_llama_like_metadata_without_weight_index_reports_partial_runtime_gap(self) -> None:
         summary = real_llm.real_llm_execution_support_summary(
             {
                 "model_id": "Qwen/Qwen2.5-7B-Instruct",
@@ -48,12 +48,80 @@ class RealLlmTests(unittest.TestCase):
         )
 
         self.assertEqual(summary["execution_family"], real_llm.EXECUTION_FAMILY_LLAMA_LIKE)
-        self.assertFalse(summary["current_stage_split_supported"])
+        self.assertTrue(summary["current_stage_split_supported"])
         self.assertFalse(summary["large_model_sharded_execution_ready"])
         self.assertTrue(summary["large_model_candidate"])
         self.assertEqual(summary["stage_local_load_strategy"], "full_model_cpu_load_then_stage_module_device_move")
-        self.assertIn("real_llm_llama_like_stage_adapter_missing", summary["blockers"])
-        self.assertIn("real_llm_large_model_stage_adapter_missing", summary["diagnosis_codes"])
+        self.assertIn("real_llm_true_partial_weight_loading_missing", summary["large_model_blockers"])
+        self.assertIn("real_llm_llama_like_runtime_execution_missing", summary["large_model_blockers"])
+        self.assertIn("real_llm_llama_like_stage_runtime_adapter_ready", summary["diagnosis_codes"])
+
+    def test_llama_like_partial_weight_plan_maps_stage_owned_safetensor_keys(self) -> None:
+        weight_map = {
+            "model.embed_tokens.weight": "model-00001-of-00004.safetensors",
+            "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.0.mlp.down_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.1.self_attn.q_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.1.mlp.down_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.2.self_attn.q_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.2.mlp.down_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.3.self_attn.q_proj.weight": "model-00004-of-00004.safetensors",
+            "model.layers.3.mlp.down_proj.weight": "model-00004-of-00004.safetensors",
+            "model.norm.weight": "model-00004-of-00004.safetensors",
+            "lm_head.weight": "model-00004-of-00004.safetensors",
+        }
+        metadata = {
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 4,
+            "hidden_size": 3584,
+            "split_index": 2,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "weight_map": weight_map,
+        }
+
+        plan = real_llm.real_llm_partial_weight_loading_plan(metadata)
+
+        self.assertEqual(plan["schema"], real_llm.REAL_LLM_PARTIAL_WEIGHT_PLAN_SCHEMA_VERSION)
+        self.assertTrue(plan["ready"])
+        self.assertFalse(plan["runtime_execution_ready"])
+        self.assertEqual(plan["execution_family"], real_llm.EXECUTION_FAMILY_LLAMA_LIKE)
+        self.assertEqual(plan["weight_file_count"], 4)
+        self.assertEqual(plan["stage_plans"][0]["stage_layer_range"], [0, 2])
+        self.assertEqual(plan["stage_plans"][1]["stage_layer_range"], [2, 4])
+        self.assertTrue(plan["stage_plans"][0]["loads_only_stage_weight_keys"])
+        self.assertTrue(plan["stage_plans"][1]["loads_only_stage_weight_keys"])
+        self.assertIn("model-00001-of-00004.safetensors", plan["stage_plans"][0]["assigned_weight_files"])
+        self.assertIn("model-00004-of-00004.safetensors", plan["stage_plans"][1]["assigned_weight_files"])
+
+        summary = real_llm.real_llm_execution_support_summary(metadata)
+        self.assertTrue(summary["partial_weight_loading_plan_ready"])
+        self.assertFalse(summary["true_partial_weight_loading_ready"])
+        self.assertFalse(summary["large_model_sharded_execution_ready"])
+        self.assertEqual(summary["stage_local_load_strategy"], "stage_weight_index_selective_load_plan")
+        self.assertNotIn("real_llm_true_partial_weight_loading_missing", summary["large_model_blockers"])
+        self.assertIn("real_llm_llama_like_runtime_execution_missing", summary["large_model_blockers"])
+        self.assertIn("real_llm_llama_like_partial_weight_plan_ready", summary["diagnosis_codes"])
+
+    def test_partial_weight_plan_without_weight_index_keeps_true_partial_blocker(self) -> None:
+        metadata = {
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 28,
+            "hidden_size": 3584,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+        }
+
+        plan = real_llm.real_llm_partial_weight_loading_plan(metadata)
+        summary = real_llm.real_llm_execution_support_summary(metadata)
+
+        self.assertFalse(plan["ready"])
+        self.assertIn("real_llm_partial_weight_plan_weight_map_missing", plan["blockers"])
+        self.assertFalse(summary["partial_weight_loading_plan_ready"])
+        self.assertIn("real_llm_true_partial_weight_loading_missing", summary["large_model_blockers"])
+        self.assertIn("real_llm_llama_like_runtime_execution_missing", summary["large_model_blockers"])
 
     def test_gpt2_model_id_variant_stays_supported_without_config_metadata(self) -> None:
         summary = real_llm.real_llm_execution_support_summary({"model_id": "distilgpt2"})
@@ -84,14 +152,14 @@ class RealLlmTests(unittest.TestCase):
         artifact = {
             "schema": real_llm.REAL_LLM_ARTIFACT_SCHEMA_VERSION,
             "artifact_hash": "sha256:qwen-test",
-            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "model_id": "bert-base-uncased",
             "backend": real_llm.BACKEND_CPU,
             "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
-            "model_type": "qwen2",
-            "architectures": ["Qwen2ForCausalLM"],
-            "split_index": 14,
-            "num_hidden_layers": 28,
-            "hidden_size": 3584,
+            "model_type": "bert",
+            "architectures": ["BertModel"],
+            "split_index": 6,
+            "num_hidden_layers": 12,
+            "hidden_size": 768,
         }
         spec = real_llm.real_llm_sharded_inference_spec_for(
             "task-qwen",
@@ -102,10 +170,65 @@ class RealLlmTests(unittest.TestCase):
         )
 
         with mock.patch.object(real_llm, "_load_model_and_tokenizer") as load_model:
-            with self.assertRaisesRegex(ValueError, "execution_family=llama_like"):
+            with self.assertRaisesRegex(ValueError, "execution_family=unsupported_hf_causal_lm"):
                 real_llm.run_real_llm_sharded_inference(spec)
 
         load_model.assert_not_called()
+
+    def test_llama_like_stage_runtime_adapter_runs_tiny_random_llama(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        model_id = "hf-internal-testing/tiny-random-LlamaForCausalLM"
+        try:
+            artifact = real_llm.inspect_real_llm_artifact(
+                model_id=model_id,
+                backend=real_llm.BACKEND_CPU,
+                require_runtime=True,
+            )
+        except Exception as exc:  # pragma: no cover - depends on optional HF cache/network
+            self.skipTest(f"tiny random Llama unavailable: {exc}")
+        artifact["partition_mode"] = real_llm.PARTITION_MODE_STAGE_LOCAL
+        artifact["artifact_hash"] = "sha256:test-llama-like-stage-runtime"
+        self.assertEqual(artifact["execution_family"], real_llm.EXECUTION_FAMILY_LLAMA_LIKE)
+        self.assertTrue(artifact["execution_support"]["current_stage_split_supported"])
+
+        stage0_spec = real_llm.real_llm_sharded_inference_spec_for(
+            "llama-stage0-task",
+            "llama-stage0-miner",
+            artifact,
+            request_count=1,
+            prompt_texts=["CrowdTensor routes home GPU"],
+            session_id="llama-session-test",
+            stage_id=0,
+            max_new_tokens=1,
+            generation_step=0,
+        )
+        stage0_result = real_llm.run_real_llm_sharded_inference(stage0_spec)
+        activation = stage0_result["activation_results"][0]
+        self.assertEqual(stage0_result["execution_family"], real_llm.EXECUTION_FAMILY_LLAMA_LIKE)
+        self.assertTrue(stage0_result["activation_transport_ready"])
+        self.assertEqual(activation["kv_cache_disabled_reason"], "llama_like_stage_cache_not_implemented")
+
+        stage1_spec = real_llm.real_llm_sharded_inference_spec_for(
+            "llama-stage1-task",
+            "llama-stage1-miner",
+            artifact,
+            request_count=1,
+            session_id="llama-session-test",
+            stage_id=1,
+            parent_task_id="llama-stage0-task",
+            max_new_tokens=1,
+            generation_step=0,
+            activation_results=[activation],
+        )
+        stage1_result = real_llm.run_real_llm_sharded_inference(stage1_spec)
+
+        self.assertEqual(stage1_result["execution_family"], real_llm.EXECUTION_FAMILY_LLAMA_LIKE)
+        self.assertTrue(stage1_result["baseline_match"])
+        self.assertTrue(stage1_result["decoded_tokens_match"])
+        self.assertEqual(stage1_result["generated_token_count"], 1)
 
     def test_sharded_spec_preserves_generation_controls(self) -> None:
         artifact = {

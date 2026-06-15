@@ -13,18 +13,25 @@ the still-blocked 7B/8B validation, build or inspect:
 
 ```bash
 python scripts/core_technology_validation_status_pack.py \
-  --output-dir dist/core-technology-validation-status-20260614 \
+  --output-dir dist/core-technology-validation-status-20260615 \
   --json
 python scripts/core_technology_validation_status_check.py \
-  --report dist/core-technology-validation-status-20260614/core_technology_validation_status.json \
+  --report dist/core-technology-validation-status-20260615/core_technology_validation_status.json \
   --json
 ```
 
 The retained status artifact is
-`dist/core-technology-validation-status-20260614/core_technology_validation_status.json`.
+`dist/core-technology-validation-status-20260615/core_technology_validation_status.json`.
 It should report `small_tier_gpu_validated=true`,
+`llama_like_local_evidence.ready=true`,
 `seven_b_eight_b_validated=false`, and `core_validation_ready=false` until a
 real 7B/8B sharded large-model run succeeds.
+
+The local Llama-like stage-runtime smoke evidence is retained at
+`dist/real-llm-llama-like-local-smoke-20260615/real_llm_sharded_evidence.json`.
+It proves two local CPU stage Miners can run a tiny Llama-like HF causal LM with
+stage-local partitioning and decoded-token baseline match. It is not 7B/8B
+validation and must not be used to mark the core layer complete.
 
 ```bash
 crowdtensor large-model-shard --output-dir dist/large-model-shard-alpha --json

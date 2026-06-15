@@ -11,12 +11,14 @@ import hashlib
 import inspect
 import json
 import time
+from pathlib import Path
 from typing import Any
 
 
 REAL_LLM_ARTIFACT_SCHEMA_VERSION = "real_llm_artifact_v1"
 REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION = "real_llm_sharded_infer_v1"
 REAL_LLM_ACTIVATION_SCHEMA_VERSION = "real_llm_activation_v1"
+REAL_LLM_PARTIAL_WEIGHT_PLAN_SCHEMA_VERSION = "real_llm_partial_weight_plan_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 BACKEND_CPU = "hf_transformers_cpu"
 BACKEND_CUDA = "hf_transformers_cuda"
@@ -47,7 +49,8 @@ EXECUTION_FAMILY_GPT2 = "gpt2"
 EXECUTION_FAMILY_LLAMA_LIKE = "llama_like"
 EXECUTION_FAMILY_UNSUPPORTED_HF_CAUSAL_LM = "unsupported_hf_causal_lm"
 EXECUTION_FAMILY_UNKNOWN = "unknown"
-SUPPORTED_EXECUTION_FAMILIES = {EXECUTION_FAMILY_GPT2}
+SUPPORTED_EXECUTION_FAMILIES = {EXECUTION_FAMILY_GPT2, EXECUTION_FAMILY_LLAMA_LIKE}
+PARTIAL_WEIGHT_PLAN_FAMILIES = {EXECUTION_FAMILY_GPT2, EXECUTION_FAMILY_LLAMA_LIKE}
 LLAMA_LIKE_MODEL_TYPES = {
     "gemma",
     "gemma2",
@@ -69,6 +72,19 @@ GPT2_PARAMETER_ESTIMATE_BY_MODEL_ID = {
     "openai-community/gpt2-large": 774_000_000,
     "gpt2-xl": 1_558_000_000,
     "openai-community/gpt2-xl": 1_558_000_000,
+}
+LLAMA_LIKE_PARAMETER_ESTIMATE_BY_MODEL_ID = {
+    "qwen/qwen2.5-7b-instruct": 7_615_000_000,
+    "qwen/qwen2.5-7b": 7_615_000_000,
+    "qwen2.5-7b-instruct": 7_615_000_000,
+    "qwen2.5-7b": 7_615_000_000,
+    "meta-llama/llama-2-7b-hf": 6_738_000_000,
+    "meta-llama/meta-llama-3-8b": 8_030_000_000,
+    "meta-llama/meta-llama-3-8b-instruct": 8_030_000_000,
+    "meta-llama/llama-3.1-8b": 8_030_000_000,
+    "meta-llama/llama-3.1-8b-instruct": 8_030_000_000,
+    "mistralai/mistral-7b-v0.1": 7_240_000_000,
+    "mistralai/mistral-7b-instruct-v0.2": 7_240_000_000,
 }
 SMALL_TIER_MIN_PARAMETERS = 1_000_000_000
 SMALL_TIER_MAX_PARAMETERS = 3_000_000_000
@@ -259,6 +275,8 @@ def estimate_parameter_count_from_metadata(metadata: dict[str, Any], *, family: 
     model_id = str(source.get("model_id") or "").strip().lower()
     if model_id in GPT2_PARAMETER_ESTIMATE_BY_MODEL_ID:
         return int(GPT2_PARAMETER_ESTIMATE_BY_MODEL_ID[model_id])
+    if model_id in LLAMA_LIKE_PARAMETER_ESTIMATE_BY_MODEL_ID:
+        return int(LLAMA_LIKE_PARAMETER_ESTIMATE_BY_MODEL_ID[model_id])
     if resolved_family != EXECUTION_FAMILY_GPT2:
         return 0
     layer_count = _first_positive_int(source, "num_hidden_layers", "n_layer", "n_layers")
@@ -274,6 +292,177 @@ def estimate_parameter_count_from_metadata(metadata: dict[str, Any], *, family: 
     return int(embedding_parameters + position_parameters + block_parameters + final_norm_parameters)
 
 
+def _weight_map_from_metadata(metadata: dict[str, Any]) -> dict[str, str]:
+    raw_map = (
+        metadata.get("weight_map")
+        or metadata.get("safetensors_weight_map")
+        or metadata.get("hf_weight_map")
+        or {}
+    )
+    if not isinstance(raw_map, dict):
+        return {}
+    weight_map: dict[str, str] = {}
+    for key, value in raw_map.items():
+        key_text = str(key or "").strip()
+        value_text = str(value or "").strip()
+        if key_text and value_text:
+            weight_map[key_text] = Path(value_text).name
+    return weight_map
+
+
+def _layer_count_from_metadata(metadata: dict[str, Any]) -> int:
+    return _first_positive_int(metadata, "num_hidden_layers", "n_layer", "n_layers")
+
+
+def _split_index_for_layer_count(metadata: dict[str, Any], layer_count: int) -> int:
+    if layer_count < 2:
+        return 0
+    try:
+        raw_split = int(metadata.get("split_index") or 0)
+    except (TypeError, ValueError):
+        raw_split = 0
+    split = raw_split if raw_split > 0 else max(1, layer_count // 2)
+    return max(1, min(split, layer_count - 1))
+
+
+def _stage_weight_prefixes(family: str, *, stage_id: int, split_index: int, layer_count: int) -> tuple[list[str], tuple[int, int], list[str]]:
+    stage = int(stage_id)
+    split = max(1, min(int(split_index), int(layer_count) - 1)) if int(layer_count) >= 2 else 0
+    if family == EXECUTION_FAMILY_GPT2:
+        if stage == 0:
+            return (
+                ["transformer.wte.", "transformer.wpe.", *[f"transformer.h.{index}." for index in range(split)]],
+                (0, split),
+                ["token_embedding", "position_embedding", "transformer_blocks_prefix"],
+            )
+        return (
+            [*[f"transformer.h.{index}." for index in range(split, layer_count)], "transformer.ln_f.", "lm_head."],
+            (split, layer_count),
+            ["transformer_blocks_suffix", "final_norm", "lm_head"],
+        )
+    if family == EXECUTION_FAMILY_LLAMA_LIKE:
+        if stage == 0:
+            return (
+                ["model.embed_tokens.", *[f"model.layers.{index}." for index in range(split)]],
+                (0, split),
+                ["token_embedding", "decoder_layers_prefix"],
+            )
+        return (
+            [*[f"model.layers.{index}." for index in range(split, layer_count)], "model.norm.", "lm_head."],
+            (split, layer_count),
+            ["decoder_layers_suffix", "final_norm", "lm_head"],
+        )
+    return ([], (0, 0), [])
+
+
+def real_llm_partial_weight_loading_plan(
+    metadata: dict[str, Any] | None = None,
+    *,
+    partition_mode: str | None = None,
+) -> dict[str, Any]:
+    """Return a public-safe plan for loading only stage-owned HF weights.
+
+    This is intentionally a planning contract, not runtime proof. It maps a
+    Hugging Face safetensors-style weight index to the exact key prefixes and
+    shard filenames each two-stage miner would need. Runtime readiness remains
+    false until the stage runner actually executes from this plan.
+    """
+
+    source = dict(metadata or {})
+    mode = normalize_partition_mode(partition_mode or source.get("partition_mode") or PARTITION_MODE_FULL)
+    family = execution_family_from_metadata(source)
+    layer_count = _layer_count_from_metadata(source)
+    split = _split_index_for_layer_count(source, layer_count)
+    weight_map = _weight_map_from_metadata(source)
+    parameter_count_estimate = estimate_parameter_count_from_metadata(source, family=family)
+    estimated_weight_bytes = parameter_count_estimate * FP32_BYTES_PER_PARAMETER
+    stage_plans: list[dict[str, Any]] = []
+    all_keys = set(weight_map)
+    all_files = set(weight_map.values())
+    assigned_all_keys: set[str] = set()
+    plan_family_supported = family in PARTIAL_WEIGHT_PLAN_FAMILIES
+    for stage_id in (0, 1):
+        prefixes, layer_range, module_kinds = _stage_weight_prefixes(
+            family,
+            stage_id=stage_id,
+            split_index=split,
+            layer_count=layer_count,
+        )
+        assigned = sorted(
+            key for key in weight_map if any(key.startswith(prefix) for prefix in prefixes)
+        )
+        assigned_files = sorted({weight_map[key] for key in assigned if weight_map.get(key)})
+        assigned_all_keys.update(assigned)
+        missing_prefixes = sorted(
+            prefix for prefix in prefixes if not any(key.startswith(prefix) for key in assigned)
+        )
+        expected_fraction = 0.0
+        if layer_count > 0:
+            expected_fraction = round((layer_range[1] - layer_range[0]) / float(layer_count), 8)
+        stage_plans.append({
+            "stage_id": stage_id,
+            "stage_layer_range": [int(layer_range[0]), int(layer_range[1])],
+            "stage_layer_range_format": "start_inclusive_end_exclusive",
+            "stage_module_kinds": module_kinds,
+            "expected_key_prefixes": prefixes,
+            "assigned_weight_key_count": len(assigned),
+            "assigned_weight_file_count": len(assigned_files),
+            "assigned_weight_files": assigned_files,
+            "missing_required_prefixes": missing_prefixes,
+            "loads_only_stage_weight_keys": bool(assigned and not missing_prefixes),
+            "expected_decoder_layer_fraction": expected_fraction,
+            "estimated_stage_weight_bytes_fp32": int(round(estimated_weight_bytes * max(expected_fraction, 0.5 if layer_count <= 0 else 0))),
+        })
+    unassigned = sorted(all_keys - assigned_all_keys)
+    plan_ready = bool(
+        mode == PARTITION_MODE_STAGE_LOCAL
+        and plan_family_supported
+        and layer_count >= 2
+        and weight_map
+        and all(not stage["missing_required_prefixes"] for stage in stage_plans)
+    )
+    diagnosis_codes: list[str] = []
+    blockers: list[str] = []
+    if plan_ready:
+        diagnosis_codes.append("real_llm_partial_weight_plan_ready")
+        if family == EXECUTION_FAMILY_LLAMA_LIKE:
+            diagnosis_codes.append("real_llm_llama_like_partial_weight_plan_ready")
+    else:
+        diagnosis_codes.append("real_llm_partial_weight_plan_not_ready")
+        if mode != PARTITION_MODE_STAGE_LOCAL:
+            blockers.append("real_llm_partial_weight_plan_requires_stage_local")
+        if not plan_family_supported:
+            blockers.append("real_llm_partial_weight_plan_family_unsupported")
+        if layer_count < 2:
+            blockers.append("real_llm_partial_weight_plan_layer_metadata_missing")
+        if not weight_map:
+            blockers.append("real_llm_partial_weight_plan_weight_map_missing")
+        if any(stage["missing_required_prefixes"] for stage in stage_plans):
+            blockers.append("real_llm_partial_weight_plan_required_keys_missing")
+    return {
+        "schema": REAL_LLM_PARTIAL_WEIGHT_PLAN_SCHEMA_VERSION,
+        "ready": plan_ready,
+        "runtime_execution_ready": False,
+        "model_id": str(source.get("model_id") or ""),
+        "execution_family": family,
+        "partition_mode": mode,
+        "stage_count": 2,
+        "num_hidden_layers": layer_count,
+        "split_index": split,
+        "parameter_count_estimate": parameter_count_estimate,
+        "estimated_weight_bytes_fp32": estimated_weight_bytes,
+        "weight_index_available": bool(weight_map),
+        "weight_key_count": len(weight_map),
+        "weight_file_count": len(all_files),
+        "unassigned_weight_key_count": len(unassigned),
+        "unassigned_weight_key_samples": unassigned[:8],
+        "stage_plans": stage_plans,
+        "diagnosis_codes": sorted(set(diagnosis_codes)),
+        "blockers": sorted(set(blockers)),
+        "public_safe": True,
+    }
+
+
 def real_llm_execution_support_summary(
     metadata: dict[str, Any] | None = None,
     *,
@@ -284,13 +473,15 @@ def real_llm_execution_support_summary(
     family = execution_family_from_metadata(source)
     current_supported = family in SUPPORTED_EXECUTION_FAMILIES
     parameter_count_estimate = estimate_parameter_count_from_metadata(source, family=family)
+    partial_plan = real_llm_partial_weight_loading_plan(source, partition_mode=mode)
+    partial_plan_ready = bool(partial_plan.get("ready"))
     small_tier_candidate = bool(
         SMALL_TIER_MIN_PARAMETERS <= parameter_count_estimate <= SMALL_TIER_MAX_PARAMETERS
     )
     large_candidate = _large_model_candidate_from_metadata(source, family=family)
     diagnosis_codes: list[str] = []
     blockers: list[str] = []
-    large_model_blockers: list[str] = ["real_llm_true_partial_weight_loading_missing"]
+    large_model_blockers: list[str] = [] if partial_plan_ready else ["real_llm_true_partial_weight_loading_missing"]
     if family == EXECUTION_FAMILY_GPT2:
         diagnosis_codes.extend([
             "real_llm_gpt2_execution_family",
@@ -299,10 +490,10 @@ def real_llm_execution_support_summary(
     elif family == EXECUTION_FAMILY_LLAMA_LIKE:
         diagnosis_codes.extend([
             "real_llm_llama_like_execution_family",
-            "real_llm_current_stage_split_unsupported",
+            "real_llm_current_stage_split_supported",
+            "real_llm_llama_like_stage_runtime_adapter_ready",
         ])
-        blockers.append("real_llm_llama_like_stage_adapter_missing")
-        large_model_blockers.append("real_llm_llama_like_stage_adapter_missing")
+        large_model_blockers.append("real_llm_llama_like_runtime_execution_missing")
     elif family == EXECUTION_FAMILY_UNKNOWN:
         diagnosis_codes.extend([
             "real_llm_unknown_execution_family",
@@ -318,11 +509,21 @@ def real_llm_execution_support_summary(
         blockers.append("real_llm_execution_architecture_unsupported")
         large_model_blockers.append("real_llm_execution_architecture_unsupported")
     if mode == PARTITION_MODE_STAGE_LOCAL:
-        diagnosis_codes.append("real_llm_stage_local_full_model_cpu_load_required")
+        if partial_plan_ready:
+            diagnosis_codes.append("real_llm_stage_local_partial_weight_plan_ready")
+        else:
+            diagnosis_codes.append("real_llm_stage_local_full_model_cpu_load_required")
+    diagnosis_codes.extend(str(code) for code in partial_plan.get("diagnosis_codes") or [])
     if large_candidate:
         diagnosis_codes.append("real_llm_large_model_candidate_detected")
         if not current_supported:
-            diagnosis_codes.append("real_llm_large_model_stage_adapter_missing")
+            diagnosis_codes.append(
+                "real_llm_large_model_runtime_stage_adapter_missing"
+                if partial_plan_ready
+                else "real_llm_large_model_stage_adapter_missing"
+            )
+        elif partial_plan_ready and not bool(partial_plan.get("runtime_execution_ready")):
+            diagnosis_codes.append("real_llm_large_model_partial_weight_runtime_missing")
     else:
         diagnosis_codes.append("real_llm_tiny_or_small_model_candidate")
     if small_tier_candidate:
@@ -339,11 +540,16 @@ def real_llm_execution_support_summary(
         "estimated_weight_bytes_fp32": estimated_weight_bytes,
         "stage_local_estimated_stage_weight_bytes_fp32": estimated_stage_weight_bytes,
         "stage_local_load_strategy": (
-            "full_model_cpu_load_then_stage_module_device_move"
+            "stage_weight_index_selective_load_plan"
+            if mode == PARTITION_MODE_STAGE_LOCAL and partial_plan_ready
+            else "full_model_cpu_load_then_stage_module_device_move"
             if mode == PARTITION_MODE_STAGE_LOCAL
             else "full_model_load"
         ),
+        "partial_weight_loading_plan_ready": partial_plan_ready,
+        "partial_weight_loading_plan": partial_plan,
         "true_partial_weight_loading_ready": False,
+        "partial_weight_runtime_execution_ready": False,
         "small_tier_candidate": small_tier_candidate,
         "kaggle_small_tier_supported_by_current_split": bool(small_tier_candidate and current_supported),
         "large_model_candidate": large_candidate,
@@ -412,6 +618,12 @@ def _block_output_hidden_and_present(output: Any) -> tuple[Any, Any | None]:
     if present is None and isinstance(output, (tuple, list)) and len(output) > 1:
         present = output[1]
     return hidden, present
+
+
+def _decoder_output_hidden(output: Any) -> Any:
+    if isinstance(output, (tuple, list)):
+        return output[0]
+    return output
 
 
 def _new_dynamic_cache(
@@ -539,6 +751,65 @@ def _call_gpt2_block(
     return block(hidden, use_cache=use_cache)
 
 
+def _causal_attention_mask(*, token_count: int, dtype: Any, device: Any) -> Any:
+    import torch  # type: ignore
+
+    count = max(1, int(token_count))
+    mask = torch.full((count, count), torch.finfo(dtype).min, dtype=dtype, device=device)
+    mask = torch.triu(mask, diagonal=1)
+    return mask.unsqueeze(0).unsqueeze(0)
+
+
+def _cache_position(*, token_count: int, device: Any) -> Any:
+    import torch  # type: ignore
+
+    return torch.arange(max(1, int(token_count)), dtype=torch.long, device=device)
+
+
+def _llama_like_position_embeddings(base_model: Any, hidden: Any, position_ids: Any) -> Any | None:
+    rotary = getattr(base_model, "rotary_emb", None)
+    if rotary is None:
+        return None
+    try:
+        return rotary(hidden, position_ids)
+    except TypeError:
+        try:
+            return rotary(position_ids)
+        except TypeError:
+            return None
+
+
+def _call_llama_like_layer(
+    layer: Any,
+    hidden: Any,
+    *,
+    attention_mask: Any | None = None,
+    position_ids: Any | None = None,
+    cache_position: Any | None = None,
+    position_embeddings: Any | None = None,
+) -> Any:
+    try:
+        parameters = inspect.signature(layer.forward).parameters
+    except (TypeError, ValueError, AttributeError):
+        parameters = {}
+    kwargs: dict[str, Any] = {}
+    if "attention_mask" in parameters:
+        kwargs["attention_mask"] = attention_mask
+    if "position_ids" in parameters:
+        kwargs["position_ids"] = position_ids
+    if "past_key_value" in parameters:
+        kwargs["past_key_value"] = None
+    if "output_attentions" in parameters:
+        kwargs["output_attentions"] = False
+    if "use_cache" in parameters:
+        kwargs["use_cache"] = False
+    if "cache_position" in parameters:
+        kwargs["cache_position"] = cache_position
+    if "position_embeddings" in parameters and position_embeddings is not None:
+        kwargs["position_embeddings"] = position_embeddings
+    return layer(hidden, **kwargs)
+
+
 def clear_real_llm_runtime_caches() -> None:
     """Clear in-process model/runtime caches used by tests and short-lived Miners."""
 
@@ -584,6 +855,62 @@ def _cache_kwargs(cache_dir: str = "") -> dict[str, str]:
     return {"cache_dir": normalized} if normalized else {}
 
 
+def _safe_hf_weight_index_metadata(model_id: str, *, cache_dir: str = "") -> dict[str, Any]:
+    """Load public-safe HF weight index metadata when it is already available.
+
+    The returned data contains key-to-filename mappings only. It never includes
+    local cache paths, raw tensor data, credentials, or repository tokens.
+    """
+
+    filenames = [
+        "model.safetensors.index.json",
+        "pytorch_model.bin.index.json",
+    ]
+    cache_kwargs = _cache_kwargs(cache_dir)
+    for filename in filenames:
+        index_path: Path | None = None
+        local_candidate = Path(str(model_id)) / filename
+        if local_candidate.is_file():
+            index_path = local_candidate
+        else:
+            try:
+                from transformers.utils import cached_file  # type: ignore
+
+                cached = cached_file(model_id, filename, **cache_kwargs)
+            except Exception:
+                cached = None
+            if cached:
+                candidate = Path(str(cached))
+                if candidate.is_file():
+                    index_path = candidate
+        if index_path is None:
+            continue
+        try:
+            payload = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        weight_map = payload.get("weight_map") if isinstance(payload, dict) else {}
+        if not isinstance(weight_map, dict):
+            continue
+        safe_map = _weight_map_from_metadata({"weight_map": weight_map})
+        if not safe_map:
+            continue
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        return {
+            "weight_index_schema": filename,
+            "weight_index_available": True,
+            "weight_map": safe_map,
+            "weight_key_count": len(safe_map),
+            "weight_file_count": len(set(safe_map.values())),
+            "total_size_bytes": int(metadata.get("total_size") or metadata.get("total_size_bytes") or 0),
+        }
+    return {
+        "weight_index_available": False,
+        "weight_key_count": 0,
+        "weight_file_count": 0,
+    }
+
+
 def _default_model_metadata_artifact(*, model_id: str, split_index: int | None, backend: str) -> dict[str, Any]:
     layer_count = int(DEFAULT_MODEL_MANIFEST["num_hidden_layers"])
     split = int(split_index) if split_index is not None else max(1, layer_count // 2)
@@ -607,6 +934,7 @@ def _default_model_metadata_artifact(*, model_id: str, split_index: int | None, 
     }
     artifact["execution_support"] = real_llm_execution_support_summary(artifact)
     artifact["execution_family"] = artifact["execution_support"]["execution_family"]
+    artifact["partial_weight_loading_plan"] = artifact["execution_support"]["partial_weight_loading_plan"]
     if backend == BACKEND_CUDA:
         artifact["cuda_runtime"] = {
             "backend": BACKEND_CUDA,
@@ -678,8 +1006,13 @@ def inspect_real_llm_artifact(
         "read_only": True,
         "metadata_only": not require_runtime,
     }
+    weight_index = _safe_hf_weight_index_metadata(normalized_model_id, cache_dir=cache_dir)
+    artifact.update({key: value for key, value in weight_index.items() if key != "weight_map"})
+    if weight_index.get("weight_map"):
+        artifact["weight_map"] = weight_index["weight_map"]
     artifact["execution_support"] = real_llm_execution_support_summary(artifact)
     artifact["execution_family"] = artifact["execution_support"]["execution_family"]
+    artifact["partial_weight_loading_plan"] = artifact["execution_support"]["partial_weight_loading_plan"]
     if resolved_backend == BACKEND_CUDA:
         artifact["cuda_runtime"] = (
             cuda_runtime_summary()
@@ -734,6 +1067,24 @@ def _gpt2_parts(model: Any) -> tuple[Any, list[Any]]:
     return transformer, blocks
 
 
+def _llama_like_parts(model: Any) -> tuple[Any, list[Any]]:
+    base_model = getattr(model, "model", None)
+    layers = list(getattr(base_model, "layers", []) or []) if base_model is not None else []
+    if base_model is None or not layers:
+        raise ValueError("real_llm_sharded_infer could not find Llama-like decoder layers")
+    if not hasattr(base_model, "embed_tokens") or not hasattr(base_model, "norm"):
+        raise ValueError("real_llm_sharded_infer could not find Llama-like embedding/normalization modules")
+    if not hasattr(model, "lm_head"):
+        raise ValueError("real_llm_sharded_infer could not find model lm_head")
+    return base_model, layers
+
+
+def _model_parts(model: Any, family: str) -> tuple[Any, list[Any]]:
+    if family == EXECUTION_FAMILY_LLAMA_LIKE:
+        return _llama_like_parts(model)
+    return _gpt2_parts(model)
+
+
 def _parameter_count(module: Any) -> int:
     seen: set[int] = set()
     total = 0
@@ -759,9 +1110,21 @@ def _module_parameter_count(modules: list[Any]) -> int:
     return total
 
 
-def _stage_modules(model: Any, *, stage_id: int, split_index: int) -> tuple[list[Any], tuple[int, int], list[str]]:
-    transformer, blocks = _gpt2_parts(model)
+def _stage_modules(model: Any, *, stage_id: int, split_index: int, family: str = EXECUTION_FAMILY_GPT2) -> tuple[list[Any], tuple[int, int], list[str]]:
+    transformer, blocks = _model_parts(model, family)
     split = max(1, min(int(split_index), len(blocks) - 1))
+    if family == EXECUTION_FAMILY_LLAMA_LIKE:
+        if int(stage_id) == 0:
+            return (
+                [transformer.embed_tokens, *blocks[:split]],
+                (0, split),
+                ["token_embedding", "decoder_layers_prefix"],
+            )
+        return (
+            [*blocks[split:], transformer.norm, model.lm_head],
+            (split, len(blocks)),
+            ["decoder_layers_suffix", "final_norm", "lm_head"],
+        )
     if int(stage_id) == 0:
         return (
             [transformer.wte, transformer.wpe, *blocks[:split]],
@@ -775,8 +1138,8 @@ def _stage_modules(model: Any, *, stage_id: int, split_index: int) -> tuple[list
     )
 
 
-def _move_stage_modules(model: Any, *, stage_id: int, split_index: int, device: Any) -> None:
-    modules, _, _ = _stage_modules(model, stage_id=stage_id, split_index=split_index)
+def _move_stage_modules(model: Any, *, stage_id: int, split_index: int, device: Any, family: str = EXECUTION_FAMILY_GPT2) -> None:
+    modules, _, _ = _stage_modules(model, stage_id=stage_id, split_index=split_index, family=family)
     for module in modules:
         module.to(device)
         module.eval()
@@ -789,13 +1152,14 @@ def _partition_summary(
     split_index: int,
     partition_mode: str,
     device: Any,
+    family: str = EXECUTION_FAMILY_GPT2,
     baseline_device: str = "",
 ) -> dict[str, Any]:
-    transformer, blocks = _gpt2_parts(model)
+    transformer, blocks = _model_parts(model, family)
     split = max(1, min(int(split_index), len(blocks) - 1))
     mode = normalize_partition_mode(partition_mode)
     full_count = _parameter_count(model)
-    modules, layer_range, module_kinds = _stage_modules(model, stage_id=stage_id, split_index=split)
+    modules, layer_range, module_kinds = _stage_modules(model, stage_id=stage_id, split_index=split, family=family)
     stage_count = _module_parameter_count(modules) if mode == PARTITION_MODE_STAGE_LOCAL else full_count
     split_valid = bool(
         len(blocks) >= 2
@@ -973,10 +1337,11 @@ def _stage0_activation(
     spec: dict[str, Any],
     split_index: int,
     device: Any,
+    family: str = EXECUTION_FAMILY_GPT2,
 ) -> dict[str, Any]:
     import torch  # type: ignore
 
-    transformer, blocks = _gpt2_parts(model)
+    transformer, blocks = _model_parts(model, family)
     split = max(1, min(int(split_index), len(blocks) - 1))
     generated_prefix_token_ids = [int(value) for value in list(request.get("generated_token_ids") or [])]
     input_ids = _tokenize_prompt(
@@ -992,7 +1357,22 @@ def _stage0_activation(
     cache_tokens_before = 0
     hidden = None
     with torch.no_grad():
-        if cached and int(cached.get("input_token_count") or 0) == int(input_ids.shape[1]) - 1:
+        if family == EXECUTION_FAMILY_LLAMA_LIKE:
+            position_embeddings = _llama_like_position_embeddings(transformer, transformer.embed_tokens(input_ids), position_ids)
+            attention_mask = _causal_attention_mask(token_count=int(input_ids.shape[1]), dtype=transformer.embed_tokens(input_ids).dtype, device=device)
+            cache_pos = _cache_position(token_count=int(input_ids.shape[1]), device=device)
+            hidden = transformer.embed_tokens(input_ids)
+            for layer in blocks[:split]:
+                output = _call_llama_like_layer(
+                    layer,
+                    hidden,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    cache_position=cache_pos,
+                    position_embeddings=position_embeddings,
+                )
+                hidden = _ensure_batched_hidden(_decoder_output_hidden(output))
+        elif cached and int(cached.get("input_token_count") or 0) == int(input_ids.shape[1]) - 1:
             previous_hidden = cached.get("hidden")
             past_key_values = list(cached.get("past_key_values") or [])
             cache = _new_dynamic_cache(model, stored_layers=past_key_values, device=device)
@@ -1075,6 +1455,7 @@ def _stage0_activation(
         "kv_cache_tokens_before": cache_tokens_before,
         "kv_cache_tokens_after": int(input_ids.shape[1]),
         "kv_cache_stage": "stage0_prefix",
+        "kv_cache_disabled_reason": "llama_like_stage_cache_not_implemented" if family == EXECUTION_FAMILY_LLAMA_LIKE else "",
     }
     activation["activation_hash"] = _activation_hash(activation)
     return activation
@@ -1089,10 +1470,11 @@ def _stage1_result(
     spec: dict[str, Any],
     device: Any,
     baseline_device: Any | None = None,
+    family: str = EXECUTION_FAMILY_GPT2,
 ) -> dict[str, Any]:
     import torch  # type: ignore
 
-    transformer, blocks = _gpt2_parts(model)
+    transformer, blocks = _model_parts(model, family)
     split = max(1, min(int(activation.get("split_index", spec.get("split_index", 1))), len(blocks) - 1))
     input_ids = torch.tensor([list(activation.get("input_ids") or [])], dtype=torch.long, device=device)
     if input_ids.numel() <= 0:
@@ -1109,7 +1491,23 @@ def _stage1_result(
     cache_hit = False
     cache_tokens_before = 0
     with torch.no_grad():
-        if (
+        if family == EXECUTION_FAMILY_LLAMA_LIKE:
+            position_ids = torch.tensor([list(activation.get("position_ids") or range(hidden.shape[1]))], dtype=torch.long, device=device)
+            attention_mask = _causal_attention_mask(token_count=int(hidden.shape[1]), dtype=hidden.dtype, device=device)
+            cache_pos = _cache_position(token_count=int(hidden.shape[1]), device=device)
+            position_embeddings = _llama_like_position_embeddings(transformer, hidden, position_ids)
+            for layer in blocks[split:]:
+                output = _call_llama_like_layer(
+                    layer,
+                    hidden,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    cache_position=cache_pos,
+                    position_embeddings=position_embeddings,
+                )
+                hidden = _ensure_batched_hidden(_decoder_output_hidden(output))
+            cache_ready = False
+        elif (
             cached
             and int(cached.get("input_token_count") or 0) == int(hidden.shape[1]) - 1
             and list(cached.get("input_token_ids") or []) == input_token_ids[:-1]
@@ -1152,7 +1550,7 @@ def _stage1_result(
                     }
                     cache_ready = True
                     cache_hit = True
-        if not cache_ready:
+        if family != EXECUTION_FAMILY_LLAMA_LIKE and not cache_ready:
             cache = _new_dynamic_cache(model)
             legacy_past: list[Any] = []
             for block in blocks[split:]:
@@ -1177,7 +1575,7 @@ def _stage1_result(
                     "past_key_values": past_key_values,
                 }
                 cache_ready = True
-        hidden = transformer.ln_f(hidden)
+        hidden = transformer.norm(hidden) if family == EXECUTION_FAMILY_LLAMA_LIKE else transformer.ln_f(hidden)
         logits = model.lm_head(hidden)
         next_token_id = int(torch.argmax(logits[0, -1, :]).item())
         baseline_target = baseline_model if baseline_model is not None else model
@@ -1214,6 +1612,7 @@ def _stage1_result(
         "kv_cache_tokens_before": cache_tokens_before,
         "kv_cache_tokens_after": int(input_ids.shape[1]),
         "kv_cache_stage": "stage1_suffix",
+        "kv_cache_disabled_reason": "llama_like_stage_cache_not_implemented" if family == EXECUTION_FAMILY_LLAMA_LIKE else "",
     }
     result["output_hash"] = _output_hash(result)
     return result
@@ -1257,13 +1656,20 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
     max_new_tokens = max(1, min(int(spec.get("max_new_tokens", 1)), MAX_NEW_TOKENS))
     generation_step = max(0, min(int(spec.get("generation_step", 0)), max_new_tokens - 1))
     if partition_mode == PARTITION_MODE_STAGE_LOCAL:
-        _move_stage_modules(model, stage_id=stage_id, split_index=split_index, device=device)
+        _move_stage_modules(
+            model,
+            stage_id=stage_id,
+            split_index=split_index,
+            device=device,
+            family=execution_support["execution_family"],
+        )
     partition = _partition_summary(
         model,
         stage_id=stage_id,
         split_index=split_index,
         partition_mode=partition_mode,
         device=device,
+        family=execution_support["execution_family"],
         baseline_device="cpu" if partition_mode == PARTITION_MODE_STAGE_LOCAL and stage_id == 1 else "",
     )
 
@@ -1276,6 +1682,7 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
                 spec=spec,
                 split_index=split_index,
                 device=device,
+                family=execution_support["execution_family"],
             )
             for request in list(spec.get("requests") or [])
         ]
@@ -1329,6 +1736,7 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
             spec=spec,
             device=device,
             baseline_device=baseline_device,
+            family=execution_support["execution_family"],
         )
         for activation in activations
     ]

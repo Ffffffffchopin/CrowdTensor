@@ -118,7 +118,7 @@ def output_request_summary() -> dict[str, Any]:
         "local_output_display_only": False,
         "public_artifact_safe": True,
         "summary": (
-            "Real LLM sharded evidence records tiny GPT split-inference readiness, token counts, "
+            "Real LLM sharded evidence records small HF causal-LM split-inference readiness, token counts, "
             "and hashes only; raw prompts, generated text, token ids, intermediate tensors, and raw model scores are excluded."
         ),
     }
@@ -908,7 +908,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     answer_scope = report.get("answer_scope") if isinstance(report.get("answer_scope"), dict) else {}
     shareable = report.get("shareable_summary") if isinstance(report.get("shareable_summary"), dict) else {}
     lines = [
-        "# CrowdTensor Real Tiny-LLM Sharded Inference Evidence",
+        "# CrowdTensor Real HF-LLM Sharded Inference Evidence",
         "",
         f"Schema: `{report.get('schema')}`",
         f"OK: `{report.get('ok')}`",
@@ -973,14 +973,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Stage 0: task `{(stage.get('stage_0') or {}).get('task_id')}`, miner `{(stage.get('stage_0') or {}).get('miner_id')}`, activations `{(stage.get('stage_0') or {}).get('activation_count')}`",
         f"- Stage 1: task `{(stage.get('stage_1') or {}).get('task_id')}`, miner `{(stage.get('stage_1') or {}).get('miner_id')}`, baseline match `{(stage.get('stage_1') or {}).get('baseline_match')}`",
         "",
-        "CPU-only tiny Hugging Face GPT two-stage pipeline; not production Swarm Inference, GPU pooling, P2P routing, or GGUF/llama.cpp serving.",
+        "CPU-only small Hugging Face causal-LM two-stage pipeline; not production Swarm Inference, GPU pooling, P2P routing, or GGUF/llama.cpp serving.",
         "",
     ])
     return "\n".join(lines)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build CPU-only real tiny-LLM sharded inference evidence.")
+    parser = argparse.ArgumentParser(description="Build CPU-only real HF causal-LM sharded inference evidence.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9880)
     parser.add_argument("--state-dir", default="")

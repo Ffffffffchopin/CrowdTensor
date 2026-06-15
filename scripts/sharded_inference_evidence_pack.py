@@ -478,6 +478,17 @@ def create_session(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def invite_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    if WORKLOAD_TYPE != "real_llm_sharded_infer":
+        return {}
+    kwargs: dict[str, Any] = {
+        "hf_model_id": str(getattr(args, "hf_model_id", "") or "sshleifer/tiny-gpt2"),
+    }
+    backend = "cuda" if str(getattr(args, "real_llm_backend", "") or "") in {"cuda", "hf_transformers_cuda"} else "cpu"
+    kwargs["backend"] = backend
+    return kwargs
+
+
 def admin_results(args: argparse.Namespace, *, task_id: str = "", limit: int = 10) -> dict[str, Any]:
     query = urlencode({
         "status": "accepted",
@@ -943,6 +954,7 @@ def run_evidence(args: argparse.Namespace) -> dict[str, Any]:
         label="sharded stage 0",
         token=f"{args.invite_token_prefix}-stage0",
         replace=True,
+        **invite_kwargs(args),
     )
     stage1_invite = create_invite(
         registry_path=registry_path,
@@ -951,6 +963,7 @@ def run_evidence(args: argparse.Namespace) -> dict[str, Any]:
         label="sharded stage 1",
         token=f"{args.invite_token_prefix}-stage1",
         replace=True,
+        **invite_kwargs(args),
     )
     rescue_miner_id = f"{args.miner_prefix}-stage1-rescue" if getattr(args, "stage_mode", "both") == "split" else f"{args.miner_prefix}-rescue"
     if getattr(args, "failure_mode", FAILURE_NONE) in {FAILURE_KILL_STAGE_AFTER_CLAIM, FAILURE_KILL_STAGE0_AFTER_CLAIM}:
@@ -962,6 +975,7 @@ def run_evidence(args: argparse.Namespace) -> dict[str, Any]:
         label="sharded rescue",
         token=f"{args.invite_token_prefix}-rescue",
         replace=True,
+        **invite_kwargs(args),
     )
     coordinator = None
     victim_proc: subprocess.Popen | None = None

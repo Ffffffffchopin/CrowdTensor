@@ -68,13 +68,16 @@ The project currently includes:
 - Core Technology Validation Status: `scripts/core_technology_validation_status_pack.py`
   emits `core_technology_validation_status_v1` as the canonical retained
   status over current core validation evidence. The retained status artifact is
-  `dist/core-technology-validation-status-20260614/core_technology_validation_status.json`;
-  it imports the fully automated `gpt2-xl` Kaggle GPU small-tier proof and the
-  T4x2 7B/8B blocker evidence. It must keep
-  `small_tier_gpu_validated=true`, `seven_b_eight_b_validated=false`, and
-  `core_validation_ready=false` until a real 7B/8B sharded large-model run
-  succeeds. `scripts/core_technology_validation_status_check.py` validates that
-  a small-tier success cannot be treated as 7B/8B completion.
+  `dist/core-technology-validation-status-20260615/core_technology_validation_status.json`;
+  it imports the fully automated `gpt2-xl` Kaggle GPU small-tier proof, the
+  local tiny Llama-like HF two-stage runtime proof at
+  `dist/real-llm-llama-like-local-smoke-20260615/real_llm_sharded_evidence.json`,
+  and the T4x2 7B/8B blocker evidence. It must keep
+  `small_tier_gpu_validated=true`, `llama_like_local_evidence.ready=true`,
+  `seven_b_eight_b_validated=false`, and `core_validation_ready=false` until a
+  real 7B/8B sharded large-model run succeeds. The check validates that neither
+  a small-tier Kaggle GPU success nor a local tiny Llama-like stage-runtime
+  smoke can be treated as 7B/8B completion.
 - Large-Model Shard Alpha: `crowdtensor large-model-shard` emits
   `large_model_shard_alpha_v1` through
   `scripts/large_model_shard_alpha_pack.py` and is validated by

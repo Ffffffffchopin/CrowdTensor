@@ -91,6 +91,13 @@ def validate_report(report: dict[str, Any], *, require_core_ready: bool = False)
             raise SystemExit("small-tier success must not be treated as 7B/8B completion")
         if report.get("core_validation_ready") is True:
             raise SystemExit("core readiness overclaimed from small-tier evidence")
+    llama_local = report.get("llama_like_local_evidence") if isinstance(report.get("llama_like_local_evidence"), dict) else {}
+    if llama_local.get("ready") and llama_local.get("large_model_validation") is not False:
+        raise SystemExit("llama-like local smoke must not be treated as large-model validation")
+    if llama_local.get("ready") and report.get("seven_b_eight_b_validated") is not True:
+        truth = report.get("readiness_truth") if isinstance(report.get("readiness_truth"), dict) else {}
+        if report.get("core_validation_ready") is True or truth.get("do_not_treat_core_layer_complete") is not True:
+            raise SystemExit("llama-like local smoke overclaimed core readiness")
     if report.get("core_validation_ready"):
         if "core_technology_validation_ready" not in codes:
             raise SystemExit("core readiness flag/code mismatch")
@@ -122,6 +129,7 @@ def main() -> None:
         "report_schema": report.get("schema"),
         "core_validation_ready": bool(report.get("core_validation_ready")),
         "small_tier_gpu_validated": bool(report.get("small_tier_gpu_validated")),
+        "llama_like_local_ready": bool((report.get("llama_like_local_evidence") or {}).get("ready")) if isinstance(report.get("llama_like_local_evidence"), dict) else False,
         "seven_b_eight_b_validated": bool(report.get("seven_b_eight_b_validated")),
         "diagnosis_codes": report.get("diagnosis_codes"),
         "blockers": report.get("blockers"),
