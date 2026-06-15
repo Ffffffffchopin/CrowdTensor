@@ -98,13 +98,13 @@ def validate_report(report: dict[str, Any], *, require_core_ready: bool = False)
     if stage_selective.get("ready"):
         if stage_selective.get("large_model_validation") is not False:
             raise SystemExit("stage-selective loading must not be treated as large-model validation")
-        if stage_selective.get("runtime_execution_validation") is not False:
-            raise SystemExit("stage-selective loading must not be treated as runtime execution validation")
+        if stage_selective.get("kaggle_runtime_validation"):
+            raise SystemExit("stage-selective local runtime must not be treated as Kaggle runtime validation")
         truth = report.get("readiness_truth") if isinstance(report.get("readiness_truth"), dict) else {}
         if truth.get("stage_selective_weight_loading_is_not_7b_8b_completion") is not True:
             raise SystemExit("stage-selective loading must not be treated as 7B/8B completion")
-        if stage_selective.get("partial_weight_tensor_application_ready") and truth.get("stage_selective_weight_application_is_not_runtime_execution") is not True:
-            raise SystemExit("stage-selective application must not be treated as runtime execution")
+        if stage_selective.get("stage_selective_runtime_ready") and truth.get("stage_selective_runtime_is_not_7b_8b_completion") is not True:
+            raise SystemExit("stage-selective runtime must not be treated as 7B/8B completion")
     if llama_local.get("ready") and report.get("seven_b_eight_b_validated") is not True:
         truth = report.get("readiness_truth") if isinstance(report.get("readiness_truth"), dict) else {}
         if report.get("core_validation_ready") is True or truth.get("do_not_treat_core_layer_complete") is not True:
@@ -146,6 +146,7 @@ def main() -> None:
         "small_tier_gpu_validated": bool(report.get("small_tier_gpu_validated")),
         "llama_like_local_ready": bool((report.get("llama_like_local_evidence") or {}).get("ready")) if isinstance(report.get("llama_like_local_evidence"), dict) else False,
         "stage_selective_weight_loading_ready": bool((report.get("stage_selective_weight_loading_evidence") or {}).get("ready")) if isinstance(report.get("stage_selective_weight_loading_evidence"), dict) else False,
+        "stage_selective_runtime_ready": bool((report.get("stage_selective_weight_loading_evidence") or {}).get("stage_selective_runtime_ready")) if isinstance(report.get("stage_selective_weight_loading_evidence"), dict) else False,
         "seven_b_eight_b_validated": bool(report.get("seven_b_eight_b_validated")),
         "diagnosis_codes": report.get("diagnosis_codes"),
         "blockers": report.get("blockers"),

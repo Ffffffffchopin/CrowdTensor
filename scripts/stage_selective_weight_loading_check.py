@@ -124,6 +124,7 @@ def build_report(output_dir: Path) -> dict[str, Any]:
     metadata = synthetic_metadata()
     stage_summaries: list[dict[str, Any]] = []
     application_summaries: list[dict[str, Any]] = []
+    runtime_summary: dict[str, Any] = {}
     if missing:
         support = real_llm.real_llm_execution_support_summary(metadata)
         report = {
@@ -153,25 +154,51 @@ def build_report(output_dir: Path) -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="crowdtensor_stage_weights_") as tmp:
             root = Path(tmp)
             build_synthetic_weights(root)
+            stage_models: dict[int, Any] = {}
+            stage_tensors: dict[int, dict[str, Any]] = {}
+            baseline_model = synthetic_stage_model()
             for stage_id in (0, 1):
                 tensors, load_summary = real_llm._load_stage_selective_safetensors(  # noqa: SLF001
                     metadata,
                     stage_id=stage_id,
                     weight_root=root,
                 )
+                stage_tensors[stage_id] = tensors
+                stage_models[stage_id] = synthetic_stage_model()
                 stage_summaries.append(load_summary)
                 application_summaries.append(
                     real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
-                        synthetic_stage_model(),
+                        stage_models[stage_id],
                         tensors,
                         metadata,
                         stage_id=stage_id,
                     )
                 )
+                real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
+                    baseline_model,
+                    tensors,
+                    metadata,
+                    stage_id=stage_id,
+                )
+            from transformers import PreTrainedTokenizerFast  # type: ignore
+            from tokenizers import Tokenizer, models, pre_tokenizers  # type: ignore
+
+            tokenizer = Tokenizer(models.WordLevel({"<unk>": 0, "CrowdTensor": 1, "routes": 2, "home": 3, "GPU": 4}, unk_token="<unk>"))
+            tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>")
+            runtime_summary = real_llm.run_stage_selective_runtime_smoke(
+                tokenizer=hf_tokenizer,
+                stage0_model=stage_models[0],
+                stage1_model=stage_models[1],
+                baseline_model=baseline_model,
+                metadata=metadata,
+                prompt="CrowdTensor routes home GPU",
+            )
         support = real_llm.real_llm_execution_support_summary({
             **metadata,
             "stage_selective_weight_load_summaries": stage_summaries,
             "stage_selective_weight_application_summaries": application_summaries,
+            "stage_selective_runtime": runtime_summary,
         })
         ready = bool(
             stage_summaries
@@ -180,7 +207,8 @@ def build_report(output_dir: Path) -> dict[str, Any]:
             and all(stage.get("ready") and stage.get("loads_only_stage_weight_keys") for stage in application_summaries)
             and support.get("partial_weight_tensor_materialization_ready")
             and support.get("partial_weight_tensor_application_ready")
-            and support.get("partial_weight_runtime_execution_ready") is False
+            and runtime_summary.get("ready") is True
+            and support.get("partial_weight_runtime_execution_ready") is True
         )
         report = {
             "schema": SCHEMA,
@@ -193,12 +221,14 @@ def build_report(output_dir: Path) -> dict[str, Any]:
             "partition_mode": metadata["partition_mode"],
             "stage_summaries": stage_summaries,
             "stage_application_summaries": application_summaries,
+            "stage_selective_runtime": runtime_summary,
             "model_execution_support": support,
             "readiness_truth": {
                 "stage_selective_weight_loading_is_not_7b_runtime": True,
                 "stage_selective_weight_application_is_not_7b_runtime": True,
-                "partial_weight_tensor_materialization_is_not_runtime_execution": True,
-                "partial_weight_tensor_application_is_not_runtime_execution": True,
+                "stage_selective_runtime_is_not_7b_runtime": True,
+                "partial_weight_tensor_materialization_is_not_large_model_runtime": True,
+                "partial_weight_tensor_application_is_not_large_model_runtime": True,
                 "seven_b_eight_b_validated": False,
                 "production_swarm_inference_claimed": False,
             },
@@ -212,9 +242,11 @@ def build_report(output_dir: Path) -> dict[str, Any]:
                 "real_llm_stage_selective_weight_application_ready"
                 if support.get("partial_weight_tensor_application_ready")
                 else "real_llm_stage_selective_weight_application_not_ready",
-                "real_llm_partial_weight_runtime_execution_missing",
+                "real_llm_stage_selective_runtime_execution_ready"
+                if support.get("partial_weight_runtime_execution_ready")
+                else "real_llm_partial_weight_runtime_execution_missing",
             ],
-            "blockers": ["real_llm_partial_weight_runtime_execution_missing"],
+            "blockers": [],
             "safety": {
                 "public_artifact_safe": True,
                 "raw_prompt_public": False,

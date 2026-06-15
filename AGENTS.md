@@ -44,8 +44,10 @@ materialization proof for the next 7B/8B step: it validates that each
 Llama-like stage can load only its assigned safetensors keys and report
 public-safe counts/hashes without tensor values. It also applies those tensors
 to matching stage-owned model `state_dict` entries in a synthetic Llama-like
-model and proves no cross-stage keys were applied. Treat this as stronger than
-a partial-weight plan, but still not runtime execution and not 7B/8B completion.
+model, proves no cross-stage keys were applied, and runs a local synthetic
+stage0->stage1 activation/decode smoke that matches a baseline next token.
+Treat this as stage-selective runtime plumbing evidence, but still not Kaggle
+runtime execution and not 7B/8B completion.
 
 ## Current Alpha Reality
 

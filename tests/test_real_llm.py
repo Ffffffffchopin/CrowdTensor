@@ -313,6 +313,143 @@ class RealLlmTests(unittest.TestCase):
             "stage_weight_index_selective_tensor_application",
         )
 
+    def test_stage_selective_runtime_smoke_matches_baseline(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        import torch  # type: ignore
+        from safetensors.torch import save_file  # type: ignore
+        from tokenizers import Tokenizer, models, pre_tokenizers  # type: ignore
+        from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast  # type: ignore
+
+        config = LlamaConfig(
+            vocab_size=8,
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_position_embeddings=16,
+        )
+        seed_model = LlamaForCausalLM(config)
+        state = seed_model.state_dict()
+        stage0_keys = [
+            "model.embed_tokens.weight",
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.layers.1.self_attn.q_proj.weight",
+        ]
+        stage1_keys = [
+            "model.layers.2.self_attn.q_proj.weight",
+            "model.layers.3.self_attn.q_proj.weight",
+            "model.norm.weight",
+            "lm_head.weight",
+        ]
+        metadata = {
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 4,
+            "hidden_size": 8,
+            "split_index": 2,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "weight_map": {
+                **{key: "model-00001-of-00002.safetensors" for key in stage0_keys},
+                **{key: "model-00002-of-00002.safetensors" for key in stage1_keys},
+            },
+        }
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_stage_runtime_") as tmp:
+            root = Path(tmp)
+            save_file(
+                {key: torch.full_like(state[key], float(index + 1)) for index, key in enumerate(stage0_keys)},
+                root / "model-00001-of-00002.safetensors",
+            )
+            save_file(
+                {key: torch.full_like(state[key], float(index + 10)) for index, key in enumerate(stage1_keys)},
+                root / "model-00002-of-00002.safetensors",
+            )
+            stage0_model = LlamaForCausalLM(config)
+            stage1_model = LlamaForCausalLM(config)
+            baseline_model = LlamaForCausalLM(config)
+            stage0_tensors, stage0_load = real_llm._load_stage_selective_safetensors(  # noqa: SLF001
+                metadata,
+                stage_id=0,
+                weight_root=root,
+            )
+            stage1_tensors, stage1_load = real_llm._load_stage_selective_safetensors(  # noqa: SLF001
+                metadata,
+                stage_id=1,
+                weight_root=root,
+            )
+            stage0_apply = real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
+                stage0_model,
+                stage0_tensors,
+                metadata,
+                stage_id=0,
+            )
+            stage1_apply = real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
+                stage1_model,
+                stage1_tensors,
+                metadata,
+                stage_id=1,
+            )
+            real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
+                baseline_model,
+                stage0_tensors,
+                metadata,
+                stage_id=0,
+            )
+            real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
+                baseline_model,
+                stage1_tensors,
+                metadata,
+                stage_id=1,
+            )
+        tokenizer = Tokenizer(models.WordLevel({"<unk>": 0, "CrowdTensor": 1, "routes": 2, "home": 3, "GPU": 4}, unk_token="<unk>"))
+        tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+        hf_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>")
+
+        runtime = real_llm.run_stage_selective_runtime_smoke(
+            tokenizer=hf_tokenizer,
+            stage0_model=stage0_model,
+            stage1_model=stage1_model,
+            baseline_model=baseline_model,
+            metadata=metadata,
+            prompt="CrowdTensor routes home GPU",
+        )
+
+        self.assertTrue(stage0_load["ready"])
+        self.assertTrue(stage1_load["ready"])
+        self.assertTrue(stage0_apply["ready"])
+        self.assertTrue(stage1_apply["ready"])
+        self.assertEqual(runtime["schema"], real_llm.REAL_LLM_STAGE_SELECTIVE_RUNTIME_SCHEMA_VERSION)
+        self.assertTrue(runtime["ready"])
+        self.assertTrue(runtime["stage_selective_runtime_execution_ready"])
+        self.assertTrue(runtime["activation_transport_ready"])
+        self.assertTrue(runtime["baseline_match"])
+        self.assertTrue(runtime["decoded_tokens_match"])
+        self.assertEqual(runtime["generated_token_count"], 1)
+        self.assertFalse(runtime["large_model_validation"])
+        self.assertFalse(runtime["kaggle_runtime_validation"])
+        self.assertFalse(runtime["raw_prompt_public"])
+        self.assertFalse(runtime["raw_generated_text_public"])
+        self.assertFalse(runtime["generated_token_ids_public"])
+        self.assertFalse(runtime["activation_public"])
+
+        support = real_llm.real_llm_execution_support_summary({
+            **metadata,
+            "stage_selective_weight_load_summaries": [stage0_load, stage1_load],
+            "stage_selective_weight_application_summaries": [stage0_apply, stage1_apply],
+            "stage_selective_runtime": runtime,
+        })
+        self.assertTrue(support["partial_weight_runtime_execution_ready"])
+        self.assertTrue(support["partial_weight_tensor_application_ready"])
+        self.assertFalse(support["large_model_sharded_execution_ready"])
+        self.assertEqual(
+            support["stage_local_load_strategy"],
+            "stage_weight_index_selective_runtime_execution",
+        )
+
     def test_partial_weight_plan_without_weight_index_keeps_true_partial_blocker(self) -> None:
         metadata = {
             "model_id": "Qwen/Qwen2.5-7B-Instruct",

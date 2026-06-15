@@ -219,6 +219,7 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
     support = report.get("model_execution_support") if isinstance(report.get("model_execution_support"), dict) else {}
     stage_rows = report.get("stage_summaries") if isinstance(report.get("stage_summaries"), list) else []
     application_rows = report.get("stage_application_summaries") if isinstance(report.get("stage_application_summaries"), list) else []
+    runtime = report.get("stage_selective_runtime") if isinstance(report.get("stage_selective_runtime"), dict) else {}
     codes = set(report.get("diagnosis_codes") or [])
     ready = bool(
         meta.get("ok")
@@ -254,6 +255,14 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
         "partial_weight_tensor_application_ready": bool(support.get("partial_weight_tensor_application_ready")),
         "true_partial_weight_loading_ready": bool(support.get("true_partial_weight_loading_ready")),
         "partial_weight_runtime_execution_ready": bool(support.get("partial_weight_runtime_execution_ready")),
+        "stage_selective_runtime_ready": bool(
+            runtime.get("ready")
+            and runtime.get("stage_selective_runtime_execution_ready")
+            and runtime.get("baseline_match")
+        ),
+        "stage_selective_runtime_scope": runtime.get("runtime_execution_scope") or "",
+        "stage_selective_runtime_generated_token_count": int(runtime.get("generated_token_count") or 0),
+        "stage_selective_runtime_baseline_match": bool(runtime.get("baseline_match")),
         "loaded_weight_key_count_total": sum(
             int(row.get("loaded_weight_key_count") or 0)
             for row in stage_rows
@@ -283,7 +292,8 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
             )
         ),
         "large_model_validation": False,
-        "runtime_execution_validation": False,
+        "runtime_execution_validation": bool(runtime.get("ready")),
+        "kaggle_runtime_validation": bool(runtime.get("kaggle_runtime_validation")),
         "diagnosis_codes": sorted(codes),
         "blockers": report.get("blockers") or [],
     }
@@ -336,6 +346,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         diagnosis_codes.append("core_stage_selective_weight_materialization_validated")
     if stage_selective.get("partial_weight_tensor_application_ready"):
         diagnosis_codes.append("core_stage_selective_weight_application_validated")
+    if stage_selective.get("stage_selective_runtime_ready"):
+        diagnosis_codes.append("core_stage_selective_runtime_validated")
 
     blockers: list[str] = []
     if not seven.get("real_7b_runtime_verified"):
@@ -377,13 +389,10 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
                 and not small.get("partial_weight_runtime_execution_ready")
             ),
             "stage_selective_weight_loading_is_not_7b_8b_completion": bool(stage_selective.get("ready")),
-            "stage_selective_weight_loading_is_not_runtime_execution": bool(
-                stage_selective.get("ready")
-                and not stage_selective.get("partial_weight_runtime_execution_ready")
-            ),
-            "stage_selective_weight_application_is_not_runtime_execution": bool(
+            "stage_selective_runtime_is_not_7b_8b_completion": bool(stage_selective.get("stage_selective_runtime_ready")),
+            "stage_selective_weight_loading_is_not_kaggle_runtime": bool(stage_selective.get("ready")),
+            "stage_selective_weight_application_is_not_kaggle_runtime": bool(
                 stage_selective.get("partial_weight_tensor_application_ready")
-                and not stage_selective.get("partial_weight_runtime_execution_ready")
             ),
             "thirteen_b_validated": False,
             "production_swarm_inference_claimed": False,
@@ -506,6 +515,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- ready: `{stage_selective.get('ready')}`",
         f"- loaded weight keys: `{stage_selective.get('loaded_weight_key_count_total', 0)}`",
         f"- applied weight keys: `{stage_selective.get('applied_weight_key_count_total', 0)}`",
+        f"- stage-selective runtime ready: `{stage_selective.get('stage_selective_runtime_ready')}`",
+        f"- stage-selective runtime scope: `{stage_selective.get('stage_selective_runtime_scope', '')}`",
         f"- loads only stage keys: `{stage_selective.get('loads_only_stage_weight_keys')}`",
         f"- runtime execution validation: `{stage_selective.get('runtime_execution_validation')}`",
         f"- large model validation: `{stage_selective.get('large_model_validation')}`",

@@ -21,6 +21,7 @@ REAL_LLM_ACTIVATION_SCHEMA_VERSION = "real_llm_activation_v1"
 REAL_LLM_PARTIAL_WEIGHT_PLAN_SCHEMA_VERSION = "real_llm_partial_weight_plan_v1"
 REAL_LLM_STAGE_SELECTIVE_WEIGHT_LOAD_SCHEMA_VERSION = "real_llm_stage_selective_weight_load_v1"
 REAL_LLM_STAGE_SELECTIVE_WEIGHT_APPLY_SCHEMA_VERSION = "real_llm_stage_selective_weight_apply_v1"
+REAL_LLM_STAGE_SELECTIVE_RUNTIME_SCHEMA_VERSION = "real_llm_stage_selective_runtime_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 BACKEND_CPU = "hf_transformers_cpu"
 BACKEND_CUDA = "hf_transformers_cuda"
@@ -833,6 +834,132 @@ def _apply_stage_selective_tensors_to_model(
     return summary
 
 
+def run_stage_selective_runtime_smoke(
+    *,
+    tokenizer: Any,
+    stage0_model: Any,
+    stage1_model: Any,
+    baseline_model: Any,
+    metadata: dict[str, Any] | None = None,
+    prompt: str = "CrowdTensor routes home GPU",
+    backend: str = BACKEND_CPU,
+) -> dict[str, Any]:
+    """Execute a two-stage Llama-like smoke using separately loaded stage models.
+
+    The result is public-safe. It proves that the stage-owned weights can drive
+    the existing activation/decode path, while keeping 7B/Kaggle readiness as a
+    separate external-runtime requirement.
+    """
+
+    source = dict(metadata or {})
+    family = execution_family_from_metadata(source)
+    split_index = _split_index_for_layer_count(source, _layer_count_from_metadata(source))
+    if family not in SUPPORTED_EXECUTION_FAMILIES:
+        return {
+            "schema": REAL_LLM_STAGE_SELECTIVE_RUNTIME_SCHEMA_VERSION,
+            "ready": False,
+            "stage_selective_runtime_execution_ready": False,
+            "model_id": str(source.get("model_id") or ""),
+            "execution_family": family,
+            "partition_mode": normalize_partition_mode(source.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL),
+            "diagnosis_codes": ["real_llm_stage_selective_runtime_execution_not_ready"],
+            "blockers": ["real_llm_execution_architecture_unsupported"],
+            "public_safe": True,
+        }
+    import torch  # type: ignore
+
+    device = torch.device("cpu")
+    stage0_model.eval()
+    stage1_model.eval()
+    baseline_model.eval()
+    spec = {
+        "schema_version": REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
+        "type": WORKLOAD_TYPE,
+        "session_id": "stage-selective-runtime-smoke",
+        "task_id": "stage-selective-runtime-smoke-stage0",
+        "miner_id": "stage-selective-runtime-stage0",
+        "model_id": str(source.get("model_id") or ""),
+        "artifact_hash": "sha256:stage-selective-runtime-smoke",
+        "split_index": split_index,
+        "stage_id": 0,
+        "max_new_tokens": 1,
+        "generation_step": 0,
+    }
+    request = {
+        "request_id": "req-1",
+        "prompt": str(prompt)[:MAX_PROMPT_CHARS],
+        "prompt_hash": _prompt_hash(str(prompt)[:MAX_PROMPT_CHARS]),
+        "max_new_tokens": 1,
+        "generated_token_ids": [],
+        "generated_text": "",
+        "generation_step": 0,
+    }
+    activation = _stage0_activation(
+        tokenizer=tokenizer,
+        model=stage0_model,
+        request=request,
+        spec=spec,
+        split_index=split_index,
+        device=device,
+        family=family,
+    )
+    stage1_spec = {
+        **spec,
+        "task_id": "stage-selective-runtime-smoke-stage1",
+        "miner_id": "stage-selective-runtime-stage1",
+        "stage_id": 1,
+    }
+    result = _stage1_result(
+        tokenizer=tokenizer,
+        model=stage1_model,
+        baseline_model=baseline_model,
+        activation=activation,
+        spec=stage1_spec,
+        device=device,
+        baseline_device=device,
+        family=family,
+    )
+    ready = bool(
+        activation.get("activation_hash")
+        and result.get("baseline_match")
+        and result.get("generated_token_count") == 1
+    )
+    return {
+        "schema": REAL_LLM_STAGE_SELECTIVE_RUNTIME_SCHEMA_VERSION,
+        "ready": ready,
+        "stage_selective_runtime_execution_ready": ready,
+        "runtime_execution_scope": "local_synthetic_stage_selective_runtime",
+        "model_id": str(source.get("model_id") or ""),
+        "execution_family": family,
+        "backend": backend,
+        "partition_mode": normalize_partition_mode(source.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL),
+        "stage_count": 2,
+        "split_index": split_index,
+        "generated_token_count": int(result.get("generated_token_count") or 0),
+        "baseline_match": bool(result.get("baseline_match")),
+        "decoded_tokens_match": bool(result.get("baseline_match")),
+        "activation_transport_ready": bool(activation.get("activation_hash")),
+        "activation_hash": str(activation.get("activation_hash") or ""),
+        "output_hash": str(result.get("output_hash") or ""),
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "activation_public": False,
+        "public_safe": True,
+        "large_model_validation": False,
+        "kaggle_runtime_validation": False,
+        "diagnosis_codes": [
+            "real_llm_stage_selective_runtime_execution_ready"
+            if ready
+            else "real_llm_stage_selective_runtime_execution_not_ready",
+            "activation_transport_ready" if activation.get("activation_hash") else "activation_transport_missing",
+            "baseline_match" if result.get("baseline_match") else "baseline_mismatch",
+            "decoded_tokens_match" if result.get("baseline_match") else "decoded_tokens_mismatch",
+        ],
+        "blockers": [] if ready else ["real_llm_stage_selective_runtime_execution_failed"],
+    }
+
+
 def _partial_weight_tensor_materialization_ready(source: dict[str, Any]) -> bool:
     if source.get("partial_weight_tensor_materialization_ready") is True:
         return True
@@ -879,6 +1006,20 @@ def _partial_weight_tensor_application_ready(source: dict[str, Any]) -> bool:
     return False
 
 
+def _partial_weight_runtime_execution_ready(source: dict[str, Any]) -> bool:
+    if source.get("partial_weight_runtime_execution_ready") is True:
+        return True
+    raw = source.get("stage_selective_runtime")
+    if isinstance(raw, dict):
+        return bool(
+            raw.get("ready")
+            and raw.get("stage_selective_runtime_execution_ready")
+            and raw.get("baseline_match")
+            and raw.get("decoded_tokens_match")
+        )
+    return False
+
+
 def real_llm_execution_support_summary(
     metadata: dict[str, Any] | None = None,
     *,
@@ -893,6 +1034,7 @@ def real_llm_execution_support_summary(
     partial_plan_ready = bool(partial_plan.get("ready"))
     tensor_materialization_ready = _partial_weight_tensor_materialization_ready(source)
     tensor_application_ready = _partial_weight_tensor_application_ready(source)
+    runtime_execution_ready = _partial_weight_runtime_execution_ready(source)
     small_tier_candidate = bool(
         SMALL_TIER_MIN_PARAMETERS <= parameter_count_estimate <= SMALL_TIER_MAX_PARAMETERS
     )
@@ -927,9 +1069,11 @@ def real_llm_execution_support_summary(
         blockers.append("real_llm_execution_architecture_unsupported")
         large_model_blockers.append("real_llm_execution_architecture_unsupported")
     if mode == PARTITION_MODE_STAGE_LOCAL:
-        if tensor_application_ready:
+        if runtime_execution_ready:
+            diagnosis_codes.append("real_llm_stage_selective_runtime_execution_ready")
+        if tensor_application_ready or runtime_execution_ready:
             diagnosis_codes.append("real_llm_stage_selective_weight_application_ready")
-        if tensor_materialization_ready or tensor_application_ready:
+        if tensor_materialization_ready or tensor_application_ready or runtime_execution_ready:
             diagnosis_codes.append("real_llm_stage_selective_weight_materialization_ready")
         if partial_plan_ready:
             diagnosis_codes.append("real_llm_stage_local_partial_weight_plan_ready")
@@ -944,7 +1088,7 @@ def real_llm_execution_support_summary(
                 if partial_plan_ready
                 else "real_llm_large_model_stage_adapter_missing"
             )
-        elif partial_plan_ready and not bool(partial_plan.get("runtime_execution_ready")):
+        elif partial_plan_ready and not runtime_execution_ready and not bool(partial_plan.get("runtime_execution_ready")):
             diagnosis_codes.append("real_llm_large_model_partial_weight_runtime_missing")
     else:
         diagnosis_codes.append("real_llm_tiny_or_small_model_candidate")
@@ -962,10 +1106,13 @@ def real_llm_execution_support_summary(
         "estimated_weight_bytes_fp32": estimated_weight_bytes,
         "stage_local_estimated_stage_weight_bytes_fp32": estimated_stage_weight_bytes,
         "stage_local_load_strategy": (
+            "stage_weight_index_selective_runtime_execution"
+            if mode == PARTITION_MODE_STAGE_LOCAL and runtime_execution_ready
+            else
             "stage_weight_index_selective_tensor_application"
-            if mode == PARTITION_MODE_STAGE_LOCAL and tensor_application_ready
+            if mode == PARTITION_MODE_STAGE_LOCAL and (tensor_application_ready or runtime_execution_ready)
             else "stage_weight_index_selective_tensor_materialization"
-            if mode == PARTITION_MODE_STAGE_LOCAL and (tensor_materialization_ready or tensor_application_ready)
+            if mode == PARTITION_MODE_STAGE_LOCAL and (tensor_materialization_ready or tensor_application_ready or runtime_execution_ready)
             else "stage_weight_index_selective_load_plan"
             if mode == PARTITION_MODE_STAGE_LOCAL and partial_plan_ready
             else "full_model_cpu_load_then_stage_module_device_move"
@@ -974,10 +1121,10 @@ def real_llm_execution_support_summary(
         ),
         "partial_weight_loading_plan_ready": partial_plan_ready,
         "partial_weight_loading_plan": partial_plan,
-        "partial_weight_tensor_materialization_ready": bool(tensor_materialization_ready or tensor_application_ready),
-        "partial_weight_tensor_application_ready": tensor_application_ready,
-        "true_partial_weight_loading_ready": bool(tensor_materialization_ready or tensor_application_ready),
-        "partial_weight_runtime_execution_ready": False,
+        "partial_weight_tensor_materialization_ready": bool(tensor_materialization_ready or tensor_application_ready or runtime_execution_ready),
+        "partial_weight_tensor_application_ready": bool(tensor_application_ready or runtime_execution_ready),
+        "true_partial_weight_loading_ready": bool(tensor_materialization_ready or tensor_application_ready or runtime_execution_ready),
+        "partial_weight_runtime_execution_ready": runtime_execution_ready,
         "small_tier_candidate": small_tier_candidate,
         "kaggle_small_tier_supported_by_current_split": bool(small_tier_candidate and current_supported),
         "large_model_candidate": large_candidate,
