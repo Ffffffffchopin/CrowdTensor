@@ -131,14 +131,34 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
                         "loaded_tensor_bytes": 72,
                     },
                 ],
+                "stage_application_summaries": [
+                    {
+                        "ready": True,
+                        "stage_selective_tensor_application_ready": True,
+                        "loads_only_stage_weight_keys": True,
+                        "cross_stage_weight_keys_loaded": False,
+                        "applied_weight_key_count": 3,
+                        "applied_tensor_bytes": 64,
+                    },
+                    {
+                        "ready": True,
+                        "stage_selective_tensor_application_ready": True,
+                        "loads_only_stage_weight_keys": True,
+                        "cross_stage_weight_keys_loaded": False,
+                        "applied_weight_key_count": 4,
+                        "applied_tensor_bytes": 72,
+                    },
+                ],
                 "model_execution_support": {
                     "partial_weight_tensor_materialization_ready": True,
+                    "partial_weight_tensor_application_ready": True,
                     "true_partial_weight_loading_ready": True,
                     "partial_weight_runtime_execution_ready": False,
                 },
                 "diagnosis_codes": [
                     "stage_selective_weight_loading_check_ready",
                     "real_llm_stage_selective_weight_materialization_ready",
+                    "real_llm_stage_selective_weight_application_ready",
                 ],
                 "blockers": ["real_llm_partial_weight_runtime_execution_missing"],
             },
@@ -265,14 +285,34 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
                         "loaded_tensor_bytes": 72,
                     },
                 ],
+                "stage_application_summaries": [
+                    {
+                        "ready": True,
+                        "stage_selective_tensor_application_ready": True,
+                        "loads_only_stage_weight_keys": True,
+                        "cross_stage_weight_keys_loaded": False,
+                        "applied_weight_key_count": 3,
+                        "applied_tensor_bytes": 64,
+                    },
+                    {
+                        "ready": True,
+                        "stage_selective_tensor_application_ready": True,
+                        "loads_only_stage_weight_keys": True,
+                        "cross_stage_weight_keys_loaded": False,
+                        "applied_weight_key_count": 4,
+                        "applied_tensor_bytes": 72,
+                    },
+                ],
                 "model_execution_support": {
                     "partial_weight_tensor_materialization_ready": True,
+                    "partial_weight_tensor_application_ready": True,
                     "true_partial_weight_loading_ready": True,
                     "partial_weight_runtime_execution_ready": False,
                 },
                 "diagnosis_codes": [
                     "stage_selective_weight_loading_check_ready",
                     "real_llm_stage_selective_weight_materialization_ready",
+                    "real_llm_stage_selective_weight_application_ready",
                 ],
                 "blockers": ["real_llm_partial_weight_runtime_execution_missing"],
             },
@@ -296,8 +336,10 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         self.assertTrue(report["llama_like_local_evidence"]["ready"])
         self.assertFalse(report["llama_like_local_evidence"]["large_model_validation"])
         self.assertTrue(report["stage_selective_weight_loading_evidence"]["ready"])
+        self.assertTrue(report["stage_selective_weight_loading_evidence"]["partial_weight_tensor_application_ready"])
         self.assertFalse(report["stage_selective_weight_loading_evidence"]["runtime_execution_validation"])
         self.assertTrue(report["readiness_truth"]["stage_selective_weight_loading_is_not_7b_8b_completion"])
+        self.assertTrue(report["readiness_truth"]["stage_selective_weight_application_is_not_runtime_execution"])
         self.assertTrue(report["readiness_truth"]["partial_weight_plan_is_not_runtime_execution"])
         self.assertIn("real_llm_partial_weight_runtime_execution_missing", report["blockers"])
         check.validate_report(report)

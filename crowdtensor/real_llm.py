@@ -20,6 +20,7 @@ REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION = "real_llm_sharded_infer_v1"
 REAL_LLM_ACTIVATION_SCHEMA_VERSION = "real_llm_activation_v1"
 REAL_LLM_PARTIAL_WEIGHT_PLAN_SCHEMA_VERSION = "real_llm_partial_weight_plan_v1"
 REAL_LLM_STAGE_SELECTIVE_WEIGHT_LOAD_SCHEMA_VERSION = "real_llm_stage_selective_weight_load_v1"
+REAL_LLM_STAGE_SELECTIVE_WEIGHT_APPLY_SCHEMA_VERSION = "real_llm_stage_selective_weight_apply_v1"
 WORKLOAD_TYPE = "real_llm_sharded_infer"
 BACKEND_CPU = "hf_transformers_cpu"
 BACKEND_CUDA = "hf_transformers_cuda"
@@ -696,6 +697,142 @@ def real_llm_stage_selective_weight_load_summary(
     return summary
 
 
+def _apply_stage_selective_tensors_to_model(
+    model: Any,
+    tensors: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+    *,
+    stage_id: int,
+    partition_mode: str | None = None,
+) -> dict[str, Any]:
+    """Apply already-loaded stage tensors to matching model state entries.
+
+    This is the bridge between selective safetensors materialization and a
+    runtime that can instantiate only stage-owned modules. The summary is
+    public-safe and intentionally omits tensor values.
+    """
+
+    source = dict(metadata or {})
+    stage = _normalize_stage_id(stage_id)
+    plan, stage_plan, _weight_map, assigned_keys = _stage_weight_selection(
+        source,
+        stage_id=stage,
+        partition_mode=partition_mode,
+    )
+    assigned_key_set = set(assigned_keys)
+    provided_keys = sorted(str(key) for key in dict(tensors or {}))
+    model_state = model.state_dict() if hasattr(model, "state_dict") else {}
+    model_keys = set(str(key) for key in model_state)
+    summary: dict[str, Any] = {
+        "schema": REAL_LLM_STAGE_SELECTIVE_WEIGHT_APPLY_SCHEMA_VERSION,
+        "ready": False,
+        "stage_selective_tensor_application_ready": False,
+        "runtime_execution_ready": False,
+        "model_id": str(source.get("model_id") or ""),
+        "execution_family": plan.get("execution_family") or execution_family_from_metadata(source),
+        "partition_mode": plan.get("partition_mode") or normalize_partition_mode(partition_mode or source.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL),
+        "stage_id": stage,
+        "stage_count": 2,
+        "stage_layer_range": list(stage_plan.get("stage_layer_range") or []),
+        "stage_layer_range_format": "start_inclusive_end_exclusive",
+        "stage_module_kinds": list(stage_plan.get("stage_module_kinds") or []),
+        "assigned_weight_key_count": len(assigned_keys),
+        "provided_weight_key_count": len(provided_keys),
+        "applied_weight_key_count": 0,
+        "missing_assigned_weight_key_count": 0,
+        "unknown_model_key_count": 0,
+        "shape_mismatch_count": 0,
+        "dtype_conversion_count": 0,
+        "cross_stage_weight_keys_loaded": False,
+        "applied_weight_key_digest": _hash_payload([]),
+        "applied_tensor_bytes": 0,
+        "loads_only_stage_weight_keys": False,
+        "public_safe": True,
+        "diagnosis_codes": [],
+        "blockers": [],
+    }
+    blockers = set(str(item) for item in list(plan.get("blockers") or []))
+    diagnosis_codes = set(str(item) for item in list(plan.get("diagnosis_codes") or []))
+    if not plan.get("ready"):
+        blockers.add("real_llm_stage_selective_weight_plan_not_ready")
+        diagnosis_codes.add("real_llm_stage_selective_weight_application_not_ready")
+        summary["blockers"] = sorted(blockers)
+        summary["diagnosis_codes"] = sorted(diagnosis_codes)
+        return summary
+    unexpected_keys = sorted(set(provided_keys) - assigned_key_set)
+    missing_assigned = sorted(assigned_key_set - set(provided_keys))
+    unknown_model_keys: list[str] = []
+    shape_mismatches: list[str] = []
+    dtype_conversions = 0
+    applied: list[str] = []
+    applied_bytes = 0
+    try:
+        import torch  # type: ignore
+    except ModuleNotFoundError:
+        torch = None  # type: ignore
+    for key in provided_keys:
+        tensor = tensors[key]
+        if key not in assigned_key_set:
+            continue
+        target = model_state.get(key)
+        if target is None:
+            unknown_model_keys.append(key)
+            continue
+        if tuple(getattr(target, "shape", ())) != tuple(getattr(tensor, "shape", ())):
+            shape_mismatches.append(key)
+            continue
+        if str(getattr(target, "dtype", "")) != str(getattr(tensor, "dtype", "")):
+            dtype_conversions += 1
+        if torch is not None:
+            with torch.no_grad():
+                target.copy_(tensor.to(device=target.device, dtype=target.dtype))
+        else:
+            target.copy_(tensor)
+        applied.append(key)
+        applied_bytes += _tensor_nbytes(target)
+    ready = bool(
+        applied
+        and not unexpected_keys
+        and not missing_assigned
+        and not unknown_model_keys
+        and not shape_mismatches
+        and set(applied) == assigned_key_set
+    )
+    if ready:
+        diagnosis_codes.update({
+            "real_llm_stage_selective_weight_application_ready",
+            "real_llm_stage_owned_state_dict_ready",
+        })
+    else:
+        diagnosis_codes.add("real_llm_stage_selective_weight_application_not_ready")
+        if unexpected_keys:
+            blockers.add("real_llm_stage_selective_cross_stage_weight_loaded")
+        if missing_assigned:
+            blockers.add("real_llm_stage_selective_assigned_weight_keys_missing")
+        if unknown_model_keys:
+            blockers.add("real_llm_stage_selective_model_state_keys_missing")
+        if shape_mismatches:
+            blockers.add("real_llm_stage_selective_weight_shape_mismatch")
+        if not applied:
+            blockers.add("real_llm_stage_selective_weight_keys_not_applied")
+    summary.update({
+        "ready": ready,
+        "stage_selective_tensor_application_ready": ready,
+        "applied_weight_key_count": len(applied),
+        "missing_assigned_weight_key_count": len(missing_assigned),
+        "unknown_model_key_count": len(unknown_model_keys),
+        "shape_mismatch_count": len(shape_mismatches),
+        "dtype_conversion_count": int(dtype_conversions),
+        "cross_stage_weight_keys_loaded": bool(unexpected_keys),
+        "applied_weight_key_digest": _hash_payload(sorted(applied)),
+        "applied_tensor_bytes": int(applied_bytes),
+        "loads_only_stage_weight_keys": bool(ready and not unexpected_keys),
+        "diagnosis_codes": sorted(diagnosis_codes),
+        "blockers": sorted(blockers),
+    })
+    return summary
+
+
 def _partial_weight_tensor_materialization_ready(source: dict[str, Any]) -> bool:
     if source.get("partial_weight_tensor_materialization_ready") is True:
         return True
@@ -720,6 +857,28 @@ def _partial_weight_tensor_materialization_ready(source: dict[str, Any]) -> bool
     return False
 
 
+def _partial_weight_tensor_application_ready(source: dict[str, Any]) -> bool:
+    if source.get("partial_weight_tensor_application_ready") is True:
+        return True
+    raw = source.get("stage_selective_weight_application")
+    if isinstance(raw, dict):
+        return bool(
+            raw.get("ready")
+            and raw.get("stage_selective_tensor_application_ready")
+            and raw.get("loads_only_stage_weight_keys")
+        )
+    raw_list = source.get("stage_selective_weight_application_summaries")
+    if isinstance(raw_list, list) and raw_list:
+        return all(
+            isinstance(item, dict)
+            and item.get("ready")
+            and item.get("stage_selective_tensor_application_ready")
+            and item.get("loads_only_stage_weight_keys")
+            for item in raw_list
+        )
+    return False
+
+
 def real_llm_execution_support_summary(
     metadata: dict[str, Any] | None = None,
     *,
@@ -733,6 +892,7 @@ def real_llm_execution_support_summary(
     partial_plan = real_llm_partial_weight_loading_plan(source, partition_mode=mode)
     partial_plan_ready = bool(partial_plan.get("ready"))
     tensor_materialization_ready = _partial_weight_tensor_materialization_ready(source)
+    tensor_application_ready = _partial_weight_tensor_application_ready(source)
     small_tier_candidate = bool(
         SMALL_TIER_MIN_PARAMETERS <= parameter_count_estimate <= SMALL_TIER_MAX_PARAMETERS
     )
@@ -767,7 +927,9 @@ def real_llm_execution_support_summary(
         blockers.append("real_llm_execution_architecture_unsupported")
         large_model_blockers.append("real_llm_execution_architecture_unsupported")
     if mode == PARTITION_MODE_STAGE_LOCAL:
-        if tensor_materialization_ready:
+        if tensor_application_ready:
+            diagnosis_codes.append("real_llm_stage_selective_weight_application_ready")
+        if tensor_materialization_ready or tensor_application_ready:
             diagnosis_codes.append("real_llm_stage_selective_weight_materialization_ready")
         if partial_plan_ready:
             diagnosis_codes.append("real_llm_stage_local_partial_weight_plan_ready")
@@ -800,8 +962,10 @@ def real_llm_execution_support_summary(
         "estimated_weight_bytes_fp32": estimated_weight_bytes,
         "stage_local_estimated_stage_weight_bytes_fp32": estimated_stage_weight_bytes,
         "stage_local_load_strategy": (
-            "stage_weight_index_selective_tensor_materialization"
-            if mode == PARTITION_MODE_STAGE_LOCAL and tensor_materialization_ready
+            "stage_weight_index_selective_tensor_application"
+            if mode == PARTITION_MODE_STAGE_LOCAL and tensor_application_ready
+            else "stage_weight_index_selective_tensor_materialization"
+            if mode == PARTITION_MODE_STAGE_LOCAL and (tensor_materialization_ready or tensor_application_ready)
             else "stage_weight_index_selective_load_plan"
             if mode == PARTITION_MODE_STAGE_LOCAL and partial_plan_ready
             else "full_model_cpu_load_then_stage_module_device_move"
@@ -810,8 +974,9 @@ def real_llm_execution_support_summary(
         ),
         "partial_weight_loading_plan_ready": partial_plan_ready,
         "partial_weight_loading_plan": partial_plan,
-        "partial_weight_tensor_materialization_ready": tensor_materialization_ready,
-        "true_partial_weight_loading_ready": tensor_materialization_ready,
+        "partial_weight_tensor_materialization_ready": bool(tensor_materialization_ready or tensor_application_ready),
+        "partial_weight_tensor_application_ready": tensor_application_ready,
+        "true_partial_weight_loading_ready": bool(tensor_materialization_ready or tensor_application_ready),
         "partial_weight_runtime_execution_ready": False,
         "small_tier_candidate": small_tier_candidate,
         "kaggle_small_tier_supported_by_current_split": bool(small_tier_candidate and current_supported),

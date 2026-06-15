@@ -218,18 +218,27 @@ def summarize_llama_like_local(report: dict[str, Any], meta: dict[str, Any], pat
 def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[str, Any], path: Path) -> dict[str, Any]:
     support = report.get("model_execution_support") if isinstance(report.get("model_execution_support"), dict) else {}
     stage_rows = report.get("stage_summaries") if isinstance(report.get("stage_summaries"), list) else []
+    application_rows = report.get("stage_application_summaries") if isinstance(report.get("stage_application_summaries"), list) else []
     codes = set(report.get("diagnosis_codes") or [])
     ready = bool(
         meta.get("ok")
         and report.get("ok") is True
         and report.get("stage_selective_weight_loading_ready") is True
         and support.get("partial_weight_tensor_materialization_ready") is True
+        and support.get("partial_weight_tensor_application_ready") is True
         and all(
             isinstance(row, dict)
             and row.get("ready") is True
             and row.get("loads_only_stage_weight_keys") is True
             and row.get("cross_stage_weight_keys_loaded") is False
             for row in stage_rows
+        )
+        and all(
+            isinstance(row, dict)
+            and row.get("ready") is True
+            and row.get("loads_only_stage_weight_keys") is True
+            and row.get("cross_stage_weight_keys_loaded") is False
+            for row in application_rows
         )
     )
     return {
@@ -242,6 +251,7 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
         "stage_count": len(stage_rows),
         "stage_selective_weight_loading_ready": report.get("stage_selective_weight_loading_ready") is True,
         "partial_weight_tensor_materialization_ready": bool(support.get("partial_weight_tensor_materialization_ready")),
+        "partial_weight_tensor_application_ready": bool(support.get("partial_weight_tensor_application_ready")),
         "true_partial_weight_loading_ready": bool(support.get("true_partial_weight_loading_ready")),
         "partial_weight_runtime_execution_ready": bool(support.get("partial_weight_runtime_execution_ready")),
         "loaded_weight_key_count_total": sum(
@@ -254,9 +264,23 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
             for row in stage_rows
             if isinstance(row, dict)
         ),
+        "applied_weight_key_count_total": sum(
+            int(row.get("applied_weight_key_count") or 0)
+            for row in application_rows
+            if isinstance(row, dict)
+        ),
+        "applied_tensor_bytes_total": sum(
+            int(row.get("applied_tensor_bytes") or 0)
+            for row in application_rows
+            if isinstance(row, dict)
+        ),
         "loads_only_stage_weight_keys": bool(
             stage_rows
             and all(isinstance(row, dict) and row.get("loads_only_stage_weight_keys") is True for row in stage_rows)
+            and (
+                not application_rows
+                or all(isinstance(row, dict) and row.get("loads_only_stage_weight_keys") is True for row in application_rows)
+            )
         ),
         "large_model_validation": False,
         "runtime_execution_validation": False,
@@ -310,6 +334,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         diagnosis_codes.extend(str(code) for code in small["large_model_blockers"])
     if stage_selective.get("ready"):
         diagnosis_codes.append("core_stage_selective_weight_materialization_validated")
+    if stage_selective.get("partial_weight_tensor_application_ready"):
+        diagnosis_codes.append("core_stage_selective_weight_application_validated")
 
     blockers: list[str] = []
     if not seven.get("real_7b_runtime_verified"):
@@ -353,6 +379,10 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "stage_selective_weight_loading_is_not_7b_8b_completion": bool(stage_selective.get("ready")),
             "stage_selective_weight_loading_is_not_runtime_execution": bool(
                 stage_selective.get("ready")
+                and not stage_selective.get("partial_weight_runtime_execution_ready")
+            ),
+            "stage_selective_weight_application_is_not_runtime_execution": bool(
+                stage_selective.get("partial_weight_tensor_application_ready")
                 and not stage_selective.get("partial_weight_runtime_execution_ready")
             ),
             "thirteen_b_validated": False,
@@ -475,6 +505,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- report: `{stage_selective.get('report_path', '')}`",
         f"- ready: `{stage_selective.get('ready')}`",
         f"- loaded weight keys: `{stage_selective.get('loaded_weight_key_count_total', 0)}`",
+        f"- applied weight keys: `{stage_selective.get('applied_weight_key_count_total', 0)}`",
         f"- loads only stage keys: `{stage_selective.get('loads_only_stage_weight_keys')}`",
         f"- runtime execution validation: `{stage_selective.get('runtime_execution_validation')}`",
         f"- large model validation: `{stage_selective.get('large_model_validation')}`",

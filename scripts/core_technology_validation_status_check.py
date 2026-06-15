@@ -103,6 +103,8 @@ def validate_report(report: dict[str, Any], *, require_core_ready: bool = False)
         truth = report.get("readiness_truth") if isinstance(report.get("readiness_truth"), dict) else {}
         if truth.get("stage_selective_weight_loading_is_not_7b_8b_completion") is not True:
             raise SystemExit("stage-selective loading must not be treated as 7B/8B completion")
+        if stage_selective.get("partial_weight_tensor_application_ready") and truth.get("stage_selective_weight_application_is_not_runtime_execution") is not True:
+            raise SystemExit("stage-selective application must not be treated as runtime execution")
     if llama_local.get("ready") and report.get("seven_b_eight_b_validated") is not True:
         truth = report.get("readiness_truth") if isinstance(report.get("readiness_truth"), dict) else {}
         if report.get("core_validation_ready") is True or truth.get("do_not_treat_core_layer_complete") is not True:

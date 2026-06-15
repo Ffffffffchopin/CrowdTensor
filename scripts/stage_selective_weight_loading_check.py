@@ -73,32 +73,57 @@ def synthetic_metadata() -> dict[str, Any]:
 def build_synthetic_weights(root: Path) -> None:
     import torch  # type: ignore
     from safetensors.torch import save_file  # type: ignore
+    from transformers import LlamaConfig, LlamaForCausalLM  # type: ignore
+
+    model = LlamaForCausalLM(synthetic_llama_config())
+    state = model.state_dict()
 
     save_file(
         {
-            "model.embed_tokens.weight": torch.ones((2, 2)),
-            "model.layers.0.self_attn.q_proj.weight": torch.full((2, 2), 2.0),
-            "model.layers.1.self_attn.q_proj.weight": torch.full((2, 2), 3.0),
-            "model.layers.2.self_attn.q_proj.weight": torch.full((2, 2), 4.0),
+            "model.embed_tokens.weight": torch.ones_like(state["model.embed_tokens.weight"]),
+            "model.layers.0.self_attn.q_proj.weight": torch.full_like(state["model.layers.0.self_attn.q_proj.weight"], 2.0),
+            "model.layers.1.self_attn.q_proj.weight": torch.full_like(state["model.layers.1.self_attn.q_proj.weight"], 3.0),
+            "model.layers.2.self_attn.q_proj.weight": torch.full_like(state["model.layers.2.self_attn.q_proj.weight"], 4.0),
         },
         root / "model-00001-of-00002.safetensors",
     )
     save_file(
         {
-            "model.layers.2.self_attn.q_proj.weight": torch.full((2, 2), 5.0),
-            "model.layers.3.self_attn.q_proj.weight": torch.full((2, 2), 6.0),
-            "model.norm.weight": torch.ones((2,)),
-            "lm_head.weight": torch.full((2, 2), 7.0),
-            "model.layers.1.self_attn.q_proj.weight": torch.full((2, 2), 8.0),
+            "model.layers.2.self_attn.q_proj.weight": torch.full_like(state["model.layers.2.self_attn.q_proj.weight"], 5.0),
+            "model.layers.3.self_attn.q_proj.weight": torch.full_like(state["model.layers.3.self_attn.q_proj.weight"], 6.0),
+            "model.norm.weight": torch.ones_like(state["model.norm.weight"]),
+            "lm_head.weight": torch.full_like(state["lm_head.weight"], 7.0),
+            "model.layers.1.self_attn.q_proj.weight": torch.full_like(state["model.layers.1.self_attn.q_proj.weight"], 8.0),
         },
         root / "model-00002-of-00002.safetensors",
     )
+
+
+def synthetic_llama_config() -> Any:
+    from transformers import LlamaConfig  # type: ignore
+
+    return LlamaConfig(
+        vocab_size=8,
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=4,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        max_position_embeddings=16,
+    )
+
+
+def synthetic_stage_model() -> Any:
+    from transformers import LlamaForCausalLM  # type: ignore
+
+    return LlamaForCausalLM(synthetic_llama_config())
 
 
 def build_report(output_dir: Path) -> dict[str, Any]:
     missing = real_llm.missing_hf_dependencies()
     metadata = synthetic_metadata()
     stage_summaries: list[dict[str, Any]] = []
+    application_summaries: list[dict[str, Any]] = []
     if missing:
         support = real_llm.real_llm_execution_support_summary(metadata)
         report = {
@@ -129,21 +154,32 @@ def build_report(output_dir: Path) -> dict[str, Any]:
             root = Path(tmp)
             build_synthetic_weights(root)
             for stage_id in (0, 1):
-                stage_summaries.append(
-                    real_llm.real_llm_stage_selective_weight_load_summary(
+                tensors, load_summary = real_llm._load_stage_selective_safetensors(  # noqa: SLF001
+                    metadata,
+                    stage_id=stage_id,
+                    weight_root=root,
+                )
+                stage_summaries.append(load_summary)
+                application_summaries.append(
+                    real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
+                        synthetic_stage_model(),
+                        tensors,
                         metadata,
                         stage_id=stage_id,
-                        weight_root=root,
                     )
                 )
         support = real_llm.real_llm_execution_support_summary({
             **metadata,
             "stage_selective_weight_load_summaries": stage_summaries,
+            "stage_selective_weight_application_summaries": application_summaries,
         })
         ready = bool(
             stage_summaries
             and all(stage.get("ready") and stage.get("loads_only_stage_weight_keys") for stage in stage_summaries)
+            and application_summaries
+            and all(stage.get("ready") and stage.get("loads_only_stage_weight_keys") for stage in application_summaries)
             and support.get("partial_weight_tensor_materialization_ready")
+            and support.get("partial_weight_tensor_application_ready")
             and support.get("partial_weight_runtime_execution_ready") is False
         )
         report = {
@@ -156,10 +192,13 @@ def build_report(output_dir: Path) -> dict[str, Any]:
             "execution_family": real_llm.execution_family_from_metadata(metadata),
             "partition_mode": metadata["partition_mode"],
             "stage_summaries": stage_summaries,
+            "stage_application_summaries": application_summaries,
             "model_execution_support": support,
             "readiness_truth": {
                 "stage_selective_weight_loading_is_not_7b_runtime": True,
+                "stage_selective_weight_application_is_not_7b_runtime": True,
                 "partial_weight_tensor_materialization_is_not_runtime_execution": True,
+                "partial_weight_tensor_application_is_not_runtime_execution": True,
                 "seven_b_eight_b_validated": False,
                 "production_swarm_inference_claimed": False,
             },
@@ -170,6 +209,9 @@ def build_report(output_dir: Path) -> dict[str, Any]:
                 "real_llm_stage_selective_weight_materialization_ready"
                 if support.get("partial_weight_tensor_materialization_ready")
                 else "real_llm_stage_selective_weight_materialization_not_ready",
+                "real_llm_stage_selective_weight_application_ready"
+                if support.get("partial_weight_tensor_application_ready")
+                else "real_llm_stage_selective_weight_application_not_ready",
                 "real_llm_partial_weight_runtime_execution_missing",
             ],
             "blockers": ["real_llm_partial_weight_runtime_execution_missing"],

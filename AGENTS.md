@@ -42,8 +42,10 @@ until a real 7B/8B sharded large-model run succeeds on external hardware.
 `scripts/stage_selective_weight_loading_check.py` is the local safetensors
 materialization proof for the next 7B/8B step: it validates that each
 Llama-like stage can load only its assigned safetensors keys and report
-public-safe counts/hashes without tensor values. Treat this as stronger than a
-partial-weight plan, but still not runtime execution and not 7B/8B completion.
+public-safe counts/hashes without tensor values. It also applies those tensors
+to matching stage-owned model `state_dict` entries in a synthetic Llama-like
+model and proves no cross-stage keys were applied. Treat this as stronger than
+a partial-weight plan, but still not runtime execution and not 7B/8B completion.
 
 ## Current Alpha Reality
 

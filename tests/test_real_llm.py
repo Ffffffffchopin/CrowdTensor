@@ -209,6 +209,110 @@ class RealLlmTests(unittest.TestCase):
             "stage_weight_index_selective_tensor_materialization",
         )
 
+    def test_stage_selective_tensors_apply_to_stage_owned_model_state(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        import torch  # type: ignore
+        from safetensors.torch import save_file  # type: ignore
+        from transformers import LlamaConfig, LlamaForCausalLM  # type: ignore
+
+        config = LlamaConfig(
+            vocab_size=8,
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_position_embeddings=16,
+        )
+        model = LlamaForCausalLM(config)
+        state = model.state_dict()
+        stage0_keys = [
+            "model.embed_tokens.weight",
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.layers.1.self_attn.q_proj.weight",
+        ]
+        stage1_keys = [
+            "model.layers.2.self_attn.q_proj.weight",
+            "model.layers.3.self_attn.q_proj.weight",
+            "model.norm.weight",
+            "lm_head.weight",
+        ]
+        weight_map = {
+            **{key: "model-00001-of-00002.safetensors" for key in stage0_keys},
+            **{key: "model-00002-of-00002.safetensors" for key in stage1_keys},
+        }
+        metadata = {
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 4,
+            "hidden_size": 8,
+            "split_index": 2,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "weight_map": weight_map,
+        }
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_stage_apply_") as tmp:
+            root = Path(tmp)
+            save_file(
+                {
+                    key: torch.full_like(state[key], float(index + 1))
+                    for index, key in enumerate(stage0_keys)
+                },
+                root / "model-00001-of-00002.safetensors",
+            )
+            save_file(
+                {
+                    key: torch.full_like(state[key], float(index + 10))
+                    for index, key in enumerate(stage1_keys)
+                },
+                root / "model-00002-of-00002.safetensors",
+            )
+            stage0_tensors, load_summary = real_llm._load_stage_selective_safetensors(  # noqa: SLF001
+                metadata,
+                stage_id=0,
+                weight_root=root,
+            )
+            apply_summary = real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
+                model,
+                stage0_tensors,
+                metadata,
+                stage_id=0,
+            )
+
+        self.assertTrue(load_summary["ready"])
+        self.assertTrue(apply_summary["ready"])
+        self.assertTrue(apply_summary["stage_selective_tensor_application_ready"])
+        self.assertEqual(apply_summary["applied_weight_key_count"], len(stage0_keys))
+        self.assertEqual(apply_summary["missing_assigned_weight_key_count"], 0)
+        self.assertEqual(apply_summary["unknown_model_key_count"], 0)
+        self.assertEqual(apply_summary["shape_mismatch_count"], 0)
+        self.assertFalse(apply_summary["cross_stage_weight_keys_loaded"])
+        self.assertTrue(apply_summary["loads_only_stage_weight_keys"])
+        self.assertIn(
+            "real_llm_stage_selective_weight_application_ready",
+            apply_summary["diagnosis_codes"],
+        )
+        for index, key in enumerate(stage0_keys):
+            self.assertTrue(torch.equal(model.state_dict()[key], torch.full_like(state[key], float(index + 1))))
+        self.assertFalse(torch.equal(model.state_dict()[stage1_keys[0]], torch.full_like(state[stage1_keys[0]], 10.0)))
+
+        support = real_llm.real_llm_execution_support_summary({
+            **metadata,
+            "stage_selective_weight_load_summaries": [load_summary],
+            "stage_selective_weight_application_summaries": [apply_summary],
+        })
+        self.assertTrue(support["partial_weight_tensor_materialization_ready"])
+        self.assertTrue(support["partial_weight_tensor_application_ready"])
+        self.assertTrue(support["true_partial_weight_loading_ready"])
+        self.assertFalse(support["partial_weight_runtime_execution_ready"])
+        self.assertEqual(
+            support["stage_local_load_strategy"],
+            "stage_weight_index_selective_tensor_application",
+        )
+
     def test_partial_weight_plan_without_weight_index_keeps_true_partial_blocker(self) -> None:
         metadata = {
             "model_id": "Qwen/Qwen2.5-7B-Instruct",

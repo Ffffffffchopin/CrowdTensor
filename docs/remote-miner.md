@@ -463,7 +463,7 @@ python scripts/core_technology_validation_status_pack.py --output-dir dist/core-
 python scripts/core_technology_validation_status_check.py --report dist/core-technology-validation-status-stage-selective-20260615/core_technology_validation_status.json --json
 ```
 
-`stage_selective_weight_loading_check_v1` proves stage-owned safetensors tensor materialization and redacted reporting only. It intentionally keeps `partial_weight_runtime_execution_ready=false` and does not prove 7B/8B Kaggle runtime success. The next large-model Kaggle attempt should build on this selective-loading path instead of repeating a full-model-in-one-container load.
+`stage_selective_weight_loading_check_v1` proves stage-owned safetensors tensor materialization, stage-owned `state_dict` application, and redacted reporting only. It intentionally keeps `partial_weight_runtime_execution_ready=false` and does not prove 7B/8B Kaggle runtime success. The next large-model Kaggle attempt should build on this selective-loading path instead of repeating a full-model-in-one-container load.
 
 For an operator-owned local LLM runtime on the Miner host, use the explicit external LLM workload:
 
