@@ -24,10 +24,11 @@ DEFAULT_SMALL_GPU_REPORT = (
     "dist/gpt2-xl-small-tier-kaggle-logfix-20260614172932/"
     "public_swarm_gpu_inference_beta_kaggle_auto.json"
 )
-DEFAULT_SEVEN_B_BLOCKER_REPORT = (
-    "dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-inplace-20260613/"
-    "large_model_kaggle_validation_run_normalized.json"
+DEFAULT_SEVEN_B_EIGHT_B_REPORT = (
+    "dist/large-model-kaggle-stage-selective-hf-7b-manual-rope-20260616/"
+    "large_model_kaggle_validation.json"
 )
+DEFAULT_SEVEN_B_BLOCKER_REPORT = DEFAULT_SEVEN_B_EIGHT_B_REPORT
 DEFAULT_LLAMA_LIKE_LOCAL_REPORT = (
     "dist/real-llm-llama-like-local-smoke-20260615/"
     "real_llm_sharded_evidence.json"
@@ -150,9 +151,38 @@ def summarize_small_gpu(report: dict[str, Any], meta: dict[str, Any], path: Path
     }
 
 
-def summarize_seven_b_blocker(report: dict[str, Any], meta: dict[str, Any], path: Path) -> dict[str, Any]:
-    validation = report.get("validation") if isinstance(report.get("validation"), dict) else {}
+def _validation_flags(report: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(report.get("validation"), dict):
+        validation = dict(report["validation"])
+    else:
+        validation = {}
+    for key in [
+        "real_7b_runtime_verified",
+        "real_13b_runtime_verified",
+        "real_runtime_verified",
+        "gpu_runtime_verified",
+        "sharded_path_verified",
+        "multi_worker_sharded_path_verified",
+        "core_validation_ready",
+    ]:
+        if key in report and key not in validation:
+            validation[key] = report.get(key)
+    tier_results = report.get("tier_results") if isinstance(report.get("tier_results"), list) else []
+    if tier_results and isinstance(tier_results[0], dict):
+        tier_validation = tier_results[0].get("validation")
+        if isinstance(tier_validation, dict):
+            for key, value in tier_validation.items():
+                validation.setdefault(key, value)
+    return validation
+
+
+def summarize_seven_b_eight_b(report: dict[str, Any], meta: dict[str, Any], path: Path) -> dict[str, Any]:
+    validation = _validation_flags(report)
     hardware = report.get("hardware") if isinstance(report.get("hardware"), dict) else {}
+    runtime = report.get("runtime") if isinstance(report.get("runtime"), dict) else {}
+    metrics = report.get("metrics") if isinstance(report.get("metrics"), dict) else {}
+    model = report.get("model") if isinstance(report.get("model"), dict) else {}
+    lifecycle = report.get("kaggle_lifecycle") if isinstance(report.get("kaggle_lifecycle"), dict) else {}
     pressure = report.get("resource_pressure_summary") if isinstance(report.get("resource_pressure_summary"), dict) else {}
     codes = set(report.get("diagnosis_codes") or [])
     blocked = bool(
@@ -163,9 +193,18 @@ def summarize_seven_b_blocker(report: dict[str, Any], meta: dict[str, Any], path
     )
     return {
         "blocked": blocked,
+        "ready": bool(validation.get("real_7b_runtime_verified")),
         "report_path": str(path),
         "report_sha256": sha256_file(path) if path.is_file() else "",
         "schema": report.get("schema", ""),
+        "model_id": model.get("model_id") or "",
+        "backend": runtime.get("backend") or "",
+        "stage_count": runtime.get("stage_count"),
+        "worker_count": runtime.get("worker_count"),
+        "generated_token_count": int(metrics.get("generated_token_count") or 0),
+        "tokens_per_second": metrics.get("tokens_per_second"),
+        "wall_time_seconds": metrics.get("wall_time_seconds"),
+        "memory_peak_mb": metrics.get("memory_peak_mb"),
         "kaggle_gpu_verified": hardware.get("kaggle_gpu_verified") is True,
         "gpu_count": hardware.get("gpu_count"),
         "gpu_names": hardware.get("gpu_names") or [],
@@ -180,9 +219,14 @@ def summarize_seven_b_blocker(report: dict[str, Any], meta: dict[str, Any], path
         "gpu_memory_low_pressure": bool(pressure.get("gpu_memory_low_pressure")),
         "cgroup_memory_peak_ratio": pressure.get("cgroup_memory_peak_ratio"),
         "gpu_memory_used_peak_ratio": pressure.get("gpu_memory_used_peak_ratio"),
+        "kaggle_kernels_deleted": lifecycle.get("kernels_deleted") is True,
         "blockers": report.get("blockers") or [],
         "diagnosis_codes": sorted(codes),
     }
+
+
+def summarize_seven_b_blocker(report: dict[str, Any], meta: dict[str, Any], path: Path) -> dict[str, Any]:
+    return summarize_seven_b_eight_b(report, meta, path)
 
 
 def summarize_llama_like_local(report: dict[str, Any], meta: dict[str, Any], path: Path) -> dict[str, Any]:
@@ -311,7 +355,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     small_path = Path(args.small_gpu_report)
-    seven_path = Path(args.seven_b_blocker_report)
+    seven_path = Path(args.seven_b_report or args.seven_b_blocker_report)
     llama_local_path = Path(args.llama_like_local_report)
     stage_selective_path = Path(args.stage_selective_weight_report)
     small_report, small_meta = try_load(small_path)
@@ -319,7 +363,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     llama_local_report, llama_local_meta = try_load(llama_local_path)
     stage_selective_report, stage_selective_meta = try_load(stage_selective_path)
     small = summarize_small_gpu(small_report, small_meta, small_path)
-    seven = summarize_seven_b_blocker(seven_report, seven_meta, seven_path)
+    seven = summarize_seven_b_eight_b(seven_report, seven_meta, seven_path)
     llama_local = summarize_llama_like_local(llama_local_report, llama_local_meta, llama_local_path)
     stage_selective = summarize_stage_selective_weight_loading(
         stage_selective_report,
@@ -384,10 +428,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "core_validation_ready": core_ready,
         "small_tier_gpu_validated": bool(small["ready"]),
         "seven_b_eight_b_validated": bool(seven["real_7b_runtime_verified"]),
-        "largest_successful_tier": "small" if small["ready"] else "",
+        "largest_successful_tier": "7b" if seven["real_7b_runtime_verified"] else ("small" if small["ready"] else ""),
         "small_tier_evidence": small,
         "llama_like_local_evidence": llama_local,
         "stage_selective_weight_loading_evidence": stage_selective,
+        "seven_b_eight_b_evidence": seven,
         "seven_b_eight_b_blocker_evidence": seven,
         "blockers": sorted(set(blockers)),
         "diagnosis_codes": sorted(set(diagnosis_codes)),
@@ -492,7 +537,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     small = report.get("small_tier_evidence") if isinstance(report.get("small_tier_evidence"), dict) else {}
     llama_local = report.get("llama_like_local_evidence") if isinstance(report.get("llama_like_local_evidence"), dict) else {}
     stage_selective = report.get("stage_selective_weight_loading_evidence") if isinstance(report.get("stage_selective_weight_loading_evidence"), dict) else {}
-    seven = report.get("seven_b_eight_b_blocker_evidence") if isinstance(report.get("seven_b_eight_b_blocker_evidence"), dict) else {}
+    seven = report.get("seven_b_eight_b_evidence") if isinstance(report.get("seven_b_eight_b_evidence"), dict) else {}
+    if not isinstance(seven, dict) or not seven:
+        seven = report.get("seven_b_eight_b_blocker_evidence") if isinstance(report.get("seven_b_eight_b_blocker_evidence"), dict) else {}
     lines = [
         "# CrowdTensor Core Technology Validation Status",
         "",
@@ -535,10 +582,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## 7B/8B Evidence",
         "",
         f"- report: `{seven.get('report_path', '')}`",
+        f"- model: `{seven.get('model_id', '')}`",
+        f"- backend: `{seven.get('backend', '')}`",
         f"- Kaggle GPU verified: `{seven.get('kaggle_gpu_verified')}`",
         f"- GPUs: `{', '.join(seven.get('gpu_names') or [])}`",
         f"- real 7B runtime verified: `{seven.get('real_7b_runtime_verified')}`",
         f"- sharded path verified: `{seven.get('sharded_path_verified')}`",
+        f"- generated tokens: `{seven.get('generated_token_count', 0)}`",
+        f"- cleanup: `{seven.get('kaggle_kernels_deleted')}`",
         f"- container memory pressure not VRAM: `{seven.get('container_memory_pressure_not_vram')}`",
         "",
         "This status is public-safe evidence. It does not include raw prompts, generated text, generated token ids, activations, credentials, private Kaggle material, leases, or idempotency material.",
@@ -550,6 +601,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build core technology validation status from retained evidence.")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--small-gpu-report", default=DEFAULT_SMALL_GPU_REPORT)
+    parser.add_argument("--seven-b-report", default="")
     parser.add_argument("--seven-b-blocker-report", default=DEFAULT_SEVEN_B_BLOCKER_REPORT)
     parser.add_argument("--llama-like-local-report", default=DEFAULT_LLAMA_LIKE_LOCAL_REPORT)
     parser.add_argument("--stage-selective-weight-report", default=DEFAULT_STAGE_SELECTIVE_WEIGHT_REPORT)

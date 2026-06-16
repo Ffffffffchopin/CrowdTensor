@@ -250,7 +250,9 @@ generated token, `decoded_tokens_match`, `stage0_partition_loaded`,
 `stage1_partition_loaded`, `public_swarm_gpu_beta_kaggle_auto_ready`, and
 `kaggle_kernels_deleted`. Treat it as 1.5B-class small-tier evidence only:
 `large_model_sharded_execution_ready=false` and
-`true_partial_weight_loading_ready=false` still block 7B/8B completion. The
+`true_partial_weight_loading_ready=false` mean this artifact itself is not the
+7B/8B completion proof. Use the core technology validation status artifact for
+the current retained T4 x2 Qwen2.5-7B proof. The
 Kaggle-auto Coordinator stdout/stderr must be redirected to log files with
 redacted lifecycle tails; the retained log-fix proof records
 `stdout_stderr_to_files: true`, so a verbose Coordinator cannot block on full

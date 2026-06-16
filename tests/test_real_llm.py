@@ -451,6 +451,60 @@ class RealLlmTests(unittest.TestCase):
             "stage_weight_index_selective_runtime_execution",
         )
 
+    def test_stage_selective_runtime_smoke_can_skip_baseline(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        from tokenizers import Tokenizer, models, pre_tokenizers  # type: ignore
+        from transformers import GPT2Config, GPT2LMHeadModel, PreTrainedTokenizerFast  # type: ignore
+
+        config = GPT2Config(
+            n_layer=4,
+            n_embd=16,
+            n_head=4,
+            n_positions=32,
+            n_ctx=32,
+            vocab_size=16,
+            bos_token_id=0,
+            eos_token_id=0,
+        )
+        full_model = GPT2LMHeadModel(config)
+        metadata = {
+            "model_id": "local-gpt2-stage-smoke",
+            "model_type": "gpt2",
+            "architectures": ["GPT2LMHeadModel"],
+            "num_hidden_layers": 4,
+            "hidden_size": 16,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "split_index": 2,
+            "weight_map": {key: "model.safetensors" for key in full_model.state_dict()},
+        }
+        stage0_model = GPT2LMHeadModel(config)
+        stage1_model = GPT2LMHeadModel(config)
+        stage0_model.load_state_dict(full_model.state_dict())
+        stage1_model.load_state_dict(full_model.state_dict())
+        tokenizer = Tokenizer(models.WordLevel({"<unk>": 0, "CrowdTensor": 1, "routes": 2}, unk_token="<unk>"))
+        tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+        hf_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>")
+
+        runtime = real_llm.run_stage_selective_runtime_smoke(
+            tokenizer=hf_tokenizer,
+            stage0_model=stage0_model,
+            stage1_model=stage1_model,
+            baseline_model=None,
+            metadata=metadata,
+            prompt="CrowdTensor routes",
+            baseline_required=False,
+        )
+
+        self.assertTrue(runtime["ready"])
+        self.assertTrue(runtime["stage_selective_runtime_execution_ready"])
+        self.assertTrue(runtime["activation_transport_ready"])
+        self.assertTrue(runtime["baseline_validation_skipped"])
+        self.assertFalse(runtime["baseline_match"])
+        self.assertEqual(runtime["generated_token_count"], 1)
+
     def test_stage_selective_hf_runtime_smoke_uses_meta_stage_models(self) -> None:
         missing = real_llm.missing_hf_dependencies()
         if missing:
@@ -519,6 +573,9 @@ class RealLlmTests(unittest.TestCase):
         self.assertTrue(runtime["ready"])
         self.assertTrue(runtime["stage_selective_runtime_execution_ready"])
         self.assertEqual(runtime["runtime_execution_scope"], "real_hf_stage_selective_runtime")
+        self.assertEqual(runtime["stage_devices"]["stage0"], "cpu")
+        self.assertEqual(runtime["stage_devices"]["stage1"], "cpu")
+        self.assertFalse(runtime["multi_device_stage_assignment"])
         self.assertTrue(runtime["activation_transport_ready"])
         self.assertTrue(runtime["baseline_match"])
         self.assertTrue(runtime["decoded_tokens_match"])
@@ -537,6 +594,60 @@ class RealLlmTests(unittest.TestCase):
         self.assertFalse(runtime["raw_generated_text_public"])
         self.assertFalse(runtime["generated_token_ids_public"])
         self.assertFalse(runtime["activation_public"])
+
+    def test_stage_selective_single_safetensors_supports_tied_lm_head(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        import torch  # type: ignore
+        from safetensors.torch import save_file  # type: ignore
+        from tokenizers import Tokenizer, models, pre_tokenizers  # type: ignore
+        from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast  # type: ignore
+
+        config = LlamaConfig(
+            vocab_size=8,
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_position_embeddings=32,
+            tie_word_embeddings=True,
+        )
+        model = LlamaForCausalLM(config)
+        state = model.state_dict()
+        single_file_state = {
+            key: tensor.detach().clone()
+            for key, tensor in state.items()
+            if key != "lm_head.weight" and not key.endswith("rotary_emb.inv_freq")
+        }
+
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_tied_lm_head_") as tmp:
+            root = Path(tmp)
+            config.to_json_file(root / "config.json")
+            tokenizer = Tokenizer(models.WordLevel({"<unk>": 0, "CrowdTensor": 1, "routes": 2}, unk_token="<unk>"))
+            tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>")
+            hf_tokenizer.save_pretrained(root)
+            save_file(single_file_state, root / "model.safetensors")
+
+            config_loaded, metadata, weight_root = real_llm._stage_selective_hf_metadata(  # noqa: SLF001
+                model_id=str(root),
+                backend=real_llm.BACKEND_CPU,
+            )
+            self.assertTrue(config_loaded.tie_word_embeddings)
+            self.assertEqual(metadata["tied_weight_aliases"]["lm_head.weight"], "model.embed_tokens.weight")
+            self.assertEqual(metadata["weight_file_count"], 1)
+            stage1_tensors, stage1_load = real_llm._load_stage_selective_safetensors(  # noqa: SLF001
+                metadata,
+                stage_id=1,
+                weight_root=weight_root,
+            )
+
+        self.assertTrue(stage1_load["ready"])
+        self.assertIn("lm_head.weight", stage1_tensors)
+        self.assertTrue(torch.equal(stage1_tensors["lm_head.weight"], state["model.embed_tokens.weight"]))
 
     def test_partial_weight_plan_without_weight_index_keeps_true_partial_blocker(self) -> None:
         metadata = {

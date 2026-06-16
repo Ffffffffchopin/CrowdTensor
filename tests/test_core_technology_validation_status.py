@@ -18,26 +18,30 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
 
-    def test_default_retained_evidence_keeps_core_incomplete(self) -> None:
+    def test_default_retained_evidence_marks_core_ready_after_7b_validation(self) -> None:
         output_dir = self._tmp_dir()
         report = pack.build_report(pack.parse_args(["--output-dir", str(output_dir)]))
 
-        self.assertFalse(report["ok"])
-        self.assertFalse(report["core_validation_ready"])
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["core_validation_ready"])
         self.assertTrue(report["small_tier_gpu_validated"])
-        self.assertFalse(report["seven_b_eight_b_validated"])
-        self.assertEqual(report["largest_successful_tier"], "small")
-        self.assertIn("core_technology_validation_incomplete", report["diagnosis_codes"])
-        self.assertIn("core_7b_8b_real_runtime_not_verified", report["blockers"])
-        self.assertTrue(report["readiness_truth"]["small_tier_success_is_not_7b_8b_completion"])
+        self.assertTrue(report["seven_b_eight_b_validated"])
+        self.assertEqual(report["largest_successful_tier"], "7b")
+        self.assertIn("core_technology_validation_ready", report["diagnosis_codes"])
+        self.assertEqual(report["blockers"], [])
+        self.assertFalse(report["readiness_truth"]["small_tier_success_is_not_7b_8b_completion"])
         self.assertEqual(report["public_leak_paths"], [])
         self.assertIn("llama_like_local_evidence", report)
         self.assertFalse(report["llama_like_local_evidence"].get("large_model_validation"))
         self.assertIn("stage_selective_weight_loading_evidence", report)
+        self.assertIn("seven_b_eight_b_evidence", report)
         self.assertIn("core_stage_selective_weight_materialization_validated", report["diagnosis_codes"])
         self.assertTrue(report["stage_selective_weight_loading_evidence"].get("ready"))
         self.assertFalse(report["stage_selective_weight_loading_evidence"].get("large_model_validation"))
-        check.validate_report(report)
+        self.assertTrue(report["seven_b_eight_b_evidence"].get("real_7b_runtime_verified"))
+        self.assertEqual(report["seven_b_eight_b_evidence"].get("generated_token_count"), 1)
+        self.assertTrue(report["seven_b_eight_b_evidence"].get("kaggle_kernels_deleted"))
+        check.validate_report(report, require_core_ready=True)
 
         for name in [
             "core_technology_validation_status.json",
@@ -201,6 +205,7 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertTrue(report["core_validation_ready"])
         self.assertTrue(report["seven_b_eight_b_validated"])
+        self.assertTrue(report["seven_b_eight_b_evidence"]["real_7b_runtime_verified"])
         self.assertIn("core_technology_validation_ready", report["diagnosis_codes"])
         check.validate_report(report, require_core_ready=True)
 

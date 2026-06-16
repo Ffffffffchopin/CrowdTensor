@@ -318,6 +318,42 @@ def _weight_map_from_metadata(metadata: dict[str, Any]) -> dict[str, str]:
     return weight_map
 
 
+def _tied_weight_aliases_from_metadata(metadata: dict[str, Any]) -> dict[str, str]:
+    raw_aliases = metadata.get("tied_weight_aliases") or {}
+    if not isinstance(raw_aliases, dict):
+        return {}
+    aliases: dict[str, str] = {}
+    for key, value in raw_aliases.items():
+        key_text = str(key or "").strip()
+        value_text = str(value or "").strip()
+        if key_text and value_text:
+            aliases[key_text] = value_text
+    return aliases
+
+
+def _with_tied_lm_head_aliases(weight_index: dict[str, Any], config: Any) -> dict[str, Any]:
+    weight_map = dict(weight_index.get("weight_map") or {})
+    if not weight_map or not bool(getattr(config, "tie_word_embeddings", False)):
+        return weight_index
+    aliases: dict[str, str] = dict(weight_index.get("tied_weight_aliases") or {})
+    alias_candidates = (
+        ("lm_head.weight", "model.embed_tokens.weight"),
+        ("lm_head.weight", "transformer.wte.weight"),
+    )
+    for target_key, source_key in alias_candidates:
+        if target_key not in weight_map and source_key in weight_map:
+            weight_map[target_key] = weight_map[source_key]
+            aliases[target_key] = source_key
+    if not aliases:
+        return weight_index
+    updated = dict(weight_index)
+    updated["weight_map"] = weight_map
+    updated["weight_key_count"] = len(weight_map)
+    updated["tied_weight_aliases"] = aliases
+    updated["tied_weight_alias_count"] = len(aliases)
+    return updated
+
+
 def _layer_count_from_metadata(metadata: dict[str, Any]) -> int:
     return _first_positive_int(metadata, "num_hidden_layers", "n_layer", "n_layers")
 
@@ -539,6 +575,7 @@ def _load_stage_selective_safetensors(
         partition_mode=partition_mode,
     )
     assigned_key_set = set(assigned_keys)
+    tied_aliases = _tied_weight_aliases_from_metadata(source)
     assigned_files = sorted({weight_map[key] for key in assigned_keys if weight_map.get(key)})
     summary: dict[str, Any] = {
         "schema": REAL_LLM_STAGE_SELECTIVE_WEIGHT_LOAD_SCHEMA_VERSION,
@@ -617,13 +654,18 @@ def _load_stage_selective_safetensors(
                 expected_in_file = [
                     key for key in assigned_keys if weight_map.get(key) == safe_filename
                 ]
-                missing_in_file = [key for key in expected_in_file if key not in available_keys]
+                missing_in_file = [
+                    key
+                    for key in expected_in_file
+                    if key not in available_keys and tied_aliases.get(key) not in available_keys
+                ]
                 if missing_in_file:
                     missing_key_count_by_file[safe_filename] = len(missing_in_file)
                 for key in expected_in_file:
-                    if key not in available_keys:
+                    source_key = key if key in available_keys else tied_aliases.get(key, "")
+                    if source_key not in available_keys:
                         continue
-                    loaded[key] = handle.get_tensor(key)
+                    loaded[key] = handle.get_tensor(source_key)
                     loaded_files.add(safe_filename)
         except Exception:
             blockers.add("real_llm_stage_selective_weight_file_load_failed")
@@ -736,15 +778,28 @@ def _materialize_runtime_buffers(model: Any, *, device: Any | None = None) -> di
             module = getattr(module, part)
         try:
             module.register_buffer(parts[-1], replacement, persistent=name not in getattr(module, "_non_persistent_buffers_set", set()))
+            if parts[-1] == "inv_freq" and hasattr(module, "original_inv_freq"):
+                try:
+                    module.original_inv_freq = replacement.detach().clone()
+                except Exception:
+                    module.original_inv_freq = replacement
         except Exception:
             blockers.append("runtime_buffer_assignment_failed:" + name)
             continue
         materialized.append(name)
+    remaining_meta_attribute_count = 0
+    for _module_name, module in model.named_modules():
+        for attr_name in ("original_inv_freq",):
+            value = getattr(module, attr_name, None)
+            if bool(getattr(value, "is_meta", False)):
+                remaining_meta_attribute_count += 1
+                blockers.append("runtime_buffer_materialization_missing_attr:" + attr_name)
     return {
         "ready": not blockers,
         "materialized_runtime_buffer_count": len(materialized),
         "materialized_runtime_buffer_digest": _hash_payload(sorted(materialized)),
         "remaining_meta_buffer_count": sum(1 for _name, item in model.named_buffers(recurse=True) if bool(getattr(item, "is_meta", False))),
+        "remaining_meta_buffer_attribute_count": remaining_meta_attribute_count,
         "blockers": sorted(blockers),
     }
 
@@ -758,8 +813,32 @@ def _instantiate_hf_causal_lm_from_config(config: Any, *, meta: bool = False) ->
     from transformers import AutoModelForCausalLM  # type: ignore
 
     if meta:
+        accelerate_exc: Exception | None = None
+        try:
+            from accelerate import init_empty_weights  # type: ignore
+        except ModuleNotFoundError:
+            init_empty_weights = None  # type: ignore
+        if init_empty_weights is not None:
+            try:
+                with init_empty_weights(include_buffers=True):
+                    return AutoModelForCausalLM.from_config(config)
+            except TypeError:
+                with init_empty_weights():
+                    return AutoModelForCausalLM.from_config(config)
+            except Exception as exc:
+                accelerate_exc = exc
+                try:
+                    with init_empty_weights():
+                        return AutoModelForCausalLM.from_config(config)
+                except Exception:
+                    pass
         with torch.device("meta"):
-            return AutoModelForCausalLM.from_config(config)
+            try:
+                return AutoModelForCausalLM.from_config(config)
+            except Exception:
+                if accelerate_exc is not None:
+                    raise accelerate_exc
+                raise
     return AutoModelForCausalLM.from_config(config)
 
 
@@ -772,6 +851,7 @@ def _stage_selective_hf_metadata(
 ) -> tuple[Any, dict[str, Any], Path | None]:
     require_hf_dependencies()
     from transformers import AutoConfig  # type: ignore
+    from transformers.utils import cached_file  # type: ignore
 
     normalized_model_id = str(model_id or DEFAULT_MODEL_ID).strip() or DEFAULT_MODEL_ID
     config = AutoConfig.from_pretrained(normalized_model_id, **_cache_kwargs(cache_dir))
@@ -797,8 +877,6 @@ def _stage_selective_hf_metadata(
             weight_root = candidate.parent
             break
         try:
-            from transformers.utils import cached_file  # type: ignore
-
             cached = cached_file(normalized_model_id, filename, **_cache_kwargs(cache_dir))
         except Exception:
             cached = None
@@ -807,6 +885,49 @@ def _stage_selective_hf_metadata(
             if path.is_file():
                 weight_root = path.parent
                 break
+    if not weight_index.get("weight_map"):
+        single_weight_path: Path | None = None
+        for filename in ("model.safetensors",):
+            candidate = Path(normalized_model_id) / filename
+            if candidate.is_file():
+                single_weight_path = candidate
+                break
+            try:
+                cached = cached_file(normalized_model_id, filename, **_cache_kwargs(cache_dir))
+            except Exception:
+                cached = None
+            if cached:
+                path = Path(str(cached))
+                if path.is_file():
+                    single_weight_path = path
+                    break
+        if single_weight_path is not None:
+            try:
+                from safetensors import safe_open  # type: ignore
+
+                with safe_open(single_weight_path, framework="pt", device="cpu") as handle:
+                    weight_keys = [str(key) for key in handle.keys()]
+            except Exception:
+                weight_keys = []
+            if not weight_keys:
+                skeleton = _instantiate_hf_causal_lm_from_config(config, meta=True)
+                weight_keys = [
+                    str(key)
+                    for key in skeleton.state_dict()
+                    if not str(key).endswith("rotary_emb.inv_freq")
+                    and not str(key).endswith("rotary_emb.original_inv_freq")
+                ]
+            weight_map = {key: single_weight_path.name for key in weight_keys}
+            weight_index = {
+                "weight_index_schema": "single_model_safetensors",
+                "weight_index_available": True,
+                "weight_map": weight_map,
+                "weight_key_count": len(weight_map),
+                "weight_file_count": 1,
+                "total_size_bytes": int(single_weight_path.stat().st_size),
+            }
+            weight_root = single_weight_path.parent
+    weight_index = _with_tied_lm_head_aliases(weight_index, config)
     metadata: dict[str, Any] = {
         "schema": REAL_LLM_ARTIFACT_SCHEMA_VERSION,
         "model_id": normalized_model_id,
@@ -824,6 +945,18 @@ def _stage_selective_hf_metadata(
     metadata.update({key: value for key, value in weight_index.items() if key != "weight_map"})
     if weight_index.get("weight_map"):
         metadata["weight_map"] = weight_index["weight_map"]
+    if weight_root is not None and metadata.get("weight_map"):
+        for filename in sorted(set(_weight_map_from_metadata(metadata).values())):
+            if (weight_root / filename).is_file():
+                continue
+            try:
+                cached = cached_file(normalized_model_id, filename, **_cache_kwargs(cache_dir))
+            except Exception:
+                cached = None
+            if cached:
+                candidate = Path(str(cached))
+                if candidate.is_file() and candidate.parent != weight_root:
+                    weight_root = candidate.parent
     metadata["artifact_hash"] = _hash_payload({
         key: value
         for key, value in metadata.items()
@@ -864,6 +997,9 @@ def run_stage_selective_hf_runtime_smoke(
     backend: str = BACKEND_CPU,
     split_index: int | None = None,
     baseline_required: bool = True,
+    stage0_device: str | None = None,
+    stage1_device: str | None = None,
+    baseline_device: str | None = None,
 ) -> dict[str, Any]:
     """Run a public-safe real HF stage-selective smoke from a model directory.
 
@@ -936,41 +1072,41 @@ def run_stage_selective_hf_runtime_smoke(
             "public_safe": True,
         }
     resolved_backend = resolve_backend(normalized_backend)
-    device = torch.device("cuda:0" if resolved_backend == BACKEND_CUDA else "cpu")
+    default_stage0 = "cuda:0" if resolved_backend == BACKEND_CUDA else "cpu"
+    default_stage1 = "cuda:0" if resolved_backend == BACKEND_CUDA else "cpu"
+    stage0_device_obj = torch.device(stage0_device or default_stage0)
+    stage1_device_obj = torch.device(stage1_device or default_stage1)
+    baseline_device_obj = torch.device(baseline_device or "cpu")
+    runtime_error_stage = "initialize"
     try:
+        runtime_error_stage = "tokenizer_load"
         tokenizer = AutoTokenizer.from_pretrained(metadata["model_id"], **_cache_kwargs(cache_dir))
+        runtime_error_stage = "stage0_model_instantiate"
         stage0_model = _instantiate_hf_causal_lm_from_config(config, meta=True)
+        runtime_error_stage = "stage1_model_instantiate"
         stage1_model = _instantiate_hf_causal_lm_from_config(config, meta=True)
+        runtime_error_stage = "baseline_model_instantiate"
         baseline_model = _instantiate_hf_causal_lm_from_config(config, meta=True) if baseline_required else None
+        runtime_error_stage = "runtime_buffer_materialization"
         runtime_buffers = {
-            "stage0": _materialize_runtime_buffers(stage0_model, device=device),
-            "stage1": _materialize_runtime_buffers(stage1_model, device=device),
+            "stage0": _materialize_runtime_buffers(stage0_model, device=stage0_device_obj),
+            "stage1": _materialize_runtime_buffers(stage1_model, device=stage1_device_obj),
         }
         if baseline_model is not None:
-            runtime_buffers["baseline"] = _materialize_runtime_buffers(baseline_model, device=torch.device("cpu"))
+            runtime_buffers["baseline"] = _materialize_runtime_buffers(baseline_model, device=baseline_device_obj)
+        runtime_error_stage = "stage0_weight_load"
         stage0_tensors, stage0_load = _load_stage_selective_safetensors(
             metadata,
             stage_id=0,
             weight_root=weight_root,
         )
-        stage1_tensors, stage1_load = _load_stage_selective_safetensors(
-            metadata,
-            stage_id=1,
-            weight_root=weight_root,
-        )
+        runtime_error_stage = "stage0_weight_apply"
         stage0_apply = _apply_stage_selective_tensors_to_model(
             stage0_model,
             stage0_tensors,
             metadata,
             stage_id=0,
-            target_device=device,
-        )
-        stage1_apply = _apply_stage_selective_tensors_to_model(
-            stage1_model,
-            stage1_tensors,
-            metadata,
-            stage_id=1,
-            target_device=device,
+            target_device=stage0_device_obj,
         )
         baseline_applies: list[dict[str, Any]] = []
         if baseline_model is not None:
@@ -980,29 +1116,61 @@ def run_stage_selective_hf_runtime_smoke(
                     stage0_tensors,
                     metadata,
                     stage_id=0,
-                    target_device=torch.device("cpu"),
+                    target_device=baseline_device_obj,
                 )
             )
+        stage0_tensors.clear()
+        del stage0_tensors
+        runtime_error_stage = "stage1_weight_load"
+        stage1_tensors, stage1_load = _load_stage_selective_safetensors(
+            metadata,
+            stage_id=1,
+            weight_root=weight_root,
+        )
+        runtime_error_stage = "stage1_weight_apply"
+        stage1_apply = _apply_stage_selective_tensors_to_model(
+            stage1_model,
+            stage1_tensors,
+            metadata,
+            stage_id=1,
+            target_device=stage1_device_obj,
+        )
+        if baseline_model is not None:
             baseline_applies.append(
                 _apply_stage_selective_tensors_to_model(
                     baseline_model,
                     stage1_tensors,
                     metadata,
                     stage_id=1,
-                    target_device=torch.device("cpu"),
+                    target_device=baseline_device_obj,
                 )
             )
+        stage1_tensors.clear()
+        del stage1_tensors
+        try:
+            import gc
+
+            gc.collect()
+            if resolved_backend == BACKEND_CUDA and hasattr(torch, "cuda"):
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
         if baseline_model is not None:
-            baseline_model.to(torch.device("cpu"))
+            runtime_error_stage = "baseline_model_device_move"
+            baseline_model.to(baseline_device_obj)
+        runtime_error_stage = "stage_selective_forward"
         runtime = run_stage_selective_runtime_smoke(
             tokenizer=tokenizer,
             stage0_model=stage0_model,
             stage1_model=stage1_model,
-            baseline_model=baseline_model if baseline_model is not None else stage1_model,
+            baseline_model=baseline_model,
             metadata=metadata,
             prompt=prompt,
             backend=resolved_backend,
             baseline_required=baseline_required,
+            stage0_device=stage0_device_obj,
+            stage1_device=stage1_device_obj,
+            baseline_device=baseline_device_obj,
         )
     except Exception as exc:
         return {
@@ -1015,6 +1183,7 @@ def run_stage_selective_hf_runtime_smoke(
             "backend": resolved_backend if "resolved_backend" in locals() else normalized_backend,
             "partition_mode": PARTITION_MODE_STAGE_LOCAL,
             "error_type": type(exc).__name__,
+            "error_stage": runtime_error_stage,
             "error_digest": _hash_payload(str(exc)),
             "diagnosis_codes": ["real_llm_stage_selective_hf_runtime_execution_failed"],
             "blockers": ["real_llm_stage_selective_hf_runtime_execution_failed"],
@@ -1045,6 +1214,12 @@ def run_stage_selective_hf_runtime_smoke(
         "model_id": public_model_id,
         "execution_family": family,
         "backend": resolved_backend,
+        "stage_devices": {
+            "stage0": str(stage0_device_obj),
+            "stage1": str(stage1_device_obj),
+            "baseline": str(baseline_device_obj),
+        },
+        "multi_device_stage_assignment": str(stage0_device_obj) != str(stage1_device_obj),
         "partition_mode": PARTITION_MODE_STAGE_LOCAL,
         "stage_count": 2,
         "split_index": int(metadata.get("split_index") or 0),
@@ -1067,6 +1242,9 @@ def run_stage_selective_hf_runtime_smoke(
         "activation_transport_ready": bool(runtime.get("activation_transport_ready")),
         "activation_hash": str(runtime.get("activation_hash") or ""),
         "output_hash": str(runtime.get("output_hash") or ""),
+        "error_type": str(runtime.get("error_type") or ""),
+        "error_stage": str(runtime.get("error_stage") or ""),
+        "error_digest": str(runtime.get("error_digest") or ""),
         "model_execution_support": support,
         "elapsed_ms": round((time.monotonic() - started) * 1000.0, 6),
         "raw_prompt_public": False,
@@ -1278,11 +1456,14 @@ def run_stage_selective_runtime_smoke(
     tokenizer: Any,
     stage0_model: Any,
     stage1_model: Any,
-    baseline_model: Any,
+    baseline_model: Any | None = None,
     metadata: dict[str, Any] | None = None,
     prompt: str = "CrowdTensor routes home GPU",
     backend: str = BACKEND_CPU,
     baseline_required: bool = True,
+    stage0_device: Any | None = None,
+    stage1_device: Any | None = None,
+    baseline_device: Any | None = None,
 ) -> dict[str, Any]:
     """Execute a two-stage Llama-like smoke using separately loaded stage models.
 
@@ -1308,10 +1489,27 @@ def run_stage_selective_runtime_smoke(
         }
     import torch  # type: ignore
 
-    device = torch.device("cpu")
+    default_device = torch.device("cpu")
+    stage0_device_obj = torch.device(stage0_device) if stage0_device is not None else default_device
+    stage1_device_obj = torch.device(stage1_device) if stage1_device is not None else default_device
+    baseline_device_obj = torch.device(baseline_device) if baseline_device is not None else default_device
+    if baseline_required and baseline_model is None:
+        return {
+            "schema": REAL_LLM_STAGE_SELECTIVE_RUNTIME_SCHEMA_VERSION,
+            "ready": False,
+            "stage_selective_runtime_execution_ready": False,
+            "model_id": str(source.get("model_id") or ""),
+            "execution_family": family,
+            "partition_mode": normalize_partition_mode(source.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL),
+            "diagnosis_codes": ["real_llm_stage_selective_runtime_execution_not_ready"],
+            "blockers": ["real_llm_stage_selective_baseline_model_missing"],
+            "public_safe": True,
+        }
     stage0_model.eval()
     stage1_model.eval()
-    baseline_model.eval()
+    if baseline_model is not None:
+        baseline_model.eval()
+    runtime_error_stage = "runtime_smoke_initialize"
     spec = {
         "schema_version": REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
         "type": WORKLOAD_TYPE,
@@ -1334,32 +1532,76 @@ def run_stage_selective_runtime_smoke(
         "generated_text": "",
         "generation_step": 0,
     }
-    activation = _stage0_activation(
-        tokenizer=tokenizer,
-        model=stage0_model,
-        request=request,
-        spec=spec,
-        split_index=split_index,
-        device=device,
-        family=family,
-    )
-    stage1_spec = {
-        **spec,
-        "task_id": "stage-selective-runtime-smoke-stage1",
-        "miner_id": "stage-selective-runtime-stage1",
-        "stage_id": 1,
-    }
-    result = _stage1_result(
-        tokenizer=tokenizer,
-        model=stage1_model,
-        baseline_model=baseline_model,
-        activation=activation,
-        spec=stage1_spec,
-        device=device,
-        baseline_device=device,
-        family=family,
-        baseline_required=baseline_required,
-    )
+    try:
+        runtime_error_stage = "stage0_activation"
+        activation = _stage0_activation(
+            tokenizer=tokenizer,
+            model=stage0_model,
+            request=request,
+            spec=spec,
+            split_index=split_index,
+            device=stage0_device_obj,
+            family=family,
+        )
+        stage1_spec = {
+            **spec,
+            "task_id": "stage-selective-runtime-smoke-stage1",
+            "miner_id": "stage-selective-runtime-stage1",
+            "stage_id": 1,
+        }
+        runtime_error_stage = "stage1_decode"
+        result = _stage1_result(
+            tokenizer=tokenizer,
+            model=stage1_model,
+            baseline_model=baseline_model,
+            activation=activation,
+            spec=stage1_spec,
+            device=stage1_device_obj,
+            baseline_device=baseline_device_obj,
+            family=family,
+            baseline_required=baseline_required,
+        )
+    except Exception as exc:
+        return {
+            "schema": REAL_LLM_STAGE_SELECTIVE_RUNTIME_SCHEMA_VERSION,
+            "ready": False,
+            "stage_selective_runtime_execution_ready": False,
+            "runtime_execution_scope": "local_synthetic_stage_selective_runtime",
+            "model_id": str(source.get("model_id") or ""),
+            "execution_family": family,
+            "backend": backend,
+            "stage_devices": {
+                "stage0": str(stage0_device_obj),
+                "stage1": str(stage1_device_obj),
+                "baseline": str(baseline_device_obj),
+            },
+            "partition_mode": normalize_partition_mode(source.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL),
+            "stage_count": 2,
+            "split_index": split_index,
+            "generated_token_count": 0,
+            "baseline_match": False,
+            "baseline_match_supported": bool(baseline_required),
+            "baseline_validation_skipped": False,
+            "decoded_tokens_match": False,
+            "activation_transport_ready": False,
+            "activation_hash": "",
+            "output_hash": "",
+            "error_type": type(exc).__name__,
+            "error_stage": runtime_error_stage,
+            "error_digest": _hash_payload(str(exc)),
+            "raw_prompt_public": False,
+            "raw_generated_text_public": False,
+            "generated_token_ids_public": False,
+            "activation_public": False,
+            "public_safe": True,
+            "large_model_validation": False,
+            "kaggle_runtime_validation": False,
+            "diagnosis_codes": [
+                "real_llm_stage_selective_runtime_execution_not_ready",
+                f"real_llm_stage_selective_{runtime_error_stage}_failed",
+            ],
+            "blockers": ["real_llm_stage_selective_runtime_execution_failed"],
+        }
     baseline_ok = bool(result.get("baseline_match")) if baseline_required else bool(result.get("baseline_validation_skipped"))
     ready = bool(
         activation.get("activation_hash")
@@ -1374,6 +1616,11 @@ def run_stage_selective_runtime_smoke(
         "model_id": str(source.get("model_id") or ""),
         "execution_family": family,
         "backend": backend,
+        "stage_devices": {
+            "stage0": str(stage0_device_obj),
+            "stage1": str(stage1_device_obj),
+            "baseline": str(baseline_device_obj),
+        },
         "partition_mode": normalize_partition_mode(source.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL),
         "stage_count": 2,
         "split_index": split_index,
@@ -1812,6 +2059,21 @@ def _llama_like_position_embeddings(base_model: Any, hidden: Any, position_ids: 
     rotary = getattr(base_model, "rotary_emb", None)
     if rotary is None:
         return None
+    inv_freq = getattr(rotary, "inv_freq", None)
+    attention_scaling = getattr(rotary, "attention_scaling", 1.0)
+    if inv_freq is not None and not bool(getattr(inv_freq, "is_meta", False)):
+        try:
+            import torch  # type: ignore
+
+            inv = inv_freq.to(device=hidden.device, dtype=torch.float32)
+            pos = position_ids.to(device=hidden.device, dtype=torch.float32)
+            freqs = torch.einsum("i,bj->bji", inv, pos)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * float(attention_scaling)
+            sin = emb.sin() * float(attention_scaling)
+            return cos.to(dtype=hidden.dtype), sin.to(dtype=hidden.dtype)
+        except Exception:
+            pass
     try:
         return rotary(hidden, position_ids)
     except TypeError:
@@ -2400,20 +2662,27 @@ def _stage0_activation(
     hidden = None
     with torch.no_grad():
         if family == EXECUTION_FAMILY_LLAMA_LIKE:
-            position_embeddings = _llama_like_position_embeddings(transformer, transformer.embed_tokens(input_ids), position_ids)
-            attention_mask = _causal_attention_mask(token_count=int(input_ids.shape[1]), dtype=transformer.embed_tokens(input_ids).dtype, device=device)
-            cache_pos = _cache_position(token_count=int(input_ids.shape[1]), device=device)
-            hidden = transformer.embed_tokens(input_ids)
-            for layer in blocks[:split]:
-                output = _call_llama_like_layer(
-                    layer,
-                    hidden,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    cache_position=cache_pos,
-                    position_embeddings=position_embeddings,
-                )
-                hidden = _ensure_batched_hidden(_decoder_output_hidden(output))
+            try:
+                stage0_substage = "stage0_embedding"
+                hidden = transformer.embed_tokens(input_ids)
+                stage0_substage = "stage0_position_embeddings"
+                position_embeddings = _llama_like_position_embeddings(transformer, hidden, position_ids)
+                stage0_substage = "stage0_attention_mask"
+                attention_mask = _causal_attention_mask(token_count=int(input_ids.shape[1]), dtype=hidden.dtype, device=device)
+                cache_pos = _cache_position(token_count=int(input_ids.shape[1]), device=device)
+                for layer_index, layer in enumerate(blocks[:split]):
+                    stage0_substage = f"stage0_layer_{layer_index}"
+                    output = _call_llama_like_layer(
+                        layer,
+                        hidden,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        cache_position=cache_pos,
+                        position_embeddings=position_embeddings,
+                    )
+                    hidden = _ensure_batched_hidden(_decoder_output_hidden(output))
+            except Exception as exc:
+                raise RuntimeError(stage0_substage) from exc
         elif cached and int(cached.get("input_token_count") or 0) == int(input_ids.shape[1]) - 1:
             previous_hidden = cached.get("hidden")
             past_key_values = list(cached.get("past_key_values") or [])
@@ -2622,7 +2891,7 @@ def _stage1_result(
         logits = model.lm_head(hidden)
         next_token_id = int(torch.argmax(logits[0, -1, :]).item())
         baseline_next_token_id: int | None = None
-        if baseline_required or baseline_model is not None:
+        if baseline_required:
             baseline_target = baseline_model if baseline_model is not None else model
             baseline_input_ids = input_ids.to(baseline_device) if baseline_device is not None else input_ids
             baseline = baseline_target(input_ids=baseline_input_ids)

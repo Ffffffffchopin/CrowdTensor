@@ -343,7 +343,12 @@ class LargeModelKaggleValidationTests(unittest.TestCase):
         self.assertIn('"hf-cuda"', source)
         self.assertIn("HF_CUDA_INSTALL_COMPAT = True", source)
         self.assertIn("<inline-python-redacted>", source)
-        self.assertIn("sharded_path_verified = False", source)
+        self.assertIn("hf_transformers_stage_selective_cuda", source)
+        self.assertIn("run_stage_selective_hf_runtime_smoke", source)
+        self.assertIn("multi_device_stage_assignment", source)
+        self.assertIn("SOURCE_TARBALL_B64", source)
+        self.assertIn("Qwen/Qwen2.5-0.5B-Instruct", source)
+        self.assertNotIn("Qwen/Qwen2.5-1.5B-Instruct-GGUF", source)
 
     def test_source_cuda_package_uses_arch_and_no_vmm(self) -> None:
         output_dir = self._tmp_dir()

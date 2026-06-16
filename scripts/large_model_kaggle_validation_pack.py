@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -24,6 +25,7 @@ if str(ROOT) not in sys.path:
 from crowdtensor import large_model_inference_rc as inference_rc  # noqa: E402
 from scripts import core_technology_handoff_pack as handoff_pack  # noqa: E402
 from scripts import large_model_inference_rc_pack as inference_pack  # noqa: E402
+from scripts.kaggle_real_llm_live_package import build_source_tarball  # noqa: E402
 
 
 SCHEMA = "large_model_kaggle_validation_v1"
@@ -36,6 +38,8 @@ DEFAULT_SMALL_REPO = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
 DEFAULT_SMALL_FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
 DEFAULT_SEVEN_B_REPO = "Qwen/Qwen2.5-7B-Instruct-GGUF"
 DEFAULT_SEVEN_B_FILE = "qwen2.5-7b-instruct-q2_k.gguf"
+DEFAULT_HF_SMALL_REPO = "Qwen/Qwen2.5-0.5B-Instruct"
+DEFAULT_HF_SEVEN_B_REPO = "Qwen/Qwen2.5-7B-Instruct"
 DEFAULT_THIRTEEN_B_REPO = "Qwen/Qwen2.5-7B-Instruct-GGUF"
 DEFAULT_THIRTEEN_B_FILE = "qwen2.5-7b-instruct-q2_k.gguf"
 DEFAULT_LLAMA_RELEASE = "b9611"
@@ -69,6 +73,7 @@ SECRET_FRAGMENTS = (
     "operator.private.env",
     "miner.private.env",
     "miner_registry.json",
+    "SOURCE_TARBALL_B64",
 )
 
 
@@ -181,16 +186,17 @@ def artifact_summary(output_dir: Path, artifacts: dict[str, dict[str, Any]]) -> 
 
 
 def tier_spec(args: argparse.Namespace, tier: str) -> dict[str, Any]:
+    hf_runtime = str(getattr(args, "runtime_path", "") or "") == "hf-cuda"
     if tier == "small":
         return {
             "tier": "small",
-            "model_id": args.small_model_id,
-            "repo": args.small_model_repo,
-            "filename": args.small_model_file,
-            "parameter_count_b": args.small_parameter_count_b,
-            "quantization": args.small_quantization,
-            "model_size_mb": args.small_model_size_mb,
-            "layer_count": args.small_layer_count,
+            "model_id": args.hf_small_model_id if hf_runtime else args.small_model_id,
+            "repo": args.hf_small_model_repo if hf_runtime else args.small_model_repo,
+            "filename": "" if hf_runtime else args.small_model_file,
+            "parameter_count_b": args.hf_small_parameter_count_b if hf_runtime else args.small_parameter_count_b,
+            "quantization": "safetensors-fp16" if hf_runtime else args.small_quantization,
+            "model_size_mb": args.hf_small_model_size_mb if hf_runtime else args.small_model_size_mb,
+            "layer_count": args.hf_small_layer_count if hf_runtime else args.small_layer_count,
         }
     if tier == "13b":
         return {
@@ -205,12 +211,12 @@ def tier_spec(args: argparse.Namespace, tier: str) -> dict[str, Any]:
         }
     return {
         "tier": "7b",
-        "model_id": args.seven_b_model_id,
-        "repo": args.seven_b_model_repo,
-        "filename": args.seven_b_model_file,
+        "model_id": args.hf_seven_b_model_id if hf_runtime else args.seven_b_model_id,
+        "repo": args.hf_seven_b_model_repo if hf_runtime else args.seven_b_model_repo,
+        "filename": "" if hf_runtime else args.seven_b_model_file,
         "parameter_count_b": args.seven_b_parameter_count_b,
-        "quantization": args.seven_b_quantization,
-        "model_size_mb": args.seven_b_model_size_mb,
+        "quantization": "safetensors-fp16" if hf_runtime else args.seven_b_quantization,
+        "model_size_mb": args.hf_seven_b_model_size_mb if hf_runtime else args.seven_b_model_size_mb,
         "layer_count": args.seven_b_layer_count,
     }
 
@@ -369,10 +375,11 @@ def wait_kaggle_terminal(
     return last_step
 
 
-def render_kernel(args: argparse.Namespace, tiers: list[dict[str, Any]]) -> str:
+def render_kernel(args: argparse.Namespace, tiers: list[dict[str, Any]], *, source_tarball_b64: str = "") -> str:
     tiers_json = json.dumps(tiers, sort_keys=True)
     return f'''from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -381,6 +388,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import textwrap
 import time
 import urllib.request
@@ -400,6 +408,7 @@ CUDA_NO_VMM = {str(bool(args.cuda_no_vmm))}
 CUDA_BUILD_JOBS = {int(args.cuda_build_jobs)}
 CUDA_BUILD_TIMEOUT_SECONDS = {int(args.cuda_build_timeout_seconds)}
 RPC_WORKER_LIMIT = {int(args.rpc_worker_limit)}
+SOURCE_TARBALL_B64 = """{source_tarball_b64}"""
 LLAMA_ASSET = "llama-" + LLAMA_RELEASE + "-bin-ubuntu-x64.tar.gz"
 LLAMA_URL = "https://github.com/ggml-org/llama.cpp/releases/download/" + LLAMA_RELEASE + "/" + LLAMA_ASSET
 OUT = Path("/kaggle/working")
@@ -559,6 +568,31 @@ def resource_snapshot(label: str, *, pids=None):
         "gpu_memory": gpu_memory_snapshot(),
         "processes": {{str(pid): proc_status_snapshot(pid) for pid in pids}},
     }}
+
+
+def install_crowdtensor_source():
+    if not SOURCE_TARBALL_B64:
+        return {{"ok": False, "reason": "source_tarball_missing"}}
+    archive = OUT / "crowdtensor_source.tar.gz"
+    source_dir = OUT / "crowdtensor_source"
+    try:
+        archive.write_bytes(base64.b64decode(SOURCE_TARBALL_B64.encode("ascii")))
+        if source_dir.exists():
+            shutil.rmtree(source_dir)
+        source_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive, "r:gz") as tar:
+            tar.extractall(source_dir)
+        step, stdout, stderr = run([sys.executable, "-m", "pip", "install", "--quiet", "-e", str(source_dir) + "[hf]"], timeout=1200)
+        step["source_file_count"] = len(list(source_dir.rglob("*.py")))
+        step["archive_public"] = False
+        return step
+    except Exception as exc:
+        return {{
+            "ok": False,
+            "reason": "source_install_failed",
+            "error_type": type(exc).__name__,
+            "error_digest": sha_text(str(exc)),
+        }}
 
 
 def disk_snapshot():
@@ -773,7 +807,7 @@ def run(command, timeout=1200, env=None):
         }}
         if setup_stdout_public(command):
             step["stdout_tail"] = safe_tail(stdout_text)
-        return step, "", ""
+        return step, stdout_text, stderr_text
 
 
 def nvidia_smi():
@@ -1150,6 +1184,13 @@ def generated_token_estimate(stdout: str, max_new_tokens: int) -> int:
 
 
 def run_hf_tier(tier, hardware):
+    progress_path = OUT / "hf_runtime_progress.json"
+    try:
+        progress_path.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
     result = {{
         "schema": SCHEMA,
         "ok": False,
@@ -1165,8 +1206,8 @@ def run_hf_tier(tier, hardware):
             "model_path_public": False,
         }},
         "runtime": {{
-            "backend": "hf_transformers_cuda",
-            "intended_backend": "llama_cpp_rpc",
+            "backend": "hf_transformers_stage_selective_cuda",
+            "intended_backend": "hf_transformers_stage_selective_cuda",
             "llama_build_mode": LLAMA_BUILD_MODE,
             "runtime_path": RUNTIME_PATH,
             "cuda_runtime_verified": False,
@@ -1200,8 +1241,9 @@ def run_hf_tier(tier, hardware):
             "https://download.pytorch.org/whl/cu118",
             "torch==2.7.1+cu118",
             "torchvision==0.22.1+cu118",
-            "transformers==4.40.2",
+            "transformers==4.46.3",
             "accelerate==0.30.1",
+            "safetensors>=0.4,<1",
         ], timeout=1200)
         if not install_step.get("ok"):
             result.update({{
@@ -1220,56 +1262,90 @@ def run_hf_tier(tier, hardware):
         "import hashlib",
         "import json",
         "import os",
+        "import shutil",
+        "import subprocess",
+        "import sys",
         "import time",
+        "from pathlib import Path",
         "",
         "prompt = os.environ['CT_PROMPT']",
         "model_id = os.environ['CT_MODEL_ID']",
         "max_new_tokens = int(os.environ['CT_MAX_NEW_TOKENS'])",
         "context_length = int(os.environ['CT_CONTEXT_LENGTH'])",
         "started = time.monotonic()",
-        "summary = dict(ok=False, model_id=model_id, torch_cuda_available=False, device_count=0, device_names=[], generated_token_count=0, output_digest='', wall_time_seconds=0.0, tokens_per_second=0.0, error_type='', error_stage='', error_digest='')",
+        "progress_path = Path('/kaggle/working/hf_runtime_progress.json')",
+        "summary = dict(ok=False, model_id=model_id, backend='hf_transformers_stage_selective_cuda', torch_cuda_available=False, device_count=0, device_names=[], generated_token_count=0, output_digest='', wall_time_seconds=0.0, tokens_per_second=0.0, error_type='', error_stage='', error_digest='', sharded_path_verified=False, multi_worker_sharded_path_verified=False)",
+        "def write_progress(stage, **updates):",
+        "    summary['progress_stage'] = stage",
+        "    summary.update(updates)",
+        "    summary['wall_time_seconds'] = round(max(time.monotonic() - started, 0.001), 3)",
+        "    try:",
+        "        progress_path.write_text(json.dumps(summary, sort_keys=True), encoding='utf-8')",
+        "    except Exception:",
+        "        pass",
+        "def run_step(command, timeout=1200):",
+        "    started_step = time.monotonic()",
+        "    completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)",
+        "    return dict(ok=completed.returncode == 0, returncode=completed.returncode, duration_seconds=round(time.monotonic() - started_step, 3), stdout_tail=(completed.stdout or '')[-1200:], stderr_tail=(completed.stderr or '')[-1200:])",
+        "def find_report(out_dir):",
+        "    path = Path(out_dir) / 'stage_selective_weight_loading_check.json'",
+        "    if not path.is_file():",
+        "        return {{}}",
+        "    try:",
+        "        return json.loads(path.read_text(encoding='utf-8'))",
+        "    except Exception:",
+        "        return {{}}",
         "try:",
+        "    write_progress('torch_import')",
         "    import torch",
-        "    from transformers import AutoModelForCausalLM, AutoTokenizer",
         "    summary['torch_version'] = str(torch.__version__)",
         "    summary['cuda_version'] = str(torch.version.cuda)",
         "    summary['torch_cuda_available'] = bool(torch.cuda.is_available())",
         "    summary['device_count'] = int(torch.cuda.device_count()) if torch.cuda.is_available() else 0",
         "    summary['device_names'] = [torch.cuda.get_device_name(i) for i in range(summary['device_count'])]",
+        "    write_progress('cuda_probe')",
         "    if not summary['torch_cuda_available']:",
         "        summary['error_type'] = 'torch_cuda_unavailable'",
+        "        write_progress('torch_cuda_unavailable')",
         "    else:",
-        "        summary['error_stage'] = 'tokenizer_load'",
-        "        tokenizer = AutoTokenizer.from_pretrained(model_id)",
-        "        summary['error_stage'] = 'model_load'",
-        "        model_kwargs = dict(torch_dtype=torch.float16, low_cpu_mem_usage=True, device_map=None)",
-        "        model = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)",
-        "        summary['error_stage'] = 'model_to_cuda'",
-        "        model = model.to('cuda:0')",
-        "        model.eval()",
-        "        summary['error_stage'] = 'tokenize'",
-        "        encoded = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=context_length)",
-        "        encoded = dict((key, value.to('cuda:0')) for key, value in encoded.items())",
-        "        input_length = int(encoded['input_ids'].shape[-1])",
-        "        summary['error_stage'] = 'generate'",
-        "        with torch.inference_mode():",
-        "            output = model.generate(**encoded, max_new_tokens=max_new_tokens, do_sample=False)",
-        "        summary['error_stage'] = 'decode'",
-        "        generated_ids = output[0][input_length:]",
-        "        summary['generated_token_count'] = int(generated_ids.numel())",
-        "        decoded = tokenizer.decode(generated_ids, skip_special_tokens=True)",
-        "        summary['output_digest'] = 'sha256:' + hashlib.sha256(decoded.encode('utf-8', errors='replace')).hexdigest()",
+        "        summary['error_stage'] = 'stage_selective_hf_runtime'",
+        "        import crowdtensor.real_llm as real_llm",
+        "        stage1_device = 'cuda:1' if summary['device_count'] >= 2 else 'cuda:0'",
+        "        write_progress('stage_selective_hf_runtime_start', stage1_device=stage1_device)",
+        "        runtime = real_llm.run_stage_selective_hf_runtime_smoke(model_id=model_id, prompt=prompt, backend=real_llm.BACKEND_CUDA, stage0_device='cuda:0', stage1_device=stage1_device, baseline_required=False)",
+        "        write_progress('stage_selective_hf_runtime_returned')",
+        "        summary['stage_selective_runtime_ready'] = bool(runtime.get('ready'))",
+        "        summary['runtime_execution_scope'] = runtime.get('runtime_execution_scope')",
+        "        summary['generated_token_count'] = int(runtime.get('generated_token_count') or 0)",
+        "        summary['output_digest'] = runtime.get('output_hash') or ''",
+        "        summary['activation_transport_ready'] = bool(runtime.get('activation_transport_ready'))",
+        "        summary['baseline_validation_skipped'] = bool(runtime.get('baseline_validation_skipped'))",
+        "        summary['stage_devices'] = runtime.get('stage_devices') or {{}}",
+        "        summary['multi_device_stage_assignment'] = bool(runtime.get('multi_device_stage_assignment'))",
+        "        summary['sharded_path_verified'] = bool(runtime.get('ready') and runtime.get('activation_transport_ready'))",
+        "        summary['multi_worker_sharded_path_verified'] = bool(runtime.get('ready') and runtime.get('multi_device_stage_assignment'))",
+        "        summary['blockers'] = runtime.get('blockers') or []",
+        "        summary['diagnosis_codes'] = runtime.get('diagnosis_codes') or []",
+        "        summary['runtime_error_type'] = runtime.get('error_type') or ''",
+        "        summary['runtime_error_stage'] = runtime.get('error_stage') or ''",
+        "        summary['runtime_error_digest'] = runtime.get('error_digest') or ''",
+        "        summary['stage_summaries'] = runtime.get('stage_summaries') or []",
+        "        summary['stage_application_summaries'] = runtime.get('stage_application_summaries') or []",
+        "        summary['runtime_buffers'] = runtime.get('runtime_buffers') or {{}}",
         "        wall = max(time.monotonic() - started, 0.001)",
         "        summary['wall_time_seconds'] = round(wall, 3)",
         "        summary['tokens_per_second'] = round(summary['generated_token_count'] / wall, 4)",
         "        summary['memory_peak_mb'] = int(torch.cuda.max_memory_allocated() // (1024 * 1024))",
-        "        summary['ok'] = bool(summary['generated_token_count'] > 0)",
+        "        summary['ok'] = bool(runtime.get('ready') and summary['generated_token_count'] > 0)",
         "        summary['error_stage'] = ''",
+        "        write_progress('summary_complete')",
         "except Exception as exc:",
         "    summary['error_type'] = type(exc).__name__",
         "    summary['error_digest'] = 'sha256:' + hashlib.sha256(str(exc).encode('utf-8', errors='replace')).hexdigest()",
+        "    write_progress('exception')",
         "finally:",
         "    summary['wall_time_seconds'] = round(max(time.monotonic() - started, 0.001), 3)",
+        "    write_progress(summary.get('progress_stage') or 'finally')",
         "print(json.dumps(summary, sort_keys=True))",
     ])
     env = os.environ.copy()
@@ -1278,6 +1354,10 @@ def run_hf_tier(tier, hardware):
         "CT_MODEL_ID": tier["repo"],
         "CT_MAX_NEW_TOKENS": str(MAX_NEW_TOKENS),
         "CT_CONTEXT_LENGTH": str(CONTEXT_LENGTH),
+        "TRANSFORMERS_NO_TF": "1",
+        "TRANSFORMERS_NO_FLAX": "1",
+        "USE_TF": "0",
+        "USE_FLAX": "0",
     }})
     step, stdout, stderr = run([sys.executable, "-c", code], timeout=2400, env=env)
     hf_summary = {{}}
@@ -1289,11 +1369,31 @@ def run_hf_tier(tier, hardware):
         if isinstance(loaded, dict):
             hf_summary = loaded
             break
+    if not hf_summary:
+        progress_path = OUT / "hf_runtime_progress.json"
+        if progress_path.is_file():
+            try:
+                loaded = json.loads(progress_path.read_text(encoding="utf-8"))
+            except Exception:
+                loaded = {{}}
+            if isinstance(loaded, dict):
+                hf_summary = loaded
+                hf_summary.setdefault("progress_recovered_from_file", True)
+    if not hf_summary and step.get("error") == "timeout":
+        hf_summary = {{
+            "ok": False,
+            "model_id": tier["repo"],
+            "backend": "hf_transformers_stage_selective_cuda",
+            "error_type": "timeout",
+            "error_stage": "hf_runtime_subprocess_timeout",
+            "generated_token_count": 0,
+            "torch_cuda_available": False,
+        }}
     token_count = int(hf_summary.get("generated_token_count") or 0)
     ok = bool(step.get("ok") and hf_summary.get("ok") and token_count > 0 and hf_summary.get("torch_cuda_available"))
     gpu_runtime_verified = bool(ok and hf_summary.get("torch_cuda_available"))
-    sharded_path_verified = False
-    multi_worker_verified = False
+    sharded_path_verified = bool(ok and hf_summary.get("sharded_path_verified"))
+    multi_worker_verified = bool(ok and hf_summary.get("multi_worker_sharded_path_verified"))
     diagnosis = [
         "large_model_kaggle_real_runtime_verified" if ok else "large_model_kaggle_real_runtime_failed",
         "large_model_kaggle_gpu_runtime_verified" if gpu_runtime_verified else "large_model_kaggle_gpu_runtime_not_verified",
@@ -1567,7 +1667,7 @@ def run_tier(tier, llama_info, hardware, rpc_info, progress=None):
     return result
 
 
-def build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, *, partial_stage=""):
+def build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, *, partial_stage="", source_install=None):
     ok = any(item.get("ok") for item in tier_results)
     real_7b = any((item.get("validation") or {{}}).get("real_7b_runtime_verified") for item in tier_results)
     sharded_path = any((item.get("validation") or {{}}).get("sharded_path_verified") for item in tier_results)
@@ -1590,6 +1690,7 @@ def build_run_report(started, hardware, llama, rpc_info, tier_results, blockers,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "duration_seconds": round(time.monotonic() - started, 3),
         "hardware": hardware,
+        "source_install": source_install or {{}},
         "llama_cpp": llama,
         "rpc": {{k: v for k, v in rpc_info.items() if k != "processes"}},
         "tier_results": tier_results,
@@ -1658,19 +1759,22 @@ def write_run_report(report):
 
 def main():
     started = time.monotonic()
+    source_install = install_crowdtensor_source()
     hardware = nvidia_smi()
     llama = {{"ok": False, "llama_cli": "", "backend": "llama.cpp"}}
     rpc_info = {{"ok": False, "enabled": False, "servers": [], "worker_count": 0}}
     tier_results = []
     blockers = []
-    write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_hardware_probe_complete"))
+    if not source_install.get("ok"):
+        blockers.append("large_model_kaggle_source_install_failed")
+    write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_hardware_probe_complete", source_install=source_install))
     if RUNTIME_PATH != "hf-cuda":
         try:
             llama = prepare_llama(hardware)
         except Exception as exc:
             blockers.append("large_model_kaggle_llama_cpp_install_failed")
             llama = {{"ok": False, "error_type": type(exc).__name__, "backend": "llama.cpp"}}
-        write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_llama_cpp_prepare_complete"))
+        write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_llama_cpp_prepare_complete", source_install=source_install))
     if hardware.get("gpu_count", 0) <= 0:
         blockers.append("large_model_kaggle_gpu_unavailable")
     if RUNTIME_PATH != "hf-cuda" and not llama.get("ok"):
@@ -1678,14 +1782,14 @@ def main():
     if hardware.get("kaggle_gpu_verified") and RUNTIME_PATH == "hf-cuda":
         for tier in TIERS:
             tier_results.append(run_hf_tier(tier, hardware))
-            write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_complete"))
+            write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_complete", source_install=source_install))
             if tier["tier"] == "7b" and tier_results[-1].get("ok"):
                 break
             if tier["tier"] == "7b" and not tier_results[-1].get("ok"):
                 break
     elif hardware.get("kaggle_gpu_verified") and llama.get("ok"):
         rpc_info = start_rpc_servers(llama, hardware)
-        write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_rpc_start_complete"))
+        write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_rpc_start_complete", source_install=source_install))
         try:
             for tier in TIERS:
                 pending_result = {{
@@ -1715,20 +1819,20 @@ def main():
                     "diagnosis_codes": ["large_model_kaggle_tier_attempt_start"],
                 }}
                 tier_results.append(pending_result)
-                write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_start"))
+                write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_start", source_install=source_install))
                 def update_tier_progress(result, partial_stage):
                     tier_results[-1] = result
-                    write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage=partial_stage))
+                    write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage=partial_stage, source_install=source_install))
 
                 tier_results[-1] = run_tier(tier, llama, hardware, rpc_info, progress=update_tier_progress)
-                write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_complete"))
+                write_run_report(build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, partial_stage="large_model_kaggle_tier_attempt_complete", source_install=source_install))
                 if tier["tier"] == "7b" and tier_results[-1].get("ok"):
                     break
                 if tier["tier"] == "7b" and not tier_results[-1].get("ok"):
                     break
         finally:
             stop_rpc_servers(rpc_info)
-    report = build_run_report(started, hardware, llama, rpc_info, tier_results, blockers)
+    report = build_run_report(started, hardware, llama, rpc_info, tier_results, blockers, source_install=source_install)
     ok = bool(report.get("ok"))
     real_7b = bool(report.get("real_7b_runtime_verified"))
     write_run_report(report)
@@ -1747,7 +1851,10 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
     kernel_dir = output_dir / "kaggle-kernel"
     kernel_dir.mkdir(parents=True, exist_ok=True)
     tiers = [tier_spec(args, tier) for tier in selected_tiers(args)]
-    (kernel_dir / "kernel.py").write_text(render_kernel(args, tiers), encoding="utf-8")
+    source_path = output_dir / "crowdtensor_source.tar.gz"
+    source = build_source_tarball(source_path)
+    source_tarball_b64 = base64.b64encode(source_path.read_bytes()).decode("ascii")
+    (kernel_dir / "kernel.py").write_text(render_kernel(args, tiers, source_tarball_b64=source_tarball_b64), encoding="utf-8")
     metadata = {
         "id": f"{owner}/{slug}" if owner else slug,
         "title": (args.kernel_title_prefix or DEFAULT_KERNEL_TITLE_PREFIX)[:36] + " " + slug[-8:],
@@ -1791,6 +1898,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path) -> dict[str, An
         "metadata": metadata,
         "tiers": tiers,
         "runbook": runbook,
+        "source": source,
     }
 
 
@@ -2541,6 +2649,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--small-quantization", default="Q4_K_M")
     parser.add_argument("--small-model-size-mb", type=int, default=1066)
     parser.add_argument("--small-layer-count", type=int, default=28)
+    parser.add_argument("--hf-small-model-id", default="qwen2.5-0.5b-instruct")
+    parser.add_argument("--hf-small-model-repo", default=DEFAULT_HF_SMALL_REPO)
+    parser.add_argument("--hf-small-parameter-count-b", type=float, default=0.5)
+    parser.add_argument("--hf-small-model-size-mb", type=int, default=1024)
+    parser.add_argument("--hf-small-layer-count", type=int, default=24)
     parser.add_argument("--seven-b-model-id", default="qwen2.5-7b-instruct-q2-k")
     parser.add_argument("--seven-b-model-repo", default=DEFAULT_SEVEN_B_REPO)
     parser.add_argument("--seven-b-model-file", default=DEFAULT_SEVEN_B_FILE)
@@ -2548,6 +2661,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seven-b-quantization", default="Q2_K")
     parser.add_argument("--seven-b-model-size-mb", type=int, default=2876)
     parser.add_argument("--seven-b-layer-count", type=int, default=28)
+    parser.add_argument("--hf-seven-b-model-id", default="qwen2.5-7b-instruct")
+    parser.add_argument("--hf-seven-b-model-repo", default=DEFAULT_HF_SEVEN_B_REPO)
+    parser.add_argument("--hf-seven-b-model-size-mb", type=int, default=15360)
     parser.add_argument("--thirteen-b-model-id", default="qwen2.5-13b-placeholder")
     parser.add_argument("--thirteen-b-model-repo", default=DEFAULT_THIRTEEN_B_REPO)
     parser.add_argument("--thirteen-b-model-file", default=DEFAULT_THIRTEEN_B_FILE)

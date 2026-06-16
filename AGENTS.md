@@ -27,20 +27,28 @@ Plan work across three layers and keep their responsibilities separate:
 
 Security, privacy, observability, artifact redaction, tests, and performance are
 cross-cutting requirements across all three layers. Do not confuse control-plane
-or UX polish with completion of the core technical breakthrough: real
-cross-device large-model inference remains the main unfinished goal.
+or UX polish with productionization of the core technical breakthrough: real
+cross-device large-model inference now has a bounded external 7B proof, but
+throughput, fault tolerance at scale, production routing, and user-facing
+serving are still separate follow-up work.
 
 The canonical current core-validation status artifact is
-`dist/core-technology-validation-status-20260615/core_technology_validation_status.json`,
+`dist/core-technology-validation-status-20260616/core_technology_validation_status.json`,
 emitted by `scripts/core_technology_validation_status_pack.py` and checked by
-`scripts/core_technology_validation_status_check.py`. It currently records a
+`scripts/core_technology_validation_status_check.py`. It records the retained
+Kaggle T4 x2 7B proof at
+`dist/large-model-kaggle-stage-selective-hf-7b-manual-rope-20260616/large_model_kaggle_validation.json`:
+`Qwen/Qwen2.5-7B-Instruct` ran with `hf_transformers_stage_selective_cuda`,
+stage0 on `cuda:0`, stage1 on `cuda:1`, `generated_token_count=1`,
+`real_7b_runtime_verified=true`, `multi_worker_sharded_path_verified=true`,
+`core_validation_ready=true`, public-safe redaction, and deleted temporary
+Kaggle kernel `xuyuhaosuyi/crowdtensor-large-llm-81608591`. It also records a
 successful fully automated `gpt2-xl` Kaggle GPU small-tier proof plus a local
 tiny Llama-like two-stage HF runtime proof at
 `dist/real-llm-llama-like-local-smoke-20260615/real_llm_sharded_evidence.json`,
-but keeps `seven_b_eight_b_validated=false` and `core_validation_ready=false`
-until a real 7B/8B sharded large-model run succeeds on external hardware.
+and keeps those smaller/local proofs scoped as non-7B evidence.
 `scripts/stage_selective_weight_loading_check.py` is the local safetensors
-materialization proof for the next 7B/8B step: it validates that each
+materialization proof behind the 7B/8B path: it validates that each
 Llama-like stage can load only its assigned safetensors keys and report
 public-safe counts/hashes without tensor values. It also applies those tensors
 to matching stage-owned model `state_dict` entries in a synthetic Llama-like
@@ -52,8 +60,10 @@ instantiated on `meta`, only stage-owned safetensors keys are materialized,
 required runtime buffers are allocated, and stage0 activation into stage1
 decode is verified without publishing prompts, generated text, token ids,
 activations, local cache paths, or tensor values. Treat this as
-stage-selective HF runtime plumbing evidence, but still not Kaggle runtime
-execution and not 7B/8B completion.
+stage-selective HF runtime plumbing evidence; the retained Kaggle T4 x2 report
+above is the external 7B validation. This is still not production P2P, not
+Coordinator-free execution, not GGUF/llama.cpp RPC success, not a GPU
+marketplace, not training/fine-tuning, and not a large-model throughput SLA.
 
 ## Current Alpha Reality
 

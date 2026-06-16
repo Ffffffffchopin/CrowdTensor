@@ -441,10 +441,10 @@ contract, test-gate summary, final Support Bundle, and answers for how the
 control layer, user layer, and future permissions/trust/billing layer should
 consume core signals. In CI-safe environments it remains ready with
 `real_runtime_verified=false`, `real_7b_runtime_verified=false`, and blockers
-when GGUF/llama.cpp/RPC/hardware are absent. Treat this as the core technology
-handoff boundary: the inference core interfaces and evidence path are stable
-enough to develop other layers, while real external 7B+ runtime proof remains a
-resource-dependent follow-up.
+when GGUF/llama.cpp/RPC/hardware are absent. A retained external Kaggle T4 x2
+7B proof now exists through the HF stage-selective CUDA path; the handoff still
+does not claim production Petals/Hivemind parity, public P2P/NAT traversal,
+training/fine-tuning, GPU marketplace economics, or a large-model serving SLA.
 
 For fresh Kaggle GPU validation of the core layer, use the bounded Kaggle
 runner:
@@ -452,35 +452,45 @@ runner:
 ```bash
 crowdtensor large-model-kaggle-validate \
   --mode kaggle-auto \
-  --tiers small,7b \
+  --tiers 7b \
   --accelerator NvidiaTeslaT4 \
-  --runtime-path rpc \
-  --llama-build-mode source-cuda \
-  --cuda-architectures native \
-  --cuda-no-vmm \
-  --cuda-build-jobs 2 \
-  --cuda-build-timeout-seconds 5400 \
-  --rpc-worker-limit 0 \
+  --runtime-path hf-cuda \
+  --hf-cuda-install-compat \
+  --max-new-tokens 1 \
+  --context-length 128 \
   --output-dir dist/large-model-kaggle-validation \
   --json
 python scripts/large_model_kaggle_validation_check.py \
   --report dist/large-model-kaggle-validation/large_model_kaggle_validation.json \
+  --require-real-7b \
   --require-core-ready \
   --json
 ```
 
 This emits `large_model_kaggle_validation_v1` and only marks
 `core_validation_ready=true` when a real 7B/8B-class run succeeds on Kaggle GPU
-through the sharded/RPC path. Failed or partial runs are still useful evidence
-but must keep `core_validation_ready=false`. A 2026-06-13 hardware probe found
-that Kaggle CLI accepts `--accelerator NvidiaTeslaT4` and returned two `Tesla
-T4` devices with Torch CUDA visible. Use that accelerator for the main
-large-model validation instead of the generic `GPU` request, which previously
-assigned single P100 runs. The retained T4 x2 source-CUDA/RPC attempts proved
-T4 x2 hardware, `CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_NO_VMM=ON`,
-`GGML_RPC=ON`, CUDA llama.cpp build, and live RPC workers, but no GGUF tier has
-successfully generated tokens through llama.cpp RPC on Kaggle. The strongest
-RPC blocked artifact is
+through the sharded runtime path. Failed or partial runs are still useful
+evidence but must keep `core_validation_ready=false`. A 2026-06-16 retained
+proof at
+`dist/large-model-kaggle-stage-selective-hf-7b-manual-rope-20260616/large_model_kaggle_validation.json`
+ran `Qwen/Qwen2.5-7B-Instruct` with `hf_transformers_stage_selective_cuda` on
+two Kaggle `Tesla T4` GPUs, stage0 on `cuda:0`, stage1 on `cuda:1`,
+`generated_token_count=1`, `real_7b_runtime_verified=true`,
+`sharded_path_verified=true`, `multi_worker_sharded_path_verified=true`,
+`core_validation_ready=true`, public-safe redaction, and deleted the temporary
+Kaggle kernel. This is the current external core technology validation proof.
+It is not GGUF/llama.cpp RPC success, not production P2P, not a GPU
+marketplace, not training/fine-tuning, and not a throughput SLA.
+
+A 2026-06-13 hardware probe found that Kaggle CLI accepts
+`--accelerator NvidiaTeslaT4` and returned two `Tesla T4` devices with Torch
+CUDA visible. Use that accelerator for the main large-model validation instead
+of the generic `GPU` request, which previously assigned single P100 runs. The
+retained T4 x2 source-CUDA/RPC attempts proved T4 x2 hardware,
+`CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_NO_VMM=ON`, `GGML_RPC=ON`, CUDA
+llama.cpp build, and live RPC workers, but no GGUF tier has successfully
+generated tokens through llama.cpp RPC on Kaggle. The strongest RPC blocked
+artifact is
 `dist/large-model-kaggle-validation-t4x2-rpc-small-telemetry-inplace-20260613/large_model_kaggle_validation.json`:
 it verifies one CUDA0 RPC worker, successful 1.5B GGUF download, and monitored
 `llama-cli --rpc` execution for about 451 seconds. Re-importing its raw report
@@ -508,22 +518,15 @@ hardware and cleanup but did not produce generated tokens through the
 sharded/RPC path; the successful Hugging Face CUDA compatibility smoke at
 `dist/large-model-kaggle-validation-small-hf-cuda-compat-import-20260612/large_model_kaggle_validation.json`
 proved only tiny-model GPU generation, not 7B/8B and not the sharded/RPC path.
-Treat the retained Kaggle artifacts as partial evidence with blockers, not
-completion of the core large-model validation goal; further single-Notebook
-llama.cpp retries are not the right next route. The HF `real_llm_sharded_infer`
-path now records an `execution_support` summary on `real_llm_artifact_v1` and
-workload specs. Today it supports only the GPT-2/tiny-GPT module family for
-stage execution; Llama/Qwen/Mistral/Gemma/Phi-style 7B/8B candidates are
-classified as `llama_like` and fail before runtime load with
-`real_llm_llama_like_stage_adapter_missing`. That is intentional: the next core
-implementation step is a true partial-weight stage adapter for those
-architectures, not routing large models through the existing tiny-GPT splitter
-or a single Kaggle Notebook cgroup. The practical next bounded Kaggle success
-attempt is `public-swarm-gpu-beta kaggle-auto --hf-model-id gpt2-xl
---real-llm-partition-mode stage-local`, because `gpt2-xl` is a GPT-2-family
-1.5B small-tier candidate the current splitter can reason about. A successful
-run would satisfy the goal's small real-model smoke tier only; it would still
-leave 7B/8B validation incomplete.
+Treat the historical RPC/P100 reports as partial evidence with blockers, not
+completion of the core large-model validation goal. They explain why the
+completed 7B Kaggle proof currently uses the HF stage-selective CUDA adapter
+rather than llama.cpp RPC. Future work may return to GGUF/RPC, but that is a
+separate adapter milestone. The HF `real_llm_sharded_infer` path now records an
+`execution_support` summary on `real_llm_artifact_v1` and workload specs, and
+the stage-selective runtime can load/apply only stage-owned safetensors keys for
+Llama-like Qwen models without publishing prompts, generated text, token ids,
+activations, cache paths, or tensor values.
 
 If you only want CPU-only deterministic demos without Hugging Face dependencies:
 

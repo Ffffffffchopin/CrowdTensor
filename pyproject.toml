@@ -39,6 +39,7 @@ hf = [
   "torch>=2,<3",
   "transformers>=4.40,<5",
   "safetensors>=0.4,<1",
+  "accelerate>=0.30,<1",
 ]
 
 [project.scripts]

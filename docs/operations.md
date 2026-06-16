@@ -8,24 +8,33 @@ Use this when working on the core technology layer: cross-device large-model
 inference planning and evidence. It is separate from the current
 Coordinator-backed tiny/small-model Public Swarm route.
 
-For the current retained status across the successful small-tier GPU proof and
-the still-blocked 7B/8B validation, build or inspect:
+For the current retained status across the successful small-tier GPU proof,
+local stage-selective proofs, and the completed Kaggle T4 x2 7B validation,
+build or inspect:
 
 ```bash
 python scripts/core_technology_validation_status_pack.py \
-  --output-dir dist/core-technology-validation-status-20260615 \
+  --output-dir dist/core-technology-validation-status-20260616 \
   --json
 python scripts/core_technology_validation_status_check.py \
-  --report dist/core-technology-validation-status-20260615/core_technology_validation_status.json \
+  --report dist/core-technology-validation-status-20260616/core_technology_validation_status.json \
+  --require-core-ready \
   --json
 ```
 
 The retained status artifact is
-`dist/core-technology-validation-status-20260615/core_technology_validation_status.json`.
+`dist/core-technology-validation-status-20260616/core_technology_validation_status.json`.
 It should report `small_tier_gpu_validated=true`,
 `llama_like_local_evidence.ready=true`,
-`seven_b_eight_b_validated=false`, and `core_validation_ready=false` until a
-real 7B/8B sharded large-model run succeeds.
+`seven_b_eight_b_validated=true`, `largest_successful_tier=7b`, and
+`core_validation_ready=true`. The 7B proof is retained at
+`dist/large-model-kaggle-stage-selective-hf-7b-manual-rope-20260616/large_model_kaggle_validation.json`;
+it ran `Qwen/Qwen2.5-7B-Instruct` with
+`hf_transformers_stage_selective_cuda`, stage0 on `cuda:0`, stage1 on `cuda:1`,
+one redacted generated token, public-safe artifacts, and deleted the temporary
+Kaggle kernel. It is a bounded external core validation proof, not production
+P2P, not GGUF/llama.cpp RPC success, not a GPU marketplace, and not a
+large-model throughput SLA.
 
 The local Llama-like stage-runtime smoke evidence is retained at
 `dist/real-llm-llama-like-local-smoke-20260615/real_llm_sharded_evidence.json`.
@@ -196,8 +205,10 @@ stdout/stderr to log files and includes only redacted tails in the public
 lifecycle output; the log-fix run completed without manual drain and records
 `stdout_stderr_to_files: true`. This is real small-tier GPU split evidence only:
 `large_model_sharded_execution_ready=false` and
-`true_partial_weight_loading_ready=false` still mean the 7B/8B core target needs
-a true partial-weight large-model adapter or a validated multi-host GGUF path.
+`true_partial_weight_loading_ready=false` mean the `gpt2-xl` artifact itself
+must not be used as 7B/8B completion. Use the retained
+`large_model_kaggle_validation_v1` T4 x2 Qwen2.5-7B report above for the current
+7B core-validation claim.
 
 If the real run happened outside the current process, import a public-safe
 runner report instead:
@@ -304,19 +315,17 @@ instead of local fixture/plan evidence:
 ```bash
 crowdtensor large-model-kaggle-validate \
   --mode kaggle-auto \
-  --tiers small,7b \
+  --tiers 7b \
   --accelerator NvidiaTeslaT4 \
-  --runtime-path rpc \
-  --llama-build-mode source-cuda \
-  --cuda-architectures native \
-  --cuda-no-vmm \
-  --cuda-build-jobs 2 \
-  --cuda-build-timeout-seconds 5400 \
-  --rpc-worker-limit 0 \
+  --runtime-path hf-cuda \
+  --hf-cuda-install-compat \
+  --max-new-tokens 1 \
+  --context-length 128 \
   --output-dir dist/large-model-kaggle-validation \
   --json
 python scripts/large_model_kaggle_validation_check.py \
   --report dist/large-model-kaggle-validation/large_model_kaggle_validation.json \
+  --require-real-7b \
   --require-core-ready \
   --json
 ```
@@ -334,19 +343,21 @@ not expose raw prompts, generated text, generated token ids, activations,
 credentials, leases, idempotency material, private Kaggle files, or model
 secrets.
 
-`--rpc-worker-limit 0` means use all visible GPUs for RPC workers. Use
-`--rpc-worker-limit 1` only as a diagnostic when a two-worker T4 x2 run is
-killed; it keeps the same llama.cpp RPC path but starts one RPC worker so the
-report can distinguish base RPC inference failure from multi-worker tensor
-split failure.
+For the currently validated path, `--runtime-path hf-cuda` runs the
+stage-selective Hugging Face CUDA adapter. It materializes only stage-owned
+safetensors keys, places stage0 and stage1 on separate visible GPUs when T4 x2
+is available, transports the activation boundary between stages, and records
+public-safe counts, hashes, metrics, and cleanup. `--runtime-path rpc` remains
+available for llama.cpp/GGUF diagnostics; its retained Kaggle attempts are
+historical blocker evidence, not the completed 7B proof.
 
 Readiness flags are intentionally strict. `real_runtime_verified` means a real
 LLM run generated tokens. `real_7b_runtime_verified` means the successful run
 was 7B/8B-class. `gpu_runtime_verified` means the successful generation ran
 through a CUDA-capable Kaggle runtime, not just that `nvidia-smi` saw a GPU.
 `sharded_path_verified` means the successful generation used the intended
-sharded/RPC path. `core_validation_ready` requires all three: 7B/8B, Kaggle GPU
-runtime, and sharded/RPC path. Single-process, CPU-only, or failed runs must
+sharded runtime path. `core_validation_ready` requires all three: 7B/8B,
+Kaggle GPU runtime, and sharded runtime path. Single-process, CPU-only, or failed runs must
 leave `core_validation_ready=false` with explicit blockers.
 
 Use `--accelerator NvidiaTeslaT4` for the main validation. A 2026-06-13
@@ -356,8 +367,22 @@ Kaggle accepted this machine shape and returned two `Tesla T4` devices with
 Torch CUDA visible. The generic `GPU` request previously assigned single P100
 runs, so it is only a fallback when T4 x2 is unavailable.
 
-Retained 2026-06-13 T4 x2 evidence currently shows runtime progress but not
-completion:
+The retained successful 2026-06-16 T4 x2 7B proof is
+`dist/large-model-kaggle-stage-selective-hf-7b-manual-rope-20260616/large_model_kaggle_validation.json`.
+It reports `core_validation_ready=true`, `real_runtime_verified=true`,
+`real_7b_runtime_verified=true`, `gpu_runtime_verified=true`,
+`sharded_path_verified=true`, `multi_worker_sharded_path_verified=true`, two
+`Tesla T4` devices, `Qwen/Qwen2.5-7B-Instruct`, `safetensors-fp16`,
+`generated_token_count=1`, `memory_peak_mb=14608`,
+`tokens_per_second=0.0084`, `wall_time_seconds=118.924`, and public-safe
+redaction. Stage evidence records stage0 on `cuda:0`, stage1 on `cuda:1`, no
+cross-stage keys loaded, activation transport ready, and temporary kernel
+`xuyuhaosuyi/crowdtensor-large-llm-81608591` deleted. The check command
+`python scripts/large_model_kaggle_validation_check.py --report <report>
+--require-real-7b --require-core-ready --json` passes for this artifact.
+
+Retained 2026-06-13 T4 x2 llama.cpp/GGUF evidence shows useful runtime progress
+but not completion:
 
 - `dist/large-model-kaggle-validation-t4x2-rpc-7b-20260613/large_model_kaggle_validation.json`
   verified two T4 GPUs and `CMAKE_CUDA_ARCHITECTURES=75`, but `cmake --build`
@@ -452,9 +477,11 @@ Retained 2026-06-12 P100 evidence currently shows blockers, not completion:
   still succeeded. This is a runtime-resource blocker, not proof of 7B/RPC
   generation.
 
-Do not treat those reports as core technology completion. They are bounded
-runtime evidence plus blockers that justify further GPU runtime work or a
-different Kaggle accelerator before claiming the 7B/8B sharded validation gate.
+Do not treat the historical RPC/P100 reports as core technology completion.
+They are bounded runtime evidence plus blockers that explain why the completed
+7B Kaggle proof currently uses the HF stage-selective CUDA adapter rather than
+llama.cpp RPC. Future work may return to GGUF/RPC, but that is a separate
+adapter milestone.
 
 ## Public Swarm Inference v2
 
