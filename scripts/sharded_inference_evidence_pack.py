@@ -479,11 +479,14 @@ def create_session(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def invite_kwargs(args: argparse.Namespace) -> dict[str, Any]:
-    if WORKLOAD_TYPE != "real_llm_sharded_infer":
-        return {}
     kwargs: dict[str, Any] = {
         "hf_model_id": str(getattr(args, "hf_model_id", "") or "sshleifer/tiny-gpt2"),
     }
+    # Wrapper packs share this module and may change WORKLOAD_TYPE at import
+    # time. Keep explicit real-model policy arguments stable across that
+    # module-level configuration rather than silently dropping them.
+    if WORKLOAD_TYPE != "real_llm_sharded_infer" and not getattr(args, "hf_model_id", ""):
+        return {}
     backend = "cuda" if str(getattr(args, "real_llm_backend", "") or "") in {"cuda", "hf_transformers_cuda"} else "cpu"
     kwargs["backend"] = backend
     return kwargs

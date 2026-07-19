@@ -37,6 +37,10 @@ DEFAULT_STAGE_SELECTIVE_WEIGHT_REPORT = (
     "dist/stage-selective-weight-loading-check/"
     "stage_selective_weight_loading_check.json"
 )
+DEFAULT_HANDOFF_REPORT = (
+    "dist/core-tech-handoff-stage-selective-live-goal-r1/"
+    "core_technology_handoff_rc.json"
+)
 
 REDACTION_FRAGMENTS = (
     "CROWDTENSOR_MINER_TOKEN",
@@ -351,6 +355,54 @@ def summarize_stage_selective_weight_loading(report: dict[str, Any], meta: dict[
     }
 
 
+def summarize_handoff_stage_selective(report: dict[str, Any], meta: dict[str, Any], path: Path) -> dict[str, Any]:
+    evidence = report.get("large_model_stage_selective_evidence") if isinstance(report.get("large_model_stage_selective_evidence"), dict) else {}
+    checks = evidence.get("checks") if isinstance(evidence.get("checks"), dict) else {}
+    seven_b = evidence.get("seven_b_live") if isinstance(evidence.get("seven_b_live"), dict) else {}
+    fourteen_b = evidence.get("fourteen_b_live") if isinstance(evidence.get("fourteen_b_live"), dict) else {}
+    n_stage = evidence.get("n_stage_partition") if isinstance(evidence.get("n_stage_partition"), dict) else {}
+    performance = evidence.get("stage_selective_performance") if isinstance(evidence.get("stage_selective_performance"), dict) else {}
+    throughput = performance.get("throughput") if isinstance(performance.get("throughput"), dict) else {}
+    memory = performance.get("memory") if isinstance(performance.get("memory"), dict) else {}
+    latency = performance.get("latency") if isinstance(performance.get("latency"), dict) else {}
+    ready = bool(
+        meta.get("ok")
+        and report.get("ok") is True
+        and report.get("core_technology_large_model_alpha_ready") is True
+        and evidence.get("core_technology_large_model_alpha_ready") is True
+        and checks.get("seven_b_multi_token_verified") is True
+        and checks.get("fourteen_b_dual_kaggle_verified") is True
+        and checks.get("n_stage_partition_plan_ready") is True
+        and checks.get("stage_selective_performance_report_ready") is True
+        and not evidence.get("not_completed")
+    )
+    return {
+        "ready": ready,
+        "report_path": str(path),
+        "report_sha256": sha256_file(path) if path.is_file() else "",
+        "schema": report.get("schema", ""),
+        "evidence_schema": evidence.get("schema", ""),
+        "evidence_scope": report.get("evidence_scope", ""),
+        "seven_b_multi_token_verified": checks.get("seven_b_multi_token_verified") is True,
+        "fourteen_b_dual_kaggle_verified": checks.get("fourteen_b_dual_kaggle_verified") is True,
+        "n_stage_partition_plan_ready": checks.get("n_stage_partition_plan_ready") is True,
+        "stage_selective_performance_report_ready": checks.get("stage_selective_performance_report_ready") is True,
+        "seven_b_model_id": seven_b.get("model_id") or "",
+        "seven_b_generated_token_count": int(seven_b.get("generated_token_count") or 0),
+        "fourteen_b_model_id": fourteen_b.get("model_id") or "",
+        "fourteen_b_generated_token_count": int(fourteen_b.get("generated_token_count") or 0),
+        "target_stage_count": int(n_stage.get("target_stage_count") or 0),
+        "tokens_per_second_effective": throughput.get("tokens_per_second_effective"),
+        "stage0_weight_download_scope": memory.get("stage0_weight_download_scope") or "",
+        "stage1_weight_download_scope": memory.get("stage1_weight_download_scope") or "",
+        "stage_weight_downloads_only_stage_files": memory.get("stage_weight_downloads_only_stage_files") is True,
+        "latency_effective_elapsed_seconds": latency.get("effective_elapsed_seconds"),
+        "not_completed": evidence.get("not_completed") or [],
+        "diagnosis_codes": report.get("diagnosis_codes") or [],
+        "limitations": evidence.get("limitations") or [],
+    }
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -358,10 +410,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     seven_path = Path(args.seven_b_report or args.seven_b_blocker_report)
     llama_local_path = Path(args.llama_like_local_report)
     stage_selective_path = Path(args.stage_selective_weight_report)
+    handoff_path = Path(args.handoff_report)
     small_report, small_meta = try_load(small_path)
     seven_report, seven_meta = try_load(seven_path)
     llama_local_report, llama_local_meta = try_load(llama_local_path)
     stage_selective_report, stage_selective_meta = try_load(stage_selective_path)
+    handoff_report, handoff_meta = try_load(handoff_path)
     small = summarize_small_gpu(small_report, small_meta, small_path)
     seven = summarize_seven_b_eight_b(seven_report, seven_meta, seven_path)
     llama_local = summarize_llama_like_local(llama_local_report, llama_local_meta, llama_local_path)
@@ -370,11 +424,13 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         stage_selective_meta,
         stage_selective_path,
     )
+    handoff_stage_selective = summarize_handoff_stage_selective(handoff_report, handoff_meta, handoff_path)
     input_leaks = {
         "small_gpu_report": public_redaction_errors(small_report) if small_report else [],
         "seven_b_blocker_report": public_redaction_errors(seven_report) if seven_report else [],
         "llama_like_local_report": public_redaction_errors(llama_local_report) if llama_local_report else [],
         "stage_selective_weight_report": public_redaction_errors(stage_selective_report) if stage_selective_report else [],
+        "handoff_report": public_redaction_errors(handoff_report) if handoff_report else [],
     }
 
     core_ready = bool(
@@ -402,6 +458,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         diagnosis_codes.append("core_stage_selective_runtime_validated")
     if stage_selective.get("stage_selective_hf_runtime_ready"):
         diagnosis_codes.append("core_stage_selective_hf_runtime_validated")
+    if handoff_stage_selective.get("ready"):
+        diagnosis_codes.append("core_stage_selective_handoff_validated")
+        diagnosis_codes.append("core_7b_multi_token_kaggle_stage_selective_validated")
+        diagnosis_codes.append("core_14b_kaggle_stage_selective_validated")
+        diagnosis_codes.append("core_n_stage_partition_plan_validated")
+        diagnosis_codes.append("core_stage_selective_performance_report_validated")
 
     blockers: list[str] = []
     if not seven.get("real_7b_runtime_verified"):
@@ -428,10 +490,19 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "core_validation_ready": core_ready,
         "small_tier_gpu_validated": bool(small["ready"]),
         "seven_b_eight_b_validated": bool(seven["real_7b_runtime_verified"]),
-        "largest_successful_tier": "7b" if seven["real_7b_runtime_verified"] else ("small" if small["ready"] else ""),
+        "fourteen_b_validated": bool(handoff_stage_selective.get("fourteen_b_dual_kaggle_verified")),
+        "seven_b_multi_token_validated": bool(handoff_stage_selective.get("seven_b_multi_token_verified")),
+        "n_stage_partition_ready": bool(handoff_stage_selective.get("n_stage_partition_plan_ready")),
+        "stage_selective_performance_report_ready": bool(handoff_stage_selective.get("stage_selective_performance_report_ready")),
+        "largest_successful_tier": (
+            "14b"
+            if handoff_stage_selective.get("fourteen_b_dual_kaggle_verified")
+            else ("7b" if seven["real_7b_runtime_verified"] else ("small" if small["ready"] else ""))
+        ),
         "small_tier_evidence": small,
         "llama_like_local_evidence": llama_local,
         "stage_selective_weight_loading_evidence": stage_selective,
+        "handoff_stage_selective_evidence": handoff_stage_selective,
         "seven_b_eight_b_evidence": seven,
         "seven_b_eight_b_blocker_evidence": seven,
         "blockers": sorted(set(blockers)),
@@ -450,7 +521,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "stage_selective_weight_application_is_not_kaggle_runtime": bool(
                 stage_selective.get("partial_weight_tensor_application_ready")
             ),
+            "handoff_stage_selective_evidence_is_live_kaggle_but_not_production": bool(handoff_stage_selective.get("ready")),
             "thirteen_b_validated": False,
+            "fourteen_b_validated": bool(handoff_stage_selective.get("fourteen_b_dual_kaggle_verified")),
             "production_swarm_inference_claimed": False,
         },
         "input_public_leak_paths": {
@@ -525,7 +598,16 @@ def build_support_bundle(report: dict[str, Any]) -> dict[str, Any]:
         ).get("ready")
         if isinstance(report.get("stage_selective_weight_loading_evidence"), dict)
         else False,
+        "handoff_stage_selective_ready": (
+            report.get("handoff_stage_selective_evidence") or {}
+        ).get("ready")
+        if isinstance(report.get("handoff_stage_selective_evidence"), dict)
+        else False,
         "seven_b_eight_b_validated": report.get("seven_b_eight_b_validated"),
+        "seven_b_multi_token_validated": report.get("seven_b_multi_token_validated"),
+        "fourteen_b_validated": report.get("fourteen_b_validated"),
+        "n_stage_partition_ready": report.get("n_stage_partition_ready"),
+        "stage_selective_performance_report_ready": report.get("stage_selective_performance_report_ready"),
         "blockers": report.get("blockers"),
         "diagnosis_codes": report.get("diagnosis_codes"),
         "safety": report.get("safety"),
@@ -537,6 +619,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     small = report.get("small_tier_evidence") if isinstance(report.get("small_tier_evidence"), dict) else {}
     llama_local = report.get("llama_like_local_evidence") if isinstance(report.get("llama_like_local_evidence"), dict) else {}
     stage_selective = report.get("stage_selective_weight_loading_evidence") if isinstance(report.get("stage_selective_weight_loading_evidence"), dict) else {}
+    handoff_stage_selective = report.get("handoff_stage_selective_evidence") if isinstance(report.get("handoff_stage_selective_evidence"), dict) else {}
     seven = report.get("seven_b_eight_b_evidence") if isinstance(report.get("seven_b_eight_b_evidence"), dict) else {}
     if not isinstance(seven, dict) or not seven:
         seven = report.get("seven_b_eight_b_blocker_evidence") if isinstance(report.get("seven_b_eight_b_blocker_evidence"), dict) else {}
@@ -547,6 +630,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- core validation ready: `{report.get('core_validation_ready')}`",
         f"- small-tier Kaggle GPU validated: `{report.get('small_tier_gpu_validated')}`",
         f"- 7B/8B validated: `{report.get('seven_b_eight_b_validated')}`",
+        f"- 7B multi-token validated: `{report.get('seven_b_multi_token_validated')}`",
+        f"- 14B validated: `{report.get('fourteen_b_validated')}`",
+        f"- N-stage partition ready: `{report.get('n_stage_partition_ready')}`",
+        f"- stage-selective performance report ready: `{report.get('stage_selective_performance_report_ready')}`",
         f"- largest successful tier: `{report.get('largest_successful_tier')}`",
         f"- blockers: `{', '.join(report.get('blockers') or [])}`",
         "",
@@ -579,6 +666,16 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- runtime execution validation: `{stage_selective.get('runtime_execution_validation')}`",
         f"- large model validation: `{stage_selective.get('large_model_validation')}`",
         "",
+        "## Handoff Stage-Selective Evidence",
+        "",
+        f"- report: `{handoff_stage_selective.get('report_path', '')}`",
+        f"- ready: `{handoff_stage_selective.get('ready')}`",
+        f"- 7B multi-token: `{handoff_stage_selective.get('seven_b_multi_token_verified')}` tokens=`{handoff_stage_selective.get('seven_b_generated_token_count', 0)}`",
+        f"- 14B dual-Kaggle: `{handoff_stage_selective.get('fourteen_b_dual_kaggle_verified')}` tokens=`{handoff_stage_selective.get('fourteen_b_generated_token_count', 0)}`",
+        f"- N-stage target stages: `{handoff_stage_selective.get('target_stage_count', 0)}`",
+        f"- token/s effective: `{handoff_stage_selective.get('tokens_per_second_effective')}`",
+        f"- stage weight download scopes: `{handoff_stage_selective.get('stage0_weight_download_scope')}`, `{handoff_stage_selective.get('stage1_weight_download_scope')}`",
+        "",
         "## 7B/8B Evidence",
         "",
         f"- report: `{seven.get('report_path', '')}`",
@@ -605,6 +702,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seven-b-blocker-report", default=DEFAULT_SEVEN_B_BLOCKER_REPORT)
     parser.add_argument("--llama-like-local-report", default=DEFAULT_LLAMA_LIKE_LOCAL_REPORT)
     parser.add_argument("--stage-selective-weight-report", default=DEFAULT_STAGE_SELECTIVE_WEIGHT_REPORT)
+    parser.add_argument("--handoff-report", default=DEFAULT_HANDOFF_REPORT)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 

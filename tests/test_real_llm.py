@@ -107,6 +107,95 @@ class RealLlmTests(unittest.TestCase):
         self.assertIn("real_llm_llama_like_runtime_execution_missing", summary["large_model_blockers"])
         self.assertIn("real_llm_llama_like_partial_weight_plan_ready", summary["diagnosis_codes"])
 
+    def test_n_stage_partition_plan_maps_stage_owned_safetensor_keys(self) -> None:
+        weight_map = {
+            "model.embed_tokens.weight": "model-00001-of-00004.safetensors",
+            "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.1.self_attn.q_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.2.self_attn.q_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.3.self_attn.q_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.4.self_attn.q_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.5.self_attn.q_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.6.self_attn.q_proj.weight": "model-00004-of-00004.safetensors",
+            "model.layers.7.self_attn.q_proj.weight": "model-00004-of-00004.safetensors",
+            "model.norm.weight": "model-00004-of-00004.safetensors",
+            "lm_head.weight": "model-00004-of-00004.safetensors",
+        }
+        metadata = {
+            "model_id": "Qwen/Qwen2.5-14B-Instruct",
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 8,
+            "hidden_size": 5120,
+            "stage_count": 4,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "weight_map": weight_map,
+        }
+
+        plan = real_llm.real_llm_n_stage_partition_plan(metadata, stage_count=4)
+
+        self.assertEqual(plan["schema"], real_llm.REAL_LLM_N_STAGE_PARTITION_PLAN_SCHEMA_VERSION)
+        self.assertTrue(plan["ready"])
+        self.assertFalse(plan["runtime_execution_ready"])
+        self.assertEqual(plan["stage_count"], 4)
+        self.assertTrue(plan["stage_ranges_valid"])
+        self.assertEqual(plan["covered_decoder_layer_count"], 8)
+        self.assertEqual([stage["stage_layer_range"] for stage in plan["stage_plans"]], [[0, 2], [2, 4], [4, 6], [6, 8]])
+        self.assertIn("model.embed_tokens.", plan["stage_plans"][0]["expected_key_prefixes"])
+        self.assertNotIn("lm_head.", plan["stage_plans"][0]["expected_key_prefixes"])
+        self.assertIn("model.norm.", plan["stage_plans"][3]["expected_key_prefixes"])
+        self.assertIn("lm_head.", plan["stage_plans"][3]["expected_key_prefixes"])
+        self.assertTrue(all(stage["loads_only_stage_weight_keys"] for stage in plan["stage_plans"]))
+        self.assertIn("real_llm_n_stage_partition_abstraction_ready", plan["diagnosis_codes"])
+        self.assertFalse(plan["unassigned_weight_key_count"])
+
+        summary = real_llm.real_llm_execution_support_summary(metadata)
+        self.assertTrue(summary["n_stage_partition_plan_ready"])
+        self.assertEqual(summary["n_stage_partition_plan"]["stage_count"], 4)
+        self.assertIn("real_llm_n_stage_partition_abstraction_ready", summary["diagnosis_codes"])
+        self.assertFalse(summary["large_model_sharded_execution_ready"])
+
+    def test_14b_metadata_estimates_weight_budget_for_n_stage_plan(self) -> None:
+        weight_map = {
+            "model.embed_tokens.weight": "model-00001-of-00004.safetensors",
+            **{
+                f"model.layers.{index}.self_attn.q_proj.weight": f"model-{(index // 10) + 1:05d}-of-00004.safetensors"
+                for index in range(48)
+            },
+            "model.norm.weight": "model-00004-of-00004.safetensors",
+            "lm_head.weight": "model-00004-of-00004.safetensors",
+        }
+        metadata = {
+            "model_id": "Qwen/Qwen2.5-14B-Instruct",
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 48,
+            "hidden_size": 5120,
+            "stage_count": 4,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "weight_map": weight_map,
+        }
+
+        summary = real_llm.real_llm_execution_support_summary(metadata)
+        plan = summary["n_stage_partition_plan"]
+
+        self.assertEqual(summary["parameter_count_estimate"], 14_700_000_000)
+        self.assertTrue(summary["large_model_candidate"])
+        self.assertEqual(plan["stage_count"], 4)
+        self.assertTrue(plan["ready"])
+        self.assertEqual(plan["covered_decoder_layer_count"], 48)
+        self.assertEqual(
+            [stage["stage_layer_range"] for stage in plan["stage_plans"]],
+            [[0, 12], [12, 24], [24, 36], [36, 48]],
+        )
+        self.assertEqual(plan["estimated_weight_bytes_fp32"], 58_800_000_000)
+        self.assertLess(
+            max(stage["estimated_stage_weight_bytes_fp32"] for stage in plan["stage_plans"]),
+            summary["estimated_weight_bytes_fp32"],
+        )
+        self.assertIn("real_llm_n_stage_partition_abstraction_ready", summary["diagnosis_codes"])
+        self.assertFalse(summary["large_model_sharded_execution_ready"])
+
     def test_stage_selective_safetensors_loader_materializes_only_stage_owned_keys(self) -> None:
         missing = real_llm.missing_hf_dependencies()
         if missing:
@@ -595,6 +684,134 @@ class RealLlmTests(unittest.TestCase):
         self.assertFalse(runtime["generated_token_ids_public"])
         self.assertFalse(runtime["activation_public"])
 
+    def test_stage_selective_hf_awq_runtime_smoke_replaces_quantized_linears(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        import torch  # type: ignore
+        from safetensors.torch import save_file  # type: ignore
+        from tokenizers import Tokenizer, models, pre_tokenizers  # type: ignore
+        from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast  # type: ignore
+
+        def pack_awq(weight: torch.Tensor, *, group_size: int = 4) -> dict[str, torch.Tensor]:
+            source = weight.detach().t().contiguous().to(dtype=torch.int32)
+            in_features, out_features = source.shape
+            assert in_features % group_size == 0
+            assert out_features % 8 == 0
+            qweight = torch.zeros((in_features, out_features // 8), dtype=torch.int32)
+            order = [0, 2, 4, 6, 1, 3, 5, 7]
+            clamped = source.clamp(0, 15)
+            for col in range(out_features // 8):
+                for bit_index, source_index in enumerate(order):
+                    qweight[:, col] |= clamped[:, col * 8 + source_index] << (bit_index * 4)
+            qzeros = torch.zeros((in_features // group_size, out_features // 8), dtype=torch.int32)
+            scales = torch.ones((in_features // group_size, out_features), dtype=torch.float16)
+            return {"qweight": qweight, "qzeros": qzeros, "scales": scales}
+
+        config = LlamaConfig(
+            vocab_size=16,
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_position_embeddings=16,
+        )
+        config.quantization_config = {
+            "quant_method": "awq",
+            "bits": 4,
+            "group_size": 4,
+            "version": "gemm",
+            "zero_point": True,
+        }
+        seed_model = LlamaForCausalLM(config)
+        with torch.no_grad():
+            for module in seed_model.modules():
+                if isinstance(module, torch.nn.Linear):
+                    module.weight.fill_(1.0)
+                    if module.bias is not None:
+                        module.bias.zero_()
+            seed_model.model.embed_tokens.weight.fill_(1.0)
+            seed_model.model.norm.weight.fill_(1.0)
+            seed_model.lm_head.weight.fill_(1.0)
+
+        state = seed_model.state_dict()
+        awq_state: dict[str, torch.Tensor] = {}
+        weight_map: dict[str, str] = {}
+        quantized_modules = [
+            name[:-len(".weight")]
+            for name in state
+            if name.endswith(".weight")
+            and (
+                ".self_attn.q_proj." in name
+                or ".self_attn.k_proj." in name
+                or ".self_attn.v_proj." in name
+                or ".self_attn.o_proj." in name
+                or ".mlp.gate_proj." in name
+                or ".mlp.up_proj." in name
+                or ".mlp.down_proj." in name
+            )
+        ]
+        for module_name in quantized_modules:
+            packed = pack_awq(state[f"{module_name}.weight"])
+            for suffix, tensor in packed.items():
+                awq_state[f"{module_name}.{suffix}"] = tensor
+        for key, tensor in state.items():
+            if any(key == f"{module}.weight" for module in quantized_modules):
+                continue
+            if key.endswith("rotary_emb.inv_freq"):
+                continue
+            awq_state[key] = tensor.detach().clone()
+
+        stage0_keys = [
+            key
+            for key in awq_state
+            if key.startswith("model.embed_tokens.")
+            or key.startswith("model.layers.0.")
+            or key.startswith("model.layers.1.")
+        ]
+        stage1_keys = [
+            key
+            for key in awq_state
+            if key.startswith("model.layers.2.")
+            or key.startswith("model.layers.3.")
+            or key.startswith("model.norm.")
+            or key.startswith("lm_head.")
+        ]
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_awq_stage_hf_runtime_") as tmp:
+            root = Path(tmp)
+            config.to_json_file(root / "config.json")
+            tokenizer = Tokenizer(models.WordLevel({"<unk>": 0, "CrowdTensor": 1, "routes": 2}, unk_token="<unk>"))
+            tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>")
+            hf_tokenizer.save_pretrained(root)
+            save_file({key: awq_state[key] for key in stage0_keys}, root / "model-00001-of-00002.safetensors")
+            save_file({key: awq_state[key] for key in stage1_keys}, root / "model-00002-of-00002.safetensors")
+            weight_map.update({key: "model-00001-of-00002.safetensors" for key in stage0_keys})
+            weight_map.update({key: "model-00002-of-00002.safetensors" for key in stage1_keys})
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"metadata": {"total_size": 1}, "weight_map": weight_map}),
+                encoding="utf-8",
+            )
+
+            runtime = real_llm.run_stage_selective_hf_runtime_smoke(
+                model_id=str(root),
+                prompt="CrowdTensor routes",
+                baseline_required=False,
+            )
+
+        self.assertTrue(runtime["ready"])
+        self.assertTrue(runtime["stage_selective_runtime_execution_ready"])
+        self.assertTrue(runtime["awq_stage_runtime_ready"])
+        self.assertTrue(runtime["awq_stage_preparation"]["stage0"]["awq_stage_model_prepared"])
+        self.assertTrue(runtime["awq_stage_preparation"]["stage1"]["awq_stage_model_prepared"])
+        self.assertGreater(runtime["awq_stage_preparation"]["stage0"]["awq_linear_replacement_count"], 0)
+        self.assertTrue(runtime["activation_transport_ready"])
+        self.assertTrue(runtime["baseline_validation_skipped"])
+        self.assertEqual(runtime["generated_token_count"], 1)
+        self.assertFalse(runtime["activation_public"])
+
     def test_stage_selective_single_safetensors_supports_tied_lm_head(self) -> None:
         missing = real_llm.missing_hf_dependencies()
         if missing:
@@ -648,6 +865,214 @@ class RealLlmTests(unittest.TestCase):
         self.assertTrue(stage1_load["ready"])
         self.assertIn("lm_head.weight", stage1_tensors)
         self.assertTrue(torch.equal(stage1_tensors["lm_head.weight"], state["model.embed_tokens.weight"]))
+
+    def test_stage_selective_hf_metadata_downloads_only_stage_owned_shards(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        from transformers import LlamaConfig  # type: ignore
+
+        weight_map = {
+            "model.embed_tokens.weight": "model-00001-of-00004.safetensors",
+            "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.1.self_attn.q_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.2.self_attn.q_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.3.self_attn.q_proj.weight": "model-00004-of-00004.safetensors",
+            "model.norm.weight": "model-00004-of-00004.safetensors",
+            "lm_head.weight": "model-00004-of-00004.safetensors",
+        }
+
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_stage_hf_meta_") as tmp:
+            root = Path(tmp)
+            config = LlamaConfig(
+                vocab_size=8,
+                hidden_size=8,
+                intermediate_size=16,
+                num_hidden_layers=4,
+                num_attention_heads=2,
+                num_key_value_heads=2,
+                max_position_embeddings=16,
+                tie_word_embeddings=False,
+            )
+            config.to_json_file(root / "config.json")
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"metadata": {"total_size": 1000}, "weight_map": weight_map}),
+                encoding="utf-8",
+            )
+            requested: list[str] = []
+
+            def fake_cached_file(_model_id: str, filename: str, **_kwargs: object) -> str:
+                requested.append(filename)
+                path = root / filename
+                path.write_bytes(b"stage-shard-placeholder")
+                return str(path)
+
+            with mock.patch("transformers.utils.cached_file", side_effect=fake_cached_file):
+                _config, metadata, weight_root = real_llm._stage_selective_hf_metadata(  # noqa: SLF001
+                    model_id=str(root),
+                    backend=real_llm.BACKEND_CPU,
+                    stage_id=0,
+                )
+
+        self.assertEqual(weight_root, root)
+        self.assertEqual(
+            requested,
+            ["model-00001-of-00004.safetensors", "model-00002-of-00004.safetensors"],
+        )
+        self.assertEqual(metadata["stage_weight_download_scope"], "stage_owned_weight_files")
+        self.assertEqual(metadata["stage_weight_download_stage_id"], 0)
+        self.assertEqual(metadata["stage_weight_download_file_count"], 2)
+        self.assertTrue(metadata["stage_weight_downloads_only_stage_files"])
+
+    def test_n_stage_selective_safetensors_loader_materializes_only_stage_owned_keys(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        import torch  # type: ignore
+        from safetensors.torch import save_file  # type: ignore
+
+        weight_map = {
+            "model.embed_tokens.weight": "model-00001-of-00004.safetensors",
+            "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.1.self_attn.q_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.2.self_attn.q_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.3.self_attn.q_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.4.self_attn.q_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.5.self_attn.q_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.6.self_attn.q_proj.weight": "model-00004-of-00004.safetensors",
+            "model.layers.7.self_attn.q_proj.weight": "model-00004-of-00004.safetensors",
+            "model.norm.weight": "model-00004-of-00004.safetensors",
+            "lm_head.weight": "model-00004-of-00004.safetensors",
+        }
+        metadata = {
+            "model_id": "Qwen/Qwen2.5-32B-Instruct-AWQ",
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 8,
+            "hidden_size": 5120,
+            "stage_count": 4,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "weight_map": weight_map,
+        }
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_n_stage_weights_") as tmp:
+            root = Path(tmp)
+            save_file(
+                {
+                    "model.embed_tokens.weight": torch.ones((2, 2)),
+                    "model.layers.0.self_attn.q_proj.weight": torch.full((2, 2), 2.0),
+                    "model.layers.1.self_attn.q_proj.weight": torch.full((2, 2), 3.0),
+                    "model.layers.2.self_attn.q_proj.weight": torch.full((2, 2), 4.0),
+                },
+                root / "model-00001-of-00004.safetensors",
+            )
+            save_file(
+                {
+                    "model.layers.2.self_attn.q_proj.weight": torch.full((2, 2), 5.0),
+                    "model.layers.3.self_attn.q_proj.weight": torch.full((2, 2), 6.0),
+                    "model.layers.5.self_attn.q_proj.weight": torch.full((2, 2), 7.0),
+                },
+                root / "model-00002-of-00004.safetensors",
+            )
+            save_file(
+                {
+                    "model.layers.4.self_attn.q_proj.weight": torch.full((2, 2), 8.0),
+                    "model.layers.5.self_attn.q_proj.weight": torch.full((2, 2), 9.0),
+                },
+                root / "model-00003-of-00004.safetensors",
+            )
+            save_file(
+                {
+                    "model.layers.6.self_attn.q_proj.weight": torch.full((2, 2), 10.0),
+                    "model.layers.7.self_attn.q_proj.weight": torch.full((2, 2), 11.0),
+                    "model.norm.weight": torch.ones((2,)),
+                    "lm_head.weight": torch.full((2, 2), 12.0),
+                },
+                root / "model-00004-of-00004.safetensors",
+            )
+
+            stage2_tensors, stage2 = real_llm._load_stage_selective_safetensors(  # noqa: SLF001
+                metadata,
+                stage_id=2,
+                stage_count=4,
+                weight_root=root,
+            )
+
+        self.assertTrue(stage2["ready"])
+        self.assertEqual(stage2["stage_id"], 2)
+        self.assertEqual(stage2["stage_count"], 4)
+        self.assertEqual(stage2["stage_layer_range"], [4, 6])
+        self.assertEqual(stage2["assigned_weight_files"], ["model-00003-of-00004.safetensors"])
+        self.assertEqual(sorted(stage2_tensors), [
+            "model.layers.4.self_attn.q_proj.weight",
+            "model.layers.5.self_attn.q_proj.weight",
+        ])
+        self.assertEqual(stage2["candidate_file_key_count"], 2)
+        self.assertFalse(stage2["cross_stage_weight_keys_loaded"])
+        self.assertTrue(stage2["loads_only_stage_weight_keys"])
+
+    def test_stage_selective_hf_metadata_downloads_only_n_stage_owned_shards(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+
+        from transformers import LlamaConfig  # type: ignore
+
+        weight_map = {
+            "model.embed_tokens.weight": "model-00001-of-00004.safetensors",
+            "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.1.self_attn.q_proj.weight": "model-00001-of-00004.safetensors",
+            "model.layers.2.self_attn.q_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.3.self_attn.q_proj.weight": "model-00002-of-00004.safetensors",
+            "model.layers.4.self_attn.q_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.5.self_attn.q_proj.weight": "model-00003-of-00004.safetensors",
+            "model.layers.6.self_attn.q_proj.weight": "model-00004-of-00004.safetensors",
+            "model.layers.7.self_attn.q_proj.weight": "model-00004-of-00004.safetensors",
+            "model.norm.weight": "model-00004-of-00004.safetensors",
+            "lm_head.weight": "model-00004-of-00004.safetensors",
+        }
+
+        with tempfile.TemporaryDirectory(prefix="crowdtensor_n_stage_hf_meta_") as tmp:
+            root = Path(tmp)
+            config = LlamaConfig(
+                vocab_size=8,
+                hidden_size=8,
+                intermediate_size=16,
+                num_hidden_layers=8,
+                num_attention_heads=2,
+                num_key_value_heads=2,
+                max_position_embeddings=16,
+                tie_word_embeddings=False,
+            )
+            config.to_json_file(root / "config.json")
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"metadata": {"total_size": 1000}, "weight_map": weight_map}),
+                encoding="utf-8",
+            )
+            requested: list[str] = []
+
+            def fake_cached_file(_model_id: str, filename: str, **_kwargs: object) -> str:
+                requested.append(filename)
+                path = root / filename
+                path.write_bytes(b"stage-shard-placeholder")
+                return str(path)
+
+            with mock.patch("transformers.utils.cached_file", side_effect=fake_cached_file):
+                _config, metadata, weight_root = real_llm._stage_selective_hf_metadata(  # noqa: SLF001
+                    model_id=str(root),
+                    backend=real_llm.BACKEND_CPU,
+                    stage_id=2,
+                    stage_count=4,
+                )
+
+        self.assertEqual(weight_root, root)
+        self.assertEqual(requested, ["model-00003-of-00004.safetensors"])
+        self.assertEqual(metadata["stage_count"], 4)
+        self.assertEqual(metadata["stage_weight_download_scope"], "stage_owned_weight_files")
+        self.assertEqual(metadata["stage_weight_download_stage_id"], 2)
+        self.assertEqual(metadata["stage_weight_download_file_count"], 1)
+        self.assertTrue(metadata["stage_weight_downloads_only_stage_files"])
 
     def test_partial_weight_plan_without_weight_index_keeps_true_partial_blocker(self) -> None:
         metadata = {
@@ -803,6 +1228,627 @@ class RealLlmTests(unittest.TestCase):
         self.assertEqual(spec["requests"][0]["generation_step"], 0)
         self.assertEqual(spec["requests"][0]["generated_token_ids"], [])
         self.assertEqual(spec["requests"][0]["generated_text"], "")
+
+    def test_stage_selective_remote_validation_accepts_baseline_skipped_stage1(self) -> None:
+        artifact = {
+            "schema": real_llm.REAL_LLM_ARTIFACT_SCHEMA_VERSION,
+            "artifact_hash": "sha256:test-stage-selective-remote-artifact",
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "backend": real_llm.BACKEND_CUDA,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "execution_mode": real_llm.EXECUTION_MODE_STAGE_SELECTIVE_HF,
+            "split_index": 14,
+            "num_hidden_layers": 28,
+            "hidden_size": 3584,
+            "vocab_size": 152064,
+        }
+        activation = {
+            "schema_version": real_llm.REAL_LLM_ACTIVATION_SCHEMA_VERSION,
+            "session_id": "session-stage-selective-remote",
+            "request_id": "req-1",
+            "prompt_hash": "sha256:prompt",
+            "model_id": artifact["model_id"],
+            "artifact_hash": artifact["artifact_hash"],
+            "split_index": 14,
+            "generation_step": 0,
+            "max_new_tokens": 1,
+            "generated_token_ids": [],
+            "generated_text": "",
+            "input_ids": [1, 2, 3],
+            "position_ids": [0, 1, 2],
+            "hidden_shape": [1, 3, 4],
+            "hidden_state": [[[0.1, 0.2, 0.3, 0.4], [0.2, 0.3, 0.4, 0.5], [0.3, 0.4, 0.5, 0.6]]],
+        }
+        activation["activation_hash"] = real_llm._activation_hash(activation)  # noqa: SLF001
+        spec = real_llm.real_llm_sharded_inference_spec_for(
+            "stage1-task",
+            "stage1-miner",
+            artifact,
+            request_count=1,
+            session_id=activation["session_id"],
+            stage_id=1,
+            parent_task_id="stage0-task",
+            max_new_tokens=1,
+            generation_step=0,
+            activation_results=[activation],
+            execution_mode=real_llm.EXECUTION_MODE_STAGE_SELECTIVE_HF,
+        )
+        result_row = {
+            "request_id": "req-1",
+            "prompt_hash": activation["prompt_hash"],
+            "model_id": artifact["model_id"],
+            "artifact_hash": artifact["artifact_hash"],
+            "activation_hash": activation["activation_hash"],
+            "generation_step": 0,
+            "max_new_tokens": 1,
+            "next_token_id": 151643,
+            "next_token_text": "",
+            "baseline_next_token_id": None,
+            "baseline_next_token_text": "",
+            "generated_token_ids": [151643],
+            "generated_token_count": 1,
+            "generated_text": "",
+            "generated_text_hash": real_llm._generated_text_hash(""),  # noqa: SLF001
+            "baseline_match": False,
+            "baseline_validation_skipped": True,
+        }
+        result_row["output_hash"] = real_llm._output_hash(result_row)  # noqa: SLF001
+        sharded_result = {
+            "schema_version": real_llm.REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
+            "type": real_llm.WORKLOAD_TYPE,
+            "session_id": activation["session_id"],
+            "stage_id": 1,
+            "stage_count": 2,
+            "model_id": artifact["model_id"],
+            "backend": real_llm.BACKEND_CUDA,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "execution_mode": real_llm.EXECUTION_MODE_STAGE_SELECTIVE_HF,
+            "artifact_schema": real_llm.REAL_LLM_ARTIFACT_SCHEMA_VERSION,
+            "artifact_hash": artifact["artifact_hash"],
+            "split_index": 14,
+            "max_new_tokens": 1,
+            "generation_step": 0,
+            "request_count": 1,
+            "activation_count": 1,
+            "activation_hashes": [activation["activation_hash"]],
+            "activation_transport_ready": True,
+            "stage_layer_range": [14, 28],
+            "stage_parameter_count": 1_000,
+            "full_model_parameter_count": 2_000,
+            "stage_parameter_fraction": 0.5,
+            "device_parameter_count": 1_000,
+            "partition_parameter_split_valid": True,
+            "stage_local_partition_ready": True,
+            "stage1_partition_loaded": True,
+            "stage_selective_hf_runtime_ready": True,
+            "stage_selective_runtime_execution_ready": True,
+            "stage_selective_weight_load_ready": True,
+            "stage_selective_weight_application_ready": True,
+            "stage_selective_weight_load": {
+                "loaded_tensor_bytes": 2048,
+                "stage_weight_download_scope": "stage_owned_weight_files",
+                "stage_weight_download_file_count": 3,
+                "stage_weight_downloads_only_stage_files": True,
+                "public_safe": True,
+            },
+            "stage_selective_weight_application": {
+                "applied_tensor_bytes": 2048,
+                "public_safe": True,
+            },
+            "runtime_buffer_materialization_ready": True,
+            "baseline_match": False,
+            "baseline_validation_skipped": True,
+            "decoded_tokens_match": True,
+            "generated_token_ids": [151643],
+            "generated_token_count": 1,
+            "generated_text": "",
+            "generated_text_hash": result_row["generated_text_hash"],
+            "inference_result": result_row,
+            "inference_results": [result_row],
+            "real_llm_artifact_ready": True,
+        }
+
+        validation = real_llm.validate_real_llm_sharded_inference(
+            sharded_result,
+            expected_spec=spec,
+            replay_runtime=False,
+        )
+
+        self.assertTrue(validation["accepted"])
+        self.assertFalse(validation["baseline_match"])
+        self.assertTrue(validation["baseline_validation_skipped"])
+        self.assertTrue(validation["stage_selective_remote_validation"])
+        self.assertTrue(validation["decoded_tokens_match"])
+        self.assertEqual(validation["execution_mode"], real_llm.EXECUTION_MODE_STAGE_SELECTIVE_HF)
+        self.assertEqual(validation["stage_selective_weight_load"]["loaded_tensor_bytes"], 2048)
+        self.assertEqual(validation["stage_selective_weight_load"]["stage_weight_download_scope"], "stage_owned_weight_files")
+        self.assertTrue(validation["stage_selective_weight_load"]["stage_weight_downloads_only_stage_files"])
+        self.assertEqual(validation["stage_selective_weight_application"]["applied_tensor_bytes"], 2048)
+
+    def test_stage_selective_remote_validation_accepts_second_generated_token(self) -> None:
+        artifact = {
+            "schema": real_llm.REAL_LLM_ARTIFACT_SCHEMA_VERSION,
+            "artifact_hash": "sha256:test-stage-selective-remote-artifact",
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "backend": real_llm.BACKEND_CUDA,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "execution_mode": real_llm.EXECUTION_MODE_STAGE_SELECTIVE_HF,
+            "split_index": 14,
+            "num_hidden_layers": 28,
+            "hidden_size": 3584,
+            "vocab_size": 152064,
+        }
+        activation = {
+            "schema_version": real_llm.REAL_LLM_ACTIVATION_SCHEMA_VERSION,
+            "session_id": "session-stage-selective-remote-multi-token",
+            "request_id": "req-1",
+            "prompt_hash": "sha256:prompt",
+            "model_id": artifact["model_id"],
+            "artifact_hash": artifact["artifact_hash"],
+            "split_index": 14,
+            "generation_step": 1,
+            "max_new_tokens": 2,
+            "generated_token_ids": [151643],
+            "generated_text": "",
+            "input_ids": [1, 2, 3, 151643],
+            "position_ids": [0, 1, 2, 3],
+            "hidden_shape": [1, 4, 4],
+            "hidden_state": [
+                [[0.1, 0.2, 0.3, 0.4], [0.2, 0.3, 0.4, 0.5], [0.3, 0.4, 0.5, 0.6], [0.4, 0.5, 0.6, 0.7]]
+            ],
+        }
+        activation["activation_hash"] = real_llm._activation_hash(activation)  # noqa: SLF001
+        spec = real_llm.real_llm_sharded_inference_spec_for(
+            "stage1-task-step-1",
+            "stage1-miner",
+            artifact,
+            request_count=1,
+            session_id=activation["session_id"],
+            stage_id=1,
+            parent_task_id="stage0-task-step-1",
+            max_new_tokens=2,
+            generation_step=1,
+            activation_results=[activation],
+            execution_mode=real_llm.EXECUTION_MODE_STAGE_SELECTIVE_HF,
+        )
+        result_row = {
+            "request_id": "req-1",
+            "prompt_hash": activation["prompt_hash"],
+            "model_id": artifact["model_id"],
+            "artifact_hash": artifact["artifact_hash"],
+            "activation_hash": activation["activation_hash"],
+            "generation_step": 1,
+            "max_new_tokens": 2,
+            "next_token_id": 198,
+            "next_token_text": "",
+            "baseline_next_token_id": None,
+            "baseline_next_token_text": "",
+            "generated_token_ids": [151643, 198],
+            "generated_token_count": 2,
+            "generated_text": "",
+            "generated_text_hash": real_llm._generated_text_hash(""),  # noqa: SLF001
+            "baseline_match": False,
+            "baseline_validation_skipped": True,
+        }
+        result_row["output_hash"] = real_llm._output_hash(result_row)  # noqa: SLF001
+        validation = real_llm.validate_real_llm_sharded_inference(
+            {
+                "schema_version": real_llm.REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
+                "type": real_llm.WORKLOAD_TYPE,
+                "session_id": activation["session_id"],
+                "stage_id": 1,
+                "stage_count": 2,
+                "model_id": artifact["model_id"],
+                "backend": real_llm.BACKEND_CUDA,
+                "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+                "execution_mode": real_llm.EXECUTION_MODE_STAGE_SELECTIVE_HF,
+                "artifact_schema": real_llm.REAL_LLM_ARTIFACT_SCHEMA_VERSION,
+                "artifact_hash": artifact["artifact_hash"],
+                "split_index": 14,
+                "max_new_tokens": 2,
+                "generation_step": 1,
+                "request_count": 1,
+                "activation_count": 1,
+                "activation_hashes": [activation["activation_hash"]],
+                "activation_transport_ready": True,
+                "stage_layer_range": [14, 28],
+                "stage_parameter_count": 1_000,
+                "full_model_parameter_count": 2_000,
+                "stage_parameter_fraction": 0.5,
+                "device_parameter_count": 1_000,
+                "partition_parameter_split_valid": True,
+                "stage_local_partition_ready": True,
+                "stage1_partition_loaded": True,
+                "stage_selective_hf_runtime_ready": True,
+                "stage_selective_runtime_execution_ready": True,
+                "stage_selective_weight_load_ready": True,
+                "stage_selective_weight_application_ready": True,
+                "runtime_buffer_materialization_ready": True,
+                "baseline_match": False,
+                "baseline_validation_skipped": True,
+                "decoded_tokens_match": True,
+                "generated_token_ids": [151643, 198],
+                "generated_token_count": 2,
+                "generated_text": "",
+                "generated_text_hash": result_row["generated_text_hash"],
+                "inference_result": result_row,
+                "inference_results": [result_row],
+                "real_llm_artifact_ready": True,
+            },
+            expected_spec=spec,
+            replay_runtime=False,
+        )
+
+        self.assertTrue(validation["accepted"])
+        self.assertTrue(validation["stage_selective_remote_validation"])
+        self.assertTrue(validation["decoded_tokens_match"])
+        self.assertEqual(validation["generation_step"], 1)
+        self.assertEqual(validation["generated_token_count"], 2)
+
+    def test_full_model_validation_rejects_baseline_skipped_stage1(self) -> None:
+        artifact = {
+            "schema": real_llm.REAL_LLM_ARTIFACT_SCHEMA_VERSION,
+            "artifact_hash": "sha256:test-full-model-remote-artifact",
+            "model_id": real_llm.DEFAULT_MODEL_ID,
+            "backend": real_llm.BACKEND_CUDA,
+            "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            "split_index": 1,
+            "num_hidden_layers": 2,
+            "hidden_size": 2,
+        }
+        activation = {
+            "schema_version": real_llm.REAL_LLM_ACTIVATION_SCHEMA_VERSION,
+            "session_id": "session-full-model-remote",
+            "request_id": "req-1",
+            "prompt_hash": "sha256:prompt",
+            "model_id": artifact["model_id"],
+            "artifact_hash": artifact["artifact_hash"],
+            "split_index": 1,
+            "input_ids": [1, 2],
+            "position_ids": [0, 1],
+            "hidden_shape": [1, 2, 2],
+            "hidden_state": [[[0.1, 0.2], [0.3, 0.4]]],
+        }
+        activation["activation_hash"] = real_llm._activation_hash(activation)  # noqa: SLF001
+        spec = real_llm.real_llm_sharded_inference_spec_for(
+            "stage1-task",
+            "stage1-miner",
+            artifact,
+            request_count=1,
+            session_id=activation["session_id"],
+            stage_id=1,
+            activation_results=[activation],
+        )
+        result_row = {
+            "request_id": "req-1",
+            "model_id": artifact["model_id"],
+            "artifact_hash": artifact["artifact_hash"],
+            "activation_hash": activation["activation_hash"],
+            "next_token_id": 42,
+            "baseline_next_token_id": None,
+            "generated_token_ids": [42],
+            "generated_token_count": 1,
+            "generated_text": "",
+            "generated_text_hash": real_llm._generated_text_hash(""),  # noqa: SLF001
+            "baseline_match": False,
+            "baseline_validation_skipped": True,
+        }
+        result_row["output_hash"] = real_llm._output_hash(result_row)  # noqa: SLF001
+        validation = real_llm.validate_real_llm_sharded_inference(
+            {
+                "schema_version": real_llm.REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
+                "session_id": activation["session_id"],
+                "stage_id": 1,
+                "model_id": artifact["model_id"],
+                "backend": real_llm.BACKEND_CUDA,
+                "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+                "artifact_hash": artifact["artifact_hash"],
+                "stage_local_partition_ready": True,
+                "partition_parameter_split_valid": True,
+                "stage1_partition_loaded": True,
+                "stage_parameter_count": 1,
+                "full_model_parameter_count": 2,
+                "activation_hashes": [activation["activation_hash"]],
+                "activation_transport_ready": True,
+                "baseline_validation_skipped": True,
+                "decoded_tokens_match": True,
+                "inference_results": [result_row],
+            },
+            expected_spec=spec,
+            replay_runtime=False,
+        )
+
+        self.assertFalse(validation["accepted"])
+        self.assertEqual(validation["code"], "real_llm_baseline_mismatch")
+
+    def test_stage_selective_partition_summary_uses_applied_stage_bytes(self) -> None:
+        class Param:
+            def __init__(self, count: int) -> None:
+                self._count = count
+                self.is_meta = True
+
+            def numel(self) -> int:
+                raise RuntimeError("meta parameter count unavailable")
+
+        class Module:
+            def __init__(self, count: int = 1) -> None:
+                self.param = Param(count)
+
+            def parameters(self):
+                return [self.param]
+
+        class Base:
+            def __init__(self) -> None:
+                self.embed_tokens = Module()
+                self.layers = [Module() for _ in range(28)]
+                self.norm = Module()
+
+        class Model:
+            def __init__(self) -> None:
+                self.model = Base()
+                self.lm_head = Module()
+
+            def parameters(self):
+                for module in [self.model.embed_tokens, *self.model.layers, self.model.norm, self.lm_head]:
+                    yield from module.parameters()
+
+        summary = real_llm._stage_selective_partition_summary(  # noqa: SLF001
+            Model(),
+            {
+                "model_id": "Qwen/Qwen2.5-7B-Instruct",
+                "num_hidden_layers": 28,
+                "hidden_size": 3584,
+                "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+            },
+            {"ready": True, "applied_tensor_bytes": 8_000},
+            stage_id=0,
+            split_index=14,
+            partition_mode=real_llm.PARTITION_MODE_STAGE_LOCAL,
+            device="cuda:0",
+            family=real_llm.EXECUTION_FAMILY_LLAMA_LIKE,
+        )
+
+        self.assertTrue(summary["stage_selective_partition_summary"])
+        self.assertTrue(summary["partition_parameter_split_valid"])
+        self.assertTrue(summary["stage_local_partition_ready"])
+        self.assertTrue(summary["stage_gpu_memory_reduced"])
+        self.assertEqual(summary["stage_parameter_count"], 2_000)
+        self.assertGreater(summary["full_model_parameter_count"], summary["stage_parameter_count"])
+
+    def test_stage_selective_runtime_buffer_materializes_only_stage_owned_rotary_cache(self) -> None:
+        class Buffer:
+            is_meta = True
+            shape = (8, 4)
+
+        class Rotary:
+            def __init__(self, *, cached_shape=(8, 4)) -> None:
+                self.inv_freq = Buffer()
+                self.cos_cached = Buffer()
+                self.cos_cached.shape = cached_shape
+                self.sin_cached = Buffer()
+                self.sin_cached.shape = cached_shape
+
+            def register_buffer(self, name, value, persistent=True):  # noqa: ANN001, ANN202
+                setattr(self, name, value)
+
+            def modules(self):
+                return [self]
+
+            def named_modules(self):
+                yield "", self
+
+            def named_buffers(self, recurse=True):  # noqa: ANN001, ANN202
+                yield "inv_freq", self.inv_freq
+                yield "cos_cached", self.cos_cached
+                yield "sin_cached", self.sin_cached
+
+            def parameters(self):
+                return []
+
+        class Attn:
+            def __init__(self, *, cached_shape=(8, 4)) -> None:
+                self.rotary_emb = Rotary(cached_shape=cached_shape)
+
+            def modules(self):
+                return [self, self.rotary_emb]
+
+            def named_modules(self):
+                yield "", self
+                yield "rotary_emb", self.rotary_emb
+
+            def named_buffers(self, recurse=True):  # noqa: ANN001, ANN202
+                for name, value in self.rotary_emb.named_buffers(recurse=recurse):
+                    yield "rotary_emb." + name, value
+
+            def parameters(self):
+                return []
+
+        class Block:
+            def __init__(self, *, cached_shape=(8, 4)) -> None:
+                self.self_attn = Attn(cached_shape=cached_shape)
+
+            def modules(self):
+                return [self, *self.self_attn.modules()]
+
+            def named_modules(self):
+                yield "", self
+                for name, value in self.self_attn.named_modules():
+                    yield "self_attn" + (("." + name) if name else ""), value
+
+            def named_buffers(self, recurse=True):  # noqa: ANN001, ANN202
+                for name, value in self.self_attn.named_buffers(recurse=recurse):
+                    yield "self_attn." + name, value
+
+            def parameters(self):
+                return []
+
+        class Module:
+            def modules(self):
+                return [self]
+
+            def named_modules(self):
+                yield "", self
+
+            def named_buffers(self, recurse=True):  # noqa: ANN001, ANN202
+                return []
+
+            def parameters(self):
+                return []
+
+        class Base:
+            def __init__(self, *, cached_shape=(8, 4)) -> None:
+                self.embed_tokens = Module()
+                self.layers = [Block(cached_shape=cached_shape) for _ in range(4)]
+                self.norm = Module()
+
+        class Config:
+            hidden_size = 8
+            num_attention_heads = 2
+            max_position_embeddings = 8
+            rope_theta = 10000.0
+
+        class Model:
+            def __init__(self, *, cached_shape=(8, 4)) -> None:
+                self.model = Base(cached_shape=cached_shape)
+                self.lm_head = Module()
+                self.config = Config()
+
+            def modules(self):
+                modules = [self, self.model, self.model.embed_tokens]
+                for layer in self.model.layers:
+                    modules.extend(layer.modules())
+                modules.extend([self.model.norm, self.lm_head])
+                return modules
+
+            def named_modules(self):
+                yield "", self
+                yield "model", self.model
+                yield "model.embed_tokens", self.model.embed_tokens
+                for index, layer in enumerate(self.model.layers):
+                    yield f"model.layers.{index}", layer
+                    for name, value in layer.named_modules():
+                        if name:
+                            yield f"model.layers.{index}.{name}", value
+                yield "model.norm", self.model.norm
+                yield "lm_head", self.lm_head
+
+            def named_buffers(self, recurse=True):  # noqa: ANN001, ANN202
+                for index, layer in enumerate(self.model.layers):
+                    for name, value in layer.named_buffers(recurse=recurse):
+                        yield f"model.layers.{index}.{name}", value
+
+            def parameters(self):
+                return []
+
+        model = Model(cached_shape=(8, 4))
+        summary = real_llm._materialize_runtime_buffers(  # noqa: SLF001
+            model,
+            device="cpu",
+            stage_id=0,
+            split_index=2,
+            family=real_llm.EXECUTION_FAMILY_LLAMA_LIKE,
+        )
+
+        self.assertTrue(summary["ready"])
+        self.assertEqual(summary["remaining_meta_buffer_count"], 0)
+        self.assertEqual(summary["materialized_runtime_buffer_count"], 6)
+        self.assertEqual(tuple(model.model.layers[0].self_attn.rotary_emb.cos_cached.shape), (8, 4))
+        self.assertEqual(tuple(model.model.layers[0].self_attn.rotary_emb.sin_cached.shape), (8, 4))
+
+        legacy_model = Model(cached_shape=(1, 1, 8, 4))
+        legacy_summary = real_llm._materialize_runtime_buffers(  # noqa: SLF001
+            legacy_model,
+            device="cpu",
+            stage_id=0,
+            split_index=2,
+            family=real_llm.EXECUTION_FAMILY_LLAMA_LIKE,
+        )
+        self.assertTrue(legacy_summary["ready"])
+        self.assertEqual(tuple(legacy_model.model.layers[0].self_attn.rotary_emb.cos_cached.shape), (1, 1, 8, 4))
+        self.assertEqual(tuple(legacy_model.model.layers[0].self_attn.rotary_emb.sin_cached.shape), (1, 1, 8, 4))
+
+    def test_stage_selective_apply_can_force_cuda_safe_dtype(self) -> None:
+        missing = real_llm.missing_hf_dependencies()
+        if missing:
+            self.skipTest("missing optional HF dependencies: " + ", ".join(missing))
+        import torch
+
+        class TinyMeta(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.model = torch.nn.Module()
+                self.model.embed_tokens = torch.nn.Module()
+                self.model.embed_tokens.weight = torch.nn.Parameter(
+                    torch.empty((2, 2), device="meta", dtype=torch.bfloat16)
+                )
+                self.model.layers = torch.nn.ModuleList([torch.nn.Module(), torch.nn.Module()])
+                self.model.layers[0].weight = torch.nn.Parameter(
+                    torch.empty((2, 2), device="meta", dtype=torch.bfloat16)
+                )
+                self.model.layers[1].weight = torch.nn.Parameter(
+                    torch.empty((2, 2), device="meta", dtype=torch.bfloat16)
+                )
+                self.model.norm = torch.nn.Module()
+                self.model.norm.weight = torch.nn.Parameter(
+                    torch.empty((2, 2), device="meta", dtype=torch.bfloat16)
+                )
+                self.lm_head = torch.nn.Module()
+                self.lm_head.weight = torch.nn.Parameter(
+                    torch.empty((2, 2), device="meta", dtype=torch.bfloat16)
+                )
+
+        model = TinyMeta()
+        captured = {}
+        original_load_state_dict = model.load_state_dict
+
+        def wrapped_load_state_dict(state, *args, **kwargs):  # noqa: ANN001, ANN202
+            captured.update(state)
+            return original_load_state_dict(state, *args, **kwargs)
+
+        model.load_state_dict = wrapped_load_state_dict  # type: ignore[method-assign]
+        summary = real_llm._apply_stage_selective_tensors_to_model(  # noqa: SLF001
+            model,
+            {
+                "model.embed_tokens.weight": torch.ones((2, 2), dtype=torch.bfloat16),
+                "model.layers.0.weight": torch.ones((2, 2), dtype=torch.bfloat16),
+            },
+            {
+                "model_id": "Qwen/Qwen2.5-7B-Instruct",
+                "partition_mode": real_llm.PARTITION_MODE_STAGE_LOCAL,
+                "num_hidden_layers": 2,
+                "split_index": 1,
+                "weight_map": {
+                    "model.embed_tokens.weight": "model.safetensors",
+                    "model.layers.0.weight": "model.safetensors",
+                    "model.layers.1.weight": "model.safetensors",
+                    "model.norm.weight": "model.safetensors",
+                    "lm_head.weight": "model.safetensors",
+                },
+            },
+            stage_id=0,
+            partition_mode=real_llm.PARTITION_MODE_STAGE_LOCAL,
+            target_device="cpu",
+            target_dtype=torch.float16,
+        )
+
+        self.assertTrue(summary["ready"])
+        self.assertEqual(summary["dtype_conversion_count"], 2)
+        self.assertEqual(summary["applied_parameter_count"], 8)
+        self.assertEqual(captured["model.embed_tokens.weight"].dtype, torch.float16)
+        self.assertEqual(captured["model.layers.0.weight"].dtype, torch.float16)
+
+    def test_stage1_restores_activation_to_materialized_weight_dtype(self) -> None:
+        import torch
+
+        class TinyStage(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.ones((2, 2), dtype=torch.float16))
+
+        model = TinyStage()
+        self.assertEqual(real_llm._first_materialized_parameter_dtype(model), torch.float16)  # noqa: SLF001
+        hidden = torch.tensor([[[0.1, 0.2]]], dtype=real_llm._first_materialized_parameter_dtype(model))  # noqa: SLF001
+        self.assertEqual(hidden.dtype, torch.float16)
 
     def test_gpt2_block_call_supports_new_past_key_values_signature(self) -> None:
         class NewBlock:

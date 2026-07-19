@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77,<81", "wheel>=0.45,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crowdtensor-mistral-adapter"
+version = "0.1.0b1"
+description = "Official Mistral Model Adapter plugin for CrowdTensor."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+  "crowdtensord[hf]>=0.2.0rc1,<0.3",
+]
+
+[project.entry-points."crowdtensor.model_adapters.v1"]
+mistral_lora_v1 = "crowdtensor_mistral_adapter:MistralModelAdapter"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["crowdtensor_mistral_adapter*"]

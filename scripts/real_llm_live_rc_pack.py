@@ -34,6 +34,7 @@ from crowdtensor.real_llm import BACKEND_CPU as REAL_LLM_BACKEND_CPU  # noqa: E4
 from crowdtensor.real_llm import BACKEND_CUDA as REAL_LLM_BACKEND_CUDA  # noqa: E402
 from crowdtensor.real_llm import DEFAULT_MODEL_ID, DEFAULT_PROMPTS, inspect_real_llm_artifact  # noqa: E402
 from crowdtensor.real_llm import normalize_backend as normalize_real_llm_backend  # noqa: E402
+from crowdtensor.real_llm import normalize_execution_mode as normalize_real_llm_execution_mode  # noqa: E402
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
 
 
@@ -232,6 +233,8 @@ def real_llm_live_rc_command(args: argparse.Namespace, output_dir: Path, mode: s
         getattr(args, "real_llm_backend", REAL_LLM_BACKEND_CPU),
         "--real-llm-partition-mode",
         getattr(args, "real_llm_partition_mode", "full"),
+        "--real-llm-execution-mode",
+        getattr(args, "real_llm_execution_mode", "full_model"),
         "--timeout-seconds",
         str(getattr(args, "timeout_seconds", 300.0)),
         "--remote-timeout-seconds",
@@ -581,6 +584,7 @@ def render_coordinator_launch(
         f"  --real-llm-model-id {shlex.quote(args.hf_model_id)} \\",
         f"  --real-llm-backend {shlex.quote(args.real_llm_backend)} \\",
         f"  --real-llm-partition-mode {shlex.quote(args.real_llm_partition_mode)} \\",
+        f"  --real-llm-execution-mode {shlex.quote(args.real_llm_execution_mode)} \\",
     ]
     if args.hf_cache_dir:
         lines.append(f"  --hf-cache-dir {shlex.quote(args.hf_cache_dir)} \\")
@@ -648,6 +652,8 @@ command = [
     "{args.real_llm_backend}",
     "--real-llm-partition-mode",
     "{args.real_llm_partition_mode}",
+    "--real-llm-execution-mode",
+    "{args.real_llm_execution_mode}",
 {cache_lines}    "--real-llm-stage-role",
     "{stage_role}",
     "--max-request-attempts",
@@ -791,6 +797,7 @@ def prepare_generated_artifacts(args: argparse.Namespace, *, output_dir: Path) -
         require_runtime=args.real_llm_backend != REAL_LLM_BACKEND_CUDA,
     )
     artifact_summary["partition_mode"] = args.real_llm_partition_mode
+    artifact_summary["execution_mode"] = args.real_llm_execution_mode
 
     observer_token = args.observer_token or secrets.token_urlsafe(32)
     admin_token = args.admin_token or secrets.token_urlsafe(32)
@@ -923,6 +930,8 @@ def start_stage_miner(
         args.real_llm_backend,
         "--real-llm-partition-mode",
         args.real_llm_partition_mode,
+        "--real-llm-execution-mode",
+        args.real_llm_execution_mode,
         "--real-llm-stage-role",
         stage_role,
     ]
@@ -974,6 +983,8 @@ def run_verify(
         args.real_llm_backend,
         "--real-llm-partition-mode",
         args.real_llm_partition_mode,
+        "--real-llm-execution-mode",
+        args.real_llm_execution_mode,
         "--failure-mode",
         "none",
         "--stage-mode",
@@ -1084,6 +1095,7 @@ def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "max_new_tokens": payload["workload"].get("max_new_tokens"),
             "hf_model_id": payload["workload"].get("hf_model_id"),
             "real_llm_partition_mode": payload["workload"].get("real_llm_partition_mode"),
+            "real_llm_execution_mode": payload["workload"].get("real_llm_execution_mode"),
         }
     if isinstance(payload.get("payload_summaries"), dict):
         for key, value in payload["payload_summaries"].items():
@@ -1145,6 +1157,7 @@ def safety_summary(args: argparse.Namespace) -> dict[str, Any]:
         "workload_type": WORKLOAD_TYPE,
         "stage_mode": "split",
         "real_llm_partition_mode": args.real_llm_partition_mode,
+        "real_llm_execution_mode": args.real_llm_execution_mode,
         "require_distinct_stage_miners": True,
         "captured_output_redacted": True,
         "summary_excludes_plaintext_tokens": True,
@@ -1167,6 +1180,15 @@ def not_completed_items(report: dict[str, Any]) -> list[str]:
     codes = set(str(code) for code in (report.get("diagnosis_codes") or []) if code)
     mode = str(report.get("mode") or "")
     existing = [str(item) for item in (report.get("not_completed") or []) if str(item)]
+    workload = report.get("workload") if isinstance(report.get("workload"), dict) else {}
+    baseline_ready = bool(
+        "baseline_match" in codes
+        or (
+            str(workload.get("real_llm_execution_mode") or "") == "stage_selective_hf"
+            and "baseline_validation_skipped" in codes
+            and "decoded_tokens_match" in codes
+        )
+    )
     if mode == MODE_KAGGLE_GENERATED:
         items: list[tuple[str, Any]] = [
             ("Kaggle stage upload packages ready", "kaggle_real_llm_stage_upload_packages_ready" in codes),
@@ -1183,7 +1205,7 @@ def not_completed_items(report: dict[str, Any]) -> list[str]:
             ("stage 0 accepted", "stage_0_accepted" in codes or "kaggle_real_llm_stage0_seen" in codes),
             ("stage 1 accepted", "stage_1_accepted" in codes or "kaggle_real_llm_stage1_seen" in codes),
             ("activation transport ready", "activation_transport_ready" in codes),
-            ("baseline match ready", "baseline_match" in codes),
+            ("baseline ready", baseline_ready),
             ("decoded tokens match ready", "decoded_tokens_match" in codes),
             ("distinct stage miners ready", "distinct_stage_miners" in codes),
             ("stage assignment valid", "stage_assignment_valid" in codes),
@@ -1508,6 +1530,7 @@ def build_kaggle_generated(args: argparse.Namespace, *, output_dir: Path) -> dic
             "max_new_tokens": args.max_new_tokens,
             "hf_model_id": args.hf_model_id,
             "real_llm_partition_mode": args.real_llm_partition_mode,
+            "real_llm_execution_mode": args.real_llm_execution_mode,
             "prompt_text_count": len(DEFAULT_PROMPTS),
             "require_distinct_stage_miners": True,
         },
@@ -1671,6 +1694,7 @@ def build_local_generated(
             "max_new_tokens": args.max_new_tokens,
             "hf_model_id": args.hf_model_id,
             "real_llm_partition_mode": args.real_llm_partition_mode,
+            "real_llm_execution_mode": args.real_llm_execution_mode,
             "prompt_text_count": len(DEFAULT_PROMPTS),
             "require_distinct_stage_miners": True,
         },
@@ -1713,6 +1737,7 @@ def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runne
         require_runtime=args.real_llm_backend != REAL_LLM_BACKEND_CUDA,
     )
     artifact_summary["partition_mode"] = args.real_llm_partition_mode
+    artifact_summary["execution_mode"] = args.real_llm_execution_mode
     verify_step, verify_payload = run_verify(
         args,
         output_dir=output_dir,
@@ -1749,6 +1774,7 @@ def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runne
             "max_new_tokens": args.max_new_tokens,
             "hf_model_id": args.hf_model_id,
             "real_llm_partition_mode": args.real_llm_partition_mode,
+            "real_llm_execution_mode": args.real_llm_execution_mode,
             "prompt_text_count": len(DEFAULT_PROMPTS),
             "require_distinct_stage_miners": True,
         },
@@ -1817,6 +1843,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- request_count: `{workload.get('request_count')}`",
         f"- hf_model_id: `{workload.get('hf_model_id')}`",
         f"- partition_mode: `{workload.get('real_llm_partition_mode')}`",
+        f"- execution_mode: `{workload.get('real_llm_execution_mode')}`",
         f"- local_generated_stage_upload_standins: `{runtime.get('local_generated_stage_upload_standins')}`",
         f"- external_runtime_verified: `{runtime.get('external_runtime_verified')}`",
         "",
@@ -1916,6 +1943,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=REAL_LLM_BACKEND_CPU,
     )
     parser.add_argument("--real-llm-partition-mode", choices=["full", "stage-local", "stage_local"], default="full")
+    parser.add_argument("--real-llm-execution-mode", choices=["full_model", "full-model", "stage_selective_hf", "stage-selective-hf"], default="full_model")
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     parser.add_argument("--remote-timeout-seconds", type=float, default=180.0)
     parser.add_argument("--startup-timeout", type=float, default=30.0)
@@ -1939,6 +1967,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--max-new-tokens must be between 1 and 32")
     args.real_llm_backend = normalize_real_llm_backend(args.real_llm_backend)
     args.real_llm_partition_mode = normalize_real_llm_partition_mode(args.real_llm_partition_mode)
+    args.real_llm_execution_mode = normalize_real_llm_execution_mode(args.real_llm_execution_mode)
     for name in [
         "timeout_seconds",
         "remote_timeout_seconds",

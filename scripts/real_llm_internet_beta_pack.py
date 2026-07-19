@@ -32,6 +32,7 @@ from crowdtensor.real_llm import BACKEND_CPU as REAL_LLM_BACKEND_CPU  # noqa: E4
 from crowdtensor.real_llm import BACKEND_CUDA as REAL_LLM_BACKEND_CUDA  # noqa: E402
 from crowdtensor.real_llm import DEFAULT_MODEL_ID, DEFAULT_PROMPTS  # noqa: E402
 from crowdtensor.real_llm import normalize_backend as normalize_real_llm_backend  # noqa: E402
+from crowdtensor.real_llm import normalize_execution_mode as normalize_real_llm_execution_mode  # noqa: E402
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
 from kaggle_real_llm_live_package import DEFAULT_CUDA_TORCH_INDEX_URL, DEFAULT_CUDA_TORCH_RUNTIME_SPEC  # noqa: E402
 from kaggle_real_llm_live_package import DEFAULT_TRANSFORMERS_SPEC  # noqa: E402
@@ -390,6 +391,7 @@ def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "hf_model_id": workload.get("hf_model_id"),
             "real_llm_backend": workload.get("real_llm_backend"),
             "real_llm_partition_mode": workload.get("real_llm_partition_mode"),
+            "real_llm_execution_mode": workload.get("real_llm_execution_mode"),
         }
     if payload.get("schema") == "kaggle_real_llm_live_package_v1":
         summary["dataset_ref"] = payload.get("dataset_ref")
@@ -406,9 +408,10 @@ def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "inline_kernel_payload": item.get("inline_kernel_payload"),
                 "hf_runtime_enabled": item.get("hf_runtime_enabled"),
                 "real_llm_stage_role_present": item.get("real_llm_stage_role_present"),
-            "real_llm_backend": item.get("real_llm_backend"),
-            "real_llm_partition_mode": item.get("real_llm_partition_mode"),
-            "gpu_accelerator_enabled": item.get("gpu_accelerator_enabled"),
+                    "real_llm_backend": item.get("real_llm_backend"),
+                    "real_llm_partition_mode": item.get("real_llm_partition_mode"),
+                    "real_llm_execution_mode": item.get("real_llm_execution_mode"),
+                    "gpu_accelerator_enabled": item.get("gpu_accelerator_enabled"),
                 "cuda_preflight_present": item.get("cuda_preflight_present"),
             }
             for item in payload.get("stages") or []
@@ -508,6 +511,16 @@ def imported_partition_mode_from_payload(payload: dict[str, Any], fallback: str)
         return fallback
     try:
         return normalize_real_llm_partition_mode(observed)
+    except ValueError:
+        return fallback
+
+
+def imported_execution_mode_from_payload(payload: dict[str, Any], fallback: str) -> str:
+    observed = first_string_value(payload, "real_llm_execution_mode")
+    if not observed:
+        return fallback
+    try:
+        return normalize_real_llm_execution_mode(observed)
     except ValueError:
         return fallback
 
@@ -1126,6 +1139,8 @@ def build_alpha_package(args: argparse.Namespace, *, output_dir: Path, runner: R
         args.real_llm_backend,
         "--real-llm-partition-mode",
         args.real_llm_partition_mode,
+        "--real-llm-execution-mode",
+        args.real_llm_execution_mode,
         "--timeout-seconds",
         str(args.timeout_seconds),
         "--remote-timeout-seconds",
@@ -1245,6 +1260,8 @@ def build_kaggle_package(
         args.real_llm_backend,
         "--real-llm-partition-mode",
         args.real_llm_partition_mode,
+        "--real-llm-execution-mode",
+        args.real_llm_execution_mode,
         "--max-tasks",
         str(args.max_new_tokens),
         "--max-request-attempts",
@@ -1335,6 +1352,8 @@ def external_alpha_command(
         args.real_llm_backend,
         "--real-llm-partition-mode",
         args.real_llm_partition_mode,
+        "--real-llm-execution-mode",
+        args.real_llm_execution_mode,
         "--timeout-seconds",
         str(args.timeout_seconds),
         "--remote-timeout-seconds",
@@ -1570,6 +1589,8 @@ def real_llm_internet_beta_command(args: argparse.Namespace, output_dir: Path, m
         getattr(args, "real_llm_backend", REAL_LLM_BACKEND_CPU),
         "--real-llm-partition-mode",
         getattr(args, "real_llm_partition_mode", "full"),
+        "--real-llm-execution-mode",
+        getattr(args, "real_llm_execution_mode", "full_model"),
         "--timeout-seconds",
         str(getattr(args, "timeout_seconds", 900.0)),
         "--remote-timeout-seconds",
@@ -2065,6 +2086,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
     requeue_payload = load_json(Path(args.requeue_report)) if args.requeue_report else {}
     real_llm_backend = imported_backend_from_payload(generation_payload, args.real_llm_backend)
     real_llm_partition_mode = imported_partition_mode_from_payload(generation_payload, args.real_llm_partition_mode)
+    real_llm_execution_mode = imported_execution_mode_from_payload(generation_payload, args.real_llm_execution_mode)
     torch_spec = imported_string_from_payload(generation_payload, "torch_spec", args.torch_spec)
     torch_index_url = imported_string_from_payload(generation_payload, "torch_index_url", args.torch_index_url)
     transformers_spec = imported_string_from_payload(generation_payload, "transformers_spec", args.transformers_spec)
@@ -2154,6 +2176,7 @@ def build_evidence_import(args: argparse.Namespace, *, output_dir: Path) -> dict
             "hf_model_id": args.hf_model_id,
             "real_llm_backend": real_llm_backend,
             "real_llm_partition_mode": real_llm_partition_mode,
+            "real_llm_execution_mode": real_llm_execution_mode,
             "torch_spec": torch_spec,
             "torch_index_url": torch_index_url,
             "transformers_spec": transformers_spec,
@@ -2690,6 +2713,7 @@ def build_report(
             "hf_model_id": args.hf_model_id,
             "real_llm_backend": args.real_llm_backend,
             "real_llm_partition_mode": args.real_llm_partition_mode,
+            "real_llm_execution_mode": args.real_llm_execution_mode,
             "torch_spec": args.torch_spec,
             "torch_index_url": args.torch_index_url,
             "transformers_spec": args.transformers_spec,
@@ -2783,6 +2807,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--real-llm-backend", choices=["hf_transformers_cpu", "hf_transformers_cuda", "cpu", "cuda", "auto"], default=REAL_LLM_BACKEND_CPU)
     parser.add_argument("--real-llm-partition-mode", choices=["full", "stage-local", "stage_local"], default="full")
+    parser.add_argument("--real-llm-execution-mode", choices=["full_model", "full-model", "stage_selective_hf", "stage-selective-hf"], default="full_model")
     parser.add_argument("--torch-spec", default="")
     parser.add_argument("--torch-index-url", default="")
     parser.add_argument("--transformers-spec", default=DEFAULT_TRANSFORMERS_SPEC)
@@ -2825,6 +2850,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--max-new-tokens must be between 1 and 32")
     args.real_llm_backend = normalize_real_llm_backend(args.real_llm_backend)
     args.real_llm_partition_mode = normalize_real_llm_partition_mode(args.real_llm_partition_mode)
+    args.real_llm_execution_mode = normalize_real_llm_execution_mode(args.real_llm_execution_mode)
     if args.lease_seconds is None:
         args.lease_seconds = (
             DEFAULT_CUDA_KAGGLE_LEASE_SECONDS

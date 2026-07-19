@@ -3,6 +3,9 @@
 
 import argparse
 import asyncio
+import base64
+import binascii
+import hashlib
 import json
 import os
 import threading
@@ -12,6 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from crowdtensor.auth import token_matches, validate_token_verifier
+from crowdtensor.cuda_training_rendezvous import (
+    CUDATrainingRendezvous,
+    install_cuda_training_routes,
+)
 from crowdtensor.protocol import (
     DEFAULT_PROTOCOL_VERSION,
     DEFAULT_WORKLOAD_TYPE,
@@ -693,7 +700,9 @@ def create_app(
     real_llm_model_id: str = "",
     real_llm_backend: str = "hf_transformers_cpu",
     real_llm_partition_mode: str = "full",
+    real_llm_execution_mode: str = "full_model",
     hf_cache_dir: str | Path | None = None,
+    hf_lora_job_manifest: str | Path | None = None,
 ):
     try:
         from fastapi import FastAPI, Header, HTTPException, Query, Response
@@ -715,7 +724,9 @@ def create_app(
         real_llm_model_id=real_llm_model_id or "sshleifer/tiny-gpt2",
         real_llm_backend=real_llm_backend,
         real_llm_partition_mode=real_llm_partition_mode,
+        real_llm_execution_mode=real_llm_execution_mode,
         hf_cache_dir=hf_cache_dir,
+        hf_lora_job_manifest=hf_lora_job_manifest,
     )
     configured_admin_token = admin_token if admin_token is not None else os.environ.get("CROWDTENSOR_ADMIN_TOKEN", "")
     configured_operator_registry_path = (
@@ -769,6 +780,8 @@ def create_app(
         external_llm_result: dict[str, Any] | None = None
         external_llm_results: list[dict[str, Any]] | None = None
         sharded_inference_result: dict[str, Any] | None = None
+        training_result: dict[str, Any] | None = None
+        training_adapter_delta_b64: str | None = None
         metrics: dict[str, Any] = Field(default_factory=dict)
 
     class TrustOverrideRequest(BaseModel):
@@ -789,6 +802,7 @@ def create_app(
         prompt_texts: list[str] | None = None
         hf_model_id: str = ""
         partition_mode: str = ""
+        execution_mode: str = ""
 
     def _token_operator_roles(token: str | None) -> set[str]:
         if token is None:
@@ -1149,6 +1163,51 @@ def create_app(
             ],
         )
     app.state.store = store
+    training_upload_dir = Path(state_dir).resolve() / "training" / "remote-uploads"
+
+    def materialize_training_delta(
+        task_id: str,
+        training_result: dict[str, Any] | None,
+        encoded_delta: str | None,
+    ) -> tuple[dict[str, Any] | None, Path | None]:
+        if not encoded_delta:
+            return training_result, None
+        result_value = json.loads(json.dumps(training_result or {}))
+        delta = result_value.get("adapter_delta")
+        if not isinstance(delta, dict):
+            raise HTTPException(status_code=422, detail="training adapter delta manifest is required")
+        try:
+            payload = base64.b64decode(encoded_delta.encode("ascii"), validate=True)
+        except (UnicodeEncodeError, binascii.Error) as exc:
+            raise HTTPException(status_code=422, detail="training adapter delta payload is invalid") from exc
+        if not payload or len(payload) > 16 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="training adapter delta payload exceeds the 16 MiB limit")
+        actual_hash = "sha256:" + hashlib.sha256(payload).hexdigest()
+        if actual_hash != str(delta.get("delta_file_hash") or ""):
+            raise HTTPException(status_code=422, detail="training adapter delta payload hash mismatch")
+        training_upload_dir.mkdir(parents=True, exist_ok=True)
+        task_hash = hashlib.sha256(str(task_id).encode("utf-8")).hexdigest()[:20]
+        upload_path = training_upload_dir / f"{task_hash}-{actual_hash.removeprefix('sha256:')[:20]}.safetensors"
+        temporary_path = upload_path.with_suffix(".tmp")
+        temporary_path.write_bytes(payload)
+        os.replace(temporary_path, upload_path)
+        delta["delta_path"] = str(upload_path)
+        result_value["adapter_delta"] = delta
+        return result_value, upload_path
+
+    cuda_training_rendezvous = None
+    if store.hf_lora_job and "cuda" in str(store.hf_lora_job.get("backend") or "").lower():
+        cuda_training_rendezvous = CUDATrainingRendezvous(
+            run_id=str(store.hf_lora_job["job_id"]),
+        )
+        install_cuda_training_routes(
+            app,
+            rendezvous=cuda_training_rendezvous,
+            authorize=require_miner,
+            store=store,
+            adapter_config_path=str((store.hf_lora_job.get("lora") or {}).get("adapter_config_path") or ""),
+        )
+    app.state.cuda_training_rendezvous = cuda_training_rendezvous
 
     @app.get("/health")
     def health() -> dict:
@@ -1452,6 +1511,7 @@ def create_app(
                     model_id=request.hf_model_id,
                     llm_backend=llm_backend,
                     partition_mode=request.partition_mode,
+                    execution_mode=request.execution_mode,
                     required_protocol_version=DEFAULT_PROTOCOL_VERSION,
                     created_by_subject=created_by_subject,
                 )
@@ -1584,6 +1644,11 @@ def create_app(
         x_crowdtensor_miner_token: str | None = Header(default=None),
     ) -> dict:
         require_miner(x_crowdtensor_miner_token)
+        materialized_result, uploaded_delta_path = materialize_training_delta(
+            task_id,
+            request.training_result,
+            request.training_adapter_delta_b64,
+        )
         try:
             return store.complete_task(
                 task_id,
@@ -1601,14 +1666,25 @@ def create_app(
                 external_llm_result=request.external_llm_result,
                 external_llm_results=request.external_llm_results,
                 sharded_inference_result=request.sharded_inference_result,
+                training_result=materialized_result,
                 metrics=request.metrics,
             )
         except ResultRejected as exc:
+            if uploaded_delta_path is not None:
+                uploaded_delta_path.unlink(missing_ok=True)
             raise HTTPException(status_code=422, detail=exc.validation) from exc
         except LeaseConflict as exc:
+            if uploaded_delta_path is not None:
+                uploaded_delta_path.unlink(missing_ok=True)
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
+            if uploaded_delta_path is not None:
+                uploaded_delta_path.unlink(missing_ok=True)
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception:
+            if uploaded_delta_path is not None:
+                uploaded_delta_path.unlink(missing_ok=True)
+            raise
 
     return app
 
@@ -1738,9 +1814,20 @@ def parse_args() -> argparse.Namespace:
         help="real_llm_sharded_infer partition mode; stage-local moves only stage-owned modules to the target device",
     )
     parser.add_argument(
+        "--real-llm-execution-mode",
+        choices=["full_model", "full-model", "stage_selective_hf", "stage-selective-hf"],
+        default=os.environ.get("CROWDTENSOR_REAL_LLM_EXECUTION_MODE", "full_model"),
+        help="real_llm_sharded_infer execution mode; stage_selective_hf defers stage-owned HF weight loading to Miners",
+    )
+    parser.add_argument(
         "--hf-cache-dir",
         default=os.environ.get("CROWDTENSOR_HF_CACHE_DIR", ""),
         help="optional Hugging Face cache directory for real_llm_sharded_infer",
+    )
+    parser.add_argument(
+        "--hf-lora-job-manifest",
+        default=os.environ.get("CROWDTENSOR_HF_LORA_JOB_MANIFEST", ""),
+        help="private local hf_lora_train job manifest; creates exactly its two shard tasks",
     )
     args = parser.parse_args()
     if args.replay_audit and args.delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
@@ -1777,7 +1864,9 @@ def main() -> None:
         real_llm_model_id=args.real_llm_model_id,
         real_llm_backend=args.real_llm_backend,
         real_llm_partition_mode=args.real_llm_partition_mode,
+        real_llm_execution_mode=args.real_llm_execution_mode,
         hf_cache_dir=args.hf_cache_dir,
+        hf_lora_job_manifest=args.hf_lora_job_manifest,
     )
     uvicorn.run(app, host=args.host, port=args.port)
 

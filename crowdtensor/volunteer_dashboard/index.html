@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>CrowdTensor Campaign</title>
+    <link rel="stylesheet" href="/v1/volunteer/dashboard/assets/dashboard.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand-block">
+        <span class="brand-mark" aria-hidden="true">CT</span>
+        <div>
+          <p class="eyebrow">Campaign dashboard</p>
+          <h1>CrowdTensor</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="connectionState" class="connection-state" data-tone="loading">Connecting</span>
+        <button id="refreshButton" class="command-button" type="button">Refresh data</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="campaign-heading" aria-labelledby="campaignTitle">
+        <div>
+          <p id="campaignProfile" class="eyebrow">Loading campaign</p>
+          <h2 id="campaignTitle">Campaign status</h2>
+          <p id="campaignPair" class="campaign-pair">Model / dataset</p>
+        </div>
+        <div class="lifecycle-block">
+          <span class="label">Lifecycle</span>
+          <strong id="lifecycleValue">Loading</strong>
+        </div>
+      </section>
+
+      <nav class="tabs" aria-label="Campaign views">
+        <button class="tab-button" type="button" data-view="overview" aria-selected="true">Overview</button>
+        <button class="tab-button" type="button" data-view="rounds" aria-selected="false">Rounds</button>
+        <button class="tab-button" type="button" data-view="provenance" aria-selected="false">Provenance</button>
+      </nav>
+
+      <section id="overviewView" class="view-panel" data-view-panel="overview">
+        <div class="metric-grid" aria-label="Campaign metrics">
+          <article class="metric-card">
+            <span class="metric-label">Round progress</span>
+            <strong id="roundMetric" class="metric-value">0 / 0</strong>
+            <span id="roundMetricDetail" class="metric-detail">No rounds reported</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Accepted updates</span>
+            <strong id="updateMetric" class="metric-value">0</strong>
+            <span id="tokenMetricDetail" class="metric-detail">0 training tokens</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Active contributors</span>
+            <strong id="activeMetric" class="metric-value">0</strong>
+            <span id="queueMetricDetail" class="metric-detail">0 work units queued</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Adapter version</span>
+            <strong id="adapterMetric" class="metric-value">v0</strong>
+            <span id="outerStepDetail" class="metric-detail">Outer step 0</span>
+          </article>
+        </div>
+
+        <div class="overview-grid">
+          <section class="chart-section" aria-labelledby="progressHeading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Training progress</p>
+                <h3 id="progressHeading">Round completion</h3>
+              </div>
+              <strong id="progressPercent">0%</strong>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <span id="progressFill"></span>
+            </div>
+            <canvas id="roundCanvas" width="900" height="280" aria-label="Accepted updates by round"></canvas>
+          </section>
+
+          <section class="activity-section" aria-labelledby="activityHeading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Audit stream</p>
+                <h3 id="activityHeading">Recent activity</h3>
+              </div>
+            </div>
+            <ol id="activityList" class="activity-list">
+              <li class="empty-row">Waiting for activity</li>
+            </ol>
+          </section>
+        </div>
+
+        <section class="reliability-band" aria-labelledby="reliabilityHeading">
+          <div>
+            <p class="eyebrow">Recovery</p>
+            <h3 id="reliabilityHeading">Reliability counters</h3>
+          </div>
+          <dl class="counter-list">
+            <div><dt>Lease expiry</dt><dd id="expiredCount">0</dd></div>
+            <div><dt>Reassigned work</dt><dd id="reassignedCount">0</dd></div>
+            <div><dt>Coordinator recovery</dt><dd id="recoveryCount">0</dd></div>
+            <div><dt>Rejected updates</dt><dd id="rejectedCount">0</dd></div>
+          </dl>
+        </section>
+      </section>
+
+      <section id="roundsView" class="view-panel" data-view-panel="rounds" hidden>
+        <div class="section-heading table-heading">
+          <div>
+            <p class="eyebrow">Aggregation ledger</p>
+            <h3>Campaign rounds</h3>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Round</th>
+                <th scope="col">State</th>
+                <th scope="col">Updates</th>
+                <th scope="col">Contributors</th>
+                <th scope="col">Adapter</th>
+                <th scope="col">Duration</th>
+              </tr>
+            </thead>
+            <tbody id="roundsBody">
+              <tr><td colspan="6" class="empty-row">No rounds reported</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="provenanceView" class="view-panel" data-view-panel="provenance" hidden>
+        <div class="provenance-grid">
+          <section aria-labelledby="sourceHeading">
+            <p class="eyebrow">Immutable inputs</p>
+            <h3 id="sourceHeading">Source provenance</h3>
+            <dl id="sourceList" class="detail-list"></dl>
+          </section>
+          <section aria-labelledby="checkpointHeading">
+            <p class="eyebrow">Canonical output</p>
+            <h3 id="checkpointHeading">Checkpoint lineage</h3>
+            <dl id="checkpointList" class="detail-list"></dl>
+          </section>
+        </div>
+        <section class="boundary-strip" aria-labelledby="boundaryHeading">
+          <div>
+            <p class="eyebrow">Evidence boundary</p>
+            <h3 id="boundaryHeading">Verified scope</h3>
+          </div>
+          <div id="boundaryList" class="boundary-list"></div>
+        </section>
+      </section>
+    </main>
+
+    <footer>
+      <span id="updatedAt">Not updated</span>
+      <span>Cell identities and lease material are not public.</span>
+    </footer>
+
+    <script src="/v1/volunteer/dashboard/assets/dashboard.js" defer></script>
+  </body>
+</html>

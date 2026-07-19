@@ -132,10 +132,14 @@ class StateStoreTests(unittest.TestCase):
             ]
         return capabilities
 
-    def _real_llm_cuda_stage_capabilities(self, stage_role: str) -> dict:
+    def _real_llm_cuda_stage_capabilities(self, stage_role: str, *, execution_mode: str = "full_model") -> dict:
         capabilities = self._python_capabilities([WORKLOAD_REAL_LLM_SHARDED_INFER])
         capabilities["backend"] = "cuda"
-        capabilities["real_llm_runtime"] = {"adapter_kind": "hf_transformers_cuda"}
+        capabilities["real_llm_runtime"] = {
+            "adapter_kind": "hf_transformers_cuda",
+            "execution_mode": execution_mode,
+            "execution_modes": [execution_mode],
+        }
         capabilities["real_llm_sharded_stage_role"] = stage_role
         if stage_role == "stage0":
             capabilities["real_llm_sharded_stage_capabilities"] = [REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY]
@@ -3177,6 +3181,50 @@ class StateStoreTests(unittest.TestCase):
                 store.claim_task("cpu-stage0", capabilities=self._real_llm_stage_capabilities("stage0"))
             claim = store.claim_task("cuda-stage0", capabilities=self._real_llm_cuda_stage_capabilities("stage0"))
             self.assertEqual(claim["task_id"], session["stage_0_task_id"])
+
+    def test_real_llm_stage_selective_tasks_require_matching_execution_mode(self) -> None:
+        artifact = {
+            "schema": "real_llm_artifact_v1",
+            "artifact_hash": "sha256:test-real-llm-stage-selective-artifact",
+            "model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "backend": "hf_transformers_cuda",
+            "split_index": 14,
+            "num_hidden_layers": 28,
+            "hidden_size": 3584,
+            "vocab_size": 152064,
+            "read_only": True,
+            "metadata_only": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "crowdtensor.state_store.inspect_real_llm_artifact",
+            return_value=artifact,
+        ):
+            store = StateStore(tmp, lease_seconds=5, inner_steps=10, backlog=0)
+            session = store.create_real_llm_sharded_inference_session(
+                request_count=1,
+                required_runtime="python-cli",
+                required_backend="cuda",
+                llm_backend="hf_transformers_cuda",
+                partition_mode="stage-local",
+                execution_mode="stage-selective-hf",
+            )
+
+            with self.assertRaises(NoTaskAvailable):
+                store.claim_task(
+                    "full-model-stage0",
+                    capabilities=self._real_llm_cuda_stage_capabilities("stage0"),
+                )
+            claim = store.claim_task(
+                "stage-selective-stage0",
+                capabilities=self._real_llm_cuda_stage_capabilities(
+                    "stage0",
+                    execution_mode="stage_selective_hf",
+                ),
+            )
+
+            self.assertEqual(claim["task_id"], session["stage_0_task_id"])
+            self.assertEqual(claim["workload_spec"]["execution_mode"], "stage_selective_hf")
+            self.assertEqual(claim["task_requirements"]["stage_capability"], REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY)
 
     def test_real_llm_generation_session_chains_next_stage0_until_max_new_tokens(self) -> None:
         artifact = {

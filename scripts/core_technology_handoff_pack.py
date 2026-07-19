@@ -24,6 +24,15 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def load_json(path_text: str) -> dict[str, Any]:
+    if not path_text:
+        return {}
+    loaded = json.loads(Path(path_text).read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise SystemExit(f"{path_text} did not contain a JSON object")
+    return loaded
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -73,8 +82,21 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         setattr(inference_args, attr, getattr(args, attr))
     inference_args.start_workers = bool(args.start_workers)
     inference_report = inference_pack.build_report(inference_args)
-    deployment_runbook = handoff.build_deployment_runbook(output_dir=output_dir, inference_report=inference_report)
-    next_layer_contract = handoff.build_next_layer_contract(inference_report=inference_report)
+    large_model_stage_selective_evidence = handoff.build_large_model_stage_selective_evidence_summary(
+        seven_b_live_report=load_json(args.seven_b_live_report),
+        fourteen_b_live_report=load_json(args.fourteen_b_live_report),
+        stage_selective_plan_report=load_json(args.stage_selective_plan_report),
+        stage_selective_performance_report=load_json(args.stage_selective_performance_report),
+    )
+    deployment_runbook = handoff.build_deployment_runbook(
+        output_dir=output_dir,
+        inference_report=inference_report,
+        large_model_stage_selective_evidence=large_model_stage_selective_evidence,
+    )
+    next_layer_contract = handoff.build_next_layer_contract(
+        inference_report=inference_report,
+        large_model_stage_selective_evidence=large_model_stage_selective_evidence,
+    )
     adapter_conformance = handoff.build_adapter_conformance(inference_report=inference_report)
     test_gate_summary = handoff.build_test_gate_summary(mode=args.mode, full_pytest=args.full_pytest)
     report = handoff.build_handoff_report(
@@ -85,12 +107,14 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         next_layer_contract=next_layer_contract,
         adapter_conformance=adapter_conformance,
         test_gate_summary=test_gate_summary,
+        large_model_stage_selective_evidence=large_model_stage_selective_evidence,
     )
 
     write_json(output_dir / "deployment_runbook.json", deployment_runbook)
     write_json(output_dir / "next_layer_contract.json", next_layer_contract)
     write_json(output_dir / "adapter_conformance.json", adapter_conformance)
     write_json(output_dir / "test_gate_summary.json", test_gate_summary)
+    write_json(output_dir / "large_model_stage_selective_evidence.json", large_model_stage_selective_evidence)
 
     artifacts = {
         "summary_json": handoff.artifact_entry(output_dir / "core_technology_handoff_rc.json", output_dir, kind="core_technology_handoff_rc", schema=handoff.HANDOFF_SCHEMA, ok=report.get("ok")),
@@ -101,7 +125,16 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "next_layer_contract_json": handoff.artifact_entry(output_dir / "next_layer_contract.json", output_dir, kind="core_technology_next_layer_contract", schema=handoff.NEXT_LAYER_CONTRACT_SCHEMA),
         "adapter_conformance_json": handoff.artifact_entry(output_dir / "adapter_conformance.json", output_dir, kind="core_technology_adapter_conformance", schema=handoff.ADAPTER_CONFORMANCE_SCHEMA),
         "test_gate_summary_json": handoff.artifact_entry(output_dir / "test_gate_summary.json", output_dir, kind="core_technology_test_gate_summary", schema=handoff.TEST_GATE_SCHEMA),
+        "large_model_stage_selective_evidence_json": handoff.artifact_entry(output_dir / "large_model_stage_selective_evidence.json", output_dir, kind="core_technology_large_model_stage_selective_evidence", schema="core_technology_large_model_stage_selective_evidence_v1", ok=large_model_stage_selective_evidence.get("core_technology_large_model_alpha_ready")),
     }
+    for name, path_text, schema in [
+        ("seven_b_live_report_json", args.seven_b_live_report, "real_llm_internet_beta_v1"),
+        ("fourteen_b_live_report_json", args.fourteen_b_live_report, "real_llm_internet_beta_v1"),
+        ("stage_selective_plan_report_json", args.stage_selective_plan_report, "large_model_stage_selective_plan_v1"),
+        ("stage_selective_performance_report_json", args.stage_selective_performance_report, "real_llm_sharded_evidence_v1"),
+    ]:
+        if path_text:
+            artifacts[name] = handoff.artifact_entry(Path(path_text).resolve(), output_dir, kind=name.removesuffix("_json"), schema=schema, ok=True)
     report["artifacts"] = artifacts
     (output_dir / "core_technology_handoff_rc.md").write_text(handoff.render_markdown(report), encoding="utf-8")
     artifacts["summary_markdown"]["present"] = True
@@ -131,6 +164,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--device-profile", default="")
     parser.add_argument("--real-benchmark-report", default="")
     parser.add_argument("--real-run-report", default="")
+    parser.add_argument("--seven-b-live-report", default="")
+    parser.add_argument("--fourteen-b-live-report", default="")
+    parser.add_argument("--stage-selective-plan-report", default="")
+    parser.add_argument("--stage-selective-performance-report", default="")
     parser.add_argument("--baseline-digest", default="")
     parser.add_argument("--llama-cli", default="llama-cli")
     parser.add_argument("--llama-rpc-server", default="rpc-server")
@@ -160,7 +197,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--real-timeout-seconds must be positive")
     if args.mode == "real" and args.real_timeout_seconds > inference_rc.MAX_REAL_RUN_TIMEOUT_SECONDS:
         raise SystemExit(f"--real-timeout-seconds must be <= {inference_rc.MAX_REAL_RUN_TIMEOUT_SECONDS} in real mode")
-    for attr in ["real_benchmark_report", "real_run_report"]:
+    for attr in [
+        "real_benchmark_report",
+        "real_run_report",
+        "seven_b_live_report",
+        "fourteen_b_live_report",
+        "stage_selective_plan_report",
+        "stage_selective_performance_report",
+    ]:
         value = getattr(args, attr)
         if value and not Path(value).is_file():
             raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")

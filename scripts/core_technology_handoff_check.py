@@ -109,12 +109,17 @@ def validate_report(report: dict[str, Any]) -> None:
     for section in ["local_fixture", "local_real_runtime", "lan_vpn_two_worker_runtime", "import_retained_evidence", "troubleshooting", "cleanup"]:
         if not deployment.get(section):
             raise SystemExit(f"deployment runbook missing section: {section}")
+    if not deployment.get("import_stage_selective_live_evidence"):
+        raise SystemExit("deployment runbook missing section: import_stage_selective_live_evidence")
     next_layer = report.get("next_layer_integration_contract") if isinstance(report.get("next_layer_integration_contract"), dict) else {}
     if next_layer.get("schema") != handoff.NEXT_LAYER_CONTRACT_SCHEMA or next_layer.get("ready") is not True:
         raise SystemExit("next-layer integration contract missing")
     for section in ["control_layer", "user_layer", "permissions_trust_billing_layer", "sample_control_request"]:
         if not next_layer.get(section):
             raise SystemExit(f"next-layer contract missing section: {section}")
+    stage_contract = next_layer.get("large_model_stage_selective_contract") if isinstance(next_layer.get("large_model_stage_selective_contract"), dict) else {}
+    if stage_contract.get("schema") != "core_technology_large_model_stage_selective_contract_v1":
+        raise SystemExit("next-layer stage-selective contract missing")
     adapter = report.get("adapter_conformance") if isinstance(report.get("adapter_conformance"), dict) else {}
     if adapter.get("schema") != handoff.ADAPTER_CONFORMANCE_SCHEMA or adapter.get("ready") is not True:
         raise SystemExit("adapter conformance missing")
@@ -159,8 +164,31 @@ def validate_report(report: dict[str, Any]) -> None:
         "next_layer_contract_json",
         "adapter_conformance_json",
         "test_gate_summary_json",
+        "large_model_stage_selective_evidence_json",
     ]:
         artifact_path(report, name)
+    stage_evidence = report.get("large_model_stage_selective_evidence")
+    if isinstance(stage_evidence, dict) and stage_evidence.get("core_technology_large_model_alpha_ready") is True:
+        checks = stage_evidence.get("checks") if isinstance(stage_evidence.get("checks"), dict) else {}
+        for field in [
+            "seven_b_multi_token_verified",
+            "fourteen_b_dual_kaggle_verified",
+            "n_stage_partition_plan_ready",
+            "stage_selective_performance_report_ready",
+        ]:
+            if checks.get(field) is not True:
+                raise SystemExit(f"large-model stage-selective evidence missing check: {field}")
+        for code in [
+            "core_technology_7b_multi_token_verified",
+            "core_technology_14b_dual_kaggle_verified",
+            "core_technology_n_stage_partition_plan_ready",
+            "core_technology_stage_selective_performance_report_ready",
+            "core_technology_large_model_alpha_ready",
+        ]:
+            if code not in codes:
+                raise SystemExit(f"missing large-model diagnosis code: {code}")
+        if report.get("core_technology_large_model_alpha_ready") is not True:
+            raise SystemExit("top-level large-model Alpha readiness flag missing")
     if report.get("real_runtime_verified") is not True:
         if report.get("real_7b_runtime_verified") is not False:
             raise SystemExit("fixture/plan Handoff RC must keep real_7b_runtime_verified=false")

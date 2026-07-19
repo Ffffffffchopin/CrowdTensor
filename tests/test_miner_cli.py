@@ -318,8 +318,27 @@ class MinerCliTests(unittest.TestCase):
         self.assertIn("real_llm_sharded_infer", enabled["supported_workloads"])
         self.assertEqual(enabled["real_llm_runtime"]["adapter_kind"], "hf_transformers_cpu")
         self.assertEqual(enabled["real_llm_runtime"]["model_id"], "sshleifer/tiny-gpt2")
+        self.assertEqual(enabled["real_llm_runtime"]["execution_mode"], "full_model")
+        self.assertEqual(enabled["real_llm_runtime"]["execution_modes"], ["full_model"])
         self.assertEqual(enabled["real_llm_sharded_stage_role"], "stage1")
         self.assertEqual(enabled["real_llm_sharded_stage_capabilities"], ["real_llm_sharded_stage1"])
+
+    def test_capabilities_can_advertise_real_llm_stage_selective_execution_mode(self) -> None:
+        enabled = miner_cli.miner_capabilities(
+            enable_hf_tiny_gpt_runtime=True,
+            hf_model_id="Qwen/Qwen2.5-7B-Instruct",
+            real_llm_backend="hf_transformers_cuda",
+            real_llm_stage_role="stage0",
+            real_llm_partition_mode="stage-local",
+            real_llm_execution_mode="stage-selective-hf",
+        )
+
+        self.assertEqual(enabled["backend"], "cuda")
+        self.assertEqual(enabled["real_llm_runtime"]["adapter_kind"], "hf_transformers_cuda")
+        self.assertEqual(enabled["real_llm_runtime"]["partition_mode"], "stage_local")
+        self.assertEqual(enabled["real_llm_runtime"]["execution_mode"], "stage_selective_hf")
+        self.assertEqual(enabled["real_llm_runtime"]["execution_modes"], ["stage_selective_hf"])
+        self.assertEqual(enabled["real_llm_sharded_stage_capabilities"], ["real_llm_sharded_cuda_stage0"])
 
     def test_capabilities_can_advertise_real_llm_cuda_backend(self) -> None:
         enabled = miner_cli.miner_capabilities(

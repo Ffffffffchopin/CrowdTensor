@@ -32,6 +32,99 @@ large-model sharding breakthrough.
 
 ## Current Milestone
 
+**Volunteer Training Internet Beta Engineering RC**
+
+The implementation work short of a physical multi-machine run is complete:
+exact SmolLM2-135M and WikiText revisions are imported into immutable Campaign
+provenance; content-addressed artifacts and persistent chunk uploads survive
+process restarts; HTTPS reverse-proxy policy fails closed; and Coordinator
+recovery preserves active leases and checkpoint lineage. The strict local gate
+uses six independent CLI processes to advance three real PEFT quorum rounds,
+injects Cell/network/upload/Coordinator failures, compares an equal six-step /
+96-token centralized baseline, independently reloads all checkpoints, and
+removes the complete private runtime.
+
+The next acceptance gate is intentionally narrow: reproduce the same ordinary
+CLI/HTTPS campaign on at least two independently administered physical Internet
+machines, collect actual WAN latency/bandwidth and churn evidence, and clean all
+remote resources. Permissionless Byzantine safety, Sybil/poisoning resistance,
+secure aggregation, incentives, useful model quality, GA, and SLA remain out
+of scope. See `docs/volunteer-training-internet-beta.md`.
+
+## Publicity Readiness
+
+**Qwen2.5-7B Elastic GSM8K Showcase RC**
+
+The repository now has a publicity-grade, strict-verified 7B instruction
+fine-tuning artifact. Two generations of concurrent Kaggle T4x2 Kernels perform
+256 real LoRA/SFT steps with forced step-128 deletion and central exactly-once
+restore. A preregistered 128-item confirmatory holdout, disjoint from the
+development set, improves normalized GSM8K exact match from 92/128 to 95/128
+(+2.344 percentage points), while valid answer rate remains 100%. The practical
+gate passes; the bootstrap interval includes zero, so no statistical
+significance or broad-reasoning claim is made. Model Card, PEFT Adapter,
+reproduction commands, strict evidence, and cleanup are retained in
+`dist/training-qwen7b-gsm8k-showcase-rc-20260719-r1`; see
+`docs/qwen7b-gsm8k-elastic-showcase.md`.
+
+The next publicity step is independent reproduction of this fixed workflow or
+an unchanged Volunteer Campaign on separately administered Internet hosts.
+Do not use the Kaggle logical-node RC to satisfy the physical multi-host gate,
+and do not broaden the model-quality claim beyond this bounded GSM8K holdout.
+
+**Volunteer Training Founding Preview**
+
+The pre-publicity product surface is now implemented: a public-safe Campaign
+Dashboard and snapshot API, an immutable proposal/license/evaluation/governance
+contract, a bounded two-Cell reproducible demo, Playwright desktop/mobile
+visual evidence, and an offline launch pack/checker. The default launch check
+may report `founding_preview_ready=true` while keeping
+`formal_launch_ready=false`. The formal gate remains the independently
+administered physical multi-host run above; no same-host or Kaggle logical-node
+artifact may satisfy it.
+
+The next work after the founding preview is external reproducibility and
+evaluation quality: run the unchanged Campaign on independent hosts, publish a
+held-out before/after report, and review the incident/rollback process. Do not
+expand marketing claims before those evidence gates pass.
+
+## Previous Milestone
+
+**Model Adapter Ecosystem Beta RC**
+
+The Community release now has a versioned external plugin boundary in
+`crowdtensor.model_adapters.v1`. Qwen2 and SmolLM2 remain built in; the first
+official separate plugin, `mistral_lora_v1`, clean-installs beside the core
+wheel and has a strict-verified real 248M Mistral CPU/CUDA LoRA gate. The gate
+covers eight atomic steps, stage checkpoints at 4/8, CUDA worker replacement
+and optimizer restore, cross-device activation/gradient transport, PEFT merge,
+independent reload, and cleanup.
+
+Next model-family work should deepen this contract with another materially
+different architecture or larger useful checkpoint only after preserving the
+same installation, recovery, export, safety, and live-evidence gates. Counting
+unverified model IDs is not a milestone. Mistral-7B, arbitrary architecture
+partitioning, full-parameter training, and production SLA remain out of scope.
+
+## Community Milestone
+
+**CrowdTensor Community Maturity RC (training flagship)**
+
+The active release line packages the achieved Qwen2.5-7B CPU/CUDA/JAX-TPU
+Training Production RC into a contributor-facing project. Its finite P0-P4
+scope is: clean wheel/sdist and container entrypoints, one Community lifecycle,
+bounded chaos and MinIO integration, role/signature/replay/privacy controls,
+`model_adapter_v1.0` with Qwen2 plus SmolLM2, a short Kaggle CPU+GPU reliability
+gate, and an offline strict release bundle. Kaggle reports are logical
+multi-node evidence, not independent physical multi-machine evidence.
+
+After this RC, priorities are external reproducibility, scheduler/model-family
+depth, and operational hardening. GA, SLA, permissionless Byzantine training,
+market/token work, broad cloud Providers, and a general Web UI remain out of
+scope. See `docs/community-quickstart.md` and `docs/community-architecture.md`.
+
+## Historical Inference Milestone
+
 **Public Real-LLM Swarm Inference Beta + Large-Model Shard Alpha**
 
 The current beta proves a small real Hugging Face GPT model can be split across

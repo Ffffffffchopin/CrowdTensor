@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=77,<81", "wheel>=0.45,<1"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "crowdtensord"
-version = "0.1.0a0"
-description = "Experimental fault-tolerant control plane for distributed AI workload miners."
+dynamic = ["version"]
+description = "Fault-tolerant collaborative inference and heterogeneous LoRA training."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
   { name = "CrowdTensorD contributors" }
 ]
@@ -16,7 +17,6 @@ keywords = ["distributed-ai", "depin", "diloco", "swarm-training", "swarm-trial"
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -25,30 +25,58 @@ classifiers = [
 ]
 dependencies = [
   "fastapi>=0.115,<1.0",
+  "httpx>=0.27,<1.0",
   "uvicorn[standard]>=0.30,<1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "build>=1.2,<2",
   "pytest>=8,<9",
+  "jsonschema>=4.20,<5",
 ]
 browser = [
   "playwright>=1.50,<2",
 ]
+storage = [
+  "boto3>=1.35,<2",
+]
 hf = [
   "torch>=2,<3",
-  "transformers>=4.40,<5",
+  "transformers>=4.40,<6",
+  "peft>=0.19,<1",
   "safetensors>=0.4,<1",
-  "accelerate>=0.30,<1",
+  "accelerate>=0.30,<2",
+  "pyarrow>=15,<24",
+]
+tpu = [
+  "jax>=0.4.35,<1",
+  "torch>=2,<3",
+  "safetensors>=0.4,<1",
 ]
 
 [project.scripts]
 crowdtensor = "crowdtensor.cli:main"
 crowdtensord = "coordinator:main"
 crowdtensor-miner = "miner_cli:main"
+crowdtensor-community = "crowdtensor.community_cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "crowdtensor.version.__version__"}
 
 [tool.setuptools]
 py-modules = ["coordinator", "miner_cli"]
 
 [tool.setuptools.packages.find]
 include = ["crowdtensor*"]
+
+[tool.setuptools.package-data]
+"crowdtensor.volunteer_dashboard" = ["*.html", "*.css", "*.js"]
+
+[tool.pytest.ini_options]
+markers = [
+  "cuda: requires a CUDA runtime",
+  "jax: requires a JAX runtime",
+  "kaggle_live: creates bounded authorized Kaggle resources",
+  "minio_live: starts a local MinIO-compatible API service",
+]

@@ -24,6 +24,7 @@ from crowdtensor.real_llm import BACKEND_CPU as REAL_LLM_BACKEND_CPU  # noqa: E4
 from crowdtensor.real_llm import BACKEND_CUDA as REAL_LLM_BACKEND_CUDA  # noqa: E402
 from crowdtensor.real_llm import DEFAULT_MODEL_ID  # noqa: E402
 from crowdtensor.real_llm import normalize_backend as normalize_real_llm_backend  # noqa: E402
+from crowdtensor.real_llm import normalize_execution_mode as normalize_real_llm_execution_mode  # noqa: E402
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
 from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
@@ -295,6 +296,7 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
             "workload_type": WORKLOAD_TYPE,
             "backend": "cuda" if normalize_real_llm_backend(args.real_llm_backend) == REAL_LLM_BACKEND_CUDA else "cpu",
             "partition_mode": args.real_llm_partition_mode,
+            "execution_mode": args.real_llm_execution_mode,
             "max_new_tokens": args.max_new_tokens,
         }
         prompt_texts = prompt_list_from_args(args)
@@ -339,6 +341,7 @@ def build_remote_existing(args: argparse.Namespace) -> dict[str, Any]:
                     require_distinct_stage_miners=args.require_distinct_stage_miners,
                     max_new_tokens=args.max_new_tokens,
                     real_llm_partition_mode=args.real_llm_partition_mode,
+                    real_llm_execution_mode=args.real_llm_execution_mode,
                 )
                 evidence = real_pack.build_report(
                     args=report_args,
@@ -429,6 +432,7 @@ def build_report(args: argparse.Namespace, *, runner: base.Runner = subprocess.r
         "hf_model_id": args.hf_model_id,
         "real_llm_backend": args.real_llm_backend,
         "real_llm_partition_mode": args.real_llm_partition_mode,
+        "real_llm_execution_mode": args.real_llm_execution_mode,
         "stage_mode": args.stage_mode,
         "require_distinct_stage_miners": bool(args.require_distinct_stage_miners),
         "prompt_text_count": len(prompt_list_from_args(args)),
@@ -487,6 +491,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- failure_mode: `{report.get('failure_mode')}`",
         f"- hf_model_id: `{report.get('hf_model_id')}`",
         f"- partition_mode: `{report.get('real_llm_partition_mode')}`",
+        f"- execution_mode: `{report.get('real_llm_execution_mode')}`",
         f"- output_dir: `{report.get('output_dir')}`",
         "",
         "## Diagnosis",
@@ -520,6 +525,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     hf_cache_dir = ""
     real_llm_backend = REAL_LLM_BACKEND_CPU
     real_llm_partition_mode = "full"
+    real_llm_execution_mode = "full_model"
     prompt_texts = "CrowdTensor routes home CPU,A miner returns one token"
     prompt_texts_file = ""
     prompt_texts_file_seen = False
@@ -557,6 +563,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             real_llm_partition_mode = str(raw[index])
         elif item.startswith("--real-llm-partition-mode="):
             real_llm_partition_mode = item.split("=", 1)[1]
+        elif item == "--real-llm-execution-mode":
+            index += 1
+            if index >= len(raw):
+                raise SystemExit("--real-llm-execution-mode requires a value")
+            real_llm_execution_mode = str(raw[index])
+        elif item.startswith("--real-llm-execution-mode="):
+            real_llm_execution_mode = item.split("=", 1)[1]
         elif item == "--prompt-texts":
             index += 1
             if index >= len(raw):
@@ -606,6 +619,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.hf_cache_dir = hf_cache_dir
     args.real_llm_backend = normalize_real_llm_backend(real_llm_backend)
     args.real_llm_partition_mode = normalize_real_llm_partition_mode(real_llm_partition_mode)
+    args.real_llm_execution_mode = normalize_real_llm_execution_mode(real_llm_execution_mode)
     if prompt_texts_file_seen and prompt_texts_seen:
         raise SystemExit("remote_real_llm_sharded_beta accepts either --prompt-texts or --prompt-texts-file, not both")
     try:

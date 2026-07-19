@@ -48,7 +48,7 @@ from crowdtensor.p2p_lite import (
 )
 from crowdtensor.auth import hash_token
 from crowdtensor.operator_invite import create_operator_invite
-from create_miner_invite import create_invite as create_miner_invite
+from crowdtensor.miner_invite import create_invite as create_miner_invite
 from crowdtensor.real_p2p import (
     DEFAULT_DISCOVERY_BACKEND,
     PROVIDER_RECORD_SCHEMA,
@@ -74,6 +74,48 @@ from crowdtensor.session_protocol import (
     safe_stream_events,
     stable_hash_payload,
     stable_hash_text,
+)
+from crowdtensor.training_foundation import (
+    cleanup_training_job,
+    export_training_job,
+    resume_training_job,
+    run_training_foundation_job,
+    training_status,
+)
+from crowdtensor.training_cuda_job import (
+    cleanup_cuda_training_job,
+    cuda_training_status,
+    export_cuda_training_job,
+    resume_cuda_training_job,
+    run_cuda_training_job,
+)
+from crowdtensor.training_qwen15b_job import (
+    cleanup_qwen15b_training_job,
+    export_qwen15b_training_job,
+    qwen15b_training_status,
+    resume_qwen15b_training_job,
+    run_qwen15b_training_job,
+)
+from crowdtensor.training_qwen15b_beta_service import (
+    TrainingBetaController,
+    TrainingBetaJobStore,
+    create_training_beta_app,
+)
+from crowdtensor.elastic_training_runtime import elastic_training_status
+from crowdtensor.elastic_training_beta import (
+    ElasticTrainingBetaController,
+    create_elastic_training_beta_app,
+)
+from crowdtensor.heterogeneous_training_beta import (
+    HeterogeneousTrainingBetaController,
+    create_heterogeneous_training_beta_app,
+)
+from crowdtensor.heterogeneous_training_production import (
+    HeterogeneousTrainingProductionController,
+    build_production_plan,
+    default_production_config,
+    load_production_config,
+    validate_production_request,
 )
 
 
@@ -121,6 +163,14 @@ GPU_SHARDED_GENERATION_BETA_CLI_SCHEMA = "gpu_sharded_generation_beta_cli_v1"
 LARGE_MODEL_SHARD_ALPHA_CLI_SCHEMA = "large_model_shard_alpha_cli_v1"
 CORE_TECHNOLOGY_INFERENCE_RC_CLI_SCHEMA = "core_technology_inference_rc_cli_v1"
 CORE_TECHNOLOGY_HANDOFF_RC_CLI_SCHEMA = "core_technology_handoff_rc_cli_v1"
+CONTROL_USER_ALPHA_CLI_SCHEMA = "control_user_alpha_cli_v1"
+GPU_SWARM_USABILITY_ALPHA_CLI_SCHEMA = "gpu_swarm_usability_alpha_cli_v1"
+GPU_SWARM_PRODUCTION_LIKE_VALIDATION_CLI_SCHEMA = "gpu_swarm_production_like_validation_cli_v1"
+KAGGLE_SWARM_32B_QUANTIZED_FEASIBILITY_CLI_SCHEMA = "kaggle_swarm_32b_quantized_feasibility_cli_v1"
+GPU_TPU_CPU_HETEROGENEOUS_STAGE_ALPHA_CLI_SCHEMA = "gpu_tpu_cpu_heterogeneous_stage_alpha_cli_v1"
+GPU_TPU_CPU_32B_HETEROGENEOUS_RC_CLI_SCHEMA = "gpu_tpu_cpu_32b_heterogeneous_rc_cli_v1"
+HETEROGENEOUS_32B_SERVING_CLI_SCHEMA = "heterogeneous_32b_serving_cli_v1"
+GLM52_KAGGLE_ALPHA_CLI_SCHEMA = "glm52_kaggle_alpha_cli_v1"
 LARGE_MODEL_KAGGLE_VALIDATION_CLI_SCHEMA = "large_model_kaggle_validation_cli_v1"
 COORDINATOR_ROUTE_CLI_SCHEMA = "crowdtensor_coordinator_route_cli_v1"
 PUBLIC_SWARM_PRODUCT_CLI_SCHEMA = "public_swarm_product_cli_v1"
@@ -2826,6 +2876,14 @@ def unique_redaction_values(values: list[str]) -> list[str]:
 
 
 def json_from_stdout(stdout: str) -> dict[str, Any]:
+    text = str(stdout or "").strip()
+    if text:
+        try:
+            payload = json.loads(text)
+            if isinstance(payload, dict):
+                return payload
+        except json.JSONDecodeError:
+            pass
     for line in reversed([line.strip() for line in stdout.splitlines() if line.strip()]):
         try:
             payload = json.loads(line)
@@ -4061,7 +4119,62 @@ def build_large_model_shard_alpha(args: argparse.Namespace, *, runner: Runner = 
         "output_dir": str(output_dir),
         "step": step,
     })
+    stage_selective_step: dict[str, Any] | None = None
+    stage_selective_plan: dict[str, Any] = {}
+    if bool(getattr(args, "stage_selective_plan", False)):
+        stage_selective_dir = output_dir / "stage-selective-plan"
+        plan_command = [
+            sys.executable,
+            str(SCRIPTS_DIR / "large_model_stage_selective_plan_pack.py"),
+            "--output-dir",
+            str(stage_selective_dir),
+            "--stage-count",
+            str(getattr(args, "stage_count", 4)),
+            "--kaggle-gpu-memory-gb",
+            str(getattr(args, "kaggle_gpu_memory_gb", 15.0)),
+            "--model-ids",
+            str(getattr(args, "stage_selective_model_ids", "") or "Qwen/Qwen2.5-7B-Instruct,Qwen/Qwen2.5-14B-Instruct"),
+            "--json",
+        ]
+        stage_selective_step, stage_selective_payload = run_json_step(
+            "large_model_stage_selective_plan",
+            plan_command,
+            runner=runner,
+            cwd=ROOT,
+            timeout_seconds=args.timeout_seconds,
+        )
+        stage_selective_plan = stage_selective_payload if stage_selective_payload else {}
+        stage_selective_step["ok"] = bool(stage_selective_step.get("ok") and stage_selective_plan.get("ok"))
+        summary["stage_selective_plan"] = stage_selective_plan
+        summary["stage_selective_plan_ready"] = bool(stage_selective_step.get("ok"))
+        summary["stage_selective_plan_step"] = stage_selective_step
+        summary["ok"] = bool(summary.get("ok") and stage_selective_step.get("ok"))
+        summary.setdefault("diagnosis_codes", [])
+        for code in stage_selective_plan.get("diagnosis_codes") or []:
+            if code not in summary["diagnosis_codes"]:
+                summary["diagnosis_codes"].append(code)
     artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    if stage_selective_step is not None:
+        stage_selective_dir = output_dir / "stage-selective-plan"
+        artifacts["large_model_stage_selective_plan_json"] = artifact_entry(
+            stage_selective_dir / "large_model_stage_selective_plan.json",
+            output_dir,
+            kind="large_model_stage_selective_plan",
+            schema="large_model_stage_selective_plan_v1",
+            ok=bool(stage_selective_plan.get("ok")),
+        )
+        artifacts["large_model_stage_selective_plan_markdown"] = artifact_entry(
+            stage_selective_dir / "large_model_stage_selective_plan.md",
+            output_dir,
+            kind="large_model_stage_selective_plan_markdown",
+        )
+        artifacts["large_model_stage_selective_plan_support_bundle"] = artifact_entry(
+            stage_selective_dir / "support_bundle.json",
+            output_dir,
+            kind="large_model_stage_selective_plan_support_bundle",
+            schema="large_model_stage_selective_plan_support_bundle_v1",
+            ok=bool(stage_selective_plan.get("ok")),
+        )
     artifacts["large_model_shard_alpha_cli_summary"] = artifact_entry(
         summary_json,
         output_dir,
@@ -4289,6 +4402,10 @@ def build_core_technology_handoff_rc(args: argparse.Namespace, *, runner: Runner
         ("--device-profile", "device_profile"),
         ("--real-benchmark-report", "real_benchmark_report"),
         ("--real-run-report", "real_run_report"),
+        ("--seven-b-live-report", "seven_b_live_report"),
+        ("--fourteen-b-live-report", "fourteen_b_live_report"),
+        ("--stage-selective-plan-report", "stage_selective_plan_report"),
+        ("--stage-selective-performance-report", "stage_selective_performance_report"),
         ("--baseline-digest", "baseline_digest"),
         ("--rpc-endpoint", "rpc_endpoint"),
     ]
@@ -4370,6 +4487,1589 @@ def build_core_technology_handoff_rc(args: argparse.Namespace, *, runner: Runner
     )
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
+
+
+def build_control_user_alpha(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "control_user_alpha_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "control_user_alpha_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--core-handoff-report",
+        str(args.core_handoff_report),
+        "--core-status-report",
+        str(args.core_status_report),
+        "--mode",
+        str(args.mode),
+        "--model-id",
+        str(args.model_id),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--request-label",
+        str(args.request_label),
+        "--prompt",
+        str(args.prompt),
+        "--json",
+    ]
+    step, payload = run_json_step(
+        "control_user_alpha",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": CONTROL_USER_ALPHA_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["control_user_alpha_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="control_user_alpha_cli_summary",
+        schema=CONTROL_USER_ALPHA_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    sensitive_fragments = (
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+    )
+    encoded = json.dumps(summary, sort_keys=True)
+    leaks = [fragment for fragment in sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "Control/User Alpha summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "control_user_alpha_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "public_artifact_safe": bool(summary.get("public_artifact_safe")),
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["control_user_alpha_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_gpu_swarm_usability_alpha(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "gpu_swarm_usability_alpha_cli_summary.json"
+    action = str(args.gpu_swarm_action)
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "gpu_swarm_usability_alpha_pack.py"),
+        "--action",
+        action,
+        "--stage",
+        str(getattr(args, "stage", "stage0") or "stage0"),
+        "--output-dir",
+        str(output_dir),
+        "--control-user-alpha-report",
+        str(args.control_user_alpha_report),
+        "--core-handoff-report",
+        str(args.core_handoff_report),
+        "--core-status-report",
+        str(args.core_status_report),
+        "--execution-mode",
+        str(args.execution_mode),
+        "--coordinator-url",
+        str(args.coordinator_url),
+        "--bind-host",
+        str(args.bind_host),
+        "--port",
+        str(args.port),
+        "--miner-id-prefix",
+        str(args.miner_id_prefix),
+        "--model-id",
+        str(args.model_id),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--lease-seconds",
+        str(args.lease_seconds),
+        "--request-label",
+        str(args.request_label),
+        "--prompt",
+        str(args.prompt),
+        "--json",
+    ]
+    if getattr(args, "hf_cache_dir", ""):
+        command.extend(["--hf-cache-dir", str(args.hf_cache_dir)])
+    if getattr(args, "external_runtime_verified", False):
+        command.append("--external-runtime-verified")
+    step, payload = run_json_step(
+        "gpu_swarm_usability_alpha",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": GPU_SWARM_USABILITY_ALPHA_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["gpu_swarm_usability_alpha_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="gpu_swarm_usability_alpha_cli_summary",
+        schema=GPU_SWARM_USABILITY_ALPHA_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    sensitive_fragments = (
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        "SOURCE_TARBALL_B64",
+        "MINER_ENV_TEXT",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+        "kernel.py",
+    )
+    encoded = json.dumps(summary, sort_keys=True)
+    leaks = [fragment for fragment in sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "GPU Swarm Usability Alpha summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "gpu_swarm_usability_alpha_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("runbook_markdown") or {}).get("path") if isinstance(artifacts.get("runbook_markdown"), dict) else "",
+        "public_artifact_safe": bool(summary.get("public_artifact_safe")),
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["gpu_swarm_usability_alpha_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_gpu_swarm_production_like_validation(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "gpu_swarm_production_like_validation_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "gpu_swarm_production_like_validation_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--execution-mode",
+        str(args.execution_mode),
+        "--usability-report",
+        str(args.usability_report),
+        "--core-handoff-report",
+        str(args.core_handoff_report),
+        "--core-status-report",
+        str(args.core_status_report),
+        "--control-user-alpha-report",
+        str(args.control_user_alpha_report),
+        "--gpu-generation-report",
+        str(args.gpu_generation_report),
+        "--gpu-generation-fallback-report",
+        str(args.gpu_generation_fallback_report),
+        "--batch-stream-report",
+        str(args.batch_stream_report),
+        "--larger-candidate-model-id",
+        str(args.larger_candidate_model_id),
+        "--larger-candidate-tier",
+        str(args.larger_candidate_tier),
+        "--larger-candidate-parameter-count-b",
+        str(args.larger_candidate_parameter_count_b),
+        "--target-max-new-tokens",
+        str(args.target_max_new_tokens),
+        "--batch-request-target",
+        str(args.batch_request_target),
+        "--context-length",
+        str(args.context_length),
+        "--gpu-count",
+        str(args.gpu_count),
+        "--available-vram-per-gpu-mb",
+        str(args.available_vram_per_gpu_mb),
+        "--max-fresh-model-attempts",
+        str(args.max_fresh_model_attempts),
+        "--max-requeue-attempts",
+        str(args.max_requeue_attempts),
+        "--max-attempt-timeout-minutes",
+        str(args.max_attempt_timeout_minutes),
+        "--json",
+    ]
+    if getattr(args, "fresh_gpu_run_performed", False):
+        command.append("--fresh-gpu-run-performed")
+    if getattr(args, "largest_successful_fresh_model_tier", ""):
+        command.extend(["--largest-successful-fresh-model-tier", str(args.largest_successful_fresh_model_tier)])
+    step, payload = run_json_step(
+        "gpu_swarm_production_like_validation",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": GPU_SWARM_PRODUCTION_LIKE_VALIDATION_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "cli_action": str(args.gpu_swarm_action),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["gpu_swarm_production_like_validation_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="gpu_swarm_production_like_validation_cli_summary",
+        schema=GPU_SWARM_PRODUCTION_LIKE_VALIDATION_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    sensitive_fragments = (
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        "SOURCE_TARBALL_B64",
+        "MINER_ENV_TEXT",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"logits":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+        "kernel.py",
+    )
+    encoded = json.dumps(summary, sort_keys=True)
+    leaks = [fragment for fragment in sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "GPU Swarm Production-Like Validation summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "gpu_swarm_production_like_validation_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "public_artifact_safe": bool(summary.get("public_artifact_safe")),
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["gpu_swarm_production_like_validation_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_kaggle_swarm_32b_quantized_feasibility(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "kaggle_swarm_32b_quantized_feasibility_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "kaggle_swarm_32b_quantized_feasibility_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--execution-mode",
+        str(args.execution_mode),
+        "--production-like-report",
+        str(args.production_like_report),
+        "--core-status-report",
+        str(args.core_status_report),
+        "--large-model-kaggle-report",
+        str(args.large_model_kaggle_report),
+        "--fresh-32b-live-probe-report",
+        str(args.fresh_32b_live_probe_report),
+        "--fresh-32b-stage-owned-loading-probe-report",
+        str(args.fresh_32b_stage_owned_loading_probe_report),
+        "--fresh-32b-activation-decode-probe-report",
+        str(args.fresh_32b_activation_decode_probe_report),
+        "--candidate-model-id",
+        str(args.candidate_model_id),
+        "--candidate-model-tier",
+        str(args.candidate_model_tier),
+        "--candidate-parameter-count-b",
+        str(args.candidate_parameter_count_b),
+        "--candidate-hidden-size",
+        str(args.candidate_hidden_size),
+        "--candidate-layer-count",
+        str(args.candidate_layer_count),
+        "--quantized-format",
+        str(args.quantized_format),
+        "--quantization-bits",
+        str(args.quantization_bits),
+        "--quantization-metadata-overhead-percent",
+        str(args.quantization_metadata_overhead_percent),
+        "--runtime-adapter",
+        str(args.runtime_adapter),
+        "--kaggle-gpu-type",
+        str(args.kaggle_gpu_type),
+        "--gpu-count",
+        str(args.gpu_count),
+        "--available-vram-per-gpu-mb",
+        str(args.available_vram_per_gpu_mb),
+        "--simultaneous-kaggle-gpu-kernel-limit",
+        str(args.simultaneous_kaggle_gpu_kernel_limit),
+        "--stage-count",
+        str(args.stage_count),
+        "--context-length",
+        str(args.context_length),
+        "--kv-cache-bytes-per-element",
+        str(args.kv_cache_bytes_per_element),
+        "--activation-bytes-per-element",
+        str(args.activation_bytes_per_element),
+        "--runtime-overhead-mb-per-stage",
+        str(args.runtime_overhead_mb_per_stage),
+        "--fragmentation-margin-mb-per-stage",
+        str(args.fragmentation_margin_mb_per_stage),
+        "--package-overhead-mb-per-stage",
+        str(args.package_overhead_mb_per_stage),
+        "--target-max-new-tokens",
+        str(args.target_max_new_tokens),
+        "--batch-request-target",
+        str(args.batch_request_target),
+        "--max-fresh-model-attempts",
+        str(args.max_fresh_model_attempts),
+        "--max-requeue-attempts",
+        str(args.max_requeue_attempts),
+        "--max-attempt-timeout-minutes",
+        str(args.max_attempt_timeout_minutes),
+        "--package-slug-prefix",
+        str(args.package_slug_prefix),
+        "--json",
+    ]
+    if getattr(args, "fresh_kaggle_run_performed", False):
+        command.append("--fresh-kaggle-run-performed")
+    step, payload = run_json_step(
+        "kaggle_swarm_32b_quantized_feasibility",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": KAGGLE_SWARM_32B_QUANTIZED_FEASIBILITY_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "cli_action": str(args.gpu_swarm_action),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["kaggle_swarm_32b_quantized_feasibility_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="kaggle_swarm_32b_quantized_feasibility_cli_summary",
+        schema=KAGGLE_SWARM_32B_QUANTIZED_FEASIBILITY_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    sensitive_fragments = (
+        "KAGGLE_KEY=",
+        "KAGGLE_USERNAME=",
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        "SOURCE_TARBALL_B64",
+        "MINER_ENV_TEXT",
+        "INLINE_KERNEL_PAYLOAD_B64",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"logits":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+        "kernel.py",
+    )
+    encoded = json.dumps(summary, sort_keys=True)
+    leaks = [fragment for fragment in sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "Kaggle Swarm 32B feasibility summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "kaggle_swarm_32b_quantized_feasibility_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "stage_package_plan": (artifacts.get("stage_package_plan_json") or {}).get("path") if isinstance(artifacts.get("stage_package_plan_json"), dict) else "",
+        "public_artifact_safe": bool(summary.get("public_artifact_safe")),
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["kaggle_swarm_32b_quantized_feasibility_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_gpu_tpu_cpu_heterogeneous_stage_alpha(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "gpu_tpu_cpu_heterogeneous_stage_alpha_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "gpu_tpu_cpu_heterogeneous_stage_alpha_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--execution-mode",
+        str(args.execution_mode),
+        "--tpu-real-llm-report",
+        str(args.tpu_real_llm_report),
+        "--gpu-full-32b-report",
+        str(args.gpu_full_32b_report),
+        "--gpu-awq-32b-report",
+        str(args.gpu_awq_32b_report),
+        "--cpu-real-llm-report",
+        str(args.cpu_real_llm_report),
+        "--small-medium-min-parameter-count",
+        str(args.small_medium_min_parameter_count),
+        "--local-e2e-mode",
+        str(args.local_e2e_mode),
+        "--local-e2e-model-id",
+        str(args.local_e2e_model_id),
+        "--local-e2e-prompt",
+        str(args.local_e2e_prompt),
+        "--bridge-mode",
+        str(args.bridge_mode),
+        "--bridge-model-id",
+        str(args.bridge_model_id),
+        "--bridge-sequence-length",
+        str(args.bridge_sequence_length),
+        "--alpha-model-id",
+        str(args.alpha_model_id),
+        "--alpha-sequence-length",
+        str(args.alpha_sequence_length),
+        "--alpha-hidden-size",
+        str(args.alpha_hidden_size),
+        "--activation-dtype",
+        str(args.activation_dtype),
+        "--target-32b-model-id",
+        str(args.target_32b_model_id),
+        "--target-max-new-tokens",
+        str(args.target_max_new_tokens),
+        "--context-length",
+        str(args.context_length),
+        "--json",
+    ]
+    step, payload = run_json_step(
+        "gpu_tpu_cpu_heterogeneous_stage_alpha",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": GPU_TPU_CPU_HETEROGENEOUS_STAGE_ALPHA_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["gpu_tpu_cpu_heterogeneous_stage_alpha_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="gpu_tpu_cpu_heterogeneous_stage_alpha_cli_summary",
+        schema=GPU_TPU_CPU_HETEROGENEOUS_STAGE_ALPHA_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    sensitive_fragments = (
+        "KAGGLE_KEY=",
+        "KAGGLE_USERNAME=",
+        "HF_TOKEN=",
+        "HUGGING_FACE_HUB_TOKEN=",
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        "SOURCE_TARBALL_B64",
+        "MINER_ENV_TEXT",
+        "INLINE_KERNEL_PAYLOAD_B64",
+        "kaggle-cookies.json",
+        "kaggle-web-storage-state.json",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"hidden_states":',
+        '"logits":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+        "kernel.py",
+    )
+    encoded = json.dumps(summary, sort_keys=True)
+    leaks = [fragment for fragment in sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "GPU+TPU+CPU Heterogeneous Stage Alpha summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "gpu_tpu_cpu_heterogeneous_stage_alpha_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "stage_contract_smoke": (artifacts.get("stage_contract_smoke_json") or {}).get("path") if isinstance(artifacts.get("stage_contract_smoke_json"), dict) else "",
+        "heterogeneous_32b_feasibility_report": (artifacts.get("heterogeneous_32b_feasibility_json") or {}).get("path") if isinstance(artifacts.get("heterogeneous_32b_feasibility_json"), dict) else "",
+        "public_artifact_safe": bool(summary.get("public_artifact_safe")),
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["gpu_tpu_cpu_heterogeneous_stage_alpha_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_gpu_tpu_cpu_32b_heterogeneous_rc(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "gpu_tpu_cpu_32b_heterogeneous_rc_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "gpu_tpu_cpu_32b_heterogeneous_rc_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--execution-mode",
+        str(args.execution_mode),
+        "--alpha-report",
+        str(args.alpha_report),
+        "--live-proof-mode",
+        str(args.live_proof_mode),
+        "--target-32b-model-id",
+        str(args.target_32b_model_id),
+        "--target-max-new-tokens",
+        str(args.target_max_new_tokens),
+        "--context-length",
+        str(args.context_length),
+        "--json",
+    ]
+    if str(args.live_same_request_report or ""):
+        command.extend(["--live-same-request-report", str(args.live_same_request_report)])
+    if str(args.tpu_allocation_attempt_report or ""):
+        command.extend(["--tpu-allocation-attempt-report", str(args.tpu_allocation_attempt_report)])
+    if str(args.tpu_web_active_event_report or ""):
+        command.extend(["--tpu-web-active-event-report", str(args.tpu_web_active_event_report)])
+    if str(args.runtime_bridge_report or ""):
+        command.extend(["--runtime-bridge-report", str(args.runtime_bridge_report)])
+    if str(args.tpu_stage_adapter_plan_report or ""):
+        command.extend(["--tpu-stage-adapter-plan-report", str(args.tpu_stage_adapter_plan_report)])
+    if str(args.tpu_stage_runtime_probe_report or ""):
+        command.extend(["--tpu-stage-runtime-probe-report", str(args.tpu_stage_runtime_probe_report)])
+    if str(args.tpu_stage_loader_probe_report or ""):
+        command.extend(["--tpu-stage-loader-probe-report", str(args.tpu_stage_loader_probe_report)])
+    step, payload = run_json_step(
+        "gpu_tpu_cpu_32b_heterogeneous_rc",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update({
+        "cli_schema": GPU_TPU_CPU_32B_HETEROGENEOUS_RC_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "ok": bool(step.get("ok")),
+        "output_dir": str(output_dir),
+        "step": step,
+    })
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["gpu_tpu_cpu_32b_heterogeneous_rc_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="gpu_tpu_cpu_32b_heterogeneous_rc_cli_summary",
+        schema=GPU_TPU_CPU_32B_HETEROGENEOUS_RC_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    sensitive_fragments = (
+        "KAGGLE_KEY=",
+        "KAGGLE_USERNAME=",
+        "HF_TOKEN=",
+        "HUGGING_FACE_HUB_TOKEN=",
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "CROWDTENSOR_P2P_PEER_SECRET=",
+        "Bearer ",
+        "SOURCE_TARBALL_B64",
+        "MINER_ENV_TEXT",
+        "INLINE_KERNEL_PAYLOAD_B64",
+        "kaggle-cookies.json",
+        "kaggle-web-storage-state.json",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"hidden_states":',
+        '"logits":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "miner_registry.json",
+        "kernel.py",
+    )
+    encoded = json.dumps(summary, sort_keys=True)
+    leaks = [fragment for fragment in sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "GPU+TPU+CPU 32B Heterogeneous RC summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "gpu_tpu_cpu_32b_heterogeneous_rc_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "blocker_report": (artifacts.get("blocker_report_json") or {}).get("path") if isinstance(artifacts.get("blocker_report_json"), dict) else "",
+        "public_artifact_safe": bool(summary.get("public_artifact_safe")),
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["gpu_tpu_cpu_32b_heterogeneous_rc_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_heterogeneous_32b_serving(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_json = output_dir / "heterogeneous_32b_serving_cli_summary.json"
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "heterogeneous_32b_serving_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--serving-mode",
+        str(args.serving_mode),
+        "--rc-report",
+        str(args.rc_report),
+        "--live-run-mode",
+        str(args.live_run_mode),
+        "--target-32b-model-id",
+        str(args.target_32b_model_id),
+        "--max-new-tokens",
+        str(args.max_new_tokens),
+        "--context-length",
+        str(args.context_length),
+        "--failure-injection",
+        str(args.failure_injection),
+        "--json",
+    ]
+    if str(args.live_serving_report or ""):
+        command.extend(["--live-serving-report", str(args.live_serving_report)])
+    step, payload = run_json_step(
+        "heterogeneous_32b_serving",
+        command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=args.timeout_seconds,
+    )
+    payload = payload if payload else {}
+    step["ok"] = bool(step.get("ok") and payload.get("ok"))
+    summary = dict(payload)
+    summary.update(
+        {
+            "cli_schema": HETEROGENEOUS_32B_SERVING_CLI_SCHEMA,
+            "generated_at": utc_now(),
+            "ok": bool(step.get("ok")),
+            "output_dir": str(output_dir),
+            "step": step,
+        }
+    )
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    artifacts["heterogeneous_32b_serving_cli_summary"] = artifact_entry(
+        summary_json,
+        output_dir,
+        kind="heterogeneous_32b_serving_cli_summary",
+        schema=HETEROGENEOUS_32B_SERVING_CLI_SCHEMA,
+        ok=bool(step.get("ok")),
+    )
+    summary["artifacts"] = artifacts
+    sensitive_fragments = (
+        "KAGGLE_KEY=",
+        "KAGGLE_USERNAME=",
+        "HF_TOKEN=",
+        "HUGGING_FACE_HUB_TOKEN=",
+        "CROWDTENSOR_MINER_TOKEN=",
+        "CROWDTENSOR_OBSERVER_TOKEN=",
+        "CROWDTENSOR_ADMIN_TOKEN=",
+        "Bearer ",
+        "jupyter-proxy",
+        "token=",
+        "kaggle-cookies",
+        "kaggle-web-storage-state",
+        '"lease_token":',
+        '"idempotency_key":',
+        '"prompt":',
+        '"prompt_text":',
+        '"raw_prompt":',
+        '"generated_text":',
+        '"output_text":',
+        '"generated_token_ids":',
+        '"token_ids":',
+        '"activation":',
+        '"activations":',
+        '"hidden_state":',
+        '"hidden_states":',
+        '"logits":',
+        '"kv_cache":',
+        '"past_key_values":',
+        "operator.private.env",
+        "miner.private.env",
+        "kernel.py",
+    )
+    encoded = json.dumps(summary, sort_keys=True)
+    leaks = [fragment for fragment in sensitive_fragments if fragment in encoded]
+    if leaks:
+        summary["ok"] = False
+        summary.setdefault("errors", []).append("sensitive_output_detected")
+        summary["safety_error"] = "Heterogeneous 32B serving summary contained secret-like fragments"
+    summary["artifact_summary"] = {
+        "schema": "heterogeneous_32b_serving_cli_artifact_summary_v1",
+        "artifact_count": len(artifacts),
+        "present_artifact_count": sum(1 for item in artifacts.values() if isinstance(item, dict) and item.get("present")),
+        "support_bundle": (artifacts.get("support_bundle_json") or {}).get("path") if isinstance(artifacts.get("support_bundle_json"), dict) else "",
+        "inspect_first": (artifacts.get("summary_markdown") or {}).get("path") if isinstance(artifacts.get("summary_markdown"), dict) else "",
+        "blocker_report": (artifacts.get("blocker_report_json") or {}).get("path") if isinstance(artifacts.get("blocker_report_json"), dict) else "",
+        "public_artifact_safe": bool(summary.get("public_artifact_safe")),
+    }
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary["artifacts"]["heterogeneous_32b_serving_cli_summary"]["present"] = True
+    summary["artifact_summary"]["present_artifact_count"] = sum(
+        1 for item in summary["artifacts"].values() if isinstance(item, dict) and item.get("present")
+    )
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def _glm52_alpha_config_from_args(args: argparse.Namespace):
+    from crowdtensor import glm52_kaggle_alpha as alpha
+
+    return alpha.AlphaConfig(
+        output_dir=Path(args.output_dir).resolve(),
+        requested_model=str(getattr(args, "model", alpha.COMPATIBLE_WEIGHT_REPO) or alpha.COMPATIBLE_WEIGHT_REPO),
+        accelerators=tuple(alpha.normalize_accelerator_request(getattr(args, "accelerators", alpha.REQUIRED_ACCELERATORS))),
+        hf_token_env=str(getattr(args, "hf_token_env", "HF_TOKEN,HUGGING_FACE_HUB_TOKEN") or ""),
+        stage_worker_package_report=str(getattr(args, "stage_worker_package_report", alpha.DEFAULT_STAGE_WORKER_PACKAGE_REPORT) or alpha.DEFAULT_STAGE_WORKER_PACKAGE_REPORT),
+        token_file=str(getattr(args, "token_file", "~/.config/crowdtensor/kaggle-tokens.md") or "~/.config/crowdtensor/kaggle-tokens.md"),
+        token_section=str(getattr(args, "token_section", "cpuowner") or ""),
+        raw_token_file=str(getattr(args, "raw_token_file", "") or ""),
+        raw_token_username=str(getattr(args, "raw_token_username", "") or ""),
+        provider_token_file_map=str(getattr(args, "provider_token_file_map", "") or ""),
+        provider_token_section_map=str(getattr(args, "provider_token_section_map", "") or ""),
+        provider_raw_token_file_map=str(getattr(args, "provider_raw_token_file_map", "") or ""),
+        provider_raw_token_username_map=str(getattr(args, "provider_raw_token_username_map", "") or ""),
+        coordinator_bind_host=str(getattr(args, "coordinator_bind_host", "0.0.0.0") or "0.0.0.0"),
+        coordinator_public_host=str(getattr(args, "coordinator_public_host", "24.199.118.54") or "24.199.118.54"),
+        coordinator_public_url=str(getattr(args, "coordinator_public_url", "") or ""),
+        gpu_accelerator=str(getattr(args, "gpu_accelerator", "NvidiaTeslaT4") or "NvidiaTeslaT4"),
+        tpu_accelerator=str(getattr(args, "tpu_accelerator", "tpuV5e8") or "tpuV5e8"),
+        wait_seconds=float(getattr(args, "wait_seconds", 7200.0) or 7200.0),
+        poll_interval_seconds=float(getattr(args, "poll_interval_seconds", 60.0) or 60.0),
+        command_timeout_seconds=float(getattr(args, "command_timeout_seconds", 180.0) or 180.0),
+        kernel_timeout_seconds=int(getattr(args, "kernel_timeout_seconds", 9000) or 9000),
+        coordinator_task_timeout_seconds=float(getattr(args, "coordinator_task_timeout_seconds", 7200.0) or 7200.0),
+        coordinator_worker_poll_interval_seconds=float(getattr(args, "coordinator_worker_poll_interval_seconds", 5.0) or 5.0),
+        stage_push_parallelism=int(getattr(args, "stage_push_parallelism", 0) or 0),
+        full_prefix_prefill_length=int(getattr(args, "full_prefix_prefill_length", 0) or 0),
+        full_prefix_dsa_mask_topk=int(getattr(args, "full_prefix_dsa_mask_topk", 0) or 0),
+        full_prefix_executed_expert_count=int(getattr(args, "full_prefix_executed_expert_count", 0) or 0),
+        full_prefix_top_k=int(getattr(args, "full_prefix_top_k", 0) or 0),
+        full_prefix_row_block_size=int(getattr(args, "full_prefix_row_block_size", 0) or 0),
+        full_prefix_max_tensor_bytes=int(getattr(args, "full_prefix_max_tensor_bytes", 0) or 0),
+        full_prefix_max_block_bytes=int(getattr(args, "full_prefix_max_block_bytes", 0) or 0),
+        cpu_group_stage_attempt_seconds=float(getattr(args, "cpu_group_stage_attempt_seconds", 0.0) or 0.0),
+        cpu_group_stage_poll_seconds=float(getattr(args, "cpu_group_stage_poll_seconds", 0.0) or 0.0),
+        default_max_new_tokens=int(getattr(args, "max_new_tokens", 8) or 8),
+        max_new_tokens_limit=int(getattr(args, "max_new_tokens_limit", max(16, int(getattr(args, "max_new_tokens", 8) or 8))) or 16),
+    )
+
+
+def _validate_glm52_alpha_model_accelerators(args: argparse.Namespace) -> None:
+    from crowdtensor import glm52_kaggle_alpha as alpha
+
+    requested_model = alpha.normalize_model_request(getattr(args, "model", alpha.COMPATIBLE_WEIGHT_REPO))
+    if not alpha.model_request_supported(requested_model):
+        supported = ", ".join(alpha.SUPPORTED_MODEL_REQUESTS)
+        raise SystemExit(f"--model must be a GLM 5.2 compatible source for glm52-kaggle Alpha; supported: {supported}")
+    accelerator_status = alpha.accelerator_request_status(getattr(args, "accelerators", "cpu,gpu,tpu"))
+    if not accelerator_status["complete"]:
+        details: list[str] = []
+        if accelerator_status["missing_required"]:
+            details.append("missing " + ",".join(accelerator_status["missing_required"]))
+        if accelerator_status["unsupported"]:
+            details.append("unsupported " + ",".join(accelerator_status["unsupported"]))
+        suffix = "; " + "; ".join(details) if details else ""
+        raise SystemExit("--accelerators must be exactly the supported cpu,gpu,tpu set for glm52-kaggle Alpha" + suffix)
+
+
+def _glm52_alpha_live_command(args: argparse.Namespace, output_dir: Path) -> list[str]:
+    from crowdtensor import glm52_kaggle_alpha as alpha
+
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "glm52_kaggle_same_request_live_probe.py"),
+        "--output-dir",
+        str(output_dir),
+        "--stage-worker-package-report",
+        str(getattr(args, "stage_worker_package_report", alpha.DEFAULT_STAGE_WORKER_PACKAGE_REPORT) or alpha.DEFAULT_STAGE_WORKER_PACKAGE_REPORT),
+        "--coordinator-bind-host",
+        str(getattr(args, "coordinator_bind_host", "0.0.0.0") or "0.0.0.0"),
+        "--coordinator-public-host",
+        str(getattr(args, "coordinator_public_host", "24.199.118.54") or "24.199.118.54"),
+        "--coordinator-public-url",
+        str(getattr(args, "coordinator_public_url", "") or ""),
+        "--max-new-tokens",
+        str(getattr(args, "max_new_tokens", 8) or 8),
+        "--wait-seconds",
+        str(getattr(args, "wait_seconds", 7200.0) or 7200.0),
+        "--poll-interval-seconds",
+        str(getattr(args, "poll_interval_seconds", 60.0) or 60.0),
+        "--command-timeout-seconds",
+        str(getattr(args, "command_timeout_seconds", 180.0) or 180.0),
+        "--kernel-timeout-seconds",
+        str(getattr(args, "kernel_timeout_seconds", 9000) or 9000),
+        "--token-file",
+        str(getattr(args, "token_file", "~/.config/crowdtensor/kaggle-tokens.md") or "~/.config/crowdtensor/kaggle-tokens.md"),
+        "--token-section",
+        str(getattr(args, "token_section", "cpuowner") or ""),
+        "--raw-token-file",
+        str(getattr(args, "raw_token_file", "") or ""),
+        "--raw-token-username",
+        str(getattr(args, "raw_token_username", "") or ""),
+        "--hf-token-env",
+        str(getattr(args, "hf_token_env", "HF_TOKEN,HUGGING_FACE_HUB_TOKEN") or ""),
+        "--provider-token-file-map",
+        str(getattr(args, "provider_token_file_map", "") or ""),
+        "--provider-token-section-map",
+        str(getattr(args, "provider_token_section_map", "") or ""),
+        "--provider-raw-token-file-map",
+        str(getattr(args, "provider_raw_token_file_map", "") or ""),
+        "--provider-raw-token-username-map",
+        str(getattr(args, "provider_raw_token_username_map", "") or ""),
+        "--gpu-accelerator",
+        str(getattr(args, "gpu_accelerator", "NvidiaTeslaT4") or "NvidiaTeslaT4"),
+        "--tpu-accelerator",
+        str(getattr(args, "tpu_accelerator", "tpuV5e8") or "tpuV5e8"),
+        "--full-prefix-prefill-length",
+        str(getattr(args, "full_prefix_prefill_length", 0) or 0),
+        "--full-prefix-dsa-mask-topk",
+        str(getattr(args, "full_prefix_dsa_mask_topk", 0) or 0),
+        "--full-prefix-executed-expert-count",
+        str(getattr(args, "full_prefix_executed_expert_count", 0) or 0),
+        "--full-prefix-top-k",
+        str(getattr(args, "full_prefix_top_k", 0) or 0),
+        "--full-prefix-row-block-size",
+        str(getattr(args, "full_prefix_row_block_size", 0) or 0),
+        "--full-prefix-max-tensor-bytes",
+        str(getattr(args, "full_prefix_max_tensor_bytes", 0) or 0),
+        "--full-prefix-max-block-bytes",
+        str(getattr(args, "full_prefix_max_block_bytes", 0) or 0),
+        "--cpu-group-stage-attempt-seconds",
+        str(getattr(args, "cpu_group_stage_attempt_seconds", 0.0) or 0.0),
+        "--cpu-group-stage-poll-seconds",
+        str(getattr(args, "cpu_group_stage_poll_seconds", 0.0) or 0.0),
+        "--json",
+    ]
+    if int(getattr(args, "stage_push_parallelism", 0) or 0) > 0:
+        command.extend(["--stage-push-parallelism", str(args.stage_push_parallelism)])
+    return command
+
+
+def _parse_cli_mapping(value: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for raw_item in str(value or "").split(","):
+        item = raw_item.strip()
+        if not item or "=" not in item:
+            continue
+        key, raw_value = item.split("=", 1)
+        key = key.strip()
+        raw_value = raw_value.strip()
+        if key:
+            mapping[key] = raw_value
+    return mapping
+
+
+def _glm52_alpha_gpu_quota_preflight_command(args: argparse.Namespace, output_dir: Path) -> list[str]:
+    raw_file_map = _parse_cli_mapping(str(getattr(args, "provider_raw_token_file_map", "") or ""))
+    raw_username_map = _parse_cli_mapping(str(getattr(args, "provider_raw_token_username_map", "") or ""))
+    raw_token_file = (
+        str(getattr(args, "gpu_quota_preflight_raw_token_file", "") or "")
+        or raw_file_map.get("kaggle_cuda", "")
+        or str(getattr(args, "raw_token_file", "") or "")
+    )
+    raw_token_username = (
+        str(getattr(args, "gpu_quota_preflight_raw_token_username", "") or "")
+        or raw_username_map.get("kaggle_cuda", "")
+        or str(getattr(args, "raw_token_username", "") or "")
+    )
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "kaggle_gpu_token_weekly_quota_probe.py"),
+        "--token-file",
+        str(getattr(args, "token_file", "~/.config/crowdtensor/kaggle-tokens.md") or ""),
+        "--output-dir",
+        str(output_dir),
+        "--accelerator",
+        str(getattr(args, "gpu_accelerator", "NvidiaTeslaT4") or "NvidiaTeslaT4"),
+        "--kernel-timeout-seconds",
+        str(max(1, min(int(getattr(args, "kernel_timeout_seconds", 120) or 120), 300))),
+        "--push-timeout-seconds",
+        str(max(1.0, float(getattr(args, "command_timeout_seconds", 180.0) or 180.0))),
+        "--delete-timeout-seconds",
+        str(max(1.0, float(getattr(args, "command_timeout_seconds", 180.0) or 180.0))),
+        "--slug-prefix",
+        str(getattr(args, "gpu_quota_preflight_slug_prefix", "ct-alpha-gpu-quota") or "ct-alpha-gpu-quota"),
+        "--json",
+    ]
+    if raw_token_file:
+        command.extend(["--raw-token-file", raw_token_file])
+        if raw_token_username:
+            command.extend(["--raw-token-username", raw_token_username])
+        command.extend([
+            "--raw-token-label",
+            str(getattr(args, "gpu_quota_preflight_raw_token_label", "") or "kaggle-cuda-raw-token"),
+        ])
+    return command
+
+
+def _gpu_quota_preflight_exhausted(report: dict[str, Any]) -> bool:
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    auth_ok = int(summary.get("auth_ok_count") or 0)
+    accepted = int(summary.get("gpu_submission_accepted_count") or 0)
+    exhausted = int(summary.get("weekly_gpu_quota_exhausted_count") or 0)
+    return bool(auth_ok > 0 and accepted == 0 and exhausted >= auth_ok)
+
+
+def _read_json_object_if_present(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _glm52_alpha_quota_status(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    accounts = [item for item in report.get("accounts", []) if isinstance(item, dict)]
+    refresh_times: list[str] = []
+    for account in accounts:
+        quota = account.get("accelerator_quota") if isinstance(account.get("accelerator_quota"), dict) else {}
+        refresh_time = str(quota.get("quota_refresh_time") or "")
+        if refresh_time:
+            refresh_times.append(refresh_time)
+    auth_ok = int(summary.get("auth_ok_count") or 0)
+    accepted = int(summary.get("gpu_submission_accepted_count") or 0)
+    exhausted = int(summary.get("weekly_gpu_quota_exhausted_count") or 0)
+    return {
+        "present": bool(report),
+        "account_count": int(summary.get("account_count") or len(accounts)),
+        "auth_ok_count": auth_ok,
+        "gpu_submission_accepted_count": accepted,
+        "weekly_gpu_quota_exhausted_count": exhausted,
+        "all_auth_ok_accounts_gpu_quota_exhausted": bool(auth_ok > 0 and accepted == 0 and exhausted >= auth_ok),
+        "next_quota_refresh_time": sorted(set(refresh_times))[0] if refresh_times else "",
+        "private_kernel_payloads_removed": report.get("private_kernel_payloads_removed") is True,
+        "public_artifact_safe": report.get("public_artifact_safe") is True if report else True,
+    }
+
+
+def _glm52_alpha_quota_status_from_alpha_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    if not summary:
+        return _glm52_alpha_quota_status({})
+    return {
+        "present": True,
+        "source": "alpha_gpu_quota_summary",
+        "account_count": int(summary.get("account_count") or 0),
+        "auth_ok_count": int(summary.get("auth_ok_count") or 0),
+        "gpu_submission_accepted_count": int(summary.get("gpu_submission_accepted_count") or 0),
+        "weekly_gpu_quota_exhausted_count": int(summary.get("weekly_gpu_quota_exhausted_count") or 0),
+        "all_auth_ok_accounts_gpu_quota_exhausted": summary.get("all_auth_ok_accounts_gpu_quota_exhausted") is True,
+        "next_quota_refresh_time": str(summary.get("next_quota_refresh_time") or ""),
+        "private_kernel_payloads_removed": any(
+            item.get("private_kernel_payloads_removed") is True
+            for item in summary.get("reports", [])
+            if isinstance(item, dict)
+        ),
+        "public_artifact_safe": summary.get("public_artifact_safe") is True,
+    }
+
+
+def _glm52_alpha_status_phase(
+    *,
+    service_status: dict[str, Any],
+    alpha_report: dict[str, Any],
+    live_report: dict[str, Any],
+    quota_status: dict[str, Any],
+    service_report: dict[str, Any],
+) -> str:
+    if service_status.get("phase"):
+        return str(service_status.get("phase"))
+    if alpha_report.get("glm52_kaggle_alpha_ready") is True:
+        return "alpha_ready"
+    if quota_status.get("all_auth_ok_accounts_gpu_quota_exhausted") is True:
+        return "blocked_gpu_quota"
+    if alpha_report:
+        return "alpha_blocked"
+    if live_report:
+        return "live_report_present"
+    if service_report:
+        return "service_configured"
+    return "missing"
+
+
+def build_glm52_kaggle_alpha_deploy(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    from crowdtensor import glm52_kaggle_alpha as alpha
+
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    config = _glm52_alpha_config_from_args(args)
+    service_report = alpha.build_service_report(config, host=str(args.bind_host), port=int(args.port), run=False)
+    service_path = output_dir / "glm52_kaggle_alpha_service.json"
+    service_path.write_text(json.dumps(service_report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    live_report_value = str(getattr(args, "live_report", "") or "")
+    live_report_path: Path | None = Path(live_report_value) if live_report_value else None
+    gpu_quota_report_paths = [str(item) for item in list(getattr(args, "gpu_quota_report", []) or [])]
+    gpu_quota_preflight_report: dict[str, Any] = {}
+    live_skipped_by_gpu_quota_preflight = False
+    steps: list[dict[str, Any]] = []
+    if bool(getattr(args, "gpu_quota_preflight", False)):
+        quota_output_dir = output_dir / "gpu-quota-preflight"
+        quota_command = _glm52_alpha_gpu_quota_preflight_command(args, quota_output_dir)
+        quota_step, quota_payload = run_json_step(
+            "kaggle_gpu_quota_preflight",
+            quota_command,
+            runner=runner,
+            cwd=ROOT,
+            timeout_seconds=max(60, int(getattr(args, "gpu_quota_preflight_timeout_seconds", 600) or 600)),
+        )
+        steps.append(quota_step)
+        quota_report_path = quota_output_dir / "kaggle_gpu_token_weekly_quota_probe.json"
+        if quota_payload:
+            quota_report_path.parent.mkdir(parents=True, exist_ok=True)
+            quota_report_path.write_text(json.dumps(quota_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            gpu_quota_preflight_report = quota_payload
+            gpu_quota_report_paths.append(str(quota_report_path))
+        if (
+            bool(getattr(args, "run_live", False))
+            and quota_payload
+            and _gpu_quota_preflight_exhausted(quota_payload)
+            and not bool(getattr(args, "continue_live_on_gpu_quota_exhausted", False))
+        ):
+            live_skipped_by_gpu_quota_preflight = True
+    if bool(getattr(args, "run_live", False)):
+        if live_skipped_by_gpu_quota_preflight:
+            steps.append(
+                {
+                    "name": "glm52_kaggle_same_request_live",
+                    "ok": False,
+                    "skipped": True,
+                    "reason": "kaggle_gpu_quota_preflight_exhausted",
+                }
+            )
+        else:
+            live_output_dir = output_dir / "live"
+            live_command = _glm52_alpha_live_command(args, live_output_dir)
+            live_step, live_payload = run_json_step(
+                "glm52_kaggle_same_request_live",
+                live_command,
+                runner=runner,
+                cwd=ROOT,
+                timeout_seconds=int(args.timeout_seconds),
+            )
+            steps.append(live_step)
+            live_report_path = live_output_dir / "glm52_kaggle_same_request_live_probe.json"
+            if live_payload:
+                live_report_path.write_text(json.dumps(live_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    pack_command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "glm52_kaggle_alpha_pack.py"),
+        "--output-dir",
+        str(output_dir),
+        "--service-report",
+        str(service_path),
+        "--min-tokens",
+        str(args.max_new_tokens),
+        "--json",
+    ]
+    if live_report_path is not None:
+        pack_command.extend(["--live-report", str(live_report_path)])
+    for gpu_quota_report in gpu_quota_report_paths:
+        pack_command.extend(["--gpu-quota-report", str(gpu_quota_report)])
+    pack_step, payload = run_json_step(
+        "glm52_kaggle_alpha_pack",
+        pack_command,
+        runner=runner,
+        cwd=ROOT,
+        timeout_seconds=max(60, int(args.timeout_seconds)),
+    )
+    steps.append(pack_step)
+    summary = dict(payload or {})
+    summary.update(
+        {
+            "cli_schema": GLM52_KAGGLE_ALPHA_CLI_SCHEMA,
+            "generated_at": utc_now(),
+            "command": "deploy",
+            "target": "glm52-kaggle",
+            "ok": bool(summary.get("ok") and pack_step.get("ok")),
+            "output_dir": str(output_dir),
+            "run_live": bool(args.run_live),
+            "live_skipped_by_gpu_quota_preflight": live_skipped_by_gpu_quota_preflight,
+            "gpu_quota_preflight_performed": bool(getattr(args, "gpu_quota_preflight", False)),
+            "gpu_quota_preflight_report": str((output_dir / "gpu-quota-preflight" / "kaggle_gpu_token_weekly_quota_probe.json")) if gpu_quota_preflight_report else "",
+            "steps": steps,
+            "service_report": str(service_path),
+            "live_report": str(live_report_path) if live_report_path is not None else "",
+            "public_artifact_safe": bool(summary.get("public_artifact_safe", True)),
+        }
+    )
+    summary_path = output_dir / "glm52_kaggle_alpha_cli_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return sanitize(summary)
+
+
+def build_glm52_kaggle_alpha_serve(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
+    from crowdtensor import glm52_kaggle_alpha as alpha
+
+    config = _glm52_alpha_config_from_args(args)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    report = alpha.build_service_report(config, host=str(args.bind_host), port=int(args.port), run=bool(args.run))
+    report.update({
+        "cli_schema": GLM52_KAGGLE_ALPHA_CLI_SCHEMA,
+        "command": "serve",
+        "target": "glm52-kaggle",
+    })
+    service_path = config.output_dir / "glm52_kaggle_alpha_service.json"
+    service_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if not args.run:
+        return sanitize(report)
+    server = alpha.AlphaHTTPServer(host=str(args.bind_host), port=int(args.port), config=config)
+    report["server"]["port"] = server.port
+    service_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        server.serve_forever()
+    finally:
+        server.stop()
+    return sanitize(report)
+
+
+def build_glm52_kaggle_alpha_status(args: argparse.Namespace) -> dict[str, Any]:
+    output_dir = Path(args.output_dir).resolve()
+    status_path = output_dir / "glm52_kaggle_alpha_status.json"
+    service_path = output_dir / "glm52_kaggle_alpha_service.json"
+    alpha_path = output_dir / "glm52_kaggle_alpha.json"
+    cli_summary_path = output_dir / "glm52_kaggle_alpha_cli_summary.json"
+    live_path = output_dir / "live" / "glm52_kaggle_same_request_live_probe.json"
+    quota_path = output_dir / "gpu-quota-preflight" / "kaggle_gpu_token_weekly_quota_probe.json"
+    status = _read_json_object_if_present(status_path)
+    service_report = _read_json_object_if_present(service_path)
+    alpha_report = _read_json_object_if_present(alpha_path)
+    cli_summary = _read_json_object_if_present(cli_summary_path)
+    live_report = _read_json_object_if_present(live_path)
+    quota_report = _read_json_object_if_present(quota_path)
+    quota_status = _glm52_alpha_quota_status(quota_report)
+    if not quota_status.get("present"):
+        quota_summary = alpha_report.get("gpu_quota_summary") if isinstance(alpha_report.get("gpu_quota_summary"), dict) else {}
+        quota_status = _glm52_alpha_quota_status_from_alpha_summary(quota_summary)
+    blocker_report = alpha_report.get("blocker_report") if isinstance(alpha_report.get("blocker_report"), dict) else {}
+    resume_private_inputs = (
+        status.get("resume_private_inputs")
+        if isinstance(status.get("resume_private_inputs"), dict)
+        else (
+            alpha_report.get("resume_private_inputs")
+            if isinstance(alpha_report.get("resume_private_inputs"), dict)
+            else blocker_report.get("resume_private_inputs", {})
+        )
+    )
+    blockers = [
+        str(item)
+        for item in (
+            alpha_report.get("blockers")
+            if isinstance(alpha_report.get("blockers"), list)
+            else blocker_report.get("blockers", [])
+        )
+        if item
+    ]
+    phase = _glm52_alpha_status_phase(
+        service_status=status,
+        alpha_report=alpha_report,
+        live_report=live_report,
+        quota_status=quota_status,
+        service_report=service_report,
+    )
+    any_report = any([status, service_report, alpha_report, cli_summary, live_report, quota_report])
+    return sanitize({
+        "schema": GLM52_KAGGLE_ALPHA_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "command": "status",
+        "target": "glm52-kaggle",
+        "ok": bool(any_report),
+        "output_dir": str(output_dir),
+        "status_report_present": bool(status),
+        "service_report_present": bool(service_report),
+        "alpha_report_present": bool(alpha_report),
+        "cli_summary_present": bool(cli_summary),
+        "live_report_present": bool(live_report),
+        "gpu_quota_preflight_report_present": bool(quota_report),
+        "phase": phase,
+        "glm52_kaggle_alpha_ready": alpha_report.get("glm52_kaggle_alpha_ready") is True,
+        "same_request_multitoken_verified": alpha_report.get("same_request_multitoken_verified") is True,
+        "generated_token_count": int(alpha_report.get("generated_token_count") or live_report.get("generated_token_count") or 0),
+        "min_required_generated_tokens": int(alpha_report.get("min_required_generated_tokens") or 0),
+        "accepted_providers": alpha_report.get("accepted_providers") if isinstance(alpha_report.get("accepted_providers"), list) else [],
+        "cleanup_verified": alpha_report.get("cleanup_verified") is True,
+        "live_skipped_by_gpu_quota_preflight": cli_summary.get("live_skipped_by_gpu_quota_preflight") is True,
+        "gpu_quota_status": quota_status,
+        "phase_status": alpha_report.get("phase_status") if isinstance(alpha_report.get("phase_status"), dict) else {},
+        "blockers": sorted(set(blockers)),
+        "next_resume_command": str(blocker_report.get("next_resume_command") or ""),
+        "resume_private_inputs": resume_private_inputs if isinstance(resume_private_inputs, dict) else {},
+        "status": status,
+        "service_summary": service_report,
+        "alpha_summary": {
+            "schema": alpha_report.get("schema") if alpha_report else "",
+            "present": bool(alpha_report),
+            "ok": alpha_report.get("ok") is True,
+            "ready": alpha_report.get("glm52_kaggle_alpha_ready") is True,
+            "blockers": sorted(set(blockers)),
+            "blocker_report": blocker_report,
+        },
+        "public_artifact_safe": True,
+    })
+
+
+def build_glm52_kaggle_alpha_cleanup(args: argparse.Namespace) -> dict[str, Any]:
+    from crowdtensor import glm52_kaggle_alpha as alpha
+
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report = alpha.build_cleanup_report(output_dir)
+    report.update({
+        "cli_schema": GLM52_KAGGLE_ALPHA_CLI_SCHEMA,
+        "command": "cleanup",
+        "target": "glm52-kaggle",
+        "output_dir": str(output_dir),
+    })
+    return sanitize(report)
+
+
+def _glm52_kaggle_alpha_generate_service_url(args: argparse.Namespace) -> str:
+    raw_url = str(getattr(args, "coordinator_url", "") or "").strip() or "http://127.0.0.1:8789"
+    parsed = urlparse(raw_url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("--coordinator-url must be an absolute http(s) URL for glm52-kaggle")
+    return raw_url.rstrip("/")
+
+
+def build_glm52_kaggle_alpha_generate(args: argparse.Namespace, *, opener: Callable[..., Any] = urlopen) -> dict[str, Any]:
+    from crowdtensor import glm52_kaggle_alpha as alpha
+
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    prompt_texts = prompt_list_from_args(args)
+    prompt = prompt_texts[0]
+    batch_requested = len(prompt_texts) > 1
+    service_url = _glm52_kaggle_alpha_generate_service_url(args)
+    endpoint = f"{service_url}/status" if bool(getattr(args, "dry_run", False)) else f"{service_url}/generate"
+    request_payload = {
+        "prompt": prompt,
+        "max_new_tokens": int(getattr(args, "max_new_tokens", 8) or 8),
+        "timeout": float(getattr(args, "timeout_seconds", 120.0) or 120.0),
+    }
+    response_payload: dict[str, Any] = {}
+    http_status = 0
+    error = ""
+    if batch_requested:
+        response_payload = {
+            "schema": alpha.GENERATE_SCHEMA,
+            "ok": False,
+            "error": "unsupported_generate_request",
+            "blockers": ["glm52_alpha_cli_batch_generate_not_supported"],
+            "generated_token_count": 0,
+            "generated_token_hashes": [],
+            "same_request_decode_verified": False,
+            "accepted_providers": [],
+            "public_artifact_safe": True,
+            "safety": alpha.safety_flags(),
+        }
+        http_status = 0
+    else:
+        try:
+            if bool(getattr(args, "dry_run", False)):
+                request = Request(endpoint, method="GET")
+            else:
+                request = Request(
+                    endpoint,
+                    data=json.dumps(request_payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+            with opener(request, timeout=float(getattr(args, "http_timeout", 30.0) or 30.0)) as response:
+                http_status = int(getattr(response, "status", 200) or 200)
+                loaded = json.loads(response.read().decode("utf-8"))
+                response_payload = loaded if isinstance(loaded, dict) else {}
+        except HTTPError as exc:
+            http_status = int(exc.code)
+            try:
+                loaded = json.loads(exc.read().decode("utf-8"))
+                response_payload = loaded if isinstance(loaded, dict) else {}
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                response_payload = {}
+                error = type(exc).__name__
+        except Exception as exc:
+            error = type(exc).__name__
+            response_payload = {}
+    recovery_status: dict[str, Any] = {}
+    try:
+        recovery_status = build_glm52_kaggle_alpha_status(argparse.Namespace(output_dir=str(output_dir)))
+    except Exception:
+        recovery_status = {}
+    recovery_blockers = [
+        str(item)
+        for item in (
+            recovery_status.get("blockers")
+            if isinstance(recovery_status.get("blockers"), list)
+            else []
+        )
+        if item
+    ]
+    artifact_recovery_present = bool(
+        recovery_status.get("alpha_report_present") is True
+        or recovery_status.get("status_report_present") is True
+        or recovery_status.get("service_report_present") is True
+    )
+    if response_payload:
+        response_resume_private_inputs = (
+            response_payload.get("resume_private_inputs")
+            if isinstance(response_payload.get("resume_private_inputs"), dict)
+            else {}
+        )
+    else:
+        response_resume_private_inputs = {}
+    recovery_resume_private_inputs = (
+        recovery_status.get("resume_private_inputs")
+        if isinstance(recovery_status.get("resume_private_inputs"), dict)
+        else {}
+    )
+    resume_private_inputs = response_resume_private_inputs or recovery_resume_private_inputs
+    next_resume_command = str(
+        response_payload.get("next_resume_command")
+        or recovery_status.get("next_resume_command")
+        or ""
+    )
+    diagnosis = [str(item) for item in response_payload.get("blockers", []) if item] if response_payload else []
+    if (error or response_payload.get("ok") is not True) and recovery_blockers:
+        diagnosis.extend(recovery_blockers)
+    if error and error not in diagnosis:
+        diagnosis.append(error)
+    if not diagnosis and response_payload.get("ok") is True:
+        diagnosis.append("glm52_alpha_generate_request_completed")
+    elif not diagnosis:
+        diagnosis.append("glm52_alpha_generate_request_failed")
+    report = {
+        "schema": GLM52_KAGGLE_ALPHA_CLI_SCHEMA,
+        "generated_at": utc_now(),
+        "command": "generate",
+        "target": "glm52-kaggle",
+        "ok": response_payload.get("ok") is True,
+        "dry_run": bool(getattr(args, "dry_run", False)),
+        "output_dir": str(output_dir),
+        "service_url_hash": stable_hash_text(service_url),
+        "endpoint": "GET /status" if bool(getattr(args, "dry_run", False)) else "POST /generate",
+        "http_status": http_status,
+        "prompt_hash": stable_hash_text(prompt),
+        "raw_prompt_public": False,
+        "raw_generated_text_public": False,
+        "generated_token_ids_public": False,
+        "request": {
+            "max_new_tokens": int(getattr(args, "max_new_tokens", 8) or 8),
+            "timeout_seconds": float(getattr(args, "timeout_seconds", 120.0) or 120.0),
+            "prompt_hash": stable_hash_text(prompt),
+        },
+        "response": response_payload,
+        "artifact_recovery": {
+            "present": artifact_recovery_present,
+            "phase": str(recovery_status.get("phase") or ""),
+            "alpha_report_present": recovery_status.get("alpha_report_present") is True,
+            "status_report_present": recovery_status.get("status_report_present") is True,
+            "service_report_present": recovery_status.get("service_report_present") is True,
+            "glm52_kaggle_alpha_ready": recovery_status.get("glm52_kaggle_alpha_ready") is True,
+            "generated_token_count": int(recovery_status.get("generated_token_count") or 0),
+            "cleanup_verified": recovery_status.get("cleanup_verified") is True,
+            "gpu_quota_status": recovery_status.get("gpu_quota_status") if isinstance(recovery_status.get("gpu_quota_status"), dict) else {},
+            "blockers": sorted(set(recovery_blockers)),
+            "next_resume_command": next_resume_command,
+            "resume_private_inputs": resume_private_inputs if isinstance(resume_private_inputs, dict) else {},
+            "public_artifact_safe": True,
+        },
+        "next_resume_command": next_resume_command,
+        "resume_private_inputs": resume_private_inputs if isinstance(resume_private_inputs, dict) else {},
+        "diagnosis_codes": sorted(set(diagnosis)),
+        "public_artifact_safe": True,
+        "safety": alpha.safety_flags(),
+    }
+    report = sanitize(redact_values(report, [prompt, service_url]))
+    path = output_dir / "glm52_kaggle_alpha_generate_cli.json"
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report
+
+
+def print_glm52_kaggle_alpha_generate(summary: dict[str, Any]) -> None:
+    response = summary.get("response") if isinstance(summary.get("response"), dict) else {}
+    print("CrowdTensor GLM 5.2 Kaggle Alpha Generate")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  status: http={summary.get('http_status')} endpoint={summary.get('endpoint')}")
+    print(
+        "  request: "
+        f"prompt_hash={summary.get('prompt_hash')} "
+        f"max_new_tokens={(summary.get('request') or {}).get('max_new_tokens') if isinstance(summary.get('request'), dict) else ''}"
+    )
+    print(
+        "  response: "
+        f"tokens={response.get('generated_token_count')} "
+        f"verified={bool(response.get('same_request_decode_verified'))} "
+        f"providers={','.join(str(item) for item in response.get('accepted_providers') or [])}"
+    )
+    if response.get("blockers"):
+        print(f"  blockers: {', '.join(str(item) for item in response.get('blockers') or [])}")
+    recovery = summary.get("artifact_recovery") if isinstance(summary.get("artifact_recovery"), dict) else {}
+    if recovery.get("present"):
+        print(f"  artifact recovery: phase={recovery.get('phase')} ready={recovery.get('glm52_kaggle_alpha_ready')}")
+    if summary.get("next_resume_command"):
+        print(f"  resume: {summary.get('next_resume_command')}")
+    print(f"  artifact: {summary.get('output_dir')}/glm52_kaggle_alpha_generate_cli.json")
 
 
 def build_large_model_kaggle_validation(args: argparse.Namespace, *, runner: Runner = subprocess.run) -> dict[str, Any]:
@@ -22757,6 +24457,8 @@ def print_core_technology_handoff_rc(summary: dict[str, Any]) -> None:
     next_layer = summary.get("next_layer_integration_contract") if isinstance(summary.get("next_layer_integration_contract"), dict) else {}
     adapter = summary.get("adapter_conformance") if isinstance(summary.get("adapter_conformance"), dict) else {}
     tests = summary.get("test_gate_summary") if isinstance(summary.get("test_gate_summary"), dict) else {}
+    stage_selective = summary.get("large_model_stage_selective_evidence") if isinstance(summary.get("large_model_stage_selective_evidence"), dict) else {}
+    stage_selective_checks = stage_selective.get("checks") if isinstance(stage_selective.get("checks"), dict) else {}
     answers = summary.get("handoff_answers") if isinstance(summary.get("handoff_answers"), dict) else {}
     artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
     print("CrowdTensor core technology Handoff RC")
@@ -22774,6 +24476,14 @@ def print_core_technology_handoff_rc(summary: dict[str, Any]) -> None:
         f"fixture={bool(capability.get('can_run_ci_safe_fixture'))} "
         f"import={bool(capability.get('can_import_real_runtime_evidence'))} "
         f"handoff={bool(capability.get('can_support_control_layer_development'))}"
+    )
+    print(
+        "  stage_selective_large_model: "
+        f"ready={bool(summary.get('core_technology_large_model_alpha_ready'))} "
+        f"7b_multi={bool(stage_selective_checks.get('seven_b_multi_token_verified'))} "
+        f"14b_dual={bool(stage_selective_checks.get('fourteen_b_dual_kaggle_verified'))} "
+        f"n_stage={bool(stage_selective_checks.get('n_stage_partition_plan_ready'))} "
+        f"perf={bool(stage_selective_checks.get('stage_selective_performance_report_ready'))}"
     )
     print(
         "  deployment: "
@@ -22814,6 +24524,534 @@ def print_core_technology_handoff_rc(summary: dict[str, Any]) -> None:
     for name, artifact in sorted((summary.get("artifacts") or {}).items()):
         if isinstance(artifact, dict):
             print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_control_user_alpha(summary: dict[str, Any]) -> None:
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    user_layer = summary.get("user_layer") if isinstance(summary.get("user_layer"), dict) else {}
+    user_status = user_layer.get("user_status") if isinstance(user_layer.get("user_status"), dict) else {}
+    model_catalog = summary.get("model_catalog") if isinstance(summary.get("model_catalog"), dict) else {}
+    control_layer = summary.get("control_layer") if isinstance(summary.get("control_layer"), dict) else {}
+    print("CrowdTensor Control/User Alpha")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(f"  mode: {summary.get('mode')} output={summary.get('output_dir')}")
+    print(
+        "  core: "
+        f"handoff={bool(summary.get('core_handoff_imported'))} "
+        f"status={bool(summary.get('core_validation_status_imported'))}"
+    )
+    print(
+        "  layers: "
+        f"control={bool(summary.get('control_layer_ready'))} "
+        f"user={bool(summary.get('user_layer_ready'))} "
+        f"catalog={bool(summary.get('model_catalog_ready'))} "
+        f"session={bool(summary.get('session_lifecycle_ready'))} "
+        f"entrypoint={bool(summary.get('user_safe_inference_entrypoint_ready'))}"
+    )
+    print(
+        "  scheduler: "
+        f"ready={bool(control_layer.get('scheduler_ready'))} "
+        f"miner_status={bool(control_layer.get('miner_control_status_ready'))}"
+    )
+    print(
+        "  user_status: "
+        f"state={user_status.get('state')} "
+        f"model={user_status.get('model_id')} "
+        f"live_verified={bool(user_status.get('model_live_verified'))} "
+        f"next={user_status.get('operator_action')}"
+    )
+    for model in model_catalog.get("models") or []:
+        if isinstance(model, dict):
+            print(
+                "  model: "
+                f"{model.get('model_id')} "
+                f"live={bool(model.get('live_verified'))} "
+                f"tokens={model.get('verified_token_count')} "
+                f"n_stage={bool(model.get('n_stage_plan_ready'))}"
+            )
+    print(
+        "  safety: "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))} "
+        "raw_prompt_public=False raw_generated_text_public=False"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_gpu_swarm_usability_alpha(summary: dict[str, Any]) -> None:
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    workflow = summary.get("user_workflow") if isinstance(summary.get("user_workflow"), dict) else {}
+    selected_model = workflow.get("selected_model") if isinstance(workflow.get("selected_model"), dict) else {}
+    lifecycle = summary.get("inference_lifecycle") if isinstance(summary.get("inference_lifecycle"), dict) else {}
+    lifecycle_status = lifecycle.get("status") if isinstance(lifecycle.get("status"), dict) else {}
+    join_packs = summary.get("miner_join_packs") if isinstance(summary.get("miner_join_packs"), dict) else {}
+    print("CrowdTensor GPU Swarm Usability Alpha")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(
+        "  mode: "
+        f"action={summary.get('action')} "
+        f"execution={summary.get('execution_mode')} "
+        f"external_runtime_verified={bool(summary.get('external_runtime_verified'))} "
+        f"output={summary.get('output_dir')}"
+    )
+    print(
+        "  readiness: "
+        f"entrypoint={bool(summary.get('user_gpu_swarm_entrypoint_ready'))} "
+        f"join_pack={bool(summary.get('gpu_miner_join_pack_ready'))} "
+        f"coordinator={bool(summary.get('coordinator_workflow_ready'))} "
+        f"two_gpu_route={bool(summary.get('two_gpu_stage_route_ready'))} "
+        f"lifecycle={bool(summary.get('inference_request_lifecycle_ready'))}"
+    )
+    print(
+        "  imports: "
+        f"catalog={bool(summary.get('model_catalog_imported'))} "
+        f"control_user={bool(summary.get('control_user_alpha_imported'))} "
+        f"core_handoff={bool(summary.get('core_handoff_imported'))}"
+    )
+    print(
+        "  model: "
+        f"{selected_model.get('model_id')} "
+        f"live_verified={bool(selected_model.get('live_verified'))} "
+        f"tokens={selected_model.get('verified_token_count')} "
+        f"n_stage={bool(selected_model.get('n_stage_plan_ready'))}"
+    )
+    print(
+        "  status: "
+        f"state={lifecycle_status.get('state')} "
+        f"next={lifecycle_status.get('operator_action')}"
+    )
+    for pack in join_packs.get("stages") or []:
+        if isinstance(pack, dict):
+            print(
+                "  miner: "
+                f"stage={pack.get('stage')} "
+                f"capability={pack.get('required_capability')} "
+                f"backend={pack.get('backend')} "
+                f"join={pack.get('recommended_command')}"
+            )
+    print(
+        "  safety: "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))} "
+        "raw_prompt_public=False raw_generated_text_public=False token_ids_public=False"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    for item in workflow.get("next_commands") or []:
+        if isinstance(item, dict):
+            print(f"  next[{item.get('label')}]: {item.get('command_line')}")
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_gpu_swarm_production_like_validation(summary: dict[str, Any]) -> None:
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    workload = summary.get("production_like_workload") if isinstance(summary.get("production_like_workload"), dict) else {}
+    larger_attempt = summary.get("larger_model_attempt") if isinstance(summary.get("larger_model_attempt"), dict) else {}
+    feasibility = larger_attempt.get("feasibility") if isinstance(larger_attempt.get("feasibility"), dict) else {}
+    memory = larger_attempt.get("memory_estimate") if isinstance(larger_attempt.get("memory_estimate"), dict) else {}
+    hardware = larger_attempt.get("hardware_profile") if isinstance(larger_attempt.get("hardware_profile"), dict) else {}
+    network = workload.get("network_activation_transfer") if isinstance(workload.get("network_activation_transfer"), dict) else {}
+    print("CrowdTensor GPU Swarm Production-Like Validation")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(
+        "  mode: "
+        f"action={summary.get('cli_action')} "
+        f"execution={summary.get('execution_mode')} "
+        f"fresh_gpu_run={bool(summary.get('fresh_gpu_run_performed'))} "
+        f"external_runtime_verified={bool(summary.get('external_runtime_verified'))} "
+        f"retained_evidence={bool(summary.get('retained_evidence_imported'))} "
+        f"output={summary.get('output_dir')}"
+    )
+    print(
+        "  readiness: "
+        f"production_like={bool(summary.get('production_like_workload_ready'))} "
+        f"multi_token={bool(summary.get('multi_token_decode_ready'))} "
+        f"batch={bool(summary.get('batch_or_multi_request_ready'))} "
+        f"two_gpu_route={bool(summary.get('two_gpu_stage_route_ready'))} "
+        f"distinct_stage_miners={bool(summary.get('distinct_stage_miners_ready'))} "
+        f"requeue={bool(summary.get('stage_requeue_or_failure_recovery_ready'))}"
+    )
+    print(
+        "  scale: "
+        f"largest_successful={summary.get('largest_successful_model_tier')} "
+        f"largest_attempted={summary.get('largest_attempted_model_tier')} "
+        f"blocked_reason={summary.get('larger_model_blocked_reason')}"
+    )
+    print(
+        "  workload: "
+        f"model={workload.get('selected_workload_model_id')} "
+        f"tokens={workload.get('generated_token_count')}/{workload.get('target_max_new_tokens')} "
+        f"requests={workload.get('request_count')} "
+        f"latency_tps_ready={bool(summary.get('latency_throughput_summary_ready'))} "
+        f"network_summary={bool(network.get('network_activation_transfer_summary_ready'))}"
+    )
+    print(
+        "  larger_model_attempt: "
+        f"candidate={larger_attempt.get('candidate_model_id')} "
+        f"required_mb_per_stage={memory.get('required_vram_mb_per_stage')} "
+        f"available_mb_per_gpu={hardware.get('available_vram_per_gpu_mb')} "
+        f"phase={feasibility.get('failure_phase')}"
+    )
+    print(
+        "  safety: "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))} "
+        "raw_prompt_public=False raw_generated_text_public=False token_ids_public=False activations_public=False"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_kaggle_swarm_32b_quantized_feasibility(summary: dict[str, Any]) -> None:
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    runtime = summary.get("quantized_runtime_plan") if isinstance(summary.get("quantized_runtime_plan"), dict) else {}
+    quantization = runtime.get("quantization") if isinstance(runtime.get("quantization"), dict) else {}
+    partition = summary.get("stage_partition_plan") if isinstance(summary.get("stage_partition_plan"), dict) else {}
+    memory = partition.get("memory_estimate") if isinstance(partition.get("memory_estimate"), dict) else {}
+    topology = summary.get("kaggle_multi_kernel_topology") if isinstance(summary.get("kaggle_multi_kernel_topology"), dict) else {}
+    evidence = summary.get("evidence_validation") if isinstance(summary.get("evidence_validation"), dict) else {}
+    print("CrowdTensor Kaggle Swarm 32B Quantized Feasibility RC")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(
+        "  mode: "
+        f"action={summary.get('cli_action')} "
+        f"execution={summary.get('execution_mode')} "
+        f"fresh_kaggle_run={bool(summary.get('fresh_kaggle_run_performed'))} "
+        f"external_runtime_verified={bool(summary.get('external_runtime_verified'))} "
+        f"retained_evidence={bool(summary.get('retained_evidence_imported'))} "
+        f"output={summary.get('output_dir')}"
+    )
+    print(
+        "  verdict: "
+        f"{summary.get('feasibility_verdict')} "
+        f"blocked_reason={summary.get('blocked_reason')}"
+    )
+    print(
+        "  candidate: "
+        f"model={runtime.get('candidate_model_id')} "
+        f"tier={summary.get('largest_attempted_model_tier')} "
+        f"adapter={runtime.get('selected_runtime_adapter')} "
+        f"quant={quantization.get('format')}"
+    )
+    print(
+        "  memory: "
+        f"required_mb_per_stage={memory.get('required_vram_mb_per_stage')} "
+        f"available_mb_per_gpu={memory.get('available_vram_mb_per_gpu')} "
+        f"margin_mb_per_stage={memory.get('margin_mb_per_stage')} "
+        f"memory_feasible={memory.get('memory_feasible_on_assumed_profile')}"
+    )
+    print(
+        "  topology: "
+        f"ready={bool(summary.get('kaggle_multi_kernel_topology_ready'))} "
+        f"stages={partition.get('stage_count')} "
+        f"stage_packages={bool(summary.get('kaggle_stage_package_plan_ready'))} "
+        f"private_payloads_written={bool(topology.get('private_package_payloads_written'))}"
+    )
+    print(
+        "  feasibility: "
+        f"stage_loading={bool(summary.get('stage_owned_loading_feasible'))} "
+        f"one_token={bool(summary.get('one_token_generation_feasible'))} "
+        f"multi_token={bool(summary.get('multi_token_generation_feasible'))} "
+        f"batch_or_seq={bool(summary.get('batch_or_sequential_request_feasible'))} "
+        f"requeue={bool(summary.get('stage_requeue_feasible'))}"
+    )
+    print(
+        "  retained: "
+        f"stage_loading={bool(evidence.get('retained_stage_owned_loading_ready'))} "
+        f"one_token={bool(evidence.get('retained_one_token_generation_ready'))} "
+        f"multi_token={bool(evidence.get('retained_multi_token_generation_ready'))} "
+        f"batch_or_seq={bool(evidence.get('retained_batch_or_sequential_ready'))} "
+        f"requeue={bool(evidence.get('retained_requeue_ready'))}"
+    )
+    print(
+        "  safety: "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))} "
+        "raw_prompt_public=False raw_generated_text_public=False token_ids_public=False activations_public=False"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"stage_package_plan={artifact_summary_value.get('stage_package_plan')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_gpu_tpu_cpu_heterogeneous_stage_alpha(summary: dict[str, Any]) -> None:
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    gpu = summary.get("gpu_backend") if isinstance(summary.get("gpu_backend"), dict) else {}
+    tpu = summary.get("tpu_backend") if isinstance(summary.get("tpu_backend"), dict) else {}
+    cpu = summary.get("cpu_backend") if isinstance(summary.get("cpu_backend"), dict) else {}
+    local_e2e = summary.get("local_three_stage_real_model_e2e") if isinstance(summary.get("local_three_stage_real_model_e2e"), dict) else {}
+    bridge_probe = summary.get("torch_jax_torch_bridge_probe") if isinstance(summary.get("torch_jax_torch_bridge_probe"), dict) else {}
+    feasibility = summary.get("heterogeneous_32b_feasibility") if isinstance(summary.get("heterogeneous_32b_feasibility"), dict) else {}
+    print("CrowdTensor GPU+TPU+CPU Heterogeneous Stage Alpha")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(
+        "  readiness: "
+        f"alpha={bool(summary.get('gpu_tpu_cpu_heterogeneous_stage_alpha_ready'))} "
+        f"small_medium_real_model={bool(summary.get('small_medium_real_model_end_to_end_ready'))} "
+        f"local_three_stage={bool(summary.get('local_three_stage_real_model_e2e_ready'))} "
+        f"torch_jax_bridge={bool(summary.get('torch_jax_torch_bridge_ready'))} "
+        f"same_request_live={bool(summary.get('same_request_live_heterogeneous_verified'))} "
+        f"tpu_stage_miner={bool(summary.get('live_tpu_stage_miner_integrated'))} "
+        f"output={summary.get('output_dir')}"
+    )
+    print(
+        "  backends: "
+        f"gpu={bool(gpu.get('gpu_backend_evidence_ready'))} "
+        f"gpu_full32b_cpu={bool(gpu.get('full_precision_32b_gpu_cpu_ready'))} "
+        f"tpu={bool(tpu.get('real_model_tpu_inference_ready'))} "
+        f"tpu_model={tpu.get('model_id')} "
+        f"tpu_params={tpu.get('parameter_count')} "
+        f"cpu={bool(cpu.get('cpu_backend_evidence_ready'))}"
+    )
+    print(
+        "  local_e2e: "
+        f"ready={bool(local_e2e.get('three_stage_real_model_e2e_ready'))} "
+        f"model={local_e2e.get('model_id')} "
+        f"params={local_e2e.get('parameter_count')} "
+        f"baseline_match={bool(local_e2e.get('baseline_match'))}"
+    )
+    print(
+        "  bridge: "
+        f"ready={bool(bridge_probe.get('bridge_ready'))} "
+        f"mode={bridge_probe.get('mode')} "
+        f"platform={bridge_probe.get('jax_device_platform')} "
+        f"blockers={','.join(str(item) for item in bridge_probe.get('blockers') or [])}"
+    )
+    print(
+        "  32b_feasibility: "
+        f"ready={bool(summary.get('gpu_tpu_cpu_32b_feasibility_report_ready'))} "
+        f"verdict={feasibility.get('verdict')} "
+        f"same_request_now={bool(feasibility.get('gpu_tpu_cpu_32b_same_request_feasible_now'))} "
+        f"tpu_32b_adapter={bool(feasibility.get('tpu_32b_runtime_adapter_ready'))} "
+        f"next_rc={bool(summary.get('next_rc_boundary_ready'))}"
+    )
+    print(
+        "  safety: "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))} "
+        "raw_prompt_public=False raw_generated_text_public=False token_ids_public=False activations_public=False"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"stage_contract={artifact_summary_value.get('stage_contract_smoke')} "
+            f"feasibility={artifact_summary_value.get('heterogeneous_32b_feasibility_report')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_gpu_tpu_cpu_32b_heterogeneous_rc(summary: dict[str, Any]) -> None:
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    live_summary = summary.get("live_same_request_summary") if isinstance(summary.get("live_same_request_summary"), dict) else {}
+    blocker = summary.get("blocker_report") if isinstance(summary.get("blocker_report"), dict) else {}
+    print("CrowdTensor GPU+TPU+CPU 32B Heterogeneous RC")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(
+        "  rc: "
+        f"ready={bool(summary.get('gpu_tpu_cpu_32b_heterogeneous_rc_ready'))} "
+        f"success={bool(summary.get('gpu_tpu_cpu_32b_bounded_rc_success'))} "
+        f"same_request_32b={bool(summary.get('gpu_tpu_cpu_32b_same_request_verified'))} "
+        f"tpu_stage={bool(summary.get('live_tpu_stage_miner_integrated'))} "
+        f"tpu_32b_adapter={bool(summary.get('tpu_32b_runtime_adapter_ready'))} "
+        f"fallback={bool(summary.get('fallback_model_used'))} "
+        f"kv_cache={bool(summary.get('stage_local_kv_cache_verified'))} "
+        f"output={summary.get('output_dir')}"
+    )
+    print(
+        "  live: "
+        f"present={bool(live_summary.get('live_proof_present'))} "
+        f"model={live_summary.get('model_id')} "
+        f"params={live_summary.get('model_parameter_count')} "
+        f"generated={live_summary.get('generated_token_count')} "
+        f"backends={','.join(str(item) for item in live_summary.get('accepted_stage_backends') or [])}"
+    )
+    print(
+        "  blocker: "
+        f"reason={summary.get('blocked_reason') or blocker.get('blocked_reason') or ''} "
+        f"items={','.join(str(item) for item in blocker.get('blockers') or [])}"
+    )
+    print(
+        "  safety: "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))} "
+        "raw_prompt_public=False raw_generated_text_public=False token_ids_public=False activations_public=False"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"blocker={artifact_summary_value.get('blocker_report')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_heterogeneous_32b_serving(summary: dict[str, Any]) -> None:
+    artifact_summary_value = summary.get("artifact_summary") if isinstance(summary.get("artifact_summary"), dict) else {}
+    metrics = summary.get("latency_metrics") if isinstance(summary.get("latency_metrics"), dict) else {}
+    blocker = summary.get("blocker_report") if isinstance(summary.get("blocker_report"), dict) else {}
+    print("CrowdTensor Heterogeneous 32B Serving")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(
+        "  serving: "
+        f"ready={bool(summary.get('heterogeneous_32b_serving_ready'))} "
+        f"production_like={bool(summary.get('production_like_serving_path_ready'))} "
+        f"source_32b={bool(summary.get('gpu_tpu_cpu_32b_same_request_source_verified'))} "
+        f"multi_token={bool(summary.get('multi_token_generation_ready'))} "
+        f"streaming={bool(summary.get('streaming_response_contract_ready'))} "
+        f"kv_cache={bool(summary.get('stage_local_kv_cache_ready'))} "
+        f"failure_requeue={bool(summary.get('failure_requeue_ready'))} "
+        f"live_external={bool(summary.get('live_external_runtime_verified'))} "
+        f"output={summary.get('output_dir')}"
+    )
+    print(
+        "  metrics: "
+        f"generated={summary.get('generated_token_count')} "
+        f"ttft_ms={metrics.get('ttft_ms')} "
+        f"throughput_tps={metrics.get('token_throughput_tps')}"
+    )
+    print(
+        "  blocker: "
+        f"reason={summary.get('blocked_reason') or blocker.get('blocked_reason') or ''} "
+        f"items={','.join(str(item) for item in blocker.get('blockers') or [])}"
+    )
+    print(
+        "  safety: "
+        f"public_artifact_safe={bool(summary.get('public_artifact_safe'))} "
+        "raw_prompt_public=False raw_generated_text_public=False token_ids_public=False activations_public=False"
+    )
+    if artifact_summary_value:
+        print(
+            "  artifacts: "
+            f"inspect={artifact_summary_value.get('inspect_first')} "
+            f"present={artifact_summary_value.get('present_artifact_count')}/{artifact_summary_value.get('artifact_count')} "
+            f"support={artifact_summary_value.get('support_bundle')} "
+            f"blocker={artifact_summary_value.get('blocker_report')} "
+            f"public_artifact_safe={bool(artifact_summary_value.get('public_artifact_safe'))}"
+        )
+    print(f"  diagnosis: {', '.join(summary.get('diagnosis_codes') or [])}")
+    for name, artifact in sorted((summary.get("artifacts") or {}).items()):
+        if isinstance(artifact, dict):
+            print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
+
+
+def print_glm52_kaggle_alpha(summary: dict[str, Any]) -> None:
+    live = summary.get("live_summary") if isinstance(summary.get("live_summary"), dict) else {}
+    service = summary.get("service_summary") if isinstance(summary.get("service_summary"), dict) else {}
+    blocker = summary.get("blocker_report") if isinstance(summary.get("blocker_report"), dict) else {}
+    status = summary.get("status") if isinstance(summary.get("status"), dict) else {}
+    gpu_quota = summary.get("gpu_quota_status") if isinstance(summary.get("gpu_quota_status"), dict) else {}
+    phase_status = summary.get("phase_status") if isinstance(summary.get("phase_status"), dict) else {}
+    print("CrowdTensor GLM 5.2 Kaggle Alpha")
+    print(f"  ok: {summary.get('ok')}")
+    print(f"  schema: {summary.get('schema')} cli_schema={summary.get('cli_schema')}")
+    print(
+        "  target: "
+        f"{summary.get('target') or 'glm52-kaggle'} "
+        f"command={summary.get('command')} output={summary.get('output_dir')}"
+    )
+    if service:
+        print(
+            "  service: "
+            f"api={bool(service.get('service_api_ready'))} "
+            f"route_live={bool(service.get('generate_routes_to_same_request_live_probe'))}"
+        )
+    if live:
+        print(
+            "  live: "
+            f"verified={bool(live.get('same_request_decode_verified'))} "
+            f"tokens={live.get('generated_token_count')}/{summary.get('min_required_generated_tokens')} "
+            f"providers={','.join(str(item) for item in live.get('accepted_providers') or [])}"
+        )
+    if status:
+        print(
+            "  status: "
+            f"phase={status.get('phase')} "
+            f"latest_live={status.get('latest_live_report_path')}"
+        )
+    elif summary.get("phase"):
+        print(
+            "  status: "
+            f"phase={summary.get('phase')} "
+            f"ready={bool(summary.get('glm52_kaggle_alpha_ready'))} "
+            f"tokens={summary.get('generated_token_count')}/{summary.get('min_required_generated_tokens')} "
+            f"cleanup={bool(summary.get('cleanup_verified'))}"
+        )
+    if gpu_quota.get("present"):
+        print(
+            "  gpu_quota: "
+            f"accepted={gpu_quota.get('gpu_submission_accepted_count')} "
+            f"exhausted={gpu_quota.get('weekly_gpu_quota_exhausted_count')}/{gpu_quota.get('auth_ok_count')} "
+            f"next_refresh={gpu_quota.get('next_quota_refresh_time')}"
+        )
+    if phase_status:
+        print(
+            "  phases: "
+            f"overall={phase_status.get('overall_state')} "
+            f"completed={','.join(str(item) for item in phase_status.get('completed_phase_names') or [])} "
+            f"blocked={','.join(str(item) for item in phase_status.get('blocked_phase_names') or [])}"
+        )
+    if blocker:
+        print(f"  blocker: blocked={blocker.get('blocked')} items={','.join(str(item) for item in blocker.get('blockers') or [])}")
+        if blocker.get("next_resume_command"):
+            print(f"  next: {blocker.get('next_resume_command')}")
+    elif summary.get("next_resume_command"):
+        print(f"  next: {summary.get('next_resume_command')}")
+    elif summary.get("blockers"):
+        print(f"  blockers: {', '.join(str(item) for item in summary.get('blockers') or [])}")
 
 
 def print_large_model_kaggle_validation(summary: dict[str, Any]) -> None:
@@ -24683,6 +26921,56 @@ def print_remote_cli_report(report: dict[str, Any], *, title: str) -> None:
         print(f"  artifact {name}: {artifact.get('path')} present={artifact.get('present')}")
 
 
+def _qwen15b_beta_controller(job_dir: str | Path) -> tuple[TrainingBetaController, str | None]:
+    job = Path(job_dir).resolve()
+    store_path = job / ".private-service" / "training_beta_jobs.sqlite3"
+    if not store_path.is_file():
+        return TrainingBetaController(TrainingBetaJobStore(store_path)), None
+    from crowdtensor.training_qwen15b_job import reconcile_qwen15b_training_job_status
+
+    reconcile_qwen15b_training_job_status(job)
+    store = TrainingBetaJobStore(store_path)
+    try:
+        job_id = store.only_job_id()
+    except KeyError:
+        job_id = None
+    return TrainingBetaController(store), job_id
+
+
+def _qwen15b_beta_request(args: argparse.Namespace, job_dir: str | Path) -> dict[str, Any]:
+    files = [str(args.kaggle_token_file)] if str(args.kaggle_token_file or "") else []
+    return {
+        "model": "Qwen/Qwen2.5-1.5B",
+        "model_revision": "8faed761d45a263340a0528343f099c05c9a4323",
+        "topology": "kaggle-2x-t4x2",
+        "steps": 8,
+        "job_dir": str(Path(job_dir).resolve()),
+        "kaggle_token_files": files,
+        "kaggle_raw_token_file": str(args.kaggle_raw_token_file or ""),
+        "kaggle_raw_token_username": str(args.kaggle_token_username or ""),
+        "allocation_timeout_seconds": float(args.allocation_timeout_seconds),
+    }
+
+
+def _watch_training_status(
+    getter: Callable[[], dict[str, Any]],
+    *,
+    timeout_seconds: float,
+    interval_seconds: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + float(timeout_seconds)
+    last = getter()
+    while time.monotonic() < deadline and last.get("overall_state") in {
+        "queued",
+        "running",
+        "recovery_required",
+        "waiting_for_miners",
+    }:
+        time.sleep(float(interval_seconds))
+        last = getter()
+    return last
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
@@ -24691,6 +26979,198 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser(
+        "community",
+        help="Run the versioned Community heterogeneous training workflow.",
+    )
+    subparsers.add_parser(
+        "volunteer",
+        help="Join or operate a low-frequency LoRA volunteer training campaign.",
+    )
+    train = subparsers.add_parser("train", help="Run and manage real collaborative LoRA training jobs.")
+    train_subparsers = train.add_subparsers(dest="train_action", required=True)
+    train_create = train_subparsers.add_parser(
+        "create", help="Create a durable elastic volunteer Qwen training job."
+    )
+    train_create.add_argument("job")
+    train_create.add_argument("--model", default="Qwen/Qwen2.5-1.5B")
+    train_create.add_argument("--steps", type=int, default=8)
+    train_create.add_argument(
+        "--heterogeneous",
+        action="store_true",
+        help="create the manifest-driven CPU/GPU heterogeneous training Beta",
+    )
+    train_create.add_argument(
+        "--tpu",
+        action="store_true",
+        help="require the pinned CPU/CUDA/Kaggle JAX TPU heterogeneous Beta",
+    )
+    train_create.add_argument("--manifest", default="")
+    train_create.add_argument("--hf-token-env", default="HF_TOKEN")
+    train_create.add_argument("--config", default="")
+    train_create.add_argument("--tokenized-payload", default="")
+    train_create.add_argument(
+        "--checkpoint-store", choices=["local", "s3"], default="local"
+    )
+    train_create.add_argument("--checkpoint-bucket", default="")
+    train_create.add_argument("--checkpoint-prefix", default="")
+    train_create.add_argument("--checkpoint-endpoint-url", default="")
+    train_create.add_argument("--checkpoint-region", default="")
+    train_create.add_argument("--checkpoint-access-key-env", default="AWS_ACCESS_KEY_ID")
+    train_create.add_argument("--checkpoint-secret-key-env", default="AWS_SECRET_ACCESS_KEY")
+    train_create.add_argument("--checkpoint-session-token-env", default="AWS_SESSION_TOKEN")
+    train_create.add_argument("--checkpoint-retention-steps", type=int, default=2)
+    train_create.add_argument("--lease-seconds", type=float, default=30.0)
+    train_create.add_argument("--max-online-miners", type=int, default=16)
+    train_create.add_argument(
+        "--max-rejected-submissions-per-session", type=int, default=3
+    )
+    train_create.add_argument(
+        "--max-checkpoint-bytes-per-session", type=int, default=0
+    )
+    train_create.add_argument("--json", action="store_true")
+    train_validate = train_subparsers.add_parser(
+        "validate",
+        help="Validate a Training Production configuration without allocating resources.",
+    )
+    train_validate.add_argument("--config", default="")
+    train_validate.add_argument("--json", action="store_true")
+    train_plan = train_subparsers.add_parser(
+        "plan",
+        help="Build a public-safe Training Production resource and placement plan.",
+    )
+    train_plan.add_argument("job", nargs="?", default="")
+    train_plan.add_argument("--config", default="")
+    train_plan.add_argument("--json", action="store_true")
+    train_start = train_subparsers.add_parser(
+        "start",
+        aliases=["run"],
+        help="Idempotently create a durable CPU/GPU/TPU Training Production job.",
+    )
+    train_start.add_argument("job")
+    train_start.add_argument("--config", default="")
+    train_start.add_argument("--model-config", default="")
+    train_start.add_argument("--tokenized-payload", default="")
+    train_start.add_argument("--hf-token-env", default="HF_TOKEN")
+    train_start.add_argument("--dry-run", action="store_true")
+    train_start.add_argument("--json", action="store_true")
+    train_lora = train_subparsers.add_parser("lora", help="Run a bounded CPU or CUDA LoRA training job.")
+    train_lora.add_argument("--backend", choices=["cpu", "cuda"], default="cpu")
+    train_lora.add_argument("--output-dir", default="dist/training-foundation-job")
+    train_lora.add_argument("--model", default="")
+    train_lora.add_argument("--topology", default="")
+    train_lora.add_argument("--steps", type=int, default=0)
+    train_lora.add_argument("--local-steps", type=int, default=8)
+    train_lora.add_argument("--pipeline-steps", type=int, default=8)
+    train_lora.add_argument("--seed", type=int, default=20260710)
+    train_lora.add_argument("--learning-rate", type=float, default=0.08)
+    train_lora.add_argument("--batch-size", type=int, default=2)
+    train_lora.add_argument("--sequence-length", type=int, default=16)
+    train_lora.add_argument("--gradient-accumulation", type=int, default=1)
+    train_lora.add_argument("--kaggle-token-file", default=os.environ.get("CROWDTENSOR_KAGGLE_TOKEN_FILE", ""))
+    train_lora.add_argument("--kaggle-token-username", default=os.environ.get("CROWDTENSOR_KAGGLE_TOKEN_USERNAME", ""))
+    train_lora.add_argument("--kaggle-raw-token-file", default=os.environ.get("CROWDTENSOR_KAGGLE_RAW_TOKEN_FILE", ""))
+    train_lora.add_argument("--allocation-timeout-seconds", type=float, default=1800.0)
+    train_lora.add_argument("--json", action="store_true")
+    train_status_parser = train_subparsers.add_parser("status", help="Show training phase and blocker status.")
+    train_status_parser.add_argument("job")
+    train_status_parser.add_argument("--backend", choices=["auto", "cpu", "cuda"], default="auto")
+    train_status_parser.add_argument("--watch", action="store_true")
+    train_status_parser.add_argument("--watch-interval-seconds", type=float, default=2.0)
+    train_status_parser.add_argument("--watch-timeout-seconds", type=float, default=1800.0)
+    train_status_parser.add_argument("--json", action="store_true")
+    train_elastic_status = train_subparsers.add_parser(
+        "elastic-status",
+        help="Show persistent elastic Miner, barrier, and committed-step status.",
+    )
+    train_elastic_status.add_argument("--state", required=True)
+    train_elastic_status.add_argument("--run-id", required=True)
+    train_elastic_status.add_argument("--json", action="store_true")
+    train_resume = train_subparsers.add_parser("resume", help="Resume an interrupted local training job.")
+    train_resume.add_argument("job")
+    train_resume.add_argument("--backend", choices=["auto", "cpu", "cuda"], default="auto")
+    train_resume.add_argument("--kaggle-token-file", default=os.environ.get("CROWDTENSOR_KAGGLE_TOKEN_FILE", ""))
+    train_resume.add_argument("--kaggle-token-username", default=os.environ.get("CROWDTENSOR_KAGGLE_TOKEN_USERNAME", ""))
+    train_resume.add_argument("--kaggle-raw-token-file", default=os.environ.get("CROWDTENSOR_KAGGLE_RAW_TOKEN_FILE", ""))
+    train_resume.add_argument("--allocation-timeout-seconds", type=float, default=1800.0)
+    train_resume.add_argument("--json", action="store_true")
+    train_pause = train_subparsers.add_parser(
+        "pause", help="Idempotently pause epoch issuance at the durable boundary."
+    )
+    train_pause.add_argument("job")
+    train_pause.add_argument("--json", action="store_true")
+    train_stop = train_subparsers.add_parser(
+        "stop", help="Idempotently stop and fence a Training Production job."
+    )
+    train_stop.add_argument("job")
+    train_stop.add_argument("--json", action="store_true")
+    train_rebalance = train_subparsers.add_parser(
+        "rebalance", help="Request a deterministic telemetry-aware stage rebalance."
+    )
+    train_rebalance.add_argument("job")
+    train_rebalance.add_argument(
+        "--reason",
+        choices=[
+            "owner_requested",
+            "performance_rebalance",
+            "health_degraded",
+            "coordinator_recovery",
+        ],
+        default="owner_requested",
+    )
+    train_rebalance.add_argument("--json", action="store_true")
+    train_metrics = train_subparsers.add_parser(
+        "metrics", help="Emit JSON or Prometheus Training Production metrics."
+    )
+    train_metrics.add_argument("job")
+    train_metrics.add_argument(
+        "--format", choices=["json", "prometheus"], default="json"
+    )
+    train_metrics.add_argument("--json", action="store_true")
+    train_events = train_subparsers.add_parser(
+        "events", help="Read a bounded page of structured training events."
+    )
+    train_events.add_argument("job")
+    train_events.add_argument("--after-sequence", type=int, default=0)
+    train_events.add_argument("--limit", type=int, default=200)
+    train_events.add_argument("--json", action="store_true")
+    train_export = train_subparsers.add_parser("export", help="Export a completed standard PEFT adapter.")
+    train_export.add_argument("job")
+    train_export.add_argument("--backend", choices=["auto", "cpu", "cuda"], default="auto")
+    train_export.add_argument("--output-dir", default="")
+    train_export.add_argument("--json", action="store_true")
+    train_cancel = train_subparsers.add_parser("cancel", help="Idempotently cancel a queued or running training job.")
+    train_cancel.add_argument("job")
+    train_cancel.add_argument("--backend", choices=["auto", "cpu", "cuda"], default="auto")
+    train_cancel.add_argument("--json", action="store_true")
+    train_invite = train_subparsers.add_parser(
+        "invite", help="Write a private Miner invite for an elastic training job."
+    )
+    train_invite.add_argument("job")
+    train_invite.add_argument("--coordinator", required=True)
+    train_invite.add_argument("--output-file", required=True)
+    train_invite.add_argument("--json", action="store_true")
+    train_serve = train_subparsers.add_parser("serve", help="Run the authenticated local Qwen training Beta API.")
+    train_serve.add_argument("--store", default="dist/training-beta-service/jobs.sqlite3")
+    train_serve.add_argument("--elastic-job", default="")
+    train_serve.add_argument("--host", default="127.0.0.1")
+    train_serve.add_argument("--port", type=int, default=8791)
+    train_serve.add_argument(
+        "--token-env",
+        default="CROWDTENSOR_TRAINING_SERVICE_TOKEN",
+    )
+    train_serve.add_argument(
+        "--miner-token-env",
+        default="CROWDTENSOR_MINER_TOKEN",
+    )
+    train_serve.add_argument("--json", action="store_true")
+    train_cleanup = train_subparsers.add_parser("cleanup", help="Clean temporary runtime state while preserving evidence.")
+    train_cleanup.add_argument("job")
+    train_cleanup.add_argument("--backend", choices=["auto", "cpu", "cuda"], default="auto")
+    train_cleanup.add_argument("--kaggle-token-file", default=os.environ.get("CROWDTENSOR_KAGGLE_TOKEN_FILE", ""))
+    train_cleanup.add_argument("--kaggle-token-username", default=os.environ.get("CROWDTENSOR_KAGGLE_TOKEN_USERNAME", ""))
+    train_cleanup.add_argument("--kaggle-raw-token-file", default=os.environ.get("CROWDTENSOR_KAGGLE_RAW_TOKEN_FILE", ""))
+    train_cleanup.add_argument("--json", action="store_true")
     local = subparsers.add_parser("local-proof", help="Run the CPU-only local proof and collect safe artifacts.")
     local.add_argument("--output-dir", default="dist/local-proof")
     local.add_argument("--base-port", type=int, default=8914)
@@ -24865,6 +27345,62 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--admin-results-limit", type=int, default=50)
     infer.add_argument("--json", action="store_true")
 
+    deploy = subparsers.add_parser(
+        "deploy",
+        help="Deploy an Alpha workload such as glm52-kaggle.",
+    )
+    deploy.add_argument("deploy_target", choices=["glm52-kaggle"])
+    deploy.add_argument("--output-dir", default="dist/glm52-kaggle-alpha")
+    deploy.add_argument("--model", default="cyankiwi/GLM-5.2-AWQ-INT4")
+    deploy.add_argument("--accelerators", default="cpu,gpu,tpu")
+    deploy.add_argument("--stage-worker-package-report", default="")
+    deploy.add_argument("--run-live", action="store_true")
+    deploy.add_argument("--live-report", default="")
+    deploy.add_argument("--gpu-quota-report", action="append", default=[])
+    deploy.add_argument("--gpu-quota-preflight", action="store_true")
+    deploy.add_argument("--gpu-quota-preflight-raw-token-file", default="")
+    deploy.add_argument("--gpu-quota-preflight-raw-token-username", default="")
+    deploy.add_argument("--gpu-quota-preflight-raw-token-label", default="")
+    deploy.add_argument("--gpu-quota-preflight-slug-prefix", default="ct-alpha-gpu-quota")
+    deploy.add_argument("--gpu-quota-preflight-timeout-seconds", type=int, default=600)
+    deploy.add_argument("--continue-live-on-gpu-quota-exhausted", action="store_true")
+    deploy.add_argument("--max-new-tokens", type=int, default=8)
+    deploy.add_argument("--max-new-tokens-limit", type=int, default=16)
+    deploy.add_argument("--bind-host", default="127.0.0.1")
+    deploy.add_argument("--port", type=int, default=8789)
+    deploy.add_argument("--coordinator-bind-host", default="0.0.0.0")
+    deploy.add_argument("--coordinator-public-host", default="24.199.118.54")
+    deploy.add_argument("--coordinator-public-url", default="")
+    deploy.add_argument("--token-file", default="~/.config/crowdtensor/kaggle-tokens.md")
+    deploy.add_argument("--token-section", default="cpuowner")
+    deploy.add_argument("--raw-token-file", default="")
+    deploy.add_argument("--raw-token-username", default="")
+    deploy.add_argument("--hf-token-env", default="HF_TOKEN,HUGGING_FACE_HUB_TOKEN")
+    deploy.add_argument("--provider-token-file-map", default="")
+    deploy.add_argument("--provider-token-section-map", default="")
+    deploy.add_argument("--provider-raw-token-file-map", default="")
+    deploy.add_argument("--provider-raw-token-username-map", default="")
+    deploy.add_argument("--gpu-accelerator", default="NvidiaTeslaT4")
+    deploy.add_argument("--tpu-accelerator", default="tpuV5e8")
+    deploy.add_argument("--wait-seconds", type=float, default=7200.0)
+    deploy.add_argument("--poll-interval-seconds", type=float, default=60.0)
+    deploy.add_argument("--command-timeout-seconds", type=float, default=180.0)
+    deploy.add_argument("--kernel-timeout-seconds", type=int, default=9000)
+    deploy.add_argument("--coordinator-task-timeout-seconds", type=float, default=7200.0)
+    deploy.add_argument("--coordinator-worker-poll-interval-seconds", type=float, default=5.0)
+    deploy.add_argument("--stage-push-parallelism", type=int, default=0)
+    deploy.add_argument("--full-prefix-prefill-length", type=int, default=0)
+    deploy.add_argument("--full-prefix-dsa-mask-topk", type=int, default=0)
+    deploy.add_argument("--full-prefix-executed-expert-count", type=int, default=0)
+    deploy.add_argument("--full-prefix-top-k", type=int, default=0)
+    deploy.add_argument("--full-prefix-row-block-size", type=int, default=0)
+    deploy.add_argument("--full-prefix-max-tensor-bytes", type=int, default=0)
+    deploy.add_argument("--full-prefix-max-block-bytes", type=int, default=0)
+    deploy.add_argument("--cpu-group-stage-attempt-seconds", type=float, default=0.0)
+    deploy.add_argument("--cpu-group-stage-poll-seconds", type=float, default=0.0)
+    deploy.add_argument("--timeout-seconds", type=int, default=14400)
+    deploy.add_argument("--json", action="store_true")
+
     serve = subparsers.add_parser(
         "serve",
         help="Print or run a product-facing Coordinator command.",
@@ -24884,6 +27420,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    serve.add_argument("serve_target", nargs="?", default="")
     serve.add_argument("--profile", choices=["cpu-real-llm", "gpu-generation"], default="cpu-real-llm")
     serve.add_argument("--bind-host", default="127.0.0.1")
     serve.add_argument("--public-host", default="127.0.0.1")
@@ -24936,9 +27473,54 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     serve.add_argument("--ttl-seconds", type=float, default=60.0)
     serve.add_argument("--peer-secret", default=os.environ.get("CROWDTENSOR_P2P_PEER_SECRET", ""))
     serve.add_argument("--http-timeout", type=float, default=5.0)
+    serve.add_argument("--output-dir", default=None)
+    serve.add_argument("--model", default="cyankiwi/GLM-5.2-AWQ-INT4")
+    serve.add_argument("--accelerators", default="cpu,gpu,tpu")
+    serve.add_argument("--stage-worker-package-report", default="")
+    serve.add_argument("--max-new-tokens", type=int, default=8)
+    serve.add_argument("--max-new-tokens-limit", type=int, default=16)
+    serve.add_argument("--coordinator-bind-host", default="0.0.0.0")
+    serve.add_argument("--coordinator-public-host", default="24.199.118.54")
+    serve.add_argument("--token-file", default="~/.config/crowdtensor/kaggle-tokens.md")
+    serve.add_argument("--token-section", default="cpuowner")
+    serve.add_argument("--raw-token-file", default="")
+    serve.add_argument("--raw-token-username", default="")
+    serve.add_argument("--hf-token-env", default="HF_TOKEN,HUGGING_FACE_HUB_TOKEN")
+    serve.add_argument("--provider-token-file-map", default="")
+    serve.add_argument("--provider-token-section-map", default="")
+    serve.add_argument("--provider-raw-token-file-map", default="")
+    serve.add_argument("--provider-raw-token-username-map", default="")
+    serve.add_argument("--gpu-accelerator", default="NvidiaTeslaT4")
+    serve.add_argument("--tpu-accelerator", default="tpuV5e8")
+    serve.add_argument("--wait-seconds", type=float, default=7200.0)
+    serve.add_argument("--poll-interval-seconds", type=float, default=60.0)
+    serve.add_argument("--command-timeout-seconds", type=float, default=180.0)
+    serve.add_argument("--kernel-timeout-seconds", type=int, default=9000)
+    serve.add_argument("--coordinator-task-timeout-seconds", type=float, default=7200.0)
+    serve.add_argument("--coordinator-worker-poll-interval-seconds", type=float, default=5.0)
+    serve.add_argument("--stage-push-parallelism", type=int, default=0)
+    serve.add_argument("--full-prefix-prefill-length", type=int, default=0)
+    serve.add_argument("--full-prefix-dsa-mask-topk", type=int, default=0)
+    serve.add_argument("--full-prefix-executed-expert-count", type=int, default=0)
+    serve.add_argument("--full-prefix-top-k", type=int, default=0)
+    serve.add_argument("--full-prefix-row-block-size", type=int, default=0)
+    serve.add_argument("--full-prefix-max-tensor-bytes", type=int, default=0)
+    serve.add_argument("--full-prefix-max-block-bytes", type=int, default=0)
+    serve.add_argument("--cpu-group-stage-attempt-seconds", type=float, default=0.0)
+    serve.add_argument("--cpu-group-stage-poll-seconds", type=float, default=0.0)
     serve.add_argument("--i-understand-public-bind", action="store_true")
     serve.add_argument("--run", action="store_true")
     serve.add_argument("--json", action="store_true")
+
+    status = subparsers.add_parser("status", help="Show Alpha workload status.")
+    status.add_argument("status_target", nargs="?", default="glm52-kaggle", choices=["glm52-kaggle"])
+    status.add_argument("--output-dir", default="dist/glm52-kaggle-alpha")
+    status.add_argument("--json", action="store_true")
+
+    cleanup = subparsers.add_parser("cleanup", help="Write cleanup proof for an Alpha workload.")
+    cleanup.add_argument("cleanup_target", nargs="?", default="glm52-kaggle", choices=["glm52-kaggle"])
+    cleanup.add_argument("--output-dir", default="dist/glm52-kaggle-alpha")
+    cleanup.add_argument("--json", action="store_true")
 
     operator_invite = subparsers.add_parser(
         "operator-invite",
@@ -25388,6 +27970,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     generate.add_argument("prompt_text_arg", nargs="?", default="", help="optional single prompt text; mutually exclusive with other prompt sources")
+    generate.add_argument("--target", choices=["", "glm52-kaggle"], default="", help="route generate through a target-specific Alpha client")
     generate.add_argument("--output-dir", default="dist/generate")
     generate.add_argument("--prompt-text", "--prompt", dest="prompt_text", default=None, help="single prompt text; mutually exclusive with other prompt sources")
     generate.add_argument("--prompt-file", default="", help="read a single prompt from a UTF-8 text file; mutually exclusive with other prompt sources")
@@ -25653,6 +28236,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     large_model_shard.add_argument("--model-metadata", default="")
     large_model_shard.add_argument("--device-profile", default="")
     large_model_shard.add_argument("--real-benchmark-report", default="")
+    large_model_shard.add_argument("--stage-selective-plan", action="store_true")
+    large_model_shard.add_argument("--stage-count", type=int, default=4)
+    large_model_shard.add_argument("--kaggle-gpu-memory-gb", type=float, default=15.0)
+    large_model_shard.add_argument(
+        "--stage-selective-model-ids",
+        default="Qwen/Qwen2.5-7B-Instruct,Qwen/Qwen2.5-14B-Instruct",
+    )
     large_model_shard.add_argument("--llama-cli", default="llama-cli")
     large_model_shard.add_argument("--llama-rpc-server", default="rpc-server")
     large_model_shard.add_argument("--prompt-placeholder", default="PROMPT_FILE")
@@ -25706,6 +28296,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     core_tech_handoff.add_argument("--device-profile", default="")
     core_tech_handoff.add_argument("--real-benchmark-report", default="")
     core_tech_handoff.add_argument("--real-run-report", default="")
+    core_tech_handoff.add_argument("--seven-b-live-report", default="")
+    core_tech_handoff.add_argument("--fourteen-b-live-report", default="")
+    core_tech_handoff.add_argument("--stage-selective-plan-report", default="")
+    core_tech_handoff.add_argument("--stage-selective-performance-report", default="")
     core_tech_handoff.add_argument("--baseline-digest", default="")
     core_tech_handoff.add_argument("--llama-cli", default="llama-cli")
     core_tech_handoff.add_argument("--llama-rpc-server", default="rpc-server")
@@ -25717,6 +28311,381 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     core_tech_handoff.add_argument("--full-pytest", action="store_true")
     core_tech_handoff.add_argument("--timeout-seconds", type=int, default=150)
     core_tech_handoff.add_argument("--json", action="store_true")
+    control_user_alpha = subparsers.add_parser(
+        "control-user-alpha",
+        help="Build the Core-backed Control/User Alpha evidence and one-command user smoke path.",
+    )
+    control_user_alpha.add_argument("--output-dir", default="dist/control-user-alpha")
+    control_user_alpha.add_argument(
+        "--core-handoff-report",
+        default=(
+            "dist/core-tech-handoff-stage-selective-live-goal-r1/"
+            "core_technology_handoff_rc.json"
+        ),
+    )
+    control_user_alpha.add_argument(
+        "--core-status-report",
+        default=(
+            "dist/core-technology-validation-status-stage-selective-goal-r1/"
+            "core_technology_validation_status.json"
+        ),
+    )
+    control_user_alpha.add_argument(
+        "--mode",
+        choices=["evidence-import", "local-fixture", "external-existing", "live-ready"],
+        default="evidence-import",
+    )
+    control_user_alpha.add_argument("--model-id", default="Qwen/Qwen2.5-14B-Instruct")
+    control_user_alpha.add_argument("--max-new-tokens", type=int, default=1)
+    control_user_alpha.add_argument("--request-label", default="control-user-alpha-smoke")
+    control_user_alpha.add_argument("--prompt", default="CrowdTensor user alpha smoke request")
+    control_user_alpha.add_argument("--timeout-seconds", type=int, default=120)
+    control_user_alpha.add_argument("--json", action="store_true")
+    gpu_swarm = subparsers.add_parser(
+        "gpu-swarm",
+        help="Build or inspect the ordinary-user GPU Swarm Usability Alpha flow.",
+    )
+    gpu_swarm_subparsers = gpu_swarm.add_subparsers(dest="gpu_swarm_action", required=True)
+
+    def add_gpu_swarm_common(action_parser: argparse.ArgumentParser) -> None:
+        action_parser.add_argument("--output-dir", default="dist/gpu-swarm-usability-alpha")
+        action_parser.add_argument(
+            "--control-user-alpha-report",
+            default="dist/control-user-alpha-goal-r1/control_user_alpha.json",
+        )
+        action_parser.add_argument(
+            "--core-handoff-report",
+            default=(
+                "dist/core-tech-handoff-stage-selective-live-goal-r1/"
+                "core_technology_handoff_rc.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--core-status-report",
+            default=(
+                "dist/core-technology-validation-status-stage-selective-goal-r1/"
+                "core_technology_validation_status.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--execution-mode",
+            choices=["fixture", "evidence-import", "external-existing", "kaggle-auto"],
+            default="evidence-import",
+        )
+        action_parser.add_argument("--external-runtime-verified", action="store_true")
+        action_parser.add_argument("--coordinator-url", default="http://127.0.0.1:9300")
+        action_parser.add_argument("--bind-host", default="0.0.0.0")
+        action_parser.add_argument("--port", type=int, default=9300)
+        action_parser.add_argument("--miner-id-prefix", default="gpu-swarm-alpha")
+        action_parser.add_argument("--model-id", default="Qwen/Qwen2.5-14B-Instruct")
+        action_parser.add_argument("--hf-cache-dir", default="")
+        action_parser.add_argument("--max-new-tokens", type=int, default=1)
+        action_parser.add_argument("--lease-seconds", type=float, default=30.0)
+        action_parser.add_argument("--request-label", default="gpu-swarm-alpha-smoke")
+        action_parser.add_argument("--prompt", default="CrowdTensor GPU swarm alpha smoke request")
+        action_parser.add_argument("--timeout-seconds", type=int, default=120)
+        action_parser.add_argument("--json", action="store_true")
+
+    def add_gpu_swarm_production_like_common(action_parser: argparse.ArgumentParser) -> None:
+        action_parser.add_argument("--output-dir", default="dist/gpu-swarm-production-like-validation")
+        action_parser.add_argument(
+            "--usability-report",
+            default="dist/gpu-swarm-usability-alpha-goal-r1/gpu_swarm_usability_alpha.json",
+        )
+        action_parser.add_argument(
+            "--control-user-alpha-report",
+            default="dist/control-user-alpha-goal-r1/control_user_alpha.json",
+        )
+        action_parser.add_argument(
+            "--core-handoff-report",
+            default=(
+                "dist/core-tech-handoff-stage-selective-live-goal-r1/"
+                "core_technology_handoff_rc.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--core-status-report",
+            default=(
+                "dist/core-technology-validation-status-stage-selective-goal-r1/"
+                "core_technology_validation_status.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--gpu-generation-report",
+            default=(
+                "dist/goal-final-infer-real-llm-internet-beta-import-16tok-gpu-summary-20260602/"
+                "real_llm_internet_beta.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--gpu-generation-fallback-report",
+            default=(
+                "dist/gpu-sharded-generation-beta-kaggle-20260528095658/"
+                "gpu_sharded_generation_beta_kaggle_auto.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--batch-stream-report",
+            default=(
+                "dist/goal-final-infer-public-real-llm-swarm-beta-import-16tok-p2p-batch-stream-kv-cache-model-gated-v2-20260602/"
+                "public_real_llm_swarm_beta.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--execution-mode",
+            choices=["fixture", "evidence-import", "external-existing", "kaggle-auto", "gpu-auto"],
+            default="evidence-import",
+        )
+        action_parser.add_argument("--larger-candidate-model-id", default="Qwen/Qwen2.5-32B-Instruct")
+        action_parser.add_argument("--larger-candidate-tier", default="32b")
+        action_parser.add_argument("--larger-candidate-parameter-count-b", type=float, default=32.5)
+        action_parser.add_argument("--target-max-new-tokens", type=int, default=16)
+        action_parser.add_argument("--batch-request-target", type=int, default=2)
+        action_parser.add_argument("--context-length", type=int, default=4096)
+        action_parser.add_argument("--gpu-count", type=int, default=2)
+        action_parser.add_argument("--available-vram-per-gpu-mb", type=int, default=15360)
+        action_parser.add_argument("--max-fresh-model-attempts", type=int, default=2)
+        action_parser.add_argument("--max-requeue-attempts", type=int, default=1)
+        action_parser.add_argument("--max-attempt-timeout-minutes", type=int, default=60)
+        action_parser.add_argument("--fresh-gpu-run-performed", action="store_true")
+        action_parser.add_argument("--largest-successful-fresh-model-tier", default="")
+        action_parser.add_argument("--timeout-seconds", type=int, default=120)
+        action_parser.add_argument("--json", action="store_true")
+
+    def add_kaggle_swarm_32b_feasibility_common(action_parser: argparse.ArgumentParser) -> None:
+        action_parser.add_argument("--output-dir", default="dist/kaggle-swarm-32b-quantized-feasibility")
+        action_parser.add_argument(
+            "--production-like-report",
+            default=(
+                "dist/gpu-swarm-production-like-validation-goal-r1/"
+                "gpu_swarm_production_like_validation.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--core-status-report",
+            default=(
+                "dist/core-technology-validation-status-stage-selective-goal-r1/"
+                "core_technology_validation_status.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--large-model-kaggle-report",
+            default=(
+                "dist/large-model-kaggle-stage-selective-hf-7b-manual-rope-20260616/"
+                "large_model_kaggle_validation.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--fresh-32b-live-probe-report",
+            default=(
+                "dist/kaggle-32b-quantized-live-probe-summary/"
+                "kaggle_32b_quantized_live_experiment_summary.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--fresh-32b-stage-owned-loading-probe-report",
+            default=(
+                "dist/kaggle-32b-stage-owned-safetensors-probe-awq-live-r3-clone/"
+                "kaggle_32b_stage_owned_safetensors_probe.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--fresh-32b-activation-decode-probe-report",
+            default=(
+                "dist/kaggle-32b-upper-bound-crossing-live-20260620-r3/"
+                "kaggle_32b_stage_owned_activation_decode_probe.json"
+            ),
+        )
+        action_parser.add_argument(
+            "--execution-mode",
+            choices=["fixture", "evidence-import", "package", "external-existing", "kaggle-auto"],
+            default="evidence-import",
+        )
+        action_parser.add_argument("--candidate-model-id", default="Qwen/Qwen2.5-32B-Instruct-AWQ")
+        action_parser.add_argument("--candidate-model-tier", default="32b-quantized")
+        action_parser.add_argument("--candidate-parameter-count-b", type=float, default=32.5)
+        action_parser.add_argument("--candidate-hidden-size", type=int, default=5120)
+        action_parser.add_argument("--candidate-layer-count", type=int, default=64)
+        action_parser.add_argument("--quantized-format", default="AWQ-safetensors")
+        action_parser.add_argument("--quantization-bits", type=float, default=4.0)
+        action_parser.add_argument("--quantization-metadata-overhead-percent", type=float, default=10.0)
+        action_parser.add_argument(
+            "--runtime-adapter",
+            choices=["hf-awq-stage-selective-kaggle", "gguf-llama-cpp-cuda", "hf-stage-selective-cuda", "hf-bitsandbytes", "exllama-v2", "vllm", "sglang"],
+            default="hf-awq-stage-selective-kaggle",
+        )
+        action_parser.add_argument("--kaggle-gpu-type", default="NVIDIA_TESLA_T4_X2")
+        action_parser.add_argument("--gpu-count", type=int, default=2)
+        action_parser.add_argument("--available-vram-per-gpu-mb", type=int, default=15360)
+        action_parser.add_argument("--simultaneous-kaggle-gpu-kernel-limit", type=int, default=2)
+        action_parser.add_argument("--stage-count", type=int, default=2)
+        action_parser.add_argument("--context-length", type=int, default=4096)
+        action_parser.add_argument("--kv-cache-bytes-per-element", type=int, default=2)
+        action_parser.add_argument("--activation-bytes-per-element", type=int, default=2)
+        action_parser.add_argument("--runtime-overhead-mb-per-stage", type=int, default=3072)
+        action_parser.add_argument("--fragmentation-margin-mb-per-stage", type=int, default=1024)
+        action_parser.add_argument("--package-overhead-mb-per-stage", type=int, default=512)
+        action_parser.add_argument("--target-max-new-tokens", type=int, default=16)
+        action_parser.add_argument("--batch-request-target", type=int, default=2)
+        action_parser.add_argument("--max-fresh-model-attempts", type=int, default=2)
+        action_parser.add_argument("--max-requeue-attempts", type=int, default=1)
+        action_parser.add_argument("--max-attempt-timeout-minutes", type=int, default=60)
+        action_parser.add_argument("--fresh-kaggle-run-performed", action="store_true")
+        action_parser.add_argument("--package-slug-prefix", default="ct-32b-q")
+        action_parser.add_argument("--timeout-seconds", type=int, default=120)
+        action_parser.add_argument("--json", action="store_true")
+
+    for action in ["smoke", "prepare", "coordinator", "infer", "status", "collect", "clean"]:
+        action_parser = gpu_swarm_subparsers.add_parser(action)
+        add_gpu_swarm_common(action_parser)
+        action_parser.set_defaults(stage="stage0")
+    gpu_swarm_miner = gpu_swarm_subparsers.add_parser("miner")
+    add_gpu_swarm_common(gpu_swarm_miner)
+    gpu_swarm_miner.add_argument("--stage", choices=["stage0", "stage1"], required=True)
+    gpu_swarm_validate = gpu_swarm_subparsers.add_parser(
+        "validate-production-like",
+        help="Build a bounded GPU Swarm production-like validation and larger-model attempt report.",
+    )
+    add_gpu_swarm_production_like_common(gpu_swarm_validate)
+    gpu_swarm_scale = gpu_swarm_subparsers.add_parser(
+        "scale-test",
+        help="Alias for bounded GPU Swarm production-like scale validation.",
+    )
+    add_gpu_swarm_production_like_common(gpu_swarm_scale)
+    gpu_swarm_kaggle_32b = gpu_swarm_subparsers.add_parser(
+        "kaggle-32b-feasibility",
+        help="Build a bounded Kaggle multi-kernel 32B quantized feasibility RC.",
+    )
+    add_kaggle_swarm_32b_feasibility_common(gpu_swarm_kaggle_32b)
+    heterogeneous_stage_alpha = subparsers.add_parser(
+        "heterogeneous-stage-alpha",
+        help="Build GPU+TPU+CPU heterogeneous stage Alpha evidence and 32B RC boundary.",
+    )
+    heterogeneous_stage_alpha.add_argument("--output-dir", default="dist/gpu-tpu-cpu-heterogeneous-stage-alpha")
+    heterogeneous_stage_alpha.add_argument(
+        "--execution-mode",
+        choices=["fixture", "evidence-import", "external-existing"],
+        default="evidence-import",
+    )
+    heterogeneous_stage_alpha.add_argument(
+        "--tpu-real-llm-report",
+        default=(
+            "dist/kaggle-tpu-gpt2-xl-jax-web-probe-20260621-r1/"
+            "kaggle_tpu_real_llm_web_probe.json"
+        ),
+    )
+    heterogeneous_stage_alpha.add_argument(
+        "--gpu-full-32b-report",
+        default=(
+            "dist/kaggle-32b-full-heterogeneous-multitoken-kv-live-20260620-r1/"
+            "kaggle_32b_full_heterogeneous_probe.json"
+        ),
+    )
+    heterogeneous_stage_alpha.add_argument(
+        "--gpu-awq-32b-report",
+        default=(
+            "dist/kaggle-32b-upper-bound-crossing-live-20260620-r3/"
+            "kaggle_32b_stage_owned_activation_decode_probe.json"
+        ),
+    )
+    heterogeneous_stage_alpha.add_argument(
+        "--cpu-real-llm-report",
+        default=(
+            "dist/real-llm-llama-like-local-smoke-20260615/"
+            "real_llm_sharded_evidence.json"
+        ),
+    )
+    heterogeneous_stage_alpha.add_argument("--small-medium-min-parameter-count", type=int, default=100_000_000)
+    heterogeneous_stage_alpha.add_argument(
+        "--local-e2e-mode",
+        choices=["run", "fixture", "skip"],
+        default="run",
+    )
+    heterogeneous_stage_alpha.add_argument("--local-e2e-model-id", default="gpt2")
+    heterogeneous_stage_alpha.add_argument("--local-e2e-prompt", default="CrowdTensor heterogeneous stage smoke")
+    heterogeneous_stage_alpha.add_argument(
+        "--bridge-mode",
+        choices=["run", "fixture", "skip"],
+        default="run",
+    )
+    heterogeneous_stage_alpha.add_argument("--bridge-model-id", default="hf-internal-testing/tiny-random-gpt2")
+    heterogeneous_stage_alpha.add_argument("--bridge-sequence-length", type=int, default=16)
+    heterogeneous_stage_alpha.add_argument("--alpha-model-id", default="gpt2-xl")
+    heterogeneous_stage_alpha.add_argument("--alpha-sequence-length", type=int, default=8)
+    heterogeneous_stage_alpha.add_argument("--alpha-hidden-size", type=int, default=1600)
+    heterogeneous_stage_alpha.add_argument(
+        "--activation-dtype",
+        choices=["float16", "bfloat16", "float32"],
+        default="float16",
+    )
+    heterogeneous_stage_alpha.add_argument("--target-32b-model-id", default="Qwen/Qwen2.5-32B-Instruct")
+    heterogeneous_stage_alpha.add_argument("--target-max-new-tokens", type=int, default=1)
+    heterogeneous_stage_alpha.add_argument("--context-length", type=int, default=128)
+    heterogeneous_stage_alpha.add_argument("--timeout-seconds", type=int, default=120)
+    heterogeneous_stage_alpha.add_argument("--json", action="store_true")
+    heterogeneous_32b_rc = subparsers.add_parser(
+        "heterogeneous-32b-rc",
+        help="Build GPU+TPU+CPU 32B same-request heterogeneous RC evidence or blocker report.",
+    )
+    heterogeneous_32b_rc.add_argument("--output-dir", default="dist/gpu-tpu-cpu-32b-heterogeneous-rc")
+    heterogeneous_32b_rc.add_argument(
+        "--execution-mode",
+        choices=["fixture", "evidence-import", "external-existing"],
+        default="evidence-import",
+    )
+    heterogeneous_32b_rc.add_argument(
+        "--alpha-report",
+        default=(
+            "dist/gpu-tpu-cpu-heterogeneous-stage-alpha-20260622-r3-cli/"
+            "gpu_tpu_cpu_heterogeneous_stage_alpha.json"
+        ),
+    )
+    heterogeneous_32b_rc.add_argument(
+        "--live-proof-mode",
+        choices=["none", "fixture-success", "fixture-fallback", "external"],
+        default="none",
+    )
+    heterogeneous_32b_rc.add_argument("--live-same-request-report", default="")
+    heterogeneous_32b_rc.add_argument("--tpu-allocation-attempt-report", default="")
+    heterogeneous_32b_rc.add_argument("--tpu-web-active-event-report", default="")
+    heterogeneous_32b_rc.add_argument("--runtime-bridge-report", default="")
+    heterogeneous_32b_rc.add_argument("--tpu-stage-adapter-plan-report", default="")
+    heterogeneous_32b_rc.add_argument("--tpu-stage-runtime-probe-report", default="")
+    heterogeneous_32b_rc.add_argument("--tpu-stage-loader-probe-report", default="")
+    heterogeneous_32b_rc.add_argument("--target-32b-model-id", default="Qwen/Qwen2.5-32B-Instruct")
+    heterogeneous_32b_rc.add_argument("--target-max-new-tokens", type=int, default=1)
+    heterogeneous_32b_rc.add_argument("--context-length", type=int, default=128)
+    heterogeneous_32b_rc.add_argument("--timeout-seconds", type=int, default=120)
+    heterogeneous_32b_rc.add_argument("--json", action="store_true")
+    heterogeneous_32b_serving = subparsers.add_parser(
+        "heterogeneous-32b-serving",
+        help="Build product-like 32B GPU+TPU+CPU heterogeneous serving deployment evidence.",
+    )
+    heterogeneous_32b_serving.add_argument("--output-dir", default="dist/heterogeneous-32b-serving")
+    heterogeneous_32b_serving.add_argument(
+        "--serving-mode",
+        choices=["fixture", "evidence-import", "external-existing"],
+        default="evidence-import",
+    )
+    heterogeneous_32b_serving.add_argument(
+        "--rc-report",
+        default=(
+            "dist/gpu-tpu-cpu-32b-heterogeneous-rc-20260623-r26-real-tpu-stage-same-request-success/"
+            "gpu_tpu_cpu_32b_heterogeneous_rc.json"
+        ),
+    )
+    heterogeneous_32b_serving.add_argument("--live-run-mode", choices=["none", "external"], default="none")
+    heterogeneous_32b_serving.add_argument("--live-serving-report", default="")
+    heterogeneous_32b_serving.add_argument("--target-32b-model-id", default="Qwen/Qwen2.5-32B-Instruct")
+    heterogeneous_32b_serving.add_argument("--max-new-tokens", type=int, default=4)
+    heterogeneous_32b_serving.add_argument("--context-length", type=int, default=128)
+    heterogeneous_32b_serving.add_argument(
+        "--failure-injection",
+        choices=["none", "tpu-timeout", "gpu-unavailable", "cpu-tail-retry"],
+        default="tpu-timeout",
+    )
+    heterogeneous_32b_serving.add_argument("--timeout-seconds", type=int, default=120)
+    heterogeneous_32b_serving.add_argument("--json", action="store_true")
     large_model_kaggle = subparsers.add_parser(
         "large-model-kaggle-validate",
         help="Package, run, or import Kaggle GPU large-model validation evidence.",
@@ -27578,10 +30547,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_demo_kaggle_real.add_argument("--task-id", default="")
     remote_demo_kaggle_real.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "serve" and getattr(args, "output_dir", None) is None:
+        args.output_dir = (
+            "dist/glm52-kaggle-alpha"
+            if str(getattr(args, "serve_target", "") or "") == "glm52-kaggle"
+            else "dist/glm52-kaggle-alpha-service"
+        )
     if getattr(args, "command", "") == "infer":
         args.coordinator_port_explicit = _flag_explicit(raw_argv, "--coordinator-port")
         args.infer_mode_explicit = _flag_explicit(raw_argv, "--mode")
-    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-tunnel-doctor", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "large-model-shard", "large-model-shard-rc", "core-tech-handoff", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
+    if args.command in {"local-proof", "infer", "serve", "operator-invite", "operator-status", "coordinator-route", "trust", "settlement", "swarm-bootstrap", "swarm-bootstrap-check", "swarm-tunnel-doctor", "swarm-handoff-doctor", "join", "generate", "p2pd", "p2p-daemon", "home-infer", "llm-infer", "cpu-infer", "shard-infer", "micro-llm-shard-infer", "real-llm-shard-infer", "large-model-shard", "large-model-shard-rc", "core-tech-handoff", "control-user-alpha", "gpu-swarm", "heterogeneous-stage-alpha", "micro-llm-artifact", "shard-infer-beta", "micro-llm-shard-infer-beta", "real-llm-shard-infer-beta", "micro-llm-live-rc", "real-llm-live-rc", "real-llm-internet-alpha", "real-llm-internet-beta", "swarm-session", "public-swarm-alpha-rc", "public-swarm-beta", "public-swarm-beta-rc", "public-swarm-product-beta", "public-real-llm-swarm-beta", "usable-swarm", "preview", "live-preview", "operator-preview", "swarm-trial", "public-swarm-gpu-beta", "gpu-generate", "real-p2p-rc", "petals-candidate", "release-ready", "remote-runbook", "remote-acceptance"} or (
         args.command == "remote-demo" and hasattr(args, "request_count")
     ):
         if hasattr(args, "request_count") and args.request_count < 1:
@@ -27796,6 +30771,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--idle-sleep must be positive")
     if args.command == "generate":
         args.output_dir_explicit = _flag_explicit(raw_argv, "--output-dir")
+        generate_target = str(getattr(args, "target", "") or "").strip()
+        if not generate_target and str(getattr(args, "prompt_text_arg", "") or "") == "glm52-kaggle":
+            generate_target = "glm52-kaggle"
+            args.prompt_text_arg = ""
+        args.generate_target = generate_target
         prompt_sources = [
             name
             for name, value in [
@@ -28502,6 +31482,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--reserved-kv-cache-mb must be non-negative")
         if args.max_new_tokens < 1 or args.max_new_tokens > 4096:
             raise SystemExit("--max-new-tokens must be between 1 and 4096")
+        if args.stage_count < 2 or args.stage_count > 16:
+            raise SystemExit("--stage-count must be between 2 and 16")
+        if args.kaggle_gpu_memory_gb <= 0:
+            raise SystemExit("--kaggle-gpu-memory-gb must be positive")
         if args.real_benchmark_report and not Path(args.real_benchmark_report).is_file():
             raise SystemExit("--real-benchmark-report must point to an existing JSON file")
     if args.command == "large-model-shard-rc":
@@ -28546,10 +31530,213 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--real-timeout-seconds must be positive")
         if args.mode == "real" and args.real_timeout_seconds > 1200:
             raise SystemExit("--real-timeout-seconds must be <= 1200 in real mode")
-        for attr in ["real_benchmark_report", "real_run_report"]:
+        for attr in [
+            "real_benchmark_report",
+            "real_run_report",
+            "seven_b_live_report",
+            "fourteen_b_live_report",
+            "stage_selective_plan_report",
+            "stage_selective_performance_report",
+        ]:
             value = getattr(args, attr)
             if value and not Path(value).is_file():
                 raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
+    if args.command == "control-user-alpha":
+        if args.max_new_tokens < 1 or args.max_new_tokens > 32:
+            raise SystemExit("--max-new-tokens must be between 1 and 32")
+        if not str(args.request_label).strip():
+            raise SystemExit("--request-label must be non-empty")
+        if not str(args.prompt).strip():
+            raise SystemExit("--prompt must be non-empty")
+        for attr in ["core_handoff_report", "core_status_report"]:
+            value = getattr(args, attr)
+            if value and not Path(value).is_file():
+                raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
+    if args.command == "gpu-swarm":
+        if args.gpu_swarm_action == "kaggle-32b-feasibility":
+            if args.execution_mode == "evidence-import":
+                for attr in ["production_like_report", "core_status_report", "large_model_kaggle_report"]:
+                    value = getattr(args, attr)
+                    if value and not Path(value).is_file():
+                        raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
+                fresh_probe_report = getattr(args, "fresh_32b_live_probe_report", "")
+                if fresh_probe_report and not Path(fresh_probe_report).is_file():
+                    default_fresh_probe = Path(
+                        "dist/kaggle-32b-quantized-live-probe-summary/"
+                        "kaggle_32b_quantized_live_experiment_summary.json"
+                    )
+                    if Path(fresh_probe_report) != default_fresh_probe:
+                        raise SystemExit("--fresh-32b-live-probe-report must point to an existing JSON file when provided")
+                stage_owned_probe_report = getattr(args, "fresh_32b_stage_owned_loading_probe_report", "")
+                if stage_owned_probe_report and not Path(stage_owned_probe_report).is_file():
+                    default_stage_owned_probe = Path(
+                        "dist/kaggle-32b-stage-owned-safetensors-probe-awq-live-r3-clone/"
+                        "kaggle_32b_stage_owned_safetensors_probe.json"
+                    )
+                    if Path(stage_owned_probe_report) != default_stage_owned_probe:
+                        raise SystemExit("--fresh-32b-stage-owned-loading-probe-report must point to an existing JSON file when provided")
+                activation_decode_probe_report = getattr(args, "fresh_32b_activation_decode_probe_report", "")
+                if activation_decode_probe_report and not Path(activation_decode_probe_report).is_file():
+                    default_activation_decode_probe = Path(
+                        "dist/kaggle-32b-upper-bound-crossing-live-20260620-r3/"
+                        "kaggle_32b_stage_owned_activation_decode_probe.json"
+                    )
+                    if Path(activation_decode_probe_report) != default_activation_decode_probe:
+                        raise SystemExit("--fresh-32b-activation-decode-probe-report must point to an existing JSON file when provided")
+            for name in [
+                "candidate_parameter_count_b",
+                "quantization_bits",
+                "quantization_metadata_overhead_percent",
+            ]:
+                if getattr(args, name) <= 0:
+                    raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+            for name in [
+                "candidate_hidden_size",
+                "candidate_layer_count",
+                "gpu_count",
+                "available_vram_per_gpu_mb",
+                "simultaneous_kaggle_gpu_kernel_limit",
+                "stage_count",
+                "context_length",
+                "kv_cache_bytes_per_element",
+                "activation_bytes_per_element",
+                "runtime_overhead_mb_per_stage",
+                "fragmentation_margin_mb_per_stage",
+                "package_overhead_mb_per_stage",
+            ]:
+                if getattr(args, name) < 1:
+                    raise SystemExit(f"--{name.replace('_', '-')} must be positive")
+            if args.target_max_new_tokens < 1 or args.target_max_new_tokens > 128:
+                raise SystemExit("--target-max-new-tokens must be between 1 and 128")
+            if args.batch_request_target < 1 or args.batch_request_target > 16:
+                raise SystemExit("--batch-request-target must be between 1 and 16")
+            if args.max_fresh_model_attempts > 2:
+                raise SystemExit("--max-fresh-model-attempts must be <= 2")
+            if args.max_requeue_attempts > 1:
+                raise SystemExit("--max-requeue-attempts must be <= 1")
+            if args.max_attempt_timeout_minutes < 1 or args.max_attempt_timeout_minutes > 60:
+                raise SystemExit("--max-attempt-timeout-minutes must be between 1 and 60")
+            if args.stage_count > args.simultaneous_kaggle_gpu_kernel_limit and args.execution_mode == "kaggle-auto":
+                raise SystemExit("--stage-count must not exceed --simultaneous-kaggle-gpu-kernel-limit in kaggle-auto mode")
+        elif args.gpu_swarm_action in {"validate-production-like", "scale-test"}:
+            for attr in ["usability_report", "core_handoff_report", "core_status_report", "control_user_alpha_report"]:
+                value = getattr(args, attr)
+                if value and not Path(value).is_file():
+                    raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
+            if not Path(args.gpu_generation_report).is_file() and not Path(args.gpu_generation_fallback_report).is_file():
+                raise SystemExit("--gpu-generation-report or --gpu-generation-fallback-report must point to an existing JSON file")
+            if args.batch_stream_report and not Path(args.batch_stream_report).is_file():
+                raise SystemExit("--batch-stream-report must point to an existing JSON file")
+            if args.target_max_new_tokens < 1 or args.target_max_new_tokens > 128:
+                raise SystemExit("--target-max-new-tokens must be between 1 and 128")
+            if args.batch_request_target < 1 or args.batch_request_target > 16:
+                raise SystemExit("--batch-request-target must be between 1 and 16")
+            if args.context_length < 1:
+                raise SystemExit("--context-length must be positive")
+            if args.gpu_count < 1:
+                raise SystemExit("--gpu-count must be positive")
+            if args.available_vram_per_gpu_mb < 1:
+                raise SystemExit("--available-vram-per-gpu-mb must be positive")
+            if args.larger_candidate_parameter_count_b <= 0:
+                raise SystemExit("--larger-candidate-parameter-count-b must be positive")
+            if args.max_fresh_model_attempts > 2:
+                raise SystemExit("--max-fresh-model-attempts must be <= 2")
+            if args.max_requeue_attempts > 1:
+                raise SystemExit("--max-requeue-attempts must be <= 1")
+            if args.max_attempt_timeout_minutes < 1 or args.max_attempt_timeout_minutes > 60:
+                raise SystemExit("--max-attempt-timeout-minutes must be between 1 and 60")
+        else:
+            if args.port < 1:
+                raise SystemExit("--port must be positive")
+            if args.max_new_tokens < 1 or args.max_new_tokens > 32:
+                raise SystemExit("--max-new-tokens must be between 1 and 32")
+            if args.lease_seconds <= 0:
+                raise SystemExit("--lease-seconds must be positive")
+            if not str(args.request_label).strip():
+                raise SystemExit("--request-label must be non-empty")
+            if not str(args.prompt).strip():
+                raise SystemExit("--prompt must be non-empty")
+            if args.gpu_swarm_action == "miner" and args.stage not in {"stage0", "stage1"}:
+                raise SystemExit("--stage must be stage0 or stage1")
+            for attr in ["core_handoff_report", "core_status_report"]:
+                value = getattr(args, attr)
+                if value and not Path(value).is_file():
+                    raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
+            control_report = getattr(args, "control_user_alpha_report", "")
+            if control_report and not Path(control_report).is_file() and control_report != "dist/control-user-alpha-goal-r1/control_user_alpha.json":
+                raise SystemExit("--control-user-alpha-report must point to an existing JSON file")
+    if args.command == "heterogeneous-stage-alpha":
+        if args.execution_mode in {"evidence-import", "external-existing"}:
+            for attr in [
+                "tpu_real_llm_report",
+                "gpu_full_32b_report",
+                "gpu_awq_32b_report",
+                "cpu_real_llm_report",
+            ]:
+                value = getattr(args, attr)
+                if value and not Path(value).is_file():
+                    raise SystemExit(f"--{attr.replace('_', '-')} must point to an existing JSON file")
+        if args.small_medium_min_parameter_count < 1:
+            raise SystemExit("--small-medium-min-parameter-count must be positive")
+        if not str(args.local_e2e_model_id).strip():
+            raise SystemExit("--local-e2e-model-id must be non-empty")
+        if not str(args.bridge_model_id).strip():
+            raise SystemExit("--bridge-model-id must be non-empty")
+        if args.bridge_sequence_length < 1 or args.bridge_sequence_length > 128:
+            raise SystemExit("--bridge-sequence-length must be between 1 and 128")
+        if args.alpha_sequence_length < 1:
+            raise SystemExit("--alpha-sequence-length must be positive")
+        if args.alpha_hidden_size < 1:
+            raise SystemExit("--alpha-hidden-size must be positive")
+        if args.target_max_new_tokens < 1 or args.target_max_new_tokens > 16:
+            raise SystemExit("--target-max-new-tokens must be between 1 and 16")
+        if args.context_length < 1 or args.context_length > 4096:
+            raise SystemExit("--context-length must be between 1 and 4096")
+    if args.command == "heterogeneous-32b-rc":
+        if args.execution_mode in {"evidence-import", "external-existing"}:
+            value = getattr(args, "alpha_report")
+            if value and not Path(value).is_file():
+                raise SystemExit("--alpha-report must point to an existing JSON file")
+        if args.live_proof_mode == "external":
+            if not str(args.live_same_request_report or "").strip():
+                raise SystemExit("--live-same-request-report is required with --live-proof-mode external")
+            if not Path(args.live_same_request_report).is_file():
+                raise SystemExit("--live-same-request-report must point to an existing JSON file")
+        if str(args.tpu_allocation_attempt_report or "").strip() and not Path(args.tpu_allocation_attempt_report).is_file():
+            raise SystemExit("--tpu-allocation-attempt-report must point to an existing JSON file")
+        if str(args.tpu_web_active_event_report or "").strip() and not Path(args.tpu_web_active_event_report).is_file():
+            raise SystemExit("--tpu-web-active-event-report must point to an existing JSON file")
+        if str(args.runtime_bridge_report or "").strip() and not Path(args.runtime_bridge_report).is_file():
+            raise SystemExit("--runtime-bridge-report must point to an existing JSON file")
+        if str(args.tpu_stage_adapter_plan_report or "").strip() and not Path(args.tpu_stage_adapter_plan_report).is_file():
+            raise SystemExit("--tpu-stage-adapter-plan-report must point to an existing JSON file")
+        if str(args.tpu_stage_runtime_probe_report or "").strip() and not Path(args.tpu_stage_runtime_probe_report).is_file():
+            raise SystemExit("--tpu-stage-runtime-probe-report must point to an existing JSON file")
+        if str(args.tpu_stage_loader_probe_report or "").strip() and not Path(args.tpu_stage_loader_probe_report).is_file():
+            raise SystemExit("--tpu-stage-loader-probe-report must point to an existing JSON file")
+        if args.target_max_new_tokens < 1 or args.target_max_new_tokens > 16:
+            raise SystemExit("--target-max-new-tokens must be between 1 and 16")
+        if args.context_length < 1 or args.context_length > 4096:
+            raise SystemExit("--context-length must be between 1 and 4096")
+        if not str(args.target_32b_model_id).strip():
+            raise SystemExit("--target-32b-model-id must be non-empty")
+    if args.command == "heterogeneous-32b-serving":
+        if args.serving_mode in {"evidence-import", "external-existing"}:
+            if not str(args.rc_report or "").strip():
+                raise SystemExit("--rc-report is required")
+            if not Path(args.rc_report).is_file():
+                raise SystemExit("--rc-report must point to an existing JSON file")
+        if args.live_run_mode == "external":
+            if not str(args.live_serving_report or "").strip():
+                raise SystemExit("--live-serving-report is required with --live-run-mode external")
+            if not Path(args.live_serving_report).is_file():
+                raise SystemExit("--live-serving-report must point to an existing JSON file")
+        if args.max_new_tokens < 4 or args.max_new_tokens > 16:
+            raise SystemExit("--max-new-tokens must be between 4 and 16")
+        if args.context_length < 1 or args.context_length > 4096:
+            raise SystemExit("--context-length must be between 1 and 4096")
+        if not str(args.target_32b_model_id).strip():
+            raise SystemExit("--target-32b-model-id must be non-empty")
     if args.command == "large-model-kaggle-validate":
         if args.context_length < 1:
             raise SystemExit("--context-length must be positive")
@@ -28780,14 +31967,688 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise SystemExit("--llm-runtime-cmd and --llm-runtime-url are mutually exclusive")
         if args.llm_runtime_timeout <= 0:
             raise SystemExit("--llm-runtime-timeout must be positive")
+    if args.command == "deploy":
+        _validate_glm52_alpha_model_accelerators(args)
+        if args.max_new_tokens < 2:
+            raise SystemExit("--max-new-tokens must be at least 2 for Alpha")
+        if args.max_new_tokens_limit < args.max_new_tokens:
+            raise SystemExit("--max-new-tokens-limit must be >= --max-new-tokens")
+        if args.stage_push_parallelism < 0:
+            raise SystemExit("--stage-push-parallelism must be non-negative")
+        if args.gpu_quota_preflight_timeout_seconds <= 0:
+            raise SystemExit("--gpu-quota-preflight-timeout-seconds must be positive")
+        for name in [
+            "full_prefix_prefill_length",
+            "full_prefix_dsa_mask_topk",
+            "full_prefix_executed_expert_count",
+            "full_prefix_top_k",
+            "full_prefix_row_block_size",
+            "full_prefix_max_tensor_bytes",
+            "full_prefix_max_block_bytes",
+        ]:
+            if int(getattr(args, name)) < 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be non-negative")
+        for name in ["cpu_group_stage_attempt_seconds", "cpu_group_stage_poll_seconds"]:
+            if float(getattr(args, name)) < 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be non-negative")
+    if args.command == "serve" and str(getattr(args, "serve_target", "") or "") == "glm52-kaggle":
+        _validate_glm52_alpha_model_accelerators(args)
+        if args.max_new_tokens < 2:
+            raise SystemExit("--max-new-tokens must be at least 2 for Alpha")
+        if args.max_new_tokens_limit < args.max_new_tokens:
+            raise SystemExit("--max-new-tokens-limit must be >= --max-new-tokens")
+        if args.stage_push_parallelism < 0:
+            raise SystemExit("--stage-push-parallelism must be non-negative")
+        for name in [
+            "full_prefix_prefill_length",
+            "full_prefix_dsa_mask_topk",
+            "full_prefix_executed_expert_count",
+            "full_prefix_top_k",
+            "full_prefix_row_block_size",
+            "full_prefix_max_tensor_bytes",
+            "full_prefix_max_block_bytes",
+        ]:
+            if int(getattr(args, name)) < 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be non-negative")
+        for name in ["cpu_group_stage_attempt_seconds", "cpu_group_stage_poll_seconds"]:
+            if float(getattr(args, name)) < 0:
+                raise SystemExit(f"--{name.replace('_', '-')} must be non-negative")
     if args.command == "clean-artifacts":
         if args.older_than_hours < 0:
             raise SystemExit("--older-than-hours must be non-negative")
+    if args.command == "train" and args.train_action == "lora":
+        if args.local_steps < 2:
+            raise SystemExit("--local-steps must be at least 2")
+        if args.pipeline_steps < 2:
+            raise SystemExit("--pipeline-steps must be at least 2")
+        if args.learning_rate <= 0:
+            raise SystemExit("--learning-rate must be positive")
+        if args.batch_size < 1:
+            raise SystemExit("--batch-size must be at least 1")
+        if args.sequence_length < 4:
+            raise SystemExit("--sequence-length must be at least 4")
+        if args.gradient_accumulation < 1:
+            raise SystemExit("--gradient-accumulation must be at least 1")
+        if args.allocation_timeout_seconds <= 0 or args.allocation_timeout_seconds > 1800:
+            raise SystemExit("--allocation-timeout-seconds must be in (0, 1800]")
+    if args.command == "train" and args.train_action == "create":
+        heterogeneous_requested = bool(
+            args.heterogeneous
+            or args.tpu
+            or args.manifest
+            or args.model == "Qwen/Qwen2.5-7B"
+        )
+        if (
+            not heterogeneous_requested
+            and (args.model != "Qwen/Qwen2.5-1.5B" or args.steps != 8)
+        ):
+            raise SystemExit("Elastic Beta currently requires pinned Qwen/Qwen2.5-1.5B and 8 steps")
+        if heterogeneous_requested and not str(args.hf_token_env).strip():
+            raise SystemExit("--hf-token-env must not be empty")
+        if args.tpu and args.model != "Qwen/Qwen2.5-7B":
+            raise SystemExit("--tpu currently requires --model Qwen/Qwen2.5-7B")
+        if bool(args.config) != bool(args.tokenized_payload):
+            raise SystemExit("--config and --tokenized-payload must be provided together")
+        if args.checkpoint_store == "s3" and not args.checkpoint_bucket:
+            raise SystemExit("--checkpoint-bucket is required for S3/MinIO storage")
+        if args.checkpoint_retention_steps < 1:
+            raise SystemExit("--checkpoint-retention-steps must be at least 1")
+        if args.lease_seconds <= 0:
+            raise SystemExit("--lease-seconds must be positive")
+        if args.max_online_miners < 1:
+            raise SystemExit("--max-online-miners must be at least 1")
+        if args.max_rejected_submissions_per_session < 1:
+            raise SystemExit("--max-rejected-submissions-per-session must be at least 1")
+        if args.max_checkpoint_bytes_per_session < 0:
+            raise SystemExit("--max-checkpoint-bytes-per-session must be non-negative")
+    if args.command == "train" and args.train_action == "resume":
+        if args.allocation_timeout_seconds <= 0 or args.allocation_timeout_seconds > 1800:
+            raise SystemExit("--allocation-timeout-seconds must be in (0, 1800]")
+    if args.command == "train" and args.train_action in {"start", "run"}:
+        if bool(args.model_config) != bool(args.tokenized_payload):
+            raise SystemExit(
+                "--model-config and --tokenized-payload must be provided together"
+            )
+        if not str(args.hf_token_env).strip():
+            raise SystemExit("--hf-token-env must not be empty")
+    if args.command == "train" and args.train_action == "events":
+        if args.after_sequence < 0:
+            raise SystemExit("--after-sequence must be non-negative")
+        if args.limit < 1 or args.limit > 1000:
+            raise SystemExit("--limit must be in [1, 1000]")
+    if args.command == "train" and args.train_action == "status":
+        if args.watch_interval_seconds <= 0:
+            raise SystemExit("--watch-interval-seconds must be positive")
+        if args.watch_timeout_seconds <= 0 or args.watch_timeout_seconds > 1800:
+            raise SystemExit("--watch-timeout-seconds must be in (0, 1800]")
+    if args.command == "train" and args.train_action == "serve":
+        if args.port < 1 or args.port > 65535:
+            raise SystemExit("--port must be in [1, 65535]")
+        if not str(args.token_env).strip():
+            raise SystemExit("--token-env must not be empty")
+        if not str(args.miner_token_env).strip():
+            raise SystemExit("--miner-token-env must not be empty")
     return args
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv and raw_argv[0] == "volunteer":
+        from .volunteer_training_cli import main as volunteer_main
+
+        volunteer_main(raw_argv[1:])
+        return
+    if raw_argv and raw_argv[0] == "community":
+        from .community_cli import main as community_main
+
+        community_main(raw_argv[1:])
+        return
+    args = parse_args(raw_argv)
+    if args.command == "train":
+        try:
+            if args.train_action == "serve":
+                if args.elastic_job:
+                    production_job = HeterogeneousTrainingProductionController.is_job(
+                        args.elastic_job
+                    )
+                    heterogeneous_job = HeterogeneousTrainingBetaController.is_job(
+                        args.elastic_job
+                    )
+                    elastic_controller = (
+                        HeterogeneousTrainingProductionController(
+                            args.elastic_job
+                        ).beta
+                        if production_job
+                        else HeterogeneousTrainingBetaController(args.elastic_job)
+                        if heterogeneous_job
+                        else ElasticTrainingBetaController(args.elastic_job)
+                    )
+                    private_credentials = elastic_controller.credentials()
+                    owner_token = str(
+                        os.environ.get(args.token_env)
+                        or private_credentials.get("owner_token")
+                        or ""
+                    )
+                    miner_token = str(
+                        os.environ.get(args.miner_token_env)
+                        or private_credentials.get("miner_token")
+                        or ""
+                    )
+                    app = (
+                        create_heterogeneous_training_beta_app(
+                            elastic_controller,
+                            owner_token=owner_token,
+                            miner_token=miner_token,
+                        )
+                        if heterogeneous_job
+                        else create_elastic_training_beta_app(
+                            elastic_controller,
+                            owner_token=owner_token,
+                            miner_token=miner_token,
+                        )
+                    )
+                    service_schema = (
+                        "crowdtensor_heterogeneous_training_production_service_cli_v1"
+                        if production_job
+                        else "crowdtensor_heterogeneous_training_beta_service_cli_v1"
+                        if heterogeneous_job
+                        else "crowdtensor_elastic_training_beta_service_cli_v1"
+                    )
+                else:
+                    token = str(os.environ.get(args.token_env) or "")
+                    if not token:
+                        raise RuntimeError("training_beta_service_private_token_required")
+                    controller = TrainingBetaController(TrainingBetaJobStore(args.store))
+                    app = create_training_beta_app(controller, token=token)
+                    service_schema = "crowdtensor_training_qwen15b_beta_service_cli_v1"
+                import uvicorn
+
+                uvicorn.run(
+                    app,
+                    host=args.host,
+                    port=int(args.port),
+                    log_level="warning",
+                    access_log=False,
+                )
+                report = {
+                    "schema": service_schema,
+                    "ok": True,
+                    "overall_state": "stopped",
+                    "current_phase": "cleanup",
+                    "host": args.host,
+                    "port": int(args.port),
+                    "authenticated": True,
+                    "token_env_name_hash": stable_hash_text(args.token_env),
+                    "miner_token_env_name_hash": stable_hash_text(
+                        args.miner_token_env
+                    ),
+                    "token_value_public": False,
+                    "private_paths_public": False,
+                    "public_artifact_safe": True,
+                }
+            elif args.train_action == "create":
+                storage = {
+                    "backend": args.checkpoint_store,
+                    "bucket": args.checkpoint_bucket,
+                    "prefix": args.checkpoint_prefix,
+                    "endpoint_url": args.checkpoint_endpoint_url,
+                    "region_name": args.checkpoint_region,
+                    "access_key_env": args.checkpoint_access_key_env,
+                    "secret_key_env": args.checkpoint_secret_key_env,
+                    "session_token_env": args.checkpoint_session_token_env,
+                }
+                heterogeneous_requested = bool(
+                    args.heterogeneous
+                    or args.tpu
+                    or args.manifest
+                    or args.model == "Qwen/Qwen2.5-7B"
+                )
+                elastic_controller = (
+                    HeterogeneousTrainingBetaController.create(
+                        args.job,
+                        manifest_path=args.manifest or None,
+                        config_path=args.config or None,
+                        tokenized_payload_path=args.tokenized_payload or None,
+                        hf_token=str(os.environ.get(args.hf_token_env) or ""),
+                        checkpoint_storage=storage,
+                        checkpoint_retention_steps=args.checkpoint_retention_steps,
+                        lease_seconds=args.lease_seconds,
+                        max_online_miners=args.max_online_miners,
+                        enable_jax_tpu=bool(args.tpu),
+                    )
+                    if heterogeneous_requested
+                    else ElasticTrainingBetaController.create(
+                        args.job,
+                        target_steps=args.steps,
+                        config_path=args.config or None,
+                        tokenized_payload_path=args.tokenized_payload or None,
+                        checkpoint_storage=storage,
+                        checkpoint_retention_steps=args.checkpoint_retention_steps,
+                        lease_seconds=args.lease_seconds,
+                        max_online_miners=args.max_online_miners,
+                        max_rejected_submissions_per_session=(
+                            args.max_rejected_submissions_per_session
+                        ),
+                        max_checkpoint_bytes_per_session=(
+                            args.max_checkpoint_bytes_per_session
+                        ),
+                    )
+                )
+                report = {**elastic_controller.status(), "command_ok": True}
+            elif args.train_action == "validate":
+                production_config = (
+                    load_production_config(args.config)
+                    if args.config
+                    else default_production_config()
+                )
+                report = {
+                    **validate_production_request(production_config),
+                    "command_ok": True,
+                }
+            elif args.train_action == "plan":
+                if args.job and HeterogeneousTrainingProductionController.is_job(
+                    args.job
+                ):
+                    report = {
+                        **HeterogeneousTrainingProductionController(
+                            args.job
+                        ).plan(),
+                        "command_ok": True,
+                    }
+                else:
+                    production_config = (
+                        load_production_config(args.config)
+                        if args.config
+                        else default_production_config()
+                    )
+                    report = {
+                        **build_production_plan(production_config),
+                        "command_ok": True,
+                    }
+            elif args.train_action in {"start", "run"}:
+                production_config = (
+                    load_production_config(args.config)
+                    if args.config
+                    else default_production_config()
+                )
+                hf_env = str(
+                    (production_config.get("private_inputs") or {}).get(
+                        "hf_token_env"
+                    )
+                    or args.hf_token_env
+                )
+                created = HeterogeneousTrainingProductionController.create(
+                    args.job,
+                    config=production_config,
+                    model_config_path=args.model_config or None,
+                    tokenized_payload_path=args.tokenized_payload or None,
+                    hf_token=str(os.environ.get(hf_env) or ""),
+                    dry_run=bool(args.dry_run),
+                )
+                report = (
+                    {**created, "command_ok": bool(created.get("ok"))}
+                    if isinstance(created, dict)
+                    else {**created.status(), "command_ok": True}
+                )
+            elif args.train_action == "lora":
+                if args.backend == "cuda":
+                    qwen15b_requested = bool(args.model or args.topology or args.steps)
+                    if qwen15b_requested:
+                        controller, existing_job_id = _qwen15b_beta_controller(args.output_dir)
+                        request = _qwen15b_beta_request(args, args.output_dir)
+                        idempotency_key = "qwen15b-beta:" + hashlib.sha256(
+                            str(Path(args.output_dir).resolve()).encode("utf-8")
+                        ).hexdigest()
+                        report = controller.submit(
+                            request,
+                            idempotency_key=idempotency_key,
+                            execute=existing_job_id is None,
+                        )
+                    else:
+                        report = run_cuda_training_job(
+                            args.output_dir,
+                            kaggle_token_file=args.kaggle_token_file,
+                            kaggle_token_username=args.kaggle_token_username,
+                            allocation_timeout_seconds=args.allocation_timeout_seconds,
+                        )
+                else:
+                    report = run_training_foundation_job(
+                        args.output_dir,
+                        local_steps=args.local_steps,
+                        pipeline_steps=args.pipeline_steps,
+                        seed=args.seed,
+                        learning_rate=args.learning_rate,
+                        batch_size=args.batch_size,
+                        sequence_length=args.sequence_length,
+                        gradient_accumulation=args.gradient_accumulation,
+                    )
+            elif args.train_action == "status":
+                is_production = HeterogeneousTrainingProductionController.is_job(
+                    args.job
+                )
+                is_heterogeneous_beta = HeterogeneousTrainingBetaController.is_job(
+                    args.job
+                )
+                is_elastic_beta = bool(
+                    is_heterogeneous_beta
+                    or ElasticTrainingBetaController.is_job(args.job)
+                )
+                if is_elastic_beta:
+                    elastic_controller = (
+                        HeterogeneousTrainingProductionController(args.job)
+                        if is_production
+                        else HeterogeneousTrainingBetaController(args.job)
+                        if is_heterogeneous_beta
+                        else ElasticTrainingBetaController(args.job)
+                    )
+                    getter = elastic_controller.status
+                else:
+                    beta_controller, beta_job_id = _qwen15b_beta_controller(args.job)
+                    is_qwen15b_beta = beta_job_id is not None
+                    is_qwen15b = is_qwen15b_beta or (Path(args.job) / "training_qwen15b_status.json").is_file()
+                    is_cuda = args.backend == "cuda" or (
+                        args.backend == "auto" and (Path(args.job) / "training_cuda_status.json").is_file()
+                    )
+                    getter = (
+                        (lambda: beta_controller.status(str(beta_job_id)))
+                        if is_qwen15b_beta
+                        else (lambda: qwen15b_training_status(args.job))
+                        if is_qwen15b
+                        else (lambda: cuda_training_status(args.job))
+                        if is_cuda
+                        else (lambda: training_status(args.job))
+                    )
+                report = (
+                    _watch_training_status(
+                        getter,
+                        timeout_seconds=args.watch_timeout_seconds,
+                        interval_seconds=args.watch_interval_seconds,
+                    )
+                    if args.watch
+                    else getter()
+                )
+                if is_elastic_beta:
+                    report = {**report, "command_ok": True}
+            elif args.train_action == "elastic-status":
+                report = {
+                    **elastic_training_status(args.state, run_id=args.run_id),
+                    "command_ok": True,
+                }
+            elif args.train_action == "resume":
+                is_production = HeterogeneousTrainingProductionController.is_job(
+                    args.job
+                )
+                is_heterogeneous_beta = HeterogeneousTrainingBetaController.is_job(
+                    args.job
+                )
+                if is_production:
+                    report = HeterogeneousTrainingProductionController(
+                        args.job
+                    ).resume()
+                elif is_heterogeneous_beta:
+                    report = {
+                        **HeterogeneousTrainingBetaController(args.job).status(),
+                        "command_ok": True,
+                        "resume_not_required": True,
+                    }
+                else:
+                    beta_controller, beta_job_id = _qwen15b_beta_controller(args.job)
+                    is_qwen15b_beta = beta_job_id is not None
+                    is_qwen15b = is_qwen15b_beta or (
+                        Path(args.job) / "training_qwen15b_status.json"
+                    ).is_file()
+                    is_cuda = args.backend == "cuda" or (
+                        args.backend == "auto"
+                        and (Path(args.job) / "training_cuda_status.json").is_file()
+                    )
+                    report = (
+                        beta_controller.resume(
+                            str(beta_job_id),
+                            execute=True,
+                            private_inputs={
+                                "kaggle_token_files": [args.kaggle_token_file]
+                                if args.kaggle_token_file
+                                else [],
+                                "kaggle_raw_token_file": args.kaggle_raw_token_file,
+                                "kaggle_raw_token_username": args.kaggle_token_username,
+                                "allocation_timeout_seconds": args.allocation_timeout_seconds,
+                            },
+                        )
+                        if is_qwen15b_beta
+                        else resume_qwen15b_training_job(
+                            args.job,
+                            kaggle_token_files=[args.kaggle_token_file]
+                            if args.kaggle_token_file
+                            else [],
+                            kaggle_raw_token_file=args.kaggle_raw_token_file,
+                            kaggle_raw_token_username=args.kaggle_token_username,
+                            allocation_timeout_seconds=args.allocation_timeout_seconds,
+                        )
+                        if is_qwen15b
+                        else resume_cuda_training_job(
+                            args.job,
+                            kaggle_token_file=args.kaggle_token_file,
+                            kaggle_token_username=args.kaggle_token_username,
+                            allocation_timeout_seconds=args.allocation_timeout_seconds,
+                        )
+                        if is_cuda
+                        else resume_training_job(args.job)
+                    )
+            elif args.train_action == "pause":
+                if not HeterogeneousTrainingProductionController.is_job(args.job):
+                    raise RuntimeError("training_pause_requires_production_job")
+                report = HeterogeneousTrainingProductionController(args.job).pause()
+            elif args.train_action == "stop":
+                if not HeterogeneousTrainingProductionController.is_job(args.job):
+                    raise RuntimeError("training_stop_requires_production_job")
+                report = HeterogeneousTrainingProductionController(args.job).stop()
+            elif args.train_action == "rebalance":
+                if not HeterogeneousTrainingProductionController.is_job(args.job):
+                    raise RuntimeError("training_rebalance_requires_production_job")
+                report = HeterogeneousTrainingProductionController(
+                    args.job
+                ).rebalance(reason=args.reason)
+            elif args.train_action == "metrics":
+                if not HeterogeneousTrainingProductionController.is_job(args.job):
+                    raise RuntimeError("training_metrics_requires_production_job")
+                production = HeterogeneousTrainingProductionController(args.job)
+                if args.format == "prometheus":
+                    print(production.runtime.prometheus_metrics(), end="")
+                    raise SystemExit(0)
+                report = {**production.runtime.metrics_snapshot(), "command_ok": True}
+            elif args.train_action == "events":
+                if not HeterogeneousTrainingProductionController.is_job(args.job):
+                    raise RuntimeError("training_events_requires_production_job")
+                report = {
+                    **HeterogeneousTrainingProductionController(
+                        args.job
+                    ).runtime.event_tail(
+                        after_sequence=args.after_sequence,
+                        limit=args.limit,
+                    ),
+                    "command_ok": True,
+                }
+            elif args.train_action == "export":
+                if HeterogeneousTrainingBetaController.is_job(args.job):
+                    report = HeterogeneousTrainingBetaController(args.job).export(
+                        args.output_dir or None
+                    )
+                elif ElasticTrainingBetaController.is_job(args.job):
+                    report = ElasticTrainingBetaController(args.job).export(
+                        args.output_dir or None
+                    )
+                else:
+                    beta_controller, beta_job_id = _qwen15b_beta_controller(args.job)
+                    is_qwen15b_beta = beta_job_id is not None
+                    is_qwen15b = is_qwen15b_beta or (Path(args.job) / "training_qwen15b_status.json").is_file()
+                    is_cuda = args.backend == "cuda" or (
+                        args.backend == "auto" and (Path(args.job) / "training_cuda_status.json").is_file()
+                    )
+                    report = (
+                        beta_controller.export(str(beta_job_id), args.output_dir or None)
+                        if is_qwen15b_beta
+                        else export_qwen15b_training_job(args.job, args.output_dir or None)
+                        if is_qwen15b
+                        else export_cuda_training_job(args.job, args.output_dir or None)
+                        if is_cuda
+                        else export_training_job(args.job, args.output_dir or None)
+                    )
+            elif args.train_action == "cancel":
+                if HeterogeneousTrainingProductionController.is_job(args.job):
+                    report = HeterogeneousTrainingProductionController(
+                        args.job
+                    ).stop()
+                elif HeterogeneousTrainingBetaController.is_job(args.job):
+                    report = HeterogeneousTrainingBetaController(args.job).cancel()
+                elif ElasticTrainingBetaController.is_job(args.job):
+                    report = ElasticTrainingBetaController(args.job).cancel()
+                else:
+                    beta_controller, beta_job_id = _qwen15b_beta_controller(args.job)
+                    if beta_job_id is None:
+                        raise RuntimeError("training_cancel_requires_qwen15b_beta_job")
+                    report = beta_controller.cancel(str(beta_job_id))
+            elif args.train_action == "invite":
+                if HeterogeneousTrainingBetaController.is_job(args.job):
+                    report = HeterogeneousTrainingBetaController(
+                        args.job
+                    ).write_miner_invite(
+                        args.output_file,
+                        coordinator_url=args.coordinator,
+                    )
+                elif not ElasticTrainingBetaController.is_job(args.job):
+                    raise RuntimeError("training_invite_requires_elastic_beta_job")
+                else:
+                    report = ElasticTrainingBetaController(
+                        args.job
+                    ).write_miner_invite(
+                        args.output_file,
+                        coordinator_url=args.coordinator,
+                    )
+            elif args.train_action == "cleanup":
+                if HeterogeneousTrainingProductionController.is_job(args.job):
+                    report = HeterogeneousTrainingProductionController(
+                        args.job
+                    ).cleanup()
+                elif HeterogeneousTrainingBetaController.is_job(args.job):
+                    report = HeterogeneousTrainingBetaController(args.job).cleanup()
+                elif ElasticTrainingBetaController.is_job(args.job):
+                    report = ElasticTrainingBetaController(args.job).cleanup()
+                else:
+                    beta_controller, beta_job_id = _qwen15b_beta_controller(args.job)
+                    is_qwen15b_beta = beta_job_id is not None
+                    is_qwen15b = is_qwen15b_beta or (Path(args.job) / "training_qwen15b_status.json").is_file()
+                    is_cuda = args.backend == "cuda" or (
+                        args.backend == "auto" and (Path(args.job) / "training_cuda_status.json").is_file()
+                    )
+                    report = (
+                        beta_controller.cleanup(str(beta_job_id))
+                        if is_qwen15b_beta
+                        else
+                        cleanup_qwen15b_training_job(
+                            args.job,
+                            kaggle_token_files=[args.kaggle_token_file]
+                            if args.kaggle_token_file
+                            else [],
+                            kaggle_raw_token_file=args.kaggle_raw_token_file,
+                            kaggle_raw_token_username=args.kaggle_token_username,
+                        )
+                        if is_qwen15b
+                        else cleanup_cuda_training_job(
+                            args.job,
+                            kaggle_token_file=args.kaggle_token_file,
+                            kaggle_token_username=args.kaggle_token_username,
+                        )
+                        if is_cuda
+                        else cleanup_training_job(args.job)
+                    )
+            else:  # pragma: no cover - argparse enforces this branch
+                raise RuntimeError(f"unsupported train action: {args.train_action}")
+        except Exception as exc:
+            job_dir = (
+                args.output_dir
+                if args.train_action == "lora"
+                else args.store
+                if args.train_action == "serve"
+                else args.state
+                if args.train_action == "elastic-status"
+                else getattr(args, "job", "")
+            )
+            requested_backend = str(getattr(args, "backend", "auto"))
+            is_qwen15b = (Path(job_dir) / "training_qwen15b_status.json").is_file()
+            is_cuda = requested_backend == "cuda" or (
+                requested_backend == "auto" and (Path(job_dir) / "training_cuda_status.json").is_file()
+            )
+            stored = (
+                HeterogeneousTrainingProductionController(job_dir).status()
+                if job_dir
+                and HeterogeneousTrainingProductionController.is_job(job_dir)
+                else HeterogeneousTrainingBetaController(job_dir).status()
+                if HeterogeneousTrainingBetaController.is_job(job_dir)
+                else qwen15b_training_status(job_dir)
+                if is_qwen15b
+                else cuda_training_status(job_dir)
+                if is_cuda
+                else training_status(job_dir)
+                if job_dir
+                else {
+                    "schema": "crowdtensor_training_command_error_v1",
+                    "overall_state": "failed",
+                    "current_phase": str(args.train_action),
+                    "public_artifact_safe": True,
+                }
+            )
+            report = {
+                **stored,
+                "overall_state": "failed",
+                "blockers": [f"training_{args.train_action}_failed:{type(exc).__name__}"],
+                "failure_detail_public": False,
+                "next_resume_command": f"crowdtensor train resume {job_dir}",
+                "private_paths_public": False,
+            }
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print(f"training action={args.train_action} ok={report.get('ok', report.get('overall_state') == 'completed')}")
+            print(f"  job={report.get('job_id', getattr(args, 'job', args.output_dir if hasattr(args, 'output_dir') else ''))}")
+            if report.get("overall_state"):
+                print(f"  state={report.get('overall_state')} phase={report.get('current_phase')}")
+            phases = report.get("phase_status") or report.get("phases") or {}
+            for phase in [
+                "model_resolution",
+                "account_preflight",
+                "allocation",
+                "kernel_launch",
+                "stage_loading",
+                "configuration",
+                "dataset",
+                "worker_assignment",
+                "forward",
+                "backward",
+                "local_step",
+                "outer_aggregation",
+                "checkpoint",
+                "resume",
+                "evaluation",
+                "export",
+                "cleanup",
+            ]:
+                if phase in phases:
+                    print(f"  phase {phase}: {(phases[phase] or {}).get('state', 'unknown')}")
+            if report.get("evaluation"):
+                evaluation = report["evaluation"]
+                print(
+                    f"  validation_loss={evaluation['before']['mean_loss']:.6f}"
+                    f"->{evaluation['after']['mean_loss']:.6f}"
+                )
+            if report.get("next_resume_command"):
+                print(f"  resume={report['next_resume_command']}")
+        succeeded = bool(
+            report.get(
+                "command_ok",
+                report.get("ok", report.get("overall_state") == "completed"),
+            )
+        )
+        raise SystemExit(0 if succeeded else 1)
     if args.command == "local-proof":
         summary = build_local_proof(args)
         if args.json:
@@ -28828,11 +32689,41 @@ def main(argv: list[str] | None = None) -> None:
             print_infer(local_report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "serve":
+        if str(getattr(args, "serve_target", "") or "") == "glm52-kaggle":
+            report = build_glm52_kaggle_alpha_serve(args)
+            if args.json:
+                print(json.dumps(report, sort_keys=True))
+            else:
+                print_glm52_kaggle_alpha(report)
+            raise SystemExit(0 if report.get("ok") else 1)
+        if str(getattr(args, "serve_target", "") or ""):
+            raise SystemExit(f"unsupported serve target: {args.serve_target}")
         report = build_product_serve(args)
         if args.json:
             print(json.dumps(report, sort_keys=True))
         else:
             print_product_serve(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "deploy":
+        report = build_glm52_kaggle_alpha_deploy(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_glm52_kaggle_alpha(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "status":
+        report = build_glm52_kaggle_alpha_status(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_glm52_kaggle_alpha(report)
+        raise SystemExit(0 if report.get("ok") else 1)
+    if args.command == "cleanup":
+        report = build_glm52_kaggle_alpha_cleanup(args)
+        if args.json:
+            print(json.dumps(report, sort_keys=True))
+        else:
+            print_glm52_kaggle_alpha(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "operator-invite":
         report = build_operator_invite(args)
@@ -28905,6 +32796,13 @@ def main(argv: list[str] | None = None) -> None:
             print_product_join(report)
         raise SystemExit(0 if report.get("ok") else 1)
     if args.command == "generate":
+        if str(getattr(args, "generate_target", "") or "") == "glm52-kaggle":
+            report = build_glm52_kaggle_alpha_generate(args)
+            if args.json:
+                print(json.dumps(report, sort_keys=True))
+            else:
+                print_glm52_kaggle_alpha_generate(report)
+            raise SystemExit(0 if report.get("ok") else 1)
         if not args.json:
             print_generate_start_hint(args)
         report = build_product_generate(args)
@@ -29028,6 +32926,50 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(summary, sort_keys=True))
         else:
             print_core_technology_handoff_rc(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "control-user-alpha":
+        summary = build_control_user_alpha(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_control_user_alpha(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "gpu-swarm":
+        if args.gpu_swarm_action == "kaggle-32b-feasibility":
+            summary = build_kaggle_swarm_32b_quantized_feasibility(args)
+        elif args.gpu_swarm_action in {"validate-production-like", "scale-test"}:
+            summary = build_gpu_swarm_production_like_validation(args)
+        else:
+            summary = build_gpu_swarm_usability_alpha(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        elif args.gpu_swarm_action == "kaggle-32b-feasibility":
+            print_kaggle_swarm_32b_quantized_feasibility(summary)
+        elif args.gpu_swarm_action in {"validate-production-like", "scale-test"}:
+            print_gpu_swarm_production_like_validation(summary)
+        else:
+            print_gpu_swarm_usability_alpha(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "heterogeneous-stage-alpha":
+        summary = build_gpu_tpu_cpu_heterogeneous_stage_alpha(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_gpu_tpu_cpu_heterogeneous_stage_alpha(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "heterogeneous-32b-rc":
+        summary = build_gpu_tpu_cpu_32b_heterogeneous_rc(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_gpu_tpu_cpu_32b_heterogeneous_rc(summary)
+        raise SystemExit(0 if summary.get("ok") else 1)
+    if args.command == "heterogeneous-32b-serving":
+        summary = build_heterogeneous_32b_serving(args)
+        if args.json:
+            print(json.dumps(summary, sort_keys=True))
+        else:
+            print_heterogeneous_32b_serving(summary)
         raise SystemExit(0 if summary.get("ok") else 1)
     if args.command == "large-model-kaggle-validate":
         summary = build_large_model_kaggle_validation(args)

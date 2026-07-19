@@ -1,24 +1,72 @@
 # CrowdTensor
 
-CrowdTensor is an open-source experiment in swarm inference: splitting small
-real model workloads across ordinary machines, while keeping routing,
-validation, failure recovery, and evidence auditable.
+CrowdTensor is an open-source project for **open campaigns for volunteer model
+training**. A Campaign pins a model and dataset revision, admits ordinary
+machines as bounded Cells, and advances a shared LoRA checkpoint one validated
+round at a time. Contributors can give a short local update and leave; the
+Coordinator keeps the accepted delta and the public evidence.
 
-The current milestone is **Public Real-LLM Swarm Inference Beta**. Today the
-project can run a real tiny Hugging Face GPT model through a Coordinator-backed
-two-stage swarm:
+The current **founding preview** includes a real HTTP Coordinator, short-lived
+per-Cell credentials, lease recovery, content-addressed update validation, a
+public Campaign Dashboard, and a reproducible two-Cell demo. Start with the
+[`governance guide`](docs/volunteer-campaign-governance.md), the
+[`launch kit`](docs/volunteer-training-launch-kit.md), or the checked
+[`Campaign proposal`](examples/volunteer-campaign/campaign-proposal.json).
 
-```text
-p2pd -> serve --p2p -> join stage0 + join stage1 -> generate --p2p
+The preview is deliberately honest about its boundary: retained evidence is
+same-host or Kaggle logical multi-node validation. It is not yet proof of independent
+physical multi-host execution, permissionless admission, Sybil resistance,
+poisoning resistance, useful model-quality improvement, or a production SLA.
+The launch checker reports `founding_preview_ready` separately from
+`formal_launch_ready`; the latter requires a real external multi-host report.
+
+Earlier inference and heterogeneous training milestones remain available below
+for compatibility and engineering reference. CrowdTensor is an engineering
+beta, not a full Hivemind/Petals replacement or a permissionless P2P network.
+
+## Public Campaign Preview
+
+Run the bounded founding demo locally. It starts one Coordinator, serves the
+Dashboard, and runs two independent Cell processes for one round. It creates
+no external GPU/TPU resources and removes its private runtime before returning:
+
+```bash
+PYTHONPATH=. python scripts/volunteer_training_public_demo.py \
+  --output-dir dist/volunteer-training-public-demo --json
+PYTHONPATH=. python scripts/volunteer_training_public_demo_check.py \
+  --report dist/volunteer-training-public-demo/volunteer_training_public_demo.json \
+  --require-verified --json
 ```
 
-That path proves the mechanics needed for larger open AI infrastructure:
-peer discovery, stage-aware scheduling, lease recovery, result validation,
-redacted evidence, and operator controls.
+The live Dashboard is served at `/v1/volunteer/dashboard` by the volunteer
+Coordinator. Its public snapshot contains aggregate progress and hashes, not
+Cell identities, leases, credentials, raw data, or tensor values. The checked
+visual references are [`desktop`](docs/assets/volunteer-dashboard-desktop.png)
+and [`mobile`](docs/assets/volunteer-dashboard-mobile.png).
 
-CrowdTensor is usable as an engineering beta. It is not yet production Swarm
-Inference, not a full Hivemind/Petals replacement, not large-model serving, and
-not a permissionless P2P network.
+Before recruiting contributors, validate a Campaign proposal and read the
+[`governance contract`](docs/volunteer-campaign-governance.md). The complete
+Reddit/LocalLLaMA framing, claim matrix, and short demo shot list are in the
+[`launch kit`](docs/volunteer-training-launch-kit.md).
+
+The CPU/CUDA/JAX-TPU path now has a Training Production RC for the fixed
+Qwen2.5-7B LoRA topology. One real Kaggle Job committed exactly 400 atomic
+steps over about 4.43 hours using two T4x2 Kernels, one CPU Kernel, and one
+eight-device TPU v5e-8 Kernel. It recovered CUDA, CPU, and TPU worker exits,
+survived a Coordinator restart, rejected stale-generation work, passed a
+five-window performance gate, exported and independently reloaded a 392-tensor
+PEFT adapter, and cleaned all resources. The canonical artifact is
+`dist/training-heterogeneous-production-rc-20260717-r5-path-redacted-final-ready/training_heterogeneous_production_rc.json`;
+its strict checker returns `training_production_rc_ready=true` with zero
+errors. See [`docs/training-foundation.md`](docs/training-foundation.md) for
+the exact verified scope and non-goals.
+
+For an account-independent procedure to acquire and verify a Kaggle Interactive
+TPU v5e-8 runtime for JAX inference or checkpointed training experiments, see
+[`docs/kaggle-tpu-v5e8-runbook.md`](docs/kaggle-tpu-v5e8-runbook.md). The
+runbook uses the Web Notebook queue, Active Events, and JupyterLab
+`serviceManager`; it does not treat Kaggle CLI/API session creation as TPU
+readiness proof.
 
 ## Why It Matters
 
@@ -44,6 +92,25 @@ validation, observability, artifact safety, and operator experience.
   enables it.
 - Produce redacted JSON/Markdown evidence and support bundles for debugging or
   release review.
+- Submit, monitor, recover, export, cancel, and clean a pinned Qwen2.5 1.5B
+  four-T4 Pipeline LoRA job through one persistent CLI/HTTP service.
+- Pause Qwen stage training when complete Miner coverage disappears, then
+  restore central checkpoints and continue on entirely new Miner sessions.
+- Create, serve, inspect, export, cancel, and clean a durable elastic job with
+  public owner commands, while contributors join from a private invite with
+  `crowdtensor-miner join --training`.
+- Run one manifest-driven training Job across pure CPU Miners and one-GPU or
+  multi-GPU hosts, with memory-aware placement, cross-device
+  activation/gradient transport, atomic checkpoints, and replacement recovery.
+- Validate, plan, start, pause, resume, rebalance, monitor, stop, and clean the
+  pinned CPU/GPU/TPU Training Production workflow through one durable CLI.
+- Install model-family plugins, list their public provenance, and fail-closed
+  conformance-check them through `crowdtensor community adapters`.
+- Run the pinned Mistral 248M two-stage LoRA path across CPU and CUDA with
+  checkpointed GPU worker replacement and standard PEFT export/reload.
+- Operate or join a versioned Volunteer Training Protocol campaign in which
+  Cells perform several local PEFT steps and upload one validated LoRA delta at
+  a round boundary instead of streaming activations over the WAN.
 
 ## Quick Start
 
@@ -61,6 +128,61 @@ python -m pip install -e '.[dev,hf]'
 crowdtensor --help
 ```
 
+Preview the training flagship without allocating resources:
+
+```bash
+crowdtensor community init training-run
+crowdtensor community validate training-run --json
+crowdtensor community plan training-run --json
+crowdtensor community coordinator up training-run --dry-run --json
+crowdtensor community miner join training-run --dry-run --json
+crowdtensor community train training-run --dry-run --json
+```
+
+The complete owner/Contributor flow is in
+[`docs/community-quickstart.md`](docs/community-quickstart.md). Supported
+models and refusal boundaries are in
+[`docs/model-adapters.md`](docs/model-adapters.md).
+
+Create the pinned SmolLM2-135M/WikiText Campaign, then contribute one work unit
+through the ordinary HTTP/CLI boundary:
+
+```bash
+crowdtensor volunteer campaign import-smollm-wikitext campaign-dir \
+  --target-rounds 3 --local-steps 1
+crowdtensor volunteer serve campaign-dir --prepare-only
+
+# After an operator serves the campaign and privately sends the mode-0600 invite:
+crowdtensor volunteer join campaign-invite.json --once --device auto
+```
+
+See
+[`docs/volunteer-training-internet-beta.md`](docs/volunteer-training-internet-beta.md)
+for pinned provenance, strict evidence, deployment flow, recovery behavior,
+and the external gate. The current RC uses real PEFT math in independent local
+processes; it is not evidence of independent Internet machines, poisoning
+resistance, or useful model quality.
+
+For the current Operator deployment, credential policy, lifecycle, MinIO,
+backup, monitoring, and exact claim boundaries, see
+[`docs/volunteer-training-operator-beta.md`](docs/volunteer-training-operator-beta.md).
+The shortest Operator path is:
+
+```bash
+crowdtensor volunteer operator campaign-dir --profile local --target-rounds 3
+```
+
+Inspect the built-in and installed Adapter registry:
+
+```bash
+crowdtensor community adapters list --json
+crowdtensor community adapters check qwen2_lora_v1 --json
+```
+
+The official Mistral Adapter is separately packaged under
+`plugins/mistral_adapter`. Its current live claim is the pinned 248M checkpoint,
+not Mistral-7B or arbitrary Mistral models.
+
 Run the fast local proof first:
 
 ```bash
@@ -72,6 +194,194 @@ Run the user-friendly local swarm inference entry point:
 ```bash
 crowdtensor infer "CrowdTensor routes small models across home compute"
 ```
+
+Run the real CPU-only collaborative LoRA training foundation:
+
+```bash
+crowdtensor train lora --output-dir dist/my-training-job
+crowdtensor train status dist/my-training-job
+crowdtensor train export dist/my-training-job --output-dir dist/my-adapter
+```
+
+This path starts the existing HTTP Coordinator plus two local CPU Miner
+processes on distinct dataset shards, performs one named-tensor DiLoCo outer
+step, runs a separate two-process activation/gradient pipeline with checkpoint
+recovery, and exports a standard PEFT adapter. See
+[`docs/training-foundation.md`](docs/training-foundation.md) for the verified
+scope and GPU handoff boundary.
+
+The pinned heterogeneous Training Production workflow is configuration-driven
+and idempotent:
+
+```bash
+crowdtensor train validate --json
+crowdtensor train plan --json
+crowdtensor train start dist/my-production-training --dry-run --json
+crowdtensor train start dist/my-production-training --json
+crowdtensor train status dist/my-production-training --watch
+crowdtensor train metrics dist/my-production-training --format prometheus
+crowdtensor train events dist/my-production-training --limit 100 --json
+
+crowdtensor train pause dist/my-production-training --json
+crowdtensor train resume dist/my-production-training --json
+crowdtensor train rebalance dist/my-production-training \
+  --reason performance_rebalance --json
+crowdtensor train stop dist/my-production-training --json
+crowdtensor train cleanup dist/my-production-training --json
+```
+
+`train serve`, `train invite`, and `crowdtensor-miner join --training` expose
+the same durable Job to contributor machines. Keep Hugging Face and Kaggle
+credentials in private environment variables or token files; public status,
+events, metrics, evidence, and resume commands contain only hashes and safe
+metadata. This RC is pinned to one Qwen2.5-7B PEFT topology. It is not
+full-parameter training, arbitrary model partitioning, production GA, or an
+SLA.
+
+The Qwen Training Service Beta path is:
+
+```bash
+crowdtensor train lora --backend cuda \
+  --model Qwen/Qwen2.5-1.5B \
+  --topology kaggle-2x-t4x2 --steps 8 \
+  --output-dir dist/my-qwen-beta-job \
+  --kaggle-token-file /path/to/private-token
+crowdtensor train status dist/my-qwen-beta-job --watch
+crowdtensor train resume dist/my-qwen-beta-job --backend cuda
+crowdtensor train export dist/my-qwen-beta-job \
+  --output-dir dist/my-qwen-adapter
+crowdtensor train cancel dist/my-qwen-beta-job
+crowdtensor train cleanup dist/my-qwen-beta-job
+```
+
+One verified run used two same-account T4x2 Kaggle Kernels, four stage-owned
+CUDA processes, persistent Coordinator restart recovery after step 4, and a
+standard PEFT export that reloads on CPU/CUDA and lowers validation loss. The
+canonical strict artifact is
+`dist/training-qwen15b-beta-20260712-r3-live-achieved/training_qwen15b_beta.json`.
+This is a bounded 1.5B LoRA Beta RC, not 7B+, full-parameter training,
+permissionless training, or a production SLA. See
+[`docs/training-foundation.md`](docs/training-foundation.md) for the exact
+evidence and service API boundary.
+
+The elastic live gate goes beyond restarting processes in one allocation. It
+commits all four stage checkpoints through an atomic barrier, deletes the old
+T4x2 pair at step 4, waits with zero Miners, and resumes at step 5 on a new
+pair whose local disks never contained the old checkpoints. Validate the
+retained artifact with:
+
+```bash
+python scripts/training_qwen15b_elastic_check.py \
+  --report dist/training-qwen15b-elastic-live-20260712-r2-repacked-achieved/training_qwen15b_elastic_live_probe.json \
+  --require-ready --json
+```
+
+A larger retained showcase uses the same path for a real 256-step
+`Qwen/Qwen2.5-1.5B` LoRA adaptation. It trains on 131,072 pinned WikiText-2
+tokens, deletes the first T4x2 pair at step 128, resumes on two new T4x2
+Kernels, and lowers 64-sequence held-out loss from `2.731937` to `2.350524`
+(-13.96%). The standard PEFT export reloads on CPU/CUDA and all four temporary
+Kernels are deleted. See
+[`docs/qwen15b-elastic-training-showcase.md`](docs/qwen15b-elastic-training-showcase.md)
+for artifacts, hashes, verification, licensing, and claim boundaries. This is
+Kaggle logical multi-node causal-LM adaptation, not instruction tuning or an
+independent physical multi-host benchmark.
+
+The stronger instruction-tuning showcase uses pinned
+`Qwen/Qwen2.5-7B-Instruct` and pinned GSM8K. Two concurrent T4x2 Kernels train
+steps 1-128, both are deleted, and two fresh T4x2 Kernels restore four central
+stage checkpoints and finish steps 129-256. The final attempt processes 262,144
+non-padding tokens and exports a 392-tensor standard PEFT Adapter. On a
+preregistered 128-item confirmatory holdout that is disjoint from development,
+normalized exact match changes from `92/128` (71.875%) to `95/128` (74.219%),
+an absolute improvement of 2.344 percentage points; valid answer rate remains
+100%. The practical preregistered gate passes, while the paired bootstrap
+interval includes zero, so no statistical-significance claim is made. See
+[`docs/qwen7b-gsm8k-elastic-showcase.md`](docs/qwen7b-gsm8k-elastic-showcase.md)
+for the failed development attempt, fixed revisions, Model Card, reproducible
+commands, strict checker, hashes, cleanup, and claim boundaries.
+
+The productized elastic path exposes the same semantics to an ordinary owner
+and Miner:
+
+```bash
+crowdtensor train create dist/my-elastic-training --json
+crowdtensor train serve \
+  --elastic-job dist/my-elastic-training \
+  --host 0.0.0.0 --port 8791
+
+crowdtensor train invite dist/my-elastic-training \
+  --coordinator https://coordinator.example \
+  --output-file state/private/miner.invite.json --json
+crowdtensor-miner join --training \
+  --invite state/private/miner.invite.json --role auto
+
+crowdtensor train status dist/my-elastic-training --watch
+crowdtensor train export dist/my-elastic-training \
+  --output-dir dist/my-elastic-adapter
+crowdtensor train cleanup dist/my-elastic-training
+```
+
+The canonical Product Beta evidence is
+`dist/training-elastic-beta-live-20260712-r6-repacked-achieved/training_elastic_beta_live_probe.json`.
+It proves public owner create/status/export, product Miner join and graceful
+drain, a full zero-Miner pause, Coordinator restart, replacement Miner central
+restore, exactly-once steps 1-8, PEFT evaluation, and complete experiment
+cleanup. The final regression report records 380 passed tests in
+`dist/training-elastic-beta-tests-20260712-r2-final/training_qwen15b_test_summary.json`.
+
+Checkpoint signatures, tensor/archive validation, stale lease fencing, upload
+quotas, rejection counters, and quarantine reject malformed, non-finite,
+unsigned, stale, and over-quota submissions. They do not establish
+permissionless Byzantine-poisoning resistance. Local checkpoint storage is
+live-verified; the optional S3/MinIO backend is implemented and unit-tested but
+has not been externally live-tested. This Beta is pinned to Qwen2.5 1.5B,
+eight steps, four stages, and two CUDA devices per Miner. See
+[`docs/training-foundation.md`](docs/training-foundation.md) for the exact
+security, storage, lifecycle, and non-capability boundaries.
+
+The unified heterogeneous path uses the same owner and contributor lifecycle,
+but the Job topology comes from a validated manifest and each CUDA device can
+join as an independent one-GPU Miner:
+
+```bash
+export HF_TOKEN='private-value-if-the-model-source-requires-it'
+crowdtensor train create dist/my-heterogeneous-training \
+  --heterogeneous --model Qwen/Qwen2.5-7B \
+  --hf-token-env HF_TOKEN --json
+crowdtensor train serve \
+  --elastic-job dist/my-heterogeneous-training \
+  --host 0.0.0.0 --port 8791
+crowdtensor train invite dist/my-heterogeneous-training \
+  --coordinator https://coordinator.example \
+  --output-file state/private/heterogeneous-miner.invite.json --json
+crowdtensor-miner join --training \
+  --invite state/private/heterogeneous-miner.invite.json --role auto
+crowdtensor train status dist/my-heterogeneous-training --watch
+crowdtensor train export dist/my-heterogeneous-training \
+  --output-dir dist/my-heterogeneous-adapter
+crowdtensor train cleanup dist/my-heterogeneous-training
+```
+
+The achieved live gate used four single-GPU T4 Miners plus one pure CPU Miner
+in the same Qwen2.5-7B LoRA Job. It committed steps 1-3, removed a trainable
+GPU Miner, restored the stage on a different Miner, and committed steps 4-6
+with 24 forward activations and 24 backward gradients. The 392-tensor PEFT
+adapter reloads on CPU and completes a finite full stagewise forward. Validate
+the retained public-safe artifact with:
+
+```bash
+PYTHONPATH=. python scripts/training_heterogeneous_beta_check.py \
+  --report dist/training-heterogeneous-beta-20260713-r3-r2-live-achieved/training_heterogeneous_beta.json \
+  --require-ready --json
+```
+
+This is a bounded Qwen2.5-7B PEFT Beta with explicit stage boundaries and
+epoch-level recovery. It is not arbitrary-model auto-partitioning,
+full-parameter or TPU training, permissionless poisoning resistance, billing,
+production GA, or an SLA. See
+[`docs/training-foundation.md`](docs/training-foundation.md) for the manifest,
+scheduler, transport, checkpoint, evidence, and cleanup contracts.
 
 It starts the fast local product loopback path, runs split tiny GPT inference,
 prints the local display-only generated text, and writes a compact

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -14,6 +15,33 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_project_version(root: Path, project: dict[str, Any]) -> str:
+    """Resolve a PEP 621 static or module-backed dynamic project version."""
+
+    direct = str(project.get("version") or "").strip()
+    if direct:
+        return direct
+    dynamic = project.get("dynamic")
+    if not isinstance(dynamic, list) or "version" not in dynamic:
+        return ""
+    version_file = root / "crowdtensor" / "version.py"
+    try:
+        tree = ast.parse(version_file.read_text(encoding="utf-8"), filename=str(version_file))
+    except (OSError, SyntaxError):
+        return ""
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (ValueError, TypeError):
+            return ""
+        return str(value) if isinstance(value, str) else ""
+    return ""
 
 REQUIRED_FILES = [
     "AGENTS.md",
@@ -167,9 +195,9 @@ def check_pyproject(root: Path) -> dict[str, Any]:
     project = payload.get("project", {})
     if project.get("name") != "crowdtensord":
         details.append("project.name must be crowdtensord")
-    version = str(project.get("version", ""))
-    if "a" not in version:
-        details.append("project.version must be an alpha version")
+    version = resolve_project_version(root, project)
+    if not version or not ("a" in version or "b" in version or "rc" in version):
+        details.append("project.version must be a prerelease version")
     if project.get("requires-python") != ">=3.11":
         details.append("project.requires-python must be >=3.11")
 

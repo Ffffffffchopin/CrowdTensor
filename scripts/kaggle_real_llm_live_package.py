@@ -184,6 +184,7 @@ def render_kernel(
     idle_sleep: float,
     real_llm_backend: str = "hf_transformers_cpu",
     real_llm_partition_mode: str = "full",
+    real_llm_execution_mode: str = "full_model",
     torch_spec: str = "",
     torch_index_url: str = "",
     transformers_spec: str = DEFAULT_TRANSFORMERS_SPEC,
@@ -213,6 +214,7 @@ MINER_ID = "{miner_id}"
 HF_MODEL_ID = "{hf_model_id}"
 HF_CACHE_DIR = "{hf_cache_dir}"
 REAL_LLM_PARTITION_MODE = "{real_llm_partition_mode}"
+REAL_LLM_EXECUTION_MODE = "{real_llm_execution_mode}"
 TORCH_SPEC = "{torch_spec}"
 TORCH_INDEX_URL = "{torch_index_url}"
 TRANSFORMERS_SPEC = "{transformers_spec}"
@@ -307,6 +309,8 @@ command = [
     "{real_llm_backend}",
     "--real-llm-partition-mode",
     REAL_LLM_PARTITION_MODE,
+    "--real-llm-execution-mode",
+    REAL_LLM_EXECUTION_MODE,
     "--real-llm-stage-role",
     STAGE,
     "--result-timeout",
@@ -353,6 +357,7 @@ def render_inline_kernel(
     miner_env_text: str,
     real_llm_backend: str = "hf_transformers_cpu",
     real_llm_partition_mode: str = "full",
+    real_llm_execution_mode: str = "full_model",
     torch_spec: str = "",
     torch_index_url: str = "",
     transformers_spec: str = DEFAULT_TRANSFORMERS_SPEC,
@@ -383,6 +388,7 @@ MINER_ID = "{miner_id}"
 HF_MODEL_ID = "{hf_model_id}"
 HF_CACHE_DIR = "{hf_cache_dir}"
 REAL_LLM_PARTITION_MODE = "{real_llm_partition_mode}"
+REAL_LLM_EXECUTION_MODE = "{real_llm_execution_mode}"
 TORCH_SPEC = "{torch_spec}"
 TORCH_INDEX_URL = "{torch_index_url}"
 TRANSFORMERS_SPEC = "{transformers_spec}"
@@ -469,6 +475,8 @@ command = [
     "{real_llm_backend}",
     "--real-llm-partition-mode",
     REAL_LLM_PARTITION_MODE,
+    "--real-llm-execution-mode",
+    REAL_LLM_EXECUTION_MODE,
     "--real-llm-stage-role",
     STAGE,
     "--result-timeout",
@@ -512,6 +520,7 @@ def build_package(args: argparse.Namespace) -> dict[str, Any]:
     args.idle_sleep = float(getattr(args, "idle_sleep", 1.0))
     args.real_llm_backend = str(getattr(args, "real_llm_backend", "hf_transformers_cpu") or "hf_transformers_cpu")
     args.real_llm_partition_mode = normalize_partition_mode(getattr(args, "real_llm_partition_mode", "full"))
+    args.real_llm_execution_mode = str(getattr(args, "real_llm_execution_mode", "full_model") or "full_model").strip().lower().replace("-", "_")
     args.torch_spec = str(getattr(args, "torch_spec", "") or "")
     args.torch_index_url = str(getattr(args, "torch_index_url", "") or "")
     args.transformers_spec = str(getattr(args, "transformers_spec", "") or DEFAULT_TRANSFORMERS_SPEC)
@@ -585,6 +594,7 @@ def build_package(args: argparse.Namespace) -> dict[str, Any]:
                 miner_env_text=miner_env_text,
                 real_llm_backend=args.real_llm_backend,
                 real_llm_partition_mode=args.real_llm_partition_mode,
+                real_llm_execution_mode=args.real_llm_execution_mode,
                 torch_spec=args.torch_spec,
                 torch_index_url=args.torch_index_url,
                 transformers_spec=args.transformers_spec,
@@ -603,6 +613,7 @@ def build_package(args: argparse.Namespace) -> dict[str, Any]:
                 idle_sleep=args.idle_sleep,
                 real_llm_backend=args.real_llm_backend,
                 real_llm_partition_mode=args.real_llm_partition_mode,
+                real_llm_execution_mode=args.real_llm_execution_mode,
                 torch_spec=args.torch_spec,
                 torch_index_url=args.torch_index_url,
                 transformers_spec=args.transformers_spec,
@@ -641,6 +652,7 @@ def build_package(args: argparse.Namespace) -> dict[str, Any]:
             "real_llm_stage_role_present": "--real-llm-stage-role" in code and stage in code,
             "real_llm_backend": args.real_llm_backend,
             "real_llm_partition_mode": args.real_llm_partition_mode,
+            "real_llm_execution_mode": args.real_llm_execution_mode,
             "gpu_accelerator_enabled": args.real_llm_backend == "hf_transformers_cuda",
             "cuda_preflight_present": "torch.cuda.is_available()" in code if args.real_llm_backend == "hf_transformers_cuda" else False,
             "torch_spec": args.torch_spec,
@@ -673,6 +685,7 @@ def build_package(args: argparse.Namespace) -> dict[str, Any]:
         "max_request_attempts": args.max_request_attempts,
         "real_llm_backend": args.real_llm_backend,
         "real_llm_partition_mode": args.real_llm_partition_mode,
+        "real_llm_execution_mode": args.real_llm_execution_mode,
         "torch_spec": args.torch_spec,
         "torch_index_url": args.torch_index_url,
         "transformers_spec": args.transformers_spec,
@@ -694,6 +707,7 @@ def build_package(args: argparse.Namespace) -> dict[str, Any]:
             "cpu_only": args.real_llm_backend != "hf_transformers_cuda",
             "gpu_backend_selected": args.real_llm_backend == "hf_transformers_cuda",
             "stage_local_partition": args.real_llm_partition_mode == "stage_local",
+            "stage_selective_hf_execution": args.real_llm_execution_mode == "stage_selective_hf",
             "kaggle_gpu_accelerator_expected": args.real_llm_backend == "hf_transformers_cuda",
             "cuda_torch_wheel_pinned": bool(args.torch_spec) if args.real_llm_backend == "hf_transformers_cuda" else False,
             "read_only": True,
@@ -728,6 +742,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--real-llm-backend", choices=["hf_transformers_cpu", "hf_transformers_cuda"], default="hf_transformers_cpu")
     parser.add_argument("--real-llm-partition-mode", choices=["full", "stage-local", "stage_local"], default="full")
+    parser.add_argument("--real-llm-execution-mode", choices=["full_model", "full-model", "stage_selective_hf", "stage-selective-hf"], default="full_model")
     parser.add_argument(
         "--torch-spec",
         default="",

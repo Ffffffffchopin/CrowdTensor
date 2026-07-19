@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crowdtensor.dev/schemas/heterogeneous_training_manifest_v2.schema.json",
+  "title": "CrowdTensor CPU/CUDA/JAX-TPU heterogeneous training manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "model", "lora", "dataset", "precision", "training",
+    "checkpoint", "scheduler", "stages", "raw_training_text_public",
+    "token_ids_public", "tensor_values_public", "private_paths_public",
+    "public_artifact_safe", "content_hash"
+  ],
+  "properties": {
+    "schema": {"const": "crowdtensor_heterogeneous_training_manifest_v2"},
+    "model": {"$ref": "#/$defs/model"},
+    "lora": {"$ref": "#/$defs/lora"},
+    "dataset": {"$ref": "#/$defs/dataset"},
+    "precision": {"$ref": "#/$defs/precision"},
+    "training": {"$ref": "#/$defs/training"},
+    "checkpoint": {"$ref": "#/$defs/checkpoint"},
+    "scheduler": {"$ref": "#/$defs/scheduler"},
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/stage"}
+    },
+    "raw_training_text_public": {"const": false},
+    "token_ids_public": {"const": false},
+    "tensor_values_public": {"const": false},
+    "private_paths_public": {"const": false},
+    "public_artifact_safe": {"const": true},
+    "content_hash": {"$ref": "#/$defs/hash"}
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "positiveInteger": {"type": "integer", "minimum": 1},
+    "dtype": {"enum": ["float16", "bfloat16", "float32"]},
+    "deviceType": {"enum": ["cpu", "cuda", "jax_tpu"]},
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_id", "model_revision", "architecture", "model_type",
+        "parameter_count", "weight_bytes", "num_hidden_layers", "hidden_size",
+        "intermediate_size", "num_attention_heads", "num_key_value_heads",
+        "vocab_size", "source_dtype", "trust_remote_code"
+      ],
+      "properties": {
+        "model_id": {"type": "string", "minLength": 1},
+        "model_revision": {"type": "string", "minLength": 1},
+        "architecture": {"type": "string", "minLength": 1},
+        "model_type": {"const": "qwen2"},
+        "parameter_count": {"$ref": "#/$defs/positiveInteger"},
+        "weight_bytes": {"$ref": "#/$defs/positiveInteger"},
+        "num_hidden_layers": {"$ref": "#/$defs/positiveInteger"},
+        "hidden_size": {"$ref": "#/$defs/positiveInteger"},
+        "intermediate_size": {"$ref": "#/$defs/positiveInteger"},
+        "num_attention_heads": {"$ref": "#/$defs/positiveInteger"},
+        "num_key_value_heads": {"$ref": "#/$defs/positiveInteger"},
+        "vocab_size": {"$ref": "#/$defs/positiveInteger"},
+        "source_dtype": {"$ref": "#/$defs/dtype"},
+        "trust_remote_code": {"type": "boolean"}
+      }
+    },
+    "lora": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rank", "alpha", "dropout", "target_modules", "bias",
+        "learning_rate", "gradient_clip_norm"
+      ],
+      "properties": {
+        "rank": {"$ref": "#/$defs/positiveInteger"},
+        "alpha": {"$ref": "#/$defs/positiveInteger"},
+        "dropout": {"type": "number", "minimum": 0},
+        "target_modules": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "bias": {"const": "none"},
+        "learning_rate": {"type": "number", "exclusiveMinimum": 0},
+        "gradient_clip_norm": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_id", "dataset_revision", "dataset_config", "train_split",
+        "validation_split", "data_seed", "raw_training_text_public",
+        "token_ids_public"
+      ],
+      "properties": {
+        "dataset_id": {"type": "string", "minLength": 1},
+        "dataset_revision": {"type": "string", "minLength": 1},
+        "dataset_config": {"type": "string", "minLength": 1},
+        "train_split": {"type": "string", "minLength": 1},
+        "validation_split": {"type": "string", "minLength": 1},
+        "data_seed": {"type": "integer", "minimum": 0},
+        "raw_training_text_public": {"const": false},
+        "token_ids_public": {"const": false}
+      }
+    },
+    "precision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cuda_compute_dtype", "cpu_compute_dtype", "jax_tpu_compute_dtype",
+        "boundary_dtype", "optimizer_dtype"
+      ],
+      "properties": {
+        "cuda_compute_dtype": {"$ref": "#/$defs/dtype"},
+        "cpu_compute_dtype": {"$ref": "#/$defs/dtype"},
+        "jax_tpu_compute_dtype": {"$ref": "#/$defs/dtype"},
+        "boundary_dtype": {"$ref": "#/$defs/dtype"},
+        "optimizer_dtype": {"$ref": "#/$defs/dtype"}
+      }
+    },
+    "training": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_steps", "microbatches_per_step", "microbatch_size",
+        "sequence_length", "gradient_accumulation_steps", "seed"
+      ],
+      "properties": {
+        "target_steps": {"$ref": "#/$defs/positiveInteger"},
+        "microbatches_per_step": {"$ref": "#/$defs/positiveInteger"},
+        "microbatch_size": {"$ref": "#/$defs/positiveInteger"},
+        "sequence_length": {"type": "integer", "minimum": 2},
+        "gradient_accumulation_steps": {"$ref": "#/$defs/positiveInteger"},
+        "seed": {"type": "integer", "minimum": 0}
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend", "retention_steps", "checkpoint_every_steps",
+        "include_optimizer", "include_scheduler", "include_rng",
+        "atomic_global_commit"
+      ],
+      "properties": {
+        "backend": {"enum": ["local", "s3"]},
+        "retention_steps": {"$ref": "#/$defs/positiveInteger"},
+        "checkpoint_every_steps": {"$ref": "#/$defs/positiveInteger"},
+        "include_optimizer": {"type": "boolean"},
+        "include_scheduler": {"type": "boolean"},
+        "include_rng": {"type": "boolean"},
+        "atomic_global_commit": {"type": "boolean"}
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_policy", "placement_policy", "rebalance_policy",
+        "max_stages_per_miner", "memory_reserve_fraction",
+        "cuda_memory_reserve_bytes", "cpu_memory_reserve_bytes",
+        "tpu_memory_reserve_bytes", "tpu_compile_cost_weight",
+        "tpu_steady_state_cost_weight", "straggler_ratio",
+        "network_cost_weight", "load_cost_weight", "beam_width",
+        "required_device_types"
+      ],
+      "properties": {
+        "device_policy": {"enum": ["cpu", "gpu", "mixed"]},
+        "placement_policy": {"enum": ["memory-performance", "memory-first"]},
+        "rebalance_policy": {"type": "string", "minLength": 1},
+        "max_stages_per_miner": {"$ref": "#/$defs/positiveInteger"},
+        "memory_reserve_fraction": {
+          "type": "number", "minimum": 0, "exclusiveMaximum": 0.9
+        },
+        "cuda_memory_reserve_bytes": {"type": "integer", "minimum": 0},
+        "cpu_memory_reserve_bytes": {"type": "integer", "minimum": 0},
+        "tpu_memory_reserve_bytes": {"type": "integer", "minimum": 0},
+        "tpu_compile_cost_weight": {"type": "number", "minimum": 0},
+        "tpu_steady_state_cost_weight": {"type": "number", "minimum": 0},
+        "straggler_ratio": {"type": "number", "minimum": 1},
+        "network_cost_weight": {"type": "number", "minimum": 0},
+        "load_cost_weight": {"type": "number", "minimum": 0},
+        "beam_width": {"$ref": "#/$defs/positiveInteger"},
+        "required_device_types": {
+          "type": "array", "uniqueItems": true,
+          "items": {"$ref": "#/$defs/deviceType"}
+        }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage_id", "layer_start", "layer_end", "layer_count",
+        "owns_embedding", "owns_norm", "owns_lm_head",
+        "allowed_device_types", "preferred_device_type",
+        "estimated_parameter_count", "estimated_weight_bytes",
+        "estimated_compute_units"
+      ],
+      "properties": {
+        "stage_id": {"type": "integer", "minimum": 0},
+        "layer_start": {"type": "integer", "minimum": 0},
+        "layer_end": {"$ref": "#/$defs/positiveInteger"},
+        "layer_count": {"$ref": "#/$defs/positiveInteger"},
+        "owns_embedding": {"type": "boolean"},
+        "owns_norm": {"type": "boolean"},
+        "owns_lm_head": {"type": "boolean"},
+        "allowed_device_types": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/deviceType"}
+        },
+        "preferred_device_type": {"$ref": "#/$defs/deviceType"},
+        "estimated_parameter_count": {"$ref": "#/$defs/positiveInteger"},
+        "estimated_weight_bytes": {"$ref": "#/$defs/positiveInteger"},
+        "estimated_compute_units": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

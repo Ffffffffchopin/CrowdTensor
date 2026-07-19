@@ -34,7 +34,7 @@ def read_pyproject(root: Path) -> dict[str, Any]:
     project = payload.get("project", {})
     return {
         "name": project.get("name", ""),
-        "version": project.get("version", ""),
+        "version": release_gate.resolve_project_version(root, project),
         "requires_python": project.get("requires-python", ""),
         "scripts": project.get("scripts", {}),
     }

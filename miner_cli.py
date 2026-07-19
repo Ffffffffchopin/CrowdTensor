@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import platform
@@ -14,6 +15,7 @@ import time
 import traceback
 import uuid
 from collections import Counter
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -21,6 +23,8 @@ from crowdtensor.diloco import run_inner_loop
 from crowdtensor.external_llm import WORKLOAD_TYPE as WORKLOAD_EXTERNAL_LLM_INFER
 from crowdtensor.external_llm import run_external_llm_inference, run_mock_external_llm_inference
 from crowdtensor.lora_mock import run_lora_inner_loop
+from crowdtensor.hf_lora_training import CUDALoRATrainingRuntime, CPULoRATrainingRuntime
+from crowdtensor.training_contract import WORKLOAD_TYPE as WORKLOAD_HF_LORA_TRAIN
 from crowdtensor.micro_transformer import MICRO_LLM_SHARDED_WORKLOAD_TYPE as WORKLOAD_MICRO_LLM_SHARDED_INFER
 from crowdtensor.micro_transformer import WORKLOAD_TYPE as WORKLOAD_MICRO_TRANSFORMER_LM
 from crowdtensor.micro_transformer import run_micro_llm_sharded_inference, run_micro_transformer_inner_loop
@@ -53,9 +57,11 @@ from crowdtensor.protocol import (
 from crowdtensor.real_llm import BACKEND_CPU as REAL_LLM_BACKEND_CPU
 from crowdtensor.real_llm import BACKEND_CUDA as REAL_LLM_BACKEND_CUDA
 from crowdtensor.real_llm import DEFAULT_MODEL_ID as DEFAULT_REAL_LLM_MODEL_ID
+from crowdtensor.real_llm import EXECUTION_MODE_FULL_MODEL as REAL_LLM_EXECUTION_MODE_FULL_MODEL
 from crowdtensor.real_llm import PARTITION_MODE_FULL as REAL_LLM_PARTITION_MODE_FULL
 from crowdtensor.real_llm import WORKLOAD_TYPE as WORKLOAD_REAL_LLM_SHARDED_INFER
 from crowdtensor.real_llm import cuda_runtime_summary, normalize_backend as normalize_real_llm_backend
+from crowdtensor.real_llm import normalize_execution_mode as normalize_real_llm_execution_mode
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode
 from crowdtensor.real_llm import run_real_llm_sharded_inference
 
@@ -332,6 +338,10 @@ def miner_capabilities(
     real_llm_backend: str = REAL_LLM_BACKEND_CPU,
     real_llm_stage_role: str = "both",
     real_llm_partition_mode: str = REAL_LLM_PARTITION_MODE_FULL,
+    real_llm_execution_mode: str = REAL_LLM_EXECUTION_MODE_FULL_MODEL,
+    enable_hf_lora_runtime: bool = False,
+    training_backend: str = "cpu",
+    cuda_device: str = "cuda:0",
 ) -> dict:
     supported_workloads = [
         "diloco_train",
@@ -342,6 +352,14 @@ def miner_capabilities(
         WORKLOAD_MODEL_BUNDLE_INFER,
         WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
     ]
+    hf_lora_runtime: dict[str, object] = {}
+    if enable_hf_lora_runtime:
+        supported_workloads.append(WORKLOAD_HF_LORA_TRAIN)
+        hf_lora_runtime = (
+            CUDALoRATrainingRuntime(cuda_device).capability()
+            if str(training_backend).lower() == "cuda"
+            else CPULoRATrainingRuntime().capability()
+        )
     external_llm_runtime = {}
     if enable_mock_llm_runtime or str(llm_runtime_cmd or "").strip() or str(llm_runtime_url or "").strip():
         supported_workloads.append(WORKLOAD_EXTERNAL_LLM_INFER)
@@ -375,6 +393,7 @@ def miner_capabilities(
     resolved_real_backend = normalize_real_llm_backend(real_llm_backend)
     if resolved_real_backend == "auto":
         resolved_real_backend = REAL_LLM_BACKEND_CUDA if cuda_runtime_summary().get("cuda_available") else REAL_LLM_BACKEND_CPU
+    resolved_real_execution_mode = normalize_real_llm_execution_mode(real_llm_execution_mode)
     if resolved_real_backend == REAL_LLM_BACKEND_CUDA:
         real_llm_stage_capabilities = {
             "stage0": [REAL_LLM_SHARDED_CUDA_STAGE0_CAPABILITY],
@@ -403,12 +422,17 @@ def miner_capabilities(
             "model_id": str(hf_model_id or DEFAULT_REAL_LLM_MODEL_ID),
             "stage_role": real_stage_role,
             "partition_mode": normalize_real_llm_partition_mode(real_llm_partition_mode),
+            "execution_mode": resolved_real_execution_mode,
+            "execution_modes": [resolved_real_execution_mode],
         }
         if resolved_real_backend == REAL_LLM_BACKEND_CUDA:
             real_llm_runtime["cuda_runtime"] = cuda_runtime_summary()
     return {
         "runtime": "python-cli",
-        "backend": "cuda" if enable_hf_tiny_gpt_runtime and resolved_real_backend == REAL_LLM_BACKEND_CUDA else "cpu",
+        "backend": "cuda" if (
+            (enable_hf_tiny_gpt_runtime and resolved_real_backend == REAL_LLM_BACKEND_CUDA)
+            or (enable_hf_lora_runtime and str(training_backend).lower() == "cuda")
+        ) else "cpu",
         "hardware_profile": hardware_profile(),
         "supports_training_spec": True,
         "protocol_version": "runtime_contract_v1",
@@ -420,6 +444,7 @@ def miner_capabilities(
         "supported_delta_formats": SUPPORTED_MINER_DELTA_FORMATS,
         "external_llm_runtime": external_llm_runtime,
         "real_llm_runtime": real_llm_runtime,
+        "hf_lora_runtime": hf_lora_runtime,
         "pid": os_safe_pid(),
     }
 
@@ -429,6 +454,25 @@ def delta_format_for_claim(claim: dict, requested_format: str) -> str:
         return requested_format
     optimizer_spec = claim.get("optimizer_spec") or {}
     return str(optimizer_spec.get("delta_format") or DELTA_FORMAT_DENSE_FLOAT)
+
+
+def localize_hf_lora_training_spec(spec: dict, fixture_dir: str | Path) -> dict:
+    """Replace private Coordinator-local paths with the Miner's packaged fixture paths."""
+
+    root = Path(fixture_dir).resolve()
+    localized = dict(spec)
+    path_values = {
+        "base_model_path": root / "base_model",
+        "adapter_path": root / "initial_adapter",
+        "adapter_tensor_path": root / "initial_adapter" / "adapter_model.safetensors",
+        "adapter_config_path": root / "initial_adapter" / "adapter_config.json",
+        "dataset_path": root / "private_dataset.jsonl",
+    }
+    missing = [name for name, path in path_values.items() if not path.exists()]
+    if missing:
+        raise RuntimeError(f"packaged HF LoRA fixture is incomplete: {','.join(sorted(missing))}")
+    localized.update({name: str(path) for name, path in path_values.items()})
+    return localized
 
 
 def build_result_payload(
@@ -467,6 +511,26 @@ def build_result_payload(
     next_residual = None
     if workload_type == "cpu_lora_mock":
         payload["adapter_delta"] = inner_result["adapter_delta"]
+    elif workload_type == WORKLOAD_HF_LORA_TRAIN:
+        payload["training_result"] = inner_result
+        delta_path = Path(str((inner_result.get("adapter_delta") or {}).get("delta_path") or ""))
+        if not delta_path.is_file():
+            raise RuntimeError("HF LoRA result is missing its private adapter delta file")
+        payload["training_adapter_delta_b64"] = base64.b64encode(delta_path.read_bytes()).decode("ascii")
+        payload["metrics"] = {
+            "elapsed_ms": elapsed_ms,
+            "optimizer_steps": int(inner_result.get("optimizer_steps", 0)),
+            "samples_seen": int(inner_result.get("samples_seen", 0)),
+            "tokens_seen": int(inner_result.get("tokens_seen", 0)),
+            "loss_start": float(inner_result.get("loss_start", 0.0)),
+            "loss_end": float(inner_result.get("loss_end", 0.0)),
+            "loss_reduced": bool(inner_result.get("loss_reduced", False)),
+            "base_weights_frozen": bool(inner_result.get("base_weights_frozen", False)),
+            "real_backward": bool(inner_result.get("real_backward", False)),
+            "dataset_shard_index": int(inner_result.get("dataset_shard_index", -1)),
+            "private_paths_public": False,
+            "raw_dataset_public": False,
+        }
     elif workload_type == WORKLOAD_MICRO_TRANSFORMER_LM:
         payload["local_delta"] = inner_result["local_delta"]
     elif workload_type == WORKLOAD_MODEL_BUNDLE_LM:
@@ -557,6 +621,10 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
                 real_llm_backend=args.real_llm_backend,
                 real_llm_stage_role=args.real_llm_stage_role,
                 real_llm_partition_mode=getattr(args, "real_llm_partition_mode", REAL_LLM_PARTITION_MODE_FULL),
+                real_llm_execution_mode=getattr(args, "real_llm_execution_mode", REAL_LLM_EXECUTION_MODE_FULL_MODEL),
+                enable_hf_lora_runtime=bool(getattr(args, "enable_hf_lora_runtime", False)),
+                training_backend=str(getattr(args, "training_backend", "cpu")),
+                cuda_device=str(getattr(args, "cuda_device", "cuda:0")),
             ),
         },
         timeout=args.claim_timeout,
@@ -580,6 +648,7 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
         WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
         WORKLOAD_EXTERNAL_LLM_INFER,
         WORKLOAD_REAL_LLM_SHARDED_INFER,
+        WORKLOAD_HF_LORA_TRAIN,
     }:
         raise RuntimeError(f"python-cli miner does not support workload {workload_type}")
 
@@ -619,6 +688,32 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
                     inner_steps=int(claim["inner_steps"]),
                     compute_seconds=args.compute_seconds,
                 )
+            elif workload_type == WORKLOAD_HF_LORA_TRAIN:
+                if not bool(getattr(args, "enable_hf_lora_runtime", False)):
+                    raise RuntimeError("hf_lora_train requires --enable-hf-lora-runtime")
+                runtime_status["phase"] = "hf_lora_training"
+                runtime_status["dataset_shard_index"] = (claim.get("workload_spec") or {}).get(
+                    "dataset_shard_index"
+                )
+                training_spec = dict(claim["workload_spec"])
+                fixture_dir = str(getattr(args, "hf_lora_fixture_dir", "") or "")
+                if fixture_dir:
+                    training_spec = localize_hf_lora_training_spec(training_spec, fixture_dir)
+                training_backend = str(getattr(args, "training_backend", "cpu")).lower()
+                if training_backend == "cuda":
+                    cuda_device = str(getattr(args, "cuda_device", "cuda:0"))
+                    training_spec["device"] = cuda_device
+                    runtime_status["cuda_device"] = cuda_device
+                    runtime = CUDALoRATrainingRuntime(
+                        cuda_device,
+                        gradient_clip_norm=float(getattr(args, "gradient_clip_norm", 1.0)),
+                    )
+                else:
+                    runtime = CPULoRATrainingRuntime()
+                inner_result = runtime.run(
+                    training_spec,
+                    output_dir=Path(getattr(args, "hf_lora_output_dir", "state/hf-lora-miner")) / claim["task_id"],
+                )
             elif workload_type == WORKLOAD_MICRO_TRANSFORMER_LM:
                 inner_result = run_micro_transformer_inner_loop(
                     claim["workload_spec"],
@@ -644,6 +739,7 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
                 runtime_status["real_llm_stage_id"] = (claim.get("workload_spec") or {}).get("stage_id")
                 runtime_status["real_llm_backend"] = (claim.get("workload_spec") or {}).get("backend")
                 runtime_status["real_llm_partition_mode"] = (claim.get("workload_spec") or {}).get("partition_mode")
+                runtime_status["real_llm_execution_mode"] = (claim.get("workload_spec") or {}).get("execution_mode")
                 inner_result = run_real_llm_sharded_inference(
                     claim["workload_spec"],
                     cache_dir=args.hf_cache_dir,
@@ -727,6 +823,16 @@ def process_one(args: argparse.Namespace, counters: Counter, residual_state: dic
             print(
                 f"accepted adapter task={claim['task_id']} adapter_step={result['adapter_step']} "
                 f"adapter_loss={result['adapter_loss']:.6f}",
+                flush=True,
+            )
+            return True
+        if workload_type == WORKLOAD_HF_LORA_TRAIN:
+            print(
+                f"accepted hf-lora task={claim['task_id']} "
+                f"shard={result['dataset_shard_index']} "
+                f"adapter_version={result['adapter_version']} "
+                f"outer_step={result['outer_step']} "
+                f"loss={inner_result['loss_start']:.6f}->{inner_result['loss_end']:.6f}",
                 flush=True,
             )
             return True
@@ -904,6 +1010,38 @@ def parse_args() -> argparse.Namespace:
         help="advertise and execute real_llm_sharded_infer with the optional CPU Hugging Face tiny GPT runtime",
     )
     parser.add_argument(
+        "--enable-hf-lora-runtime",
+        action="store_true",
+        help="advertise and execute the real Transformers/PEFT hf_lora_train workload",
+    )
+    parser.add_argument(
+        "--training-backend",
+        choices=["cpu", "cuda"],
+        default=os.environ.get("CROWDTENSOR_TRAINING_BACKEND", "cpu"),
+        help="device backend for hf_lora_train; CUDA never falls back to CPU",
+    )
+    parser.add_argument(
+        "--cuda-device",
+        default=os.environ.get("CROWDTENSOR_CUDA_DEVICE", "cuda:0"),
+        help="explicit CUDA placement for hf_lora_train",
+    )
+    parser.add_argument(
+        "--gradient-clip-norm",
+        type=float,
+        default=float(os.environ.get("CROWDTENSOR_GRADIENT_CLIP_NORM", "1.0")),
+        help="maximum LoRA gradient norm for CUDA training",
+    )
+    parser.add_argument(
+        "--hf-lora-fixture-dir",
+        default=os.environ.get("CROWDTENSOR_HF_LORA_FIXTURE_DIR", ""),
+        help="private packaged model/adapter/dataset root used by remote Miners",
+    )
+    parser.add_argument(
+        "--hf-lora-output-dir",
+        default=os.environ.get("CROWDTENSOR_HF_LORA_OUTPUT_DIR", "state/hf-lora-miner"),
+        help="private local output directory for hf_lora_train adapter and delta files",
+    )
+    parser.add_argument(
         "--hf-model-id",
         default=os.environ.get("CROWDTENSOR_HF_MODEL_ID", DEFAULT_REAL_LLM_MODEL_ID),
         help="Hugging Face causal LM id for real_llm_sharded_infer; defaults to sshleifer/tiny-gpt2",
@@ -931,6 +1069,12 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("CROWDTENSOR_REAL_LLM_PARTITION_MODE", REAL_LLM_PARTITION_MODE_FULL),
         help="real_llm_sharded_infer partition mode; stage-local moves only stage-owned modules to the target device",
     )
+    parser.add_argument(
+        "--real-llm-execution-mode",
+        choices=["full_model", "full-model", "stage_selective_hf", "stage-selective-hf"],
+        default=os.environ.get("CROWDTENSOR_REAL_LLM_EXECUTION_MODE", REAL_LLM_EXECUTION_MODE_FULL_MODEL),
+        help="real_llm_sharded_infer execution mode; stage_selective_hf loads only stage-owned HF weights",
+    )
     parser.add_argument("--idle-sleep", type=float, default=2.0)
     parser.add_argument(
         "--debug-tracebacks",
@@ -950,7 +1094,12 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--retry-max-sleep must be non-negative")
     if args.llm_runtime_timeout <= 0:
         raise SystemExit("--llm-runtime-timeout must be positive")
+    if args.gradient_clip_norm <= 0:
+        raise SystemExit("--gradient-clip-norm must be positive")
+    if args.training_backend == "cuda" and not str(args.cuda_device).startswith("cuda:"):
+        raise SystemExit("--cuda-device must use cuda:<index>")
     args.real_llm_partition_mode = normalize_real_llm_partition_mode(args.real_llm_partition_mode)
+    args.real_llm_execution_mode = normalize_real_llm_execution_mode(args.real_llm_execution_mode)
     return args
 
 
@@ -974,6 +1123,11 @@ def summary_payload(args: argparse.Namespace, counters: Counter, started_at: flo
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "join":
+        from crowdtensor.elastic_training_miner import training_join_main
+
+        training_join_main(sys.argv[2:])
+        return
     args = parse_args()
     counters: Counter = Counter()
     residual_state: dict[str, list[float]] = {}

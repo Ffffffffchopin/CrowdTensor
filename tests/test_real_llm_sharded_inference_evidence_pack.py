@@ -258,8 +258,15 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
                         "activation_hashes": ["sha256:activation"],
                         "stage_layer_range": [0, 1],
                         "stage0_partition_loaded": True,
+                        "stage_selective_weight_load": {
+                            "loaded_tensor_bytes": 2048,
+                            "stage_weight_download_scope": "stage_owned_weight_files",
+                            "stage_weight_download_file_count": 2,
+                            "stage_weight_downloads_only_stage_files": True,
+                        },
+                        "stage_selective_weight_application": {"applied_tensor_bytes": 2048},
                     },
-                    "metrics": {"elapsed_ms": 1.0},
+                    "metrics": {"elapsed_ms": 20.0},
                 },
                 {
                     "task_id": "task-stage-1",
@@ -282,6 +289,15 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
                         "stage_layer_range": [1, 2],
                         "stage1_partition_loaded": True,
                         "baseline_device": "cpu",
+                        "generated_token_ids": [16046],
+                        "generated_token_count": 1,
+                        "stage_selective_weight_load": {
+                            "loaded_tensor_bytes": 4096,
+                            "stage_weight_download_scope": "stage_owned_weight_files",
+                            "stage_weight_download_file_count": 2,
+                            "stage_weight_downloads_only_stage_files": True,
+                        },
+                        "stage_selective_weight_application": {"applied_tensor_bytes": 4096},
                         "request_trace": [
                             {
                                 "request_id": "req-1",
@@ -294,7 +310,7 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
                             }
                         ],
                     },
-                    "metrics": {"elapsed_ms": 1.0},
+                    "metrics": {"elapsed_ms": 30.0},
                 },
             ],
         }
@@ -319,6 +335,15 @@ class RealLlmShardedInferenceEvidencePackTests(unittest.TestCase):
         self.assertIn("stage1_partition_loaded", report["diagnosis_codes"])
         self.assertTrue(report["safety"]["stage_local_partition"])
         self.assertEqual(report["stage_summary"]["stage_1"]["baseline_device"], "cpu")
+        self.assertEqual(report["performance"]["latency"]["total_stage_elapsed_ms"], 50.0)
+        self.assertEqual(report["performance"]["throughput"]["generated_token_count"], 1)
+        self.assertEqual(report["performance"]["throughput"]["tokens_per_second_effective"], 20.0)
+        self.assertEqual(report["performance"]["transport"]["activation_bytes_total"], 128)
+        self.assertEqual(report["performance"]["memory"]["stage_selective_loaded_tensor_bytes_total"], 6144)
+        self.assertEqual(report["performance"]["memory"]["stage_selective_applied_tensor_bytes_total"], 6144)
+        self.assertTrue(report["performance"]["memory"]["stage_weight_downloads_only_stage_files"])
+        self.assertEqual(report["performance"]["memory"]["stage0_weight_download_scope"], "stage_owned_weight_files")
+        self.assertEqual(report["performance"]["memory"]["stage1_weight_download_scope"], "stage_owned_weight_files")
         self.assertFalse(report["not_completed"])
 
     def test_render_markdown_includes_review_scope_and_next_steps(self) -> None:

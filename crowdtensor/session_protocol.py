@@ -55,6 +55,7 @@ RAW_PUBLIC_KEYS = {
     "sharded_inference_result",
     "external_llm_result",
     "external_llm_results",
+    "training_result",
 }
 SECRET_VALUE_FRAGMENTS = (
     "CROWDTENSOR_ADMIN_TOKEN",

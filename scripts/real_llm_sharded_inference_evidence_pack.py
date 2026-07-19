@@ -31,6 +31,7 @@ from crowdtensor.real_llm import DEFAULT_MODEL_ID, DEFAULT_PROMPTS, inspect_real
 from crowdtensor.real_llm import BACKEND_CPU as REAL_LLM_BACKEND_CPU  # noqa: E402
 from crowdtensor.real_llm import BACKEND_CUDA as REAL_LLM_BACKEND_CUDA  # noqa: E402
 from crowdtensor.real_llm import normalize_backend as normalize_real_llm_backend  # noqa: E402
+from crowdtensor.real_llm import normalize_execution_mode as normalize_real_llm_execution_mode  # noqa: E402
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
 from product_swarm_mvp_check import parse_prompt_texts_arg, read_prompt_texts_file  # noqa: E402
 
@@ -232,6 +233,7 @@ def create_session(args: argparse.Namespace) -> dict[str, Any]:
         "workload_type": WORKLOAD_TYPE,
         "backend": "cuda" if resolved_backend == REAL_LLM_BACKEND_CUDA else "cpu",
         "partition_mode": normalize_real_llm_partition_mode(getattr(args, "real_llm_partition_mode", "full")),
+        "execution_mode": normalize_real_llm_execution_mode(getattr(args, "real_llm_execution_mode", "full_model")),
     }
     prompt_texts = prompt_list_from_args(args)
     if prompt_texts:
@@ -291,6 +293,8 @@ def real_llm_sharded_command(args: argparse.Namespace, output_dir: Path) -> list
         getattr(args, "real_llm_backend", REAL_LLM_BACKEND_CPU),
         "--real-llm-partition-mode",
         getattr(args, "real_llm_partition_mode", "full"),
+        "--real-llm-execution-mode",
+        getattr(args, "real_llm_execution_mode", "full_model"),
         "--json",
     ]
     if getattr(args, "hf_cache_dir", ""):
@@ -310,6 +314,18 @@ def not_completed_items(report: dict[str, Any]) -> list[str]:
     generation = report.get("generation") if isinstance(report.get("generation"), dict) else {}
     artifact = report.get("artifact") if isinstance(report.get("artifact"), dict) else {}
     assignment = report.get("stage_assignment") if isinstance(report.get("stage_assignment"), dict) else {}
+    stage = report.get("stage_summary") if isinstance(report.get("stage_summary"), dict) else {}
+    stage1 = stage.get("stage_1") if isinstance(stage.get("stage_1"), dict) else {}
+    execution_mode = normalize_real_llm_execution_mode(artifact.get("execution_mode"))
+    baseline_ready = bool(
+        "baseline_match" in codes
+        or (
+            execution_mode == "stage_selective_hf"
+            and "baseline_validation_skipped" in codes
+            and "decoded_tokens_match" in codes
+            and stage1.get("baseline_validation_skipped") is True
+        )
+    )
     requeue = (
         ((report.get("observability") if isinstance(report.get("observability"), dict) else {}).get("requeue_summary"))
         if isinstance((report.get("observability") if isinstance(report.get("observability"), dict) else {}).get("requeue_summary"), dict)
@@ -321,7 +337,7 @@ def not_completed_items(report: dict[str, Any]) -> list[str]:
         ("stage 1 accepted", "stage_1_accepted" in codes),
         ("activation transport ready", "activation_transport_ready" in codes),
         ("real LLM artifact ready", "real_llm_artifact_ready" in codes),
-        ("baseline match ready", "baseline_match" in codes),
+        ("baseline ready", baseline_ready),
         ("decoded tokens match ready", "decoded_tokens_match" in codes),
         ("generation complete", "generation_complete" in codes),
         ("generated token count reached target", int(generation.get("generated_token_count") or 0) >= int(generation.get("max_new_tokens") or 1)),
@@ -488,6 +504,7 @@ def support_bundle_payload(report: dict[str, Any]) -> dict[str, Any]:
         "session": report.get("session"),
         "artifact": report.get("artifact"),
         "generation": report.get("generation"),
+        "performance": report.get("performance"),
         "stage_assignment": report.get("stage_assignment"),
         "observability": report.get("observability"),
         "safety": report.get("safety"),
@@ -568,6 +585,106 @@ def latest_stage_task(tasks: list[dict[str, Any]], stage_id: int) -> dict[str, A
     return max(candidates, key=task_generation_step)
 
 
+def safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def performance_summary(
+    *,
+    stage0: dict[str, Any],
+    stage1: dict[str, Any],
+    stage0_validation: dict[str, Any],
+    stage1_validation: dict[str, Any],
+    generated_token_count: int,
+    completed_generation_steps: int,
+    max_new_tokens: int,
+) -> dict[str, Any]:
+    stage0_elapsed_ms = safe_float((stage0.get("metrics") or {}).get("elapsed_ms"))
+    stage1_elapsed_ms = safe_float((stage1.get("metrics") or {}).get("elapsed_ms"))
+    total_stage_elapsed_ms = stage0_elapsed_ms + stage1_elapsed_ms
+    effective_elapsed_seconds = total_stage_elapsed_ms / 1000.0 if total_stage_elapsed_ms > 0 else 0.0
+    generated = max(0, int(generated_token_count))
+    tokens_per_second = round(generated / effective_elapsed_seconds, 6) if effective_elapsed_seconds > 0 else 0.0
+    activation_bytes = safe_int(stage0_validation.get("activation_bytes")) + safe_int(stage1_validation.get("activation_bytes"))
+    stage0_load = stage0_validation.get("stage_selective_weight_load") if isinstance(stage0_validation.get("stage_selective_weight_load"), dict) else {}
+    stage1_load = stage1_validation.get("stage_selective_weight_load") if isinstance(stage1_validation.get("stage_selective_weight_load"), dict) else {}
+    stage0_apply = stage0_validation.get("stage_selective_weight_application") if isinstance(stage0_validation.get("stage_selective_weight_application"), dict) else {}
+    stage1_apply = stage1_validation.get("stage_selective_weight_application") if isinstance(stage1_validation.get("stage_selective_weight_application"), dict) else {}
+    stage0_loaded_bytes = safe_int(stage0_load.get("loaded_tensor_bytes"))
+    stage1_loaded_bytes = safe_int(stage1_load.get("loaded_tensor_bytes"))
+    stage0_applied_bytes = safe_int(stage0_apply.get("applied_tensor_bytes"))
+    stage1_applied_bytes = safe_int(stage1_apply.get("applied_tensor_bytes"))
+    return {
+        "schema": "real_llm_sharded_performance_summary_v1",
+        "latency": {
+            "stage0_elapsed_ms": stage0_elapsed_ms,
+            "stage1_elapsed_ms": stage1_elapsed_ms,
+            "total_stage_elapsed_ms": round(total_stage_elapsed_ms, 6),
+            "effective_elapsed_seconds": round(effective_elapsed_seconds, 6),
+        },
+        "throughput": {
+            "generated_token_count": generated,
+            "completed_generation_steps": int(completed_generation_steps),
+            "max_new_tokens": int(max_new_tokens),
+            "tokens_per_second_effective": tokens_per_second,
+            "multi_token_target_ready": bool(generated >= int(max_new_tokens) and completed_generation_steps >= int(max_new_tokens)),
+        },
+        "transport": {
+            "activation_bytes_total": activation_bytes,
+            "activation_bytes_stage0": safe_int(stage0_validation.get("activation_bytes")),
+            "activation_bytes_stage1": safe_int(stage1_validation.get("activation_bytes")),
+            "activation_transport_ready": bool(
+                stage0_validation.get("activation_transport_ready")
+                and stage1_validation.get("activation_transport_ready")
+            ),
+        },
+        "memory": {
+            "stage0_parameter_count": safe_int(stage0_validation.get("stage_parameter_count")),
+            "stage1_parameter_count": safe_int(stage1_validation.get("stage_parameter_count")),
+            "full_model_parameter_count": safe_int(
+                stage0_validation.get("full_model_parameter_count")
+                or stage1_validation.get("full_model_parameter_count")
+            ),
+            "stage0_parameter_fraction": stage0_validation.get("stage_parameter_fraction"),
+            "stage1_parameter_fraction": stage1_validation.get("stage_parameter_fraction"),
+            "stage0_loaded_tensor_bytes": stage0_loaded_bytes,
+            "stage1_loaded_tensor_bytes": stage1_loaded_bytes,
+            "stage0_applied_tensor_bytes": stage0_applied_bytes,
+            "stage1_applied_tensor_bytes": stage1_applied_bytes,
+            "stage_selective_loaded_tensor_bytes_total": stage0_loaded_bytes + stage1_loaded_bytes,
+            "stage_selective_applied_tensor_bytes_total": stage0_applied_bytes + stage1_applied_bytes,
+            "stage0_weight_download_scope": str(stage0_load.get("stage_weight_download_scope") or ""),
+            "stage1_weight_download_scope": str(stage1_load.get("stage_weight_download_scope") or ""),
+            "stage0_weight_download_file_count": safe_int(stage0_load.get("stage_weight_download_file_count")),
+            "stage1_weight_download_file_count": safe_int(stage1_load.get("stage_weight_download_file_count")),
+            "stage_weight_downloads_only_stage_files": bool(
+                stage0_load.get("stage_weight_downloads_only_stage_files")
+                and stage1_load.get("stage_weight_downloads_only_stage_files")
+            ),
+            "stage_gpu_memory_reduced": bool(
+                stage0_validation.get("stage_gpu_memory_reduced")
+                or stage1_validation.get("stage_gpu_memory_reduced")
+            ),
+        },
+        "failure_recovery": {
+            "stage0_attempt": safe_int(stage0.get("attempt"), 0),
+            "stage1_attempt": safe_int(stage1.get("attempt"), 0),
+            "requeue_observed": bool(safe_int(stage0.get("attempt"), 0) > 1 or safe_int(stage1.get("attempt"), 0) > 1),
+        },
+        "public_artifact_safe": True,
+    }
+
+
 def build_report(
     *,
     args: argparse.Namespace,
@@ -608,6 +725,7 @@ def build_report(
     stage0_ok = stage0.get("status") == "completed" and stage0_validation.get("code") == "ok"
     stage1_ok = stage1.get("status") == "completed" and stage1_validation.get("code") == "ok"
     baseline_match = bool(stage1_validation.get("baseline_match"))
+    baseline_validation_skipped = bool(stage1_validation.get("baseline_validation_skipped"))
     decoded_tokens_match = bool(stage1_validation.get("decoded_tokens_match"))
     activation_ready = bool(
         stage0_validation.get("activation_transport_ready")
@@ -645,6 +763,12 @@ def build_report(
             or stage1_validation.get("partition_mode")
             or normalize_real_llm_partition_mode(getattr(args, "real_llm_partition_mode", "full"))
         ),
+        "execution_mode": (
+            session.get("execution_mode")
+            or stage0_validation.get("execution_mode")
+            or stage1_validation.get("execution_mode")
+            or normalize_real_llm_execution_mode(getattr(args, "real_llm_execution_mode", "full_model"))
+        ),
         "split_index": session.get("split_index") or stage0_validation.get("split_index") or stage1_validation.get("split_index"),
         "num_hidden_layers": session.get("num_hidden_layers"),
         "hidden_size": session.get("hidden_size"),
@@ -665,6 +789,13 @@ def build_report(
         ),
     }
     partition_mode = normalize_real_llm_partition_mode(artifact.get("partition_mode"))
+    execution_mode = normalize_real_llm_execution_mode(artifact.get("execution_mode"))
+    stage_selective_baseline_skipped = bool(
+        execution_mode == "stage_selective_hf"
+        and baseline_validation_skipped
+        and decoded_tokens_match
+    )
+    baseline_ready = bool(baseline_match or stage_selective_baseline_skipped)
     stage0_partition_loaded = bool(stage0_validation.get("stage0_partition_loaded"))
     stage1_partition_loaded = bool(stage1_validation.get("stage1_partition_loaded"))
     partition_ready = bool(
@@ -705,6 +836,10 @@ def build_report(
         codes.append("stage_1_accepted")
     if baseline_match:
         codes.append("baseline_match")
+    if baseline_validation_skipped:
+        codes.append("baseline_validation_skipped")
+    if stage_selective_baseline_skipped:
+        codes.append("stage_selective_baseline_skipped")
     if decoded_tokens_match:
         codes.append("decoded_tokens_match")
     if generation_complete:
@@ -741,7 +876,7 @@ def build_report(
     if (
         stage0_ok
         and stage1_ok
-        and baseline_match
+        and baseline_ready
         and decoded_tokens_match
         and generation_complete
         and activation_ready
@@ -757,7 +892,7 @@ def build_report(
             codes.append("stage_0_missing")
         if not stage1_ok:
             codes.append("stage_1_missing")
-        if not baseline_match:
+        if not baseline_ready:
             codes.append("baseline_mismatch")
         if not decoded_tokens_match:
             codes.append("decoded_tokens_mismatch")
@@ -773,6 +908,15 @@ def build_report(
             codes.append("distinct_stage_miners_missing")
         if not read_only or not redaction_ok:
             codes.append("safety_failed")
+    performance = performance_summary(
+        stage0=stage0,
+        stage1=stage1,
+        stage0_validation=stage0_validation,
+        stage1_validation=stage1_validation,
+        generated_token_count=generated_token_count,
+        completed_generation_steps=completed_generation_steps,
+        max_new_tokens=max_new_tokens,
+    )
     report = {
         "schema": SCHEMA,
         "generated_at": base.utc_now(),
@@ -792,6 +936,7 @@ def build_report(
             "model_id": session.get("model_id"),
             "prompt_request_count": session.get("prompt_request_count"),
             "partition_mode": artifact.get("partition_mode"),
+            "execution_mode": artifact.get("execution_mode"),
             "max_new_tokens": max_new_tokens,
             "final_generation_step": generation_step,
         },
@@ -806,6 +951,7 @@ def build_report(
             "generated_text_redacted": bool(stage1_validation.get("generated_text") is not None),
             "multi_token_generation_ready": multi_token_generation_ready,
         },
+        "performance": performance,
         "stage_summary": {
             "stage_0": {
                 "task_id": stage0.get("task_id"),
@@ -819,6 +965,7 @@ def build_report(
                 "artifact_hash": stage0_validation.get("artifact_hash"),
                 "backend": stage0_validation.get("backend"),
                 "partition_mode": stage0_validation.get("partition_mode"),
+                "execution_mode": stage0_validation.get("execution_mode"),
                 "stage_layer_range": stage0_validation.get("stage_layer_range"),
                 "stage_parameter_count": stage0_validation.get("stage_parameter_count"),
                 "full_model_parameter_count": stage0_validation.get("full_model_parameter_count"),
@@ -828,6 +975,8 @@ def build_report(
                 "stage0_partition_loaded": stage0_partition_loaded,
                 "stage_gpu_memory_reduced": stage0_validation.get("stage_gpu_memory_reduced"),
                 "stage_cpu_partition_ready": stage0_validation.get("stage_cpu_partition_ready"),
+                "stage_selective_weight_load": stage0_validation.get("stage_selective_weight_load"),
+                "stage_selective_weight_application": stage0_validation.get("stage_selective_weight_application"),
                 "elapsed_ms": (stage0.get("metrics") or {}).get("elapsed_ms"),
             },
             "stage_1": {
@@ -837,6 +986,8 @@ def build_report(
                 "accepted": stage1_ok,
                 "generation_step": generation_step,
                 "baseline_match": baseline_match,
+                "baseline_validation_skipped": baseline_validation_skipped,
+                "baseline_ready": baseline_ready,
                 "decoded_tokens_match": decoded_tokens_match,
                 "request_count": stage1_validation.get("request_count"),
                 "generated_token_summary": redacted_token_summary(stage1_validation.get("generated_token_ids")),
@@ -845,6 +996,7 @@ def build_report(
                 "artifact_hash": stage1_validation.get("artifact_hash"),
                 "backend": stage1_validation.get("backend"),
                 "partition_mode": stage1_validation.get("partition_mode"),
+                "execution_mode": stage1_validation.get("execution_mode"),
                 "baseline_device": stage1_validation.get("baseline_device"),
                 "stage_layer_range": stage1_validation.get("stage_layer_range"),
                 "stage_parameter_count": stage1_validation.get("stage_parameter_count"),
@@ -855,6 +1007,8 @@ def build_report(
                 "stage1_partition_loaded": stage1_partition_loaded,
                 "stage_gpu_memory_reduced": stage1_validation.get("stage_gpu_memory_reduced"),
                 "stage_cpu_partition_ready": stage1_validation.get("stage_cpu_partition_ready"),
+                "stage_selective_weight_load": stage1_validation.get("stage_selective_weight_load"),
+                "stage_selective_weight_application": stage1_validation.get("stage_selective_weight_application"),
                 "elapsed_ms": (stage1.get("metrics") or {}).get("elapsed_ms"),
             },
         },
@@ -995,6 +1149,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=REAL_LLM_BACKEND_CPU,
     )
     parser.add_argument("--real-llm-partition-mode", choices=["full", "stage-local", "stage_local"], default="full")
+    parser.add_argument("--real-llm-execution-mode", choices=["full_model", "full-model", "stage_selective_hf", "stage-selective-hf"], default="full_model")
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--failure-mode", choices=sorted(base.FAILURE_MODES), default=base.FAILURE_NONE)
     parser.add_argument("--stage-mode", choices=["both", "split"], default="both")
@@ -1040,6 +1195,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.base_url = f"http://{args.host}:{args.port}"
     args.real_llm_backend = normalize_real_llm_backend(args.real_llm_backend)
     args.real_llm_partition_mode = normalize_real_llm_partition_mode(args.real_llm_partition_mode)
+    args.real_llm_execution_mode = normalize_real_llm_execution_mode(args.real_llm_execution_mode)
     inspect_real_llm_artifact(
         model_id=args.hf_model_id,
         cache_dir=args.hf_cache_dir,

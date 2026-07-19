@@ -51,6 +51,7 @@ from .protocol import (
     WORKLOAD_CPU_LORA_MOCK,
     WORKLOAD_DILOCO_TRAIN,
     WORKLOAD_EXTERNAL_LLM_INFER,
+    WORKLOAD_HF_LORA_TRAIN,
     WORKLOAD_MICRO_LLM_SHARDED_INFER,
     WORKLOAD_MICRO_TRANSFORMER_LM,
     WORKLOAD_MODEL_BUNDLE_INFER,
@@ -110,14 +111,24 @@ from .outer_optimizer import (
 )
 from .outer_optimizer import decode_delta_payload
 from .outer_optimizer import OPTIMIZER_DILOCO_MOMENTUM
+from .hf_lora_training import training_spec_for_claim as hf_lora_training_spec_for_claim
+from .named_tensor_optimizer import apply_diloco_outer_step
+from .training_contract import (
+    RESULT_SCHEMA as HF_LORA_RESULT_SCHEMA,
+    public_training_spec,
+    sha256_file,
+    validate_adapter_delta as validate_named_adapter_delta,
+)
 from .real_llm import (
     BACKEND_CPU as REAL_LLM_BACKEND_CPU,
     BACKEND_CUDA as REAL_LLM_BACKEND_CUDA,
     DEFAULT_MODEL_ID as DEFAULT_REAL_LLM_MODEL_ID,
     DEFAULT_PROMPTS as DEFAULT_REAL_LLM_PROMPTS,
+    EXECUTION_MODE_FULL_MODEL as REAL_LLM_EXECUTION_MODE_FULL_MODEL,
     PARTITION_MODE_FULL as REAL_LLM_PARTITION_MODE_FULL,
     inspect_real_llm_artifact,
     normalize_backend as normalize_real_llm_backend,
+    normalize_execution_mode as normalize_real_llm_execution_mode,
     normalize_partition_mode as normalize_real_llm_partition_mode,
     real_llm_sharded_inference_spec_for,
     validate_real_llm_sharded_inference,
@@ -161,7 +172,9 @@ class StateStore:
         real_llm_model_id: str = DEFAULT_REAL_LLM_MODEL_ID,
         real_llm_backend: str = REAL_LLM_BACKEND_CPU,
         real_llm_partition_mode: str = REAL_LLM_PARTITION_MODE_FULL,
+        real_llm_execution_mode: str = REAL_LLM_EXECUTION_MODE_FULL_MODEL,
         hf_cache_dir: str | Path | None = None,
+        hf_lora_job_manifest: str | Path | None = None,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.task_log_path = self.state_dir / "tasks.jsonl"
@@ -176,7 +189,12 @@ class StateStore:
         self.real_llm_model_id = str(real_llm_model_id or DEFAULT_REAL_LLM_MODEL_ID)
         self.real_llm_backend = normalize_real_llm_backend(real_llm_backend)
         self.real_llm_partition_mode = normalize_real_llm_partition_mode(real_llm_partition_mode)
+        self.real_llm_execution_mode = normalize_real_llm_execution_mode(real_llm_execution_mode)
         self.hf_cache_dir = str(hf_cache_dir or "")
+        self.hf_lora_job_manifest_path = str(hf_lora_job_manifest or "")
+        self.hf_lora_job: dict = {}
+        self.training_state_path = self.state_dir / "training_state.json"
+        self._training_state: dict = {}
         self._real_llm_artifact_cache: dict[str, dict] = {}
         self._real_llm_stage_affinity: dict[str, dict[int, str]] = {}
         if self.replay_audit and self.delta_format == DELTA_FORMAT_SIGN_COMPRESSED_EF:
@@ -194,16 +212,108 @@ class StateStore:
             self._model["micro_transformer"] = load_micro_llm_artifact(self.micro_llm_artifact_path)["model"]
 
         self.state_dir.mkdir(parents=True, exist_ok=True)
+        self._load_hf_lora_job()
+        self._load_training_state()
         self._load()
         if self.micro_llm_artifact_path:
             self._model["micro_transformer"] = load_micro_llm_artifact(self.micro_llm_artifact_path)["model"]
         self._recover_inflight()
+        self._ensure_hf_lora_round_tasks()
         self.ensure_backlog()
 
     @property
     def model(self) -> dict:
         with self._lock:
             return json.loads(json.dumps(self._model))
+
+    @property
+    def training_state(self) -> dict:
+        with self._lock:
+            return json.loads(json.dumps(self._training_state))
+
+    def _load_hf_lora_job(self) -> None:
+        if not self.hf_lora_job_manifest_path:
+            return
+        path = Path(self.hf_lora_job_manifest_path)
+        with path.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        if not isinstance(value, dict) or value.get("workload_type") != WORKLOAD_HF_LORA_TRAIN:
+            raise ValueError("hf_lora_job_manifest must contain an hf_lora_train job")
+        shards = list((value.get("dataset") or {}).get("shards") or [])
+        if len(shards) != 2:
+            raise ValueError("hf_lora_train foundation job requires exactly two dataset shards")
+        self.hf_lora_job = value
+
+    def _load_training_state(self) -> None:
+        if self.training_state_path.is_file():
+            with self.training_state_path.open("r", encoding="utf-8") as handle:
+                value = json.load(handle)
+            if not isinstance(value, dict):
+                raise ValueError("training_state.json must contain an object")
+            self._training_state = value
+            return
+        if not self.hf_lora_job:
+            self._training_state = {}
+            return
+        lora = self.hf_lora_job["lora"]
+        outer = self.hf_lora_job["outer_optimizer"]
+        self._training_state = {
+            "schema": "crowdtensor_hf_lora_coordinator_state_v1",
+            "job_id": self.hf_lora_job["job_id"],
+            "job_hash": self.hf_lora_job["job_hash"],
+            "round_id": f"{self.hf_lora_job['job_id']}-round-0001",
+            "round_status": "awaiting_miner_results",
+            "adapter_version": int(lora["adapter_version"]),
+            "outer_step": int(outer["outer_step"]),
+            "global_adapter_path": str(lora["adapter_tensor_path"]),
+            "global_adapter_file_hash": sha256_file(lora["adapter_tensor_path"]),
+            "velocity_path": str((self.state_dir / "training" / "outer_velocity.safetensors").resolve()),
+            "accepted_result_ids": [],
+            "accepted_shard_indexes": [],
+            "aggregation": {},
+            "permission_mode": "permissioned_trusted_local_workers",
+            "gpu_live_verified": False,
+        }
+        self._write_training_state()
+
+    def _write_training_state(self) -> None:
+        if not self._training_state:
+            return
+        tmp_path = self.training_state_path.with_suffix(".tmp")
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(self._training_state, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, self.training_state_path)
+
+    def _ensure_hf_lora_round_tasks(self) -> None:
+        if not self.hf_lora_job or self._training_state.get("round_status") == "aggregated":
+            return
+        existing = [
+            task for task in self._tasks.values()
+            if self._workload_type(task) == WORKLOAD_HF_LORA_TRAIN
+        ]
+        if existing:
+            return
+        round_id = str(self._training_state["round_id"])
+        training_backend = str(self.hf_lora_job.get("backend") or "").lower()
+        required_backend = "cuda" if "cuda" in training_backend else "cpu"
+        for shard in self.hf_lora_job["dataset"]["shards"]:
+            self._create_task(
+                required_runtime="python-cli",
+                required_backend=required_backend,
+                required_protocol_version=DEFAULT_PROTOCOL_VERSION,
+                workload_type=WORKLOAD_HF_LORA_TRAIN,
+                inner_steps=int(self.hf_lora_job["local_training"]["local_steps"]),
+                workload_metadata={
+                    "job_id": self.hf_lora_job["job_id"],
+                    "round_id": round_id,
+                    "dataset_shard_index": int(shard["shard_index"]),
+                    "dataset_shard_hash": shard["shard_hash"],
+                    "job_manifest_path": self.hf_lora_job_manifest_path,
+                },
+            )
 
     def claim_task(self, miner_id: str | None = None, capabilities: dict | None = None) -> dict:
         with self._lock:
@@ -1020,6 +1130,7 @@ class StateStore:
         model_id: str | None = None,
         llm_backend: str | None = None,
         partition_mode: str | None = None,
+        execution_mode: str | None = None,
         required_protocol_version: str = DEFAULT_PROTOCOL_VERSION,
         created_by_subject: str = "",
     ) -> dict:
@@ -1029,6 +1140,7 @@ class StateStore:
         backend = str(required_backend or "").strip()
         resolved_llm_backend = normalize_real_llm_backend(llm_backend or self.real_llm_backend)
         resolved_partition_mode = normalize_real_llm_partition_mode(partition_mode or self.real_llm_partition_mode)
+        resolved_execution_mode = normalize_real_llm_execution_mode(execution_mode or self.real_llm_execution_mode)
         expected_backend = "cuda" if resolved_llm_backend == REAL_LLM_BACKEND_CUDA else "cpu"
         if runtime != "python-cli":
             raise ValueError("real LLM sharded inference sessions require runtime python-cli")
@@ -1037,6 +1149,7 @@ class StateStore:
         with self._lock:
             artifact = self._real_llm_artifact_summary(resolved_llm_backend, model_id=model_id)
             artifact["partition_mode"] = resolved_partition_mode
+            artifact["execution_mode"] = resolved_execution_mode
             prompts = [str(item) for item in (prompt_texts or DEFAULT_REAL_LLM_PROMPTS) if str(item)]
             prompts = prompts[:count] or list(DEFAULT_REAL_LLM_PROMPTS[:count])
             session_id = new_task_id().replace("task-", "real-llm-shard-session-", 1)
@@ -1054,6 +1167,7 @@ class StateStore:
                 "model_id": artifact.get("model_id", self.real_llm_model_id),
                 "backend": artifact.get("backend", "hf_transformers_cpu"),
                 "partition_mode": resolved_partition_mode,
+                "execution_mode": resolved_execution_mode,
                 "split_index": artifact.get("split_index"),
                 "num_hidden_layers": artifact.get("num_hidden_layers"),
                 "hidden_size": artifact.get("hidden_size"),
@@ -1085,6 +1199,7 @@ class StateStore:
                 "model_id": artifact.get("model_id"),
                 "backend": artifact.get("backend"),
                 "partition_mode": resolved_partition_mode,
+                "execution_mode": resolved_execution_mode,
                 "split_index": artifact.get("split_index"),
                 "num_hidden_layers": artifact.get("num_hidden_layers"),
                 "hidden_size": artifact.get("hidden_size"),
@@ -1192,6 +1307,7 @@ class StateStore:
         external_llm_result: dict | None = None,
         external_llm_results: list[dict] | None = None,
         sharded_inference_result: dict | None = None,
+        training_result: dict | None = None,
         metrics: dict | None = None,
     ) -> dict:
         with self._lock:
@@ -1224,6 +1340,15 @@ class StateStore:
                     attempt=attempt,
                     idempotency_key=idempotency_key,
                     adapter_delta=adapter_delta,
+                    metrics=metrics,
+                )
+            if workload_type == WORKLOAD_HF_LORA_TRAIN:
+                return self._complete_hf_lora_task(
+                    task,
+                    lease_token=lease_token,
+                    attempt=attempt,
+                    idempotency_key=idempotency_key,
+                    training_result=training_result,
                     metrics=metrics,
                 )
             if workload_type == WORKLOAD_MICRO_TRANSFORMER_LM:
@@ -1602,6 +1727,210 @@ class StateStore:
         self._apply_task_event(event)
         self._model = next_model
         self._write_checkpoint()
+        self.ensure_backlog()
+        return response
+
+    def _complete_hf_lora_task(
+        self,
+        task: dict,
+        *,
+        lease_token: str,
+        attempt: int,
+        idempotency_key: str | None = None,
+        training_result: dict | None = None,
+        metrics: dict | None = None,
+    ) -> dict:
+        claim = dict(task.get("claim_workload_spec") or {})
+        result = dict(training_result or {})
+        validation: dict
+        if result.get("schema") != HF_LORA_RESULT_SCHEMA:
+            validation = {
+                "schema": "crowdtensor_adapter_delta_validation_v1",
+                "accepted": False,
+                "code": "hf_lora_result_schema_mismatch",
+                "reason": "unsupported hf_lora_train result schema",
+                "public_artifact_safe": True,
+            }
+        elif str(result.get("task_id") or "") != str(task["task_id"]):
+            validation = {
+                "schema": "crowdtensor_adapter_delta_validation_v1",
+                "accepted": False,
+                "code": "hf_lora_task_id_mismatch",
+                "reason": "training result task_id does not match claim",
+                "public_artifact_safe": True,
+            }
+        elif str(result.get("claim_hash") or "") != str(claim.get("claim_hash") or ""):
+            validation = {
+                "schema": "crowdtensor_adapter_delta_validation_v1",
+                "accepted": False,
+                "code": "hf_lora_claim_hash_mismatch",
+                "reason": "training result claim hash does not match claim",
+                "public_artifact_safe": True,
+            }
+        elif not all(
+            result.get(field) is True
+            for field in ("real_backward", "base_weights_frozen", "only_lora_trainable")
+        ):
+            validation = {
+                "schema": "crowdtensor_adapter_delta_validation_v1",
+                "accepted": False,
+                "code": "hf_lora_training_invariant_failed",
+                "reason": "real backward, frozen base, and LoRA-only trainability are required",
+                "public_artifact_safe": True,
+            }
+        elif not isinstance(result.get("runtime"), dict) or not all(
+            (result.get("runtime") or {}).get(field) is True
+            for field in ("real_pytorch_autograd", "real_transformers", "real_peft_lora")
+        ):
+            validation = {
+                "schema": "crowdtensor_adapter_delta_validation_v1",
+                "accepted": False,
+                "code": "hf_lora_real_runtime_missing",
+                "reason": "real PyTorch, Transformers, and PEFT runtime evidence is required",
+                "public_artifact_safe": True,
+            }
+        else:
+            seen_result_ids = [
+                str((other.get("training_result") or {}).get("result_id") or "")
+                for other in self._tasks.values()
+                if self._workload_type(other) == WORKLOAD_HF_LORA_TRAIN
+                and other.get("status") == STATUS_COMPLETED
+            ]
+            expected = {
+                "job_id": claim.get("job_id"),
+                "round_id": claim.get("round_id"),
+                "model_manifest_hash": claim.get("model_manifest_hash"),
+                "base_model_hash": claim.get("base_model_hash"),
+                "base_adapter_hash": claim.get("base_adapter_hash"),
+                "base_model_version": claim.get("base_model_version"),
+                "adapter_version": claim.get("adapter_version"),
+                "dataset_shard_index": claim.get("dataset_shard_index"),
+                "dataset_shard_hash": claim.get("dataset_shard_hash"),
+                "tensor_specs": (self.hf_lora_job.get("lora") or {}).get("tensor_specs"),
+            }
+            validation = validate_named_adapter_delta(
+                result.get("adapter_delta"),
+                expected=expected,
+                seen_result_ids=seen_result_ids,
+                max_delta_norm=100.0,
+                max_loss_increase=0.25,
+            )
+            if validation.get("accepted") and str(result.get("result_id")) != str(
+                (result.get("adapter_delta") or {}).get("result_id")
+            ):
+                validation = {
+                    "schema": "crowdtensor_adapter_delta_validation_v1",
+                    "accepted": False,
+                    "code": "hf_lora_result_id_mismatch",
+                    "reason": "training result and adapter delta result_id do not match",
+                    "public_artifact_safe": True,
+                }
+
+        staleness = int(self._training_state.get("adapter_version", 0)) - int(task["model_version"])
+        now = now_epoch()
+        if not validation.get("accepted"):
+            response = dict(validation)
+            event = self._append_event({
+                "type": EVENT_TASK_REJECTED,
+                "task_id": task["task_id"],
+                "attempt": attempt,
+                "lease_token": lease_token,
+                "miner_id": task.get("miner_id"),
+                "base_model_version": int(task["model_version"]),
+                "training_result": result,
+                "metrics": metrics or {},
+                "staleness": staleness,
+                "validation": validation,
+                "result_model_version": int(self._training_state.get("adapter_version", 0)),
+                "model_updated": False,
+                "training_updated": False,
+                "result_response": response,
+                **self._idempotency_event_fields(idempotency_key, lease_token=lease_token),
+                "ts": now,
+            })
+            self._apply_task_event(event)
+            self.ensure_backlog()
+            raise ResultRejected(validation)
+
+        completed_results = [
+            dict(other.get("training_result") or {})
+            for other in self._tasks.values()
+            if self._workload_type(other) == WORKLOAD_HF_LORA_TRAIN
+            and other.get("status") == STATUS_COMPLETED
+        ]
+        round_results = completed_results + [result]
+        aggregation: dict = {}
+        if len(round_results) == 2:
+            shard_indexes = {int(item["dataset_shard_index"]) for item in round_results}
+            if shard_indexes != {0, 1}:
+                raise ResultRejected({
+                    "schema": "crowdtensor_adapter_delta_validation_v1",
+                    "accepted": False,
+                    "code": "hf_lora_distinct_shards_required",
+                    "reason": "outer step requires results from dataset shards 0 and 1",
+                    "public_artifact_safe": True,
+                })
+            training_dir = self.state_dir / "training"
+            next_version = int(self._training_state["adapter_version"]) + 1
+            aggregation = apply_diloco_outer_step(
+                base_adapter_path=self._training_state["global_adapter_path"],
+                delta_paths=[item["adapter_delta"]["delta_path"] for item in round_results],
+                output_adapter_path=training_dir / f"global_adapter_v{next_version}.safetensors",
+                velocity_path=self._training_state["velocity_path"],
+                outer_step=int(self._training_state["outer_step"]),
+                adapter_version=int(self._training_state["adapter_version"]),
+                outer_lr=float(self.hf_lora_job["outer_optimizer"]["outer_lr"]),
+                momentum=float(self.hf_lora_job["outer_optimizer"]["momentum"]),
+            )
+            self._training_state.update({
+                "round_status": "aggregated",
+                "adapter_version": int(aggregation["adapter_version_after"]),
+                "outer_step": int(aggregation["outer_step_after"]),
+                "global_adapter_path": aggregation["global_adapter_path"],
+                "global_adapter_file_hash": aggregation["global_adapter_file_hash"],
+                "aggregation": aggregation,
+            })
+        accepted_ids = set(self._training_state.get("accepted_result_ids") or [])
+        accepted_ids.add(str(result["result_id"]))
+        accepted_shards = {int(value) for value in self._training_state.get("accepted_shard_indexes") or []}
+        accepted_shards.add(int(result["dataset_shard_index"]))
+        self._training_state["accepted_result_ids"] = sorted(accepted_ids)
+        self._training_state["accepted_shard_indexes"] = sorted(accepted_shards)
+        self._write_training_state()
+
+        response = {
+            "accepted": True,
+            "model_updated": False,
+            "training_updated": bool(aggregation),
+            "workload_type": WORKLOAD_HF_LORA_TRAIN,
+            "model_version": int(self._training_state["adapter_version"]),
+            "adapter_version": int(self._training_state["adapter_version"]),
+            "outer_step": int(self._training_state["outer_step"]),
+            "round_status": self._training_state["round_status"],
+            "accepted_result_count": len(self._training_state["accepted_result_ids"]),
+            "dataset_shard_index": int(result["dataset_shard_index"]),
+            "staleness": staleness,
+        }
+        event = self._append_event({
+            "type": EVENT_TASK_COMPLETED,
+            "task_id": task["task_id"],
+            "attempt": attempt,
+            "lease_token": lease_token,
+            "miner_id": task.get("miner_id"),
+            "base_model_version": int(task["model_version"]),
+            "training_result": result,
+            "metrics": metrics or {},
+            "staleness": staleness,
+            "validation": validation,
+            "result_model_version": int(self._training_state["adapter_version"]),
+            "model_updated": False,
+            "training_updated": bool(aggregation),
+            "training_outer_step_result": int(self._training_state["outer_step"]),
+            "result_response": response,
+            **self._idempotency_event_fields(idempotency_key, lease_token=lease_token),
+            "ts": now,
+        })
+        self._apply_task_event(event)
         self.ensure_backlog()
         return response
 
@@ -2101,6 +2430,7 @@ class StateStore:
             "model_id": validation.get("model_id"),
             "backend": validation.get("backend"),
             "partition_mode": validation.get("partition_mode", REAL_LLM_PARTITION_MODE_FULL),
+            "execution_mode": validation.get("execution_mode", REAL_LLM_EXECUTION_MODE_FULL_MODEL),
             "stage_layer_range": list(validation.get("stage_layer_range") or []),
             "stage_parameter_count": int(validation.get("stage_parameter_count", 0)),
             "full_model_parameter_count": int(validation.get("full_model_parameter_count", 0)),
@@ -2124,9 +2454,16 @@ class StateStore:
             "activation_hashes": list(validation.get("activation_hashes") or []),
             "activation_transport_ready": bool(validation.get("activation_transport_ready", False)),
             "real_llm_artifact_ready": bool(validation.get("real_llm_artifact_ready", False)),
+            "stage_selective_hf_runtime_ready": bool(validation.get("stage_selective_hf_runtime_ready", False)),
+            "stage_selective_runtime_execution_ready": bool(validation.get("stage_selective_runtime_execution_ready", False)),
+            "stage_selective_weight_load_ready": bool(validation.get("stage_selective_weight_load_ready", False)),
+            "stage_selective_weight_application_ready": bool(validation.get("stage_selective_weight_application_ready", False)),
+            "runtime_buffer_materialization_ready": bool(validation.get("runtime_buffer_materialization_ready", False)),
             "runtime_replay_performed": bool(validation.get("runtime_replay_performed", False)),
             "remote_runtime_validation": bool(validation.get("remote_runtime_validation", False)),
             "baseline_match": bool(validation.get("baseline_match", stage_id == 0)),
+            "baseline_validation_skipped": bool(validation.get("baseline_validation_skipped", False)),
+            "stage_selective_remote_validation": bool(validation.get("stage_selective_remote_validation", False)),
             "decoded_tokens_match": bool(validation.get("decoded_tokens_match", stage_id == 0)),
             "request_count": int(validation.get("request_count", 0)),
             "generated_token_count": int(validation.get("generated_token_count", 0)),
@@ -2210,6 +2547,7 @@ class StateStore:
                 "model_id": metadata.get("model_id", self.real_llm_model_id),
                 "backend": metadata.get("backend", "hf_transformers_cpu"),
                 "partition_mode": metadata.get("partition_mode", REAL_LLM_PARTITION_MODE_FULL),
+                "execution_mode": metadata.get("execution_mode", self.real_llm_execution_mode),
                 "split_index": metadata.get("split_index"),
                 "num_hidden_layers": metadata.get("num_hidden_layers"),
                 "hidden_size": metadata.get("hidden_size"),
@@ -2280,6 +2618,7 @@ class StateStore:
                 "model_id": metadata.get("model_id", self.real_llm_model_id),
                 "backend": metadata.get("backend", "hf_transformers_cpu"),
                 "partition_mode": metadata.get("partition_mode", REAL_LLM_PARTITION_MODE_FULL),
+                "execution_mode": metadata.get("execution_mode", self.real_llm_execution_mode),
                 "split_index": metadata.get("split_index"),
                 "num_hidden_layers": metadata.get("num_hidden_layers"),
                 "hidden_size": metadata.get("hidden_size"),
@@ -2347,6 +2686,10 @@ class StateStore:
                 task for task in completed
                 if bool(task.get("model_bundle_updated", False))
             ]
+            training_updates = [
+                task for task in completed
+                if bool(task.get("training_updated", False))
+            ]
             staleness_values = [
                 int(task.get("staleness", 0) or 0)
                 for task in completed
@@ -2392,6 +2735,8 @@ class StateStore:
                 "adapter_updates": len(adapter_updates),
                 "micro_transformer_updates": len(micro_transformer_updates),
                 "model_bundle_updates": len(model_bundle_updates),
+                "training_updates": len(training_updates),
+                "training": self._public_training_state(),
                 "rejected_results": len(rejected),
                 "audit_results": len(audit_results),
                 "audit_rejections": len(audit_rejections),
@@ -2653,6 +2998,7 @@ class StateStore:
                 "external_llm_result": {},
                 "external_llm_results": [],
                 "sharded_inference_result": {},
+                "training_result": {},
                 "activation_results": [],
                 "result_response": {},
                 "result_idempotency_key_hash": "",
@@ -2662,6 +3008,7 @@ class StateStore:
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
                 "model_bundle_updated": False,
+                "training_updated": False,
                 "capabilities": {},
                 "runtime_status": {},
                 "claimed_at": None,
@@ -2736,6 +3083,7 @@ class StateStore:
                 "external_llm_result": event.get("external_llm_result", {}),
                 "external_llm_results": event.get("external_llm_results", []),
                 "sharded_inference_result": event.get("sharded_inference_result", {}),
+                "training_result": event.get("training_result", {}),
                 "activation_results": event.get("activation_results", []),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
@@ -2745,6 +3093,8 @@ class StateStore:
                 "adapter_updated": bool(event.get("adapter_updated", False)),
                 "micro_transformer_updated": bool(event.get("micro_transformer_updated", False)),
                 "model_bundle_updated": bool(event.get("model_bundle_updated", False)),
+                "training_updated": bool(event.get("training_updated", False)),
+                "training_outer_step_result": event.get("training_outer_step_result"),
                 "adapter_step_result": event.get("adapter_step_result"),
                 "micro_transformer_step_result": event.get("micro_transformer_step_result"),
                 "model_bundle_step_result": event.get("model_bundle_step_result"),
@@ -2769,6 +3119,7 @@ class StateStore:
                 "external_llm_result": event.get("external_llm_result", {}),
                 "external_llm_results": event.get("external_llm_results", []),
                 "sharded_inference_result": event.get("sharded_inference_result", {}),
+                "training_result": event.get("training_result", {}),
                 "activation_results": event.get("activation_results", []),
                 "result_response": event.get("result_response", {}),
                 "result_idempotency_key_hash": event.get("result_idempotency_key_hash", ""),
@@ -2778,6 +3129,7 @@ class StateStore:
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
                 "model_bundle_updated": False,
+                "training_updated": False,
                 "rejected_at": float(event["ts"]),
             })
         elif event_type == EVENT_TASK_REQUEUED:
@@ -2800,6 +3152,7 @@ class StateStore:
                 "external_llm_result": {},
                 "external_llm_results": [],
                 "sharded_inference_result": {},
+                "training_result": {},
                 "activation_results": [],
                 "result_response": {},
                 "result_idempotency_key_hash": "",
@@ -2809,6 +3162,7 @@ class StateStore:
                 "adapter_updated": False,
                 "micro_transformer_updated": False,
                 "model_bundle_updated": False,
+                "training_updated": False,
                 "capabilities": {},
                 "runtime_status": {},
                 "claim_weights": None,
@@ -2900,6 +3254,17 @@ class StateStore:
             public.pop(field, None)
         return public
 
+    def _public_training_state(self) -> dict:
+        if not self._training_state:
+            return {}
+        public = public_training_spec(self._training_state)
+        aggregation = public.get("aggregation")
+        if isinstance(aggregation, dict):
+            public["aggregation"] = {
+                key: value for key, value in aggregation.items() if not key.endswith("_path")
+            }
+        return public
+
     def _public_task(self, task: dict) -> dict:
         public = dict(task)
         workload_type = self._workload_type(task)
@@ -2914,7 +3279,14 @@ class StateStore:
         public.pop("external_llm_result", None)
         public.pop("external_llm_results", None)
         public.pop("sharded_inference_result", None)
+        public.pop("training_result", None)
         public.pop("activation_results", None)
+        if workload_type == WORKLOAD_HF_LORA_TRAIN and isinstance(public.get("workload_metadata"), dict):
+            public["workload_metadata"] = {
+                key: value
+                for key, value in public["workload_metadata"].items()
+                if not key.endswith("_path")
+            }
         if workload_type in {
             WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
             WORKLOAD_MICRO_LLM_SHARDED_INFER,
@@ -2946,6 +3318,8 @@ class StateStore:
         if not isinstance(workload_spec, dict):
             return {}
         public = json.loads(json.dumps(workload_spec))
+        if workload_type == WORKLOAD_HF_LORA_TRAIN:
+            return public_training_spec(public)
         if workload_type == WORKLOAD_EXTERNAL_LLM_INFER:
             requests = public.get("requests")
             if isinstance(requests, list):
@@ -3007,6 +3381,7 @@ class StateStore:
             "input_ids",
             "logits",
             "output_text",
+            "training_result",
         ):
             public.pop(field, None)
         if workload_type == WORKLOAD_EXTERNAL_LLM_INFER and "output_preview" in public:
@@ -3040,6 +3415,7 @@ class StateStore:
             "adapter_updated": bool(task.get("adapter_updated", False)),
             "micro_transformer_updated": bool(task.get("micro_transformer_updated", False)),
             "model_bundle_updated": bool(task.get("model_bundle_updated", False)),
+            "training_updated": bool(task.get("training_updated", False)),
             "idempotent": bool(task.get("result_idempotency_key_hash")),
             "terminal_at": float(terminal_at or 0.0),
             "validation": self._validation_summary(validation, workload_type=workload_type),
@@ -3106,6 +3482,7 @@ class StateStore:
                 or task.get("adapter_updated")
                 or task.get("micro_transformer_updated")
                 or task.get("model_bundle_updated")
+                or task.get("training_updated")
             ),
             "raw_payload_public": False,
         }
@@ -3132,6 +3509,13 @@ class StateStore:
             return {
                 "unit": "stage_task",
                 "stage_rows": int(validation.get("activation_count", metrics.get("activation_count", 1)) or 1),
+            }
+        if workload_type == WORKLOAD_HF_LORA_TRAIN:
+            return {
+                "unit": "token",
+                "samples_seen": int(metrics.get("samples_seen", 0) or 0),
+                "tokens_seen": int(metrics.get("tokens_seen", 0) or 0),
+                "optimizer_steps": int(metrics.get("optimizer_steps", task.get("inner_steps", 0)) or 0),
             }
         return {
             "unit": "inner_step",
@@ -3457,6 +3841,7 @@ class StateStore:
                             "input_ids",
                             "logits",
                             "output_text",
+                            "training_result",
                         }
                         else redact(item)
                     )
@@ -3488,6 +3873,20 @@ class StateStore:
                         claim_spec,
                         workload_type=WORKLOAD_REAL_LLM_SHARDED_INFER,
                     )
+                is_hf_lora = (
+                    workload_type == WORKLOAD_HF_LORA_TRAIN
+                    or (
+                        isinstance(claim_spec, dict)
+                        and claim_spec.get("workload_type") == WORKLOAD_HF_LORA_TRAIN
+                    )
+                )
+                if is_hf_lora and isinstance(claim_spec, dict):
+                    redacted["claim_workload_spec"] = self._public_workload_spec(
+                        claim_spec,
+                        workload_type=WORKLOAD_HF_LORA_TRAIN,
+                    )
+                if is_hf_lora and isinstance(redacted.get("workload_metadata"), dict):
+                    redacted["workload_metadata"] = public_training_spec(redacted["workload_metadata"])
                 return redacted
             if isinstance(value, list):
                 return [redact(item) for item in value]
@@ -3543,6 +3942,8 @@ class StateStore:
         return AUDIT_MODE_NONE
 
     def _model_version_for_task(self, task: dict) -> int:
+        if self._workload_type(task) == WORKLOAD_HF_LORA_TRAIN:
+            return int(self._training_state.get("adapter_version", 0))
         if self._workload_type(task) in {
             WORKLOAD_MICRO_TRANSFORMER_LM,
             WORKLOAD_MICRO_LLM_SHARDED_INFER,
@@ -3562,6 +3963,7 @@ class StateStore:
         if self._workload_type(task) in {
             WORKLOAD_EXTERNAL_LLM_INFER,
             WORKLOAD_REAL_LLM_SHARDED_INFER,
+            WORKLOAD_HF_LORA_TRAIN,
         }:
             return []
         if self._workload_type(task) in {
@@ -3578,6 +3980,8 @@ class StateStore:
         return list(self._model["weights"])
 
     def _optimizer_spec_for_task(self, task: dict) -> dict:
+        if self._workload_type(task) == WORKLOAD_HF_LORA_TRAIN:
+            return dict(self.hf_lora_job.get("outer_optimizer") or {})
         if self._workload_type(task) != WORKLOAD_DILOCO_TRAIN:
             return {}
         return {
@@ -3594,6 +3998,7 @@ class StateStore:
             WORKLOAD_SHARDED_MODEL_BUNDLE_INFER,
             WORKLOAD_MICRO_LLM_SHARDED_INFER,
             WORKLOAD_REAL_LLM_SHARDED_INFER,
+            WORKLOAD_HF_LORA_TRAIN,
         }:
             claim_task = {**task, "miner_id": miner_id, "model_version": model_version}
             workload_spec = self._workload_spec(claim_task)
@@ -3709,6 +4114,15 @@ class StateStore:
 
     def _workload_spec(self, task: dict) -> dict:
         workload_type = self._workload_type(task)
+        if workload_type == WORKLOAD_HF_LORA_TRAIN:
+            metadata = dict(task.get("workload_metadata") or {})
+            return hf_lora_training_spec_for_claim(
+                self.hf_lora_job,
+                task_id=task["task_id"],
+                miner_id=task.get("miner_id") or "anonymous",
+                shard_index=int(metadata["dataset_shard_index"]),
+                device=("cuda:0" if "cuda" in str(self.hf_lora_job.get("backend") or "").lower() else "cpu"),
+            )
         if workload_type == WORKLOAD_BROWSER_PROBE:
             return dict(BROWSER_PROBE_SPEC)
         if workload_type == WORKLOAD_CPU_LORA_MOCK:
@@ -3775,6 +4189,8 @@ class StateStore:
             artifact = self._real_llm_artifact_from_metadata(metadata) or self._real_llm_artifact_summary()
             if isinstance(metadata, dict) and metadata.get("partition_mode"):
                 artifact["partition_mode"] = normalize_real_llm_partition_mode(metadata.get("partition_mode"))
+            if isinstance(metadata, dict) and metadata.get("execution_mode"):
+                artifact["execution_mode"] = normalize_real_llm_execution_mode(metadata.get("execution_mode"))
             return real_llm_sharded_inference_spec_for(
                 task["task_id"],
                 task.get("miner_id") or "anonymous",
@@ -3788,6 +4204,7 @@ class StateStore:
                 generation_step=int(metadata.get("generation_step", 0)),
                 requests=list(metadata.get("requests") or []),
                 activation_results=list(metadata.get("activation_results") or []),
+                execution_mode=metadata.get("execution_mode") or self.real_llm_execution_mode,
             )
         return {"type": WORKLOAD_DILOCO_TRAIN}
 
@@ -3805,6 +4222,7 @@ class StateStore:
             backend=resolved_backend,
             require_runtime=resolved_backend != REAL_LLM_BACKEND_CUDA,
         )
+        artifact["execution_mode"] = self.real_llm_execution_mode
         if use_default_cache:
             self._real_llm_artifact_cache[resolved_backend] = dict(artifact)
         return dict(artifact)
@@ -3822,7 +4240,9 @@ class StateStore:
             "model_id": model_id,
             "backend": normalize_real_llm_backend(str(metadata.get("backend") or REAL_LLM_BACKEND_CPU)),
             "partition_mode": normalize_real_llm_partition_mode(metadata.get("partition_mode") or REAL_LLM_PARTITION_MODE_FULL),
+            "execution_mode": normalize_real_llm_execution_mode(metadata.get("execution_mode") or REAL_LLM_EXECUTION_MODE_FULL_MODEL),
             "model_type": str(metadata.get("model_type") or ""),
+            "architectures": list(metadata.get("architectures") or []),
             "split_index": int(metadata.get("split_index") or 1),
             "num_hidden_layers": int(metadata.get("num_hidden_layers") or 2),
             "hidden_size": int(metadata.get("hidden_size") or 1),
@@ -3887,6 +4307,26 @@ class StateStore:
         required_stage_capability = self._required_stage_capability(task)
         if required_stage_capability and not self._miner_supports_stage_capability(capabilities, required_stage_capability):
             return False
+
+        if workload_type == WORKLOAD_REAL_LLM_SHARDED_INFER:
+            metadata = task.get("workload_metadata") if isinstance(task.get("workload_metadata"), dict) else {}
+            required_execution_mode = normalize_real_llm_execution_mode(
+                metadata.get("execution_mode") or REAL_LLM_EXECUTION_MODE_FULL_MODEL
+            )
+            if required_execution_mode != REAL_LLM_EXECUTION_MODE_FULL_MODEL:
+                runtime = capabilities.get("real_llm_runtime") if isinstance(capabilities.get("real_llm_runtime"), dict) else {}
+                advertised = runtime.get("execution_modes")
+                if advertised is None:
+                    advertised = runtime.get("execution_mode") or capabilities.get("real_llm_execution_mode")
+                if isinstance(advertised, str):
+                    advertised_modes = {normalize_real_llm_execution_mode(advertised)}
+                else:
+                    advertised_modes = {
+                        normalize_real_llm_execution_mode(value)
+                        for value in list(advertised or [])
+                    }
+                if required_execution_mode not in advertised_modes:
+                    return False
 
         if workload_type != WORKLOAD_DILOCO_TRAIN:
             return True

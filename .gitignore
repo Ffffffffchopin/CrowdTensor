@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.venv-*/
 state/
 dist/
 build/
@@ -16,3 +17,7 @@ htmlcov/
 .agents/
 .codex/
 .DS_Store
+
+# Local goal/session scratch files.
+/goal.md
+/tmp_rendered_*.py

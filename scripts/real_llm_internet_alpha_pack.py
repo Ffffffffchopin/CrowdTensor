@@ -25,6 +25,7 @@ from crowdtensor.real_llm import BACKEND_CPU as REAL_LLM_BACKEND_CPU  # noqa: E4
 from crowdtensor.real_llm import BACKEND_CUDA as REAL_LLM_BACKEND_CUDA  # noqa: E402
 from crowdtensor.real_llm import DEFAULT_MODEL_ID, DEFAULT_PROMPTS  # noqa: E402
 from crowdtensor.real_llm import normalize_backend as normalize_real_llm_backend  # noqa: E402
+from crowdtensor.real_llm import normalize_execution_mode as normalize_real_llm_execution_mode  # noqa: E402
 from crowdtensor.real_llm import normalize_partition_mode as normalize_real_llm_partition_mode  # noqa: E402
 
 
@@ -465,6 +466,8 @@ def run_live_rc(
         args.real_llm_backend,
         "--real-llm-partition-mode",
         args.real_llm_partition_mode,
+        "--real-llm-execution-mode",
+        args.real_llm_execution_mode,
         "--timeout-seconds",
         str(args.timeout_seconds),
         "--remote-timeout-seconds",
@@ -542,6 +545,8 @@ def run_requeue_beta(
         args.real_llm_backend,
         "--real-llm-partition-mode",
         args.real_llm_partition_mode,
+        "--real-llm-execution-mode",
+        args.real_llm_execution_mode,
         "--timeout-seconds",
         str(max(int(args.timeout_seconds), 240)),
         "--remote-timeout-seconds",
@@ -690,6 +695,8 @@ def real_llm_internet_alpha_command(args: argparse.Namespace, output_dir: Path, 
         getattr(args, "real_llm_backend", REAL_LLM_BACKEND_CPU),
         "--real-llm-partition-mode",
         getattr(args, "real_llm_partition_mode", "full"),
+        "--real-llm-execution-mode",
+        getattr(args, "real_llm_execution_mode", "full_model"),
         "--timeout-seconds",
         str(getattr(args, "timeout_seconds", 300.0)),
         "--remote-timeout-seconds",
@@ -1130,6 +1137,7 @@ def build_local_generated(args: argparse.Namespace, *, output_dir: Path, runner:
             "max_new_tokens": args.max_new_tokens,
             "hf_model_id": args.hf_model_id,
             "real_llm_partition_mode": args.real_llm_partition_mode,
+            "real_llm_execution_mode": args.real_llm_execution_mode,
             "prompt_text_count": len(DEFAULT_PROMPTS),
             "require_distinct_stage_miners": True,
         },
@@ -1192,6 +1200,7 @@ def build_package(args: argparse.Namespace, *, output_dir: Path, runner: Runner)
             "max_new_tokens": args.max_new_tokens,
             "hf_model_id": args.hf_model_id,
             "real_llm_partition_mode": args.real_llm_partition_mode,
+            "real_llm_execution_mode": args.real_llm_execution_mode,
             "prompt_text_count": len(DEFAULT_PROMPTS),
             "require_distinct_stage_miners": True,
         },
@@ -1250,6 +1259,7 @@ def build_external_existing(args: argparse.Namespace, *, output_dir: Path, runne
             "max_new_tokens": args.max_new_tokens,
             "hf_model_id": args.hf_model_id,
             "real_llm_partition_mode": args.real_llm_partition_mode,
+            "real_llm_execution_mode": args.real_llm_execution_mode,
             "prompt_text_count": len(DEFAULT_PROMPTS),
             "require_distinct_stage_miners": True,
         },
@@ -1313,6 +1323,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- request_count: `{workload.get('request_count')}`",
         f"- hf_model_id: `{workload.get('hf_model_id')}`",
         f"- partition_mode: `{workload.get('real_llm_partition_mode')}`",
+        f"- execution_mode: `{workload.get('real_llm_execution_mode')}`",
         f"- local_generated_stage_upload_standins: `{runtime.get('local_generated_stage_upload_standins')}`",
         f"- package_only: `{runtime.get('package_only')}`",
         f"- external_runtime_verified: `{runtime.get('external_runtime_verified')}`",
@@ -1403,6 +1414,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hf-cache-dir", default="")
     parser.add_argument("--real-llm-backend", choices=["hf_transformers_cpu", "hf_transformers_cuda", "cpu", "cuda", "auto"], default=REAL_LLM_BACKEND_CPU)
     parser.add_argument("--real-llm-partition-mode", choices=["full", "stage-local", "stage_local"], default="full")
+    parser.add_argument("--real-llm-execution-mode", choices=["full_model", "full-model", "stage_selective_hf", "stage-selective-hf"], default="full_model")
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     parser.add_argument("--remote-timeout-seconds", type=float, default=180.0)
     parser.add_argument("--startup-timeout", type=float, default=30.0)
@@ -1429,6 +1441,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--max-new-tokens must be between 1 and 32")
     args.real_llm_backend = normalize_real_llm_backend(args.real_llm_backend)
     args.real_llm_partition_mode = normalize_real_llm_partition_mode(args.real_llm_partition_mode)
+    args.real_llm_execution_mode = normalize_real_llm_execution_mode(args.real_llm_execution_mode)
     for name in [
         "timeout_seconds",
         "remote_timeout_seconds",

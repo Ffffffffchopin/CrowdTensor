@@ -68,5 +68,24 @@ services:
       - --directory
       - web
 
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    profiles: ["storage"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-crowdtensor-local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-this-local-password}
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - crowdtensor-minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
 volumes:
   crowdtensor-state:
+  crowdtensor-minio:

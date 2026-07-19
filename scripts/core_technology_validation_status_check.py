@@ -115,6 +115,29 @@ def validate_report(report: dict[str, Any], *, require_core_ready: bool = False)
         truth = report.get("readiness_truth") if isinstance(report.get("readiness_truth"), dict) else {}
         if report.get("core_validation_ready") is True or truth.get("do_not_treat_core_layer_complete") is not True:
             raise SystemExit("stage-selective loading overclaimed core readiness")
+    handoff_stage = report.get("handoff_stage_selective_evidence") if isinstance(report.get("handoff_stage_selective_evidence"), dict) else {}
+    if handoff_stage.get("ready"):
+        for field in [
+            "seven_b_multi_token_verified",
+            "fourteen_b_dual_kaggle_verified",
+            "n_stage_partition_plan_ready",
+            "stage_selective_performance_report_ready",
+        ]:
+            if handoff_stage.get(field) is not True:
+                raise SystemExit(f"handoff stage-selective field mismatch: {field}")
+        if report.get("fourteen_b_validated") is not True:
+            raise SystemExit("handoff stage-selective ready requires fourteen_b_validated")
+        if report.get("seven_b_multi_token_validated") is not True:
+            raise SystemExit("handoff stage-selective ready requires seven_b_multi_token_validated")
+        if report.get("n_stage_partition_ready") is not True:
+            raise SystemExit("handoff stage-selective ready requires n_stage_partition_ready")
+        if report.get("stage_selective_performance_report_ready") is not True:
+            raise SystemExit("handoff stage-selective ready requires stage_selective_performance_report_ready")
+        if report.get("largest_successful_tier") != "14b":
+            raise SystemExit("handoff stage-selective ready should promote largest_successful_tier to 14b")
+        truth = report.get("readiness_truth") if isinstance(report.get("readiness_truth"), dict) else {}
+        if truth.get("handoff_stage_selective_evidence_is_live_kaggle_but_not_production") is not True:
+            raise SystemExit("handoff stage-selective evidence boundary missing")
     if report.get("core_validation_ready"):
         if "core_technology_validation_ready" not in codes:
             raise SystemExit("core readiness flag/code mismatch")
@@ -150,6 +173,10 @@ def main() -> None:
         "stage_selective_weight_loading_ready": bool((report.get("stage_selective_weight_loading_evidence") or {}).get("ready")) if isinstance(report.get("stage_selective_weight_loading_evidence"), dict) else False,
         "stage_selective_runtime_ready": bool((report.get("stage_selective_weight_loading_evidence") or {}).get("stage_selective_runtime_ready")) if isinstance(report.get("stage_selective_weight_loading_evidence"), dict) else False,
         "stage_selective_hf_runtime_ready": bool((report.get("stage_selective_weight_loading_evidence") or {}).get("stage_selective_hf_runtime_ready")) if isinstance(report.get("stage_selective_weight_loading_evidence"), dict) else False,
+        "handoff_stage_selective_ready": bool((report.get("handoff_stage_selective_evidence") or {}).get("ready")) if isinstance(report.get("handoff_stage_selective_evidence"), dict) else False,
+        "seven_b_multi_token_validated": bool(report.get("seven_b_multi_token_validated")),
+        "fourteen_b_validated": bool(report.get("fourteen_b_validated")),
+        "n_stage_partition_ready": bool(report.get("n_stage_partition_ready")),
         "seven_b_eight_b_validated": bool(report.get("seven_b_eight_b_validated")),
         "diagnosis_codes": report.get("diagnosis_codes"),
         "blockers": report.get("blockers"),

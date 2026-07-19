@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ REAL_LLM_ARTIFACT_SCHEMA_VERSION = "real_llm_artifact_v1"
 REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION = "real_llm_sharded_infer_v1"
 REAL_LLM_ACTIVATION_SCHEMA_VERSION = "real_llm_activation_v1"
 REAL_LLM_PARTIAL_WEIGHT_PLAN_SCHEMA_VERSION = "real_llm_partial_weight_plan_v1"
+REAL_LLM_N_STAGE_PARTITION_PLAN_SCHEMA_VERSION = "real_llm_n_stage_partition_plan_v1"
 REAL_LLM_STAGE_SELECTIVE_WEIGHT_LOAD_SCHEMA_VERSION = "real_llm_stage_selective_weight_load_v1"
 REAL_LLM_STAGE_SELECTIVE_WEIGHT_APPLY_SCHEMA_VERSION = "real_llm_stage_selective_weight_apply_v1"
 REAL_LLM_STAGE_SELECTIVE_RUNTIME_SCHEMA_VERSION = "real_llm_stage_selective_runtime_v1"
@@ -36,6 +38,13 @@ SUPPORTED_PARTITION_MODES = {
     PARTITION_MODE_STAGE_LOCAL,
     PARTITION_MODE_STAGE_LOCAL_ALIAS,
 }
+EXECUTION_MODE_FULL_MODEL = "full_model"
+EXECUTION_MODE_STAGE_SELECTIVE_HF = "stage_selective_hf"
+SUPPORTED_EXECUTION_MODES = {
+    EXECUTION_MODE_FULL_MODEL,
+    EXECUTION_MODE_STAGE_SELECTIVE_HF,
+}
+QUANTIZATION_METHOD_AWQ = "awq"
 DEFAULT_MODEL_ID = "sshleifer/tiny-gpt2"
 DEFAULT_MODEL_MANIFEST = {
     "model_type": "gpt2",
@@ -78,6 +87,10 @@ GPT2_PARAMETER_ESTIMATE_BY_MODEL_ID = {
     "openai-community/gpt2-xl": 1_558_000_000,
 }
 LLAMA_LIKE_PARAMETER_ESTIMATE_BY_MODEL_ID = {
+    "qwen/qwen2.5-14b-instruct": 14_700_000_000,
+    "qwen/qwen2.5-14b": 14_700_000_000,
+    "qwen2.5-14b-instruct": 14_700_000_000,
+    "qwen2.5-14b": 14_700_000_000,
     "qwen/qwen2.5-7b-instruct": 7_615_000_000,
     "qwen/qwen2.5-7b": 7_615_000_000,
     "qwen2.5-7b-instruct": 7_615_000_000,
@@ -97,10 +110,33 @@ FP32_BYTES_PER_PARAMETER = 4
 MAX_REQUESTS = 4
 MAX_PROMPT_CHARS = 256
 MAX_NEW_TOKENS = 32
+MAX_PARTITION_STAGES = 16
 ROUND_DIGITS = 8
 _MODEL_CACHE: dict[tuple[str, str, str, bool], tuple[Any, Any, Any]] = {}
 _STAGE0_KV_CACHE: dict[tuple[str, str, str, int, str], dict[str, Any]] = {}
 _STAGE1_KV_CACHE: dict[tuple[str, str, str, int, str], dict[str, Any]] = {}
+
+
+def _quantization_config_from_config(config: Any) -> dict[str, Any]:
+    raw = getattr(config, "quantization_config", None)
+    if isinstance(raw, dict):
+        return {str(key): value for key, value in raw.items()}
+    return {}
+
+
+def _quantization_config_from_metadata(metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = dict(metadata or {}).get("quantization_config")
+    if isinstance(raw, dict):
+        return {str(key): value for key, value in raw.items()}
+    return {}
+
+
+def _quantization_method_from_metadata(metadata: dict[str, Any] | None = None) -> str:
+    return str(_quantization_config_from_metadata(metadata).get("quant_method") or "").lower()
+
+
+def _metadata_uses_awq(metadata: dict[str, Any] | None = None) -> bool:
+    return _quantization_method_from_metadata(metadata) == QUANTIZATION_METHOD_AWQ
 
 
 def missing_hf_dependencies() -> list[str]:
@@ -214,6 +250,15 @@ def normalize_partition_mode(mode: str | None = None) -> str:
     raise ValueError(f"unsupported real_llm_sharded_infer partition_mode: {mode}")
 
 
+def normalize_execution_mode(mode: str | None = None) -> str:
+    normalized = str(mode or EXECUTION_MODE_FULL_MODEL).strip().lower().replace("-", "_")
+    if normalized in {"", "full", "full_model", "full_model_hf"}:
+        return EXECUTION_MODE_FULL_MODEL
+    if normalized in {"stage_selective", "stage_selective_hf", "hf_stage_selective"}:
+        return EXECUTION_MODE_STAGE_SELECTIVE_HF
+    raise ValueError(f"unsupported real_llm_sharded_infer execution_mode: {mode}")
+
+
 def execution_family_from_metadata(
     metadata: dict[str, Any] | None = None,
     *,
@@ -285,6 +330,12 @@ def estimate_parameter_count_from_metadata(metadata: dict[str, Any], *, family: 
         return int(GPT2_PARAMETER_ESTIMATE_BY_MODEL_ID[model_id])
     if model_id in LLAMA_LIKE_PARAMETER_ESTIMATE_BY_MODEL_ID:
         return int(LLAMA_LIKE_PARAMETER_ESTIMATE_BY_MODEL_ID[model_id])
+    model_size_match = re.search(r"(?<![a-z0-9])([0-9]+(?:\.[0-9]+)?)b(?![a-z0-9])", model_id)
+    if model_size_match:
+        try:
+            return int(float(model_size_match.group(1)) * 1_000_000_000)
+        except ValueError:
+            pass
     if resolved_family != EXECUTION_FAMILY_GPT2:
         return 0
     layer_count = _first_positive_int(source, "num_hidden_layers", "n_layer", "n_layers")
@@ -369,34 +420,236 @@ def _split_index_for_layer_count(metadata: dict[str, Any], layer_count: int) -> 
     return max(1, min(split, layer_count - 1))
 
 
+def _normalize_stage_count(stage_count: int | None = None, *, layer_count: int = 0) -> int:
+    try:
+        count = int(stage_count or 2)
+    except (TypeError, ValueError):
+        count = 2
+    count = max(2, min(count, MAX_PARTITION_STAGES))
+    if layer_count > 0:
+        count = min(count, max(2, int(layer_count)))
+    return count
+
+
+def _stage_layer_ranges(layer_count: int, stage_count: int | None = None) -> list[tuple[int, int]]:
+    layers = max(0, int(layer_count))
+    count = _normalize_stage_count(stage_count, layer_count=layers)
+    if layers <= 0:
+        return [(0, 0) for _ in range(count)]
+    base = layers // count
+    remainder = layers % count
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    for index in range(count):
+        width = base + (1 if index < remainder else 0)
+        start = cursor
+        end = min(layers, start + width)
+        if end <= start and layers > 0:
+            end = min(layers, start + 1)
+        ranges.append((start, end))
+        cursor = end
+    return ranges
+
+
+def _layer_range_for_stage(
+    *,
+    layer_count: int,
+    stage_id: int,
+    stage_count: int | None = None,
+) -> tuple[int, int]:
+    ranges = _stage_layer_ranges(layer_count, stage_count)
+    stage = max(0, min(int(stage_id), len(ranges) - 1))
+    return ranges[stage]
+
+
+def _stage_weight_prefixes_for_range(
+    family: str,
+    *,
+    stage_id: int,
+    stage_count: int,
+    layer_range: tuple[int, int],
+) -> tuple[list[str], list[str]]:
+    stage = int(stage_id)
+    count = _normalize_stage_count(stage_count)
+    start, end = int(layer_range[0]), int(layer_range[1])
+    layer_prefixes: list[str]
+    module_kinds: list[str]
+    if family == EXECUTION_FAMILY_GPT2:
+        layer_prefixes = [f"transformer.h.{index}." for index in range(start, end)]
+        module_kinds = ["transformer_blocks"]
+        if stage == 0:
+            layer_prefixes = ["transformer.wte.", "transformer.wpe.", *layer_prefixes]
+            module_kinds = ["token_embedding", "position_embedding", *module_kinds]
+        if stage == count - 1:
+            layer_prefixes = [*layer_prefixes, "transformer.ln_f.", "lm_head."]
+            module_kinds = [*module_kinds, "final_norm", "lm_head"]
+        return layer_prefixes, module_kinds
+    if family == EXECUTION_FAMILY_LLAMA_LIKE:
+        layer_prefixes = [f"model.layers.{index}." for index in range(start, end)]
+        module_kinds = ["decoder_layers"]
+        if stage == 0:
+            layer_prefixes = ["model.embed_tokens.", *layer_prefixes]
+            module_kinds = ["token_embedding", *module_kinds]
+        if stage == count - 1:
+            layer_prefixes = [*layer_prefixes, "model.norm.", "lm_head."]
+            module_kinds = [*module_kinds, "final_norm", "lm_head"]
+        return layer_prefixes, module_kinds
+    return [], []
+
+
 def _stage_weight_prefixes(family: str, *, stage_id: int, split_index: int, layer_count: int) -> tuple[list[str], tuple[int, int], list[str]]:
     stage = int(stage_id)
     split = max(1, min(int(split_index), int(layer_count) - 1)) if int(layer_count) >= 2 else 0
+    if stage == 0:
+        layer_range = (0, split)
+    else:
+        layer_range = (split, int(layer_count))
+    prefixes, module_kinds = _stage_weight_prefixes_for_range(
+        family,
+        stage_id=stage,
+        stage_count=2,
+        layer_range=layer_range,
+    )
     if family == EXECUTION_FAMILY_GPT2:
         if stage == 0:
-            return (
-                ["transformer.wte.", "transformer.wpe.", *[f"transformer.h.{index}." for index in range(split)]],
-                (0, split),
-                ["token_embedding", "position_embedding", "transformer_blocks_prefix"],
-            )
-        return (
-            [*[f"transformer.h.{index}." for index in range(split, layer_count)], "transformer.ln_f.", "lm_head."],
-            (split, layer_count),
-            ["transformer_blocks_suffix", "final_norm", "lm_head"],
-        )
+            module_kinds = ["token_embedding", "position_embedding", "transformer_blocks_prefix"]
+        else:
+            module_kinds = ["transformer_blocks_suffix", "final_norm", "lm_head"]
     if family == EXECUTION_FAMILY_LLAMA_LIKE:
         if stage == 0:
-            return (
-                ["model.embed_tokens.", *[f"model.layers.{index}." for index in range(split)]],
-                (0, split),
-                ["token_embedding", "decoder_layers_prefix"],
-            )
-        return (
-            [*[f"model.layers.{index}." for index in range(split, layer_count)], "model.norm.", "lm_head."],
-            (split, layer_count),
-            ["decoder_layers_suffix", "final_norm", "lm_head"],
-        )
+            module_kinds = ["token_embedding", "decoder_layers_prefix"]
+        else:
+            module_kinds = ["decoder_layers_suffix", "final_norm", "lm_head"]
+    if prefixes:
+        return (prefixes, layer_range, module_kinds)
     return ([], (0, 0), [])
+
+
+def real_llm_n_stage_partition_plan(
+    metadata: dict[str, Any] | None = None,
+    *,
+    partition_mode: str | None = None,
+    stage_count: int | None = None,
+) -> dict[str, Any]:
+    """Return a public-safe N-stage weight ownership plan.
+
+    This is a planning contract only. The current runtime remains the proven
+    two-stage path; this plan makes stage ownership explicit enough for later
+    Coordinator scheduling and N-stage runtime migration.
+    """
+
+    source = dict(metadata or {})
+    mode = normalize_partition_mode(partition_mode or source.get("partition_mode") or PARTITION_MODE_FULL)
+    family = execution_family_from_metadata(source)
+    layer_count = _layer_count_from_metadata(source)
+    count = _normalize_stage_count(stage_count or source.get("stage_count") or 2, layer_count=layer_count)
+    weight_map = _weight_map_from_metadata(source)
+    parameter_count_estimate = estimate_parameter_count_from_metadata(source, family=family)
+    estimated_weight_bytes = parameter_count_estimate * FP32_BYTES_PER_PARAMETER
+    all_keys = set(weight_map)
+    all_files = set(weight_map.values())
+    assigned_all_keys: set[str] = set()
+    ranges = _stage_layer_ranges(layer_count, count)
+    stage_plans: list[dict[str, Any]] = []
+    plan_family_supported = family in PARTIAL_WEIGHT_PLAN_FAMILIES
+    for stage_id, layer_range in enumerate(ranges):
+        prefixes, module_kinds = _stage_weight_prefixes_for_range(
+            family,
+            stage_id=stage_id,
+            stage_count=count,
+            layer_range=layer_range,
+        )
+        assigned = sorted(
+            key for key in weight_map if any(key.startswith(prefix) for prefix in prefixes)
+        )
+        assigned_files = sorted({weight_map[key] for key in assigned if weight_map.get(key)})
+        assigned_all_keys.update(assigned)
+        missing_prefixes = sorted(
+            prefix for prefix in prefixes if not any(key.startswith(prefix) for key in assigned)
+        )
+        layer_width = max(0, int(layer_range[1]) - int(layer_range[0]))
+        expected_fraction = round(layer_width / float(layer_count), ROUND_DIGITS) if layer_count > 0 else 0.0
+        stage_plans.append({
+            "stage_id": stage_id,
+            "stage_count": count,
+            "stage_layer_range": [int(layer_range[0]), int(layer_range[1])],
+            "stage_layer_range_format": "start_inclusive_end_exclusive",
+            "stage_module_kinds": module_kinds,
+            "expected_key_prefixes": prefixes,
+            "assigned_weight_key_count": len(assigned),
+            "assigned_weight_file_count": len(assigned_files),
+            "assigned_weight_files": assigned_files,
+            "missing_required_prefixes": missing_prefixes,
+            "loads_only_stage_weight_keys": bool(assigned and not missing_prefixes),
+            "expected_decoder_layer_fraction": expected_fraction,
+            "estimated_stage_weight_bytes_fp32": int(round(estimated_weight_bytes * expected_fraction)),
+        })
+    unassigned = sorted(all_keys - assigned_all_keys)
+    covered_layer_count = sum(
+        max(0, int(stage["stage_layer_range"][1]) - int(stage["stage_layer_range"][0]))
+        for stage in stage_plans
+    )
+    stage_ranges_valid = bool(
+        layer_count >= count
+        and covered_layer_count == layer_count
+        and all(
+            int(stage["stage_layer_range"][0]) < int(stage["stage_layer_range"][1])
+            for stage in stage_plans
+        )
+    )
+    ready = bool(
+        mode == PARTITION_MODE_STAGE_LOCAL
+        and plan_family_supported
+        and layer_count >= count
+        and weight_map
+        and stage_ranges_valid
+        and all(not stage["missing_required_prefixes"] for stage in stage_plans)
+    )
+    diagnosis_codes: list[str] = []
+    blockers: list[str] = []
+    if ready:
+        diagnosis_codes.append("real_llm_n_stage_partition_plan_ready")
+        if count > 2:
+            diagnosis_codes.append("real_llm_n_stage_partition_abstraction_ready")
+        if family == EXECUTION_FAMILY_LLAMA_LIKE:
+            diagnosis_codes.append("real_llm_llama_like_n_stage_partition_plan_ready")
+    else:
+        diagnosis_codes.append("real_llm_n_stage_partition_plan_not_ready")
+        if mode != PARTITION_MODE_STAGE_LOCAL:
+            blockers.append("real_llm_n_stage_partition_requires_stage_local")
+        if not plan_family_supported:
+            blockers.append("real_llm_n_stage_partition_family_unsupported")
+        if layer_count < count:
+            blockers.append("real_llm_n_stage_partition_layer_metadata_insufficient")
+        if not weight_map:
+            blockers.append("real_llm_n_stage_partition_weight_map_missing")
+        if not stage_ranges_valid:
+            blockers.append("real_llm_n_stage_partition_layer_ranges_invalid")
+        if any(stage["missing_required_prefixes"] for stage in stage_plans):
+            blockers.append("real_llm_n_stage_partition_required_keys_missing")
+    return {
+        "schema": REAL_LLM_N_STAGE_PARTITION_PLAN_SCHEMA_VERSION,
+        "ready": ready,
+        "runtime_execution_ready": False,
+        "model_id": str(source.get("model_id") or ""),
+        "execution_family": family,
+        "partition_mode": mode,
+        "stage_count": count,
+        "num_hidden_layers": layer_count,
+        "parameter_count_estimate": parameter_count_estimate,
+        "estimated_weight_bytes_fp32": estimated_weight_bytes,
+        "weight_index_available": bool(weight_map),
+        "weight_key_count": len(weight_map),
+        "weight_file_count": len(all_files),
+        "covered_decoder_layer_count": covered_layer_count,
+        "stage_ranges_valid": stage_ranges_valid,
+        "unassigned_weight_key_count": len(unassigned),
+        "unassigned_weight_key_samples": unassigned[:8],
+        "stage_plans": stage_plans,
+        "diagnosis_codes": sorted(set(diagnosis_codes)),
+        "blockers": sorted(set(blockers)),
+        "public_safe": True,
+    }
 
 
 def real_llm_partial_weight_loading_plan(
@@ -414,6 +667,11 @@ def real_llm_partial_weight_loading_plan(
 
     source = dict(metadata or {})
     mode = normalize_partition_mode(partition_mode or source.get("partition_mode") or PARTITION_MODE_FULL)
+    n_stage_plan = real_llm_n_stage_partition_plan(
+        source,
+        partition_mode=mode,
+        stage_count=2,
+    )
     family = execution_family_from_metadata(source)
     layer_count = _layer_count_from_metadata(source)
     split = _split_index_for_layer_count(source, layer_count)
@@ -501,19 +759,22 @@ def real_llm_partial_weight_loading_plan(
         "unassigned_weight_key_count": len(unassigned),
         "unassigned_weight_key_samples": unassigned[:8],
         "stage_plans": stage_plans,
+        "n_stage_partition_plan": n_stage_plan,
+        "n_stage_partition_plan_ready": bool(n_stage_plan.get("ready")),
         "diagnosis_codes": sorted(set(diagnosis_codes)),
         "blockers": sorted(set(blockers)),
         "public_safe": True,
     }
 
 
-def _normalize_stage_id(stage_id: int) -> int:
+def _normalize_stage_id(stage_id: int, *, stage_count: int | None = None) -> int:
+    count = _normalize_stage_count(stage_count) if stage_count is not None else 2
     try:
         stage = int(stage_id)
     except (TypeError, ValueError) as exc:
-        raise ValueError("real LLM stage_id must be 0 or 1") from exc
-    if stage not in {0, 1}:
-        raise ValueError("real LLM stage_id must be 0 or 1")
+        raise ValueError(f"real LLM stage_id must be between 0 and {count - 1}") from exc
+    if stage < 0 or stage >= count:
+        raise ValueError(f"real LLM stage_id must be between 0 and {count - 1}")
     return stage
 
 
@@ -522,12 +783,22 @@ def _stage_weight_selection(
     *,
     stage_id: int,
     partition_mode: str | None = None,
+    stage_count: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str], list[str]]:
-    stage = _normalize_stage_id(stage_id)
-    plan = real_llm_partial_weight_loading_plan(
-        metadata,
-        partition_mode=partition_mode or metadata.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL,
-    )
+    layer_count = _layer_count_from_metadata(metadata)
+    count = _normalize_stage_count(stage_count or metadata.get("stage_count") or 2, layer_count=layer_count)
+    stage = _normalize_stage_id(stage_id, stage_count=count)
+    if count == 2:
+        plan = real_llm_partial_weight_loading_plan(
+            metadata,
+            partition_mode=partition_mode or metadata.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL,
+        )
+    else:
+        plan = real_llm_n_stage_partition_plan(
+            metadata,
+            partition_mode=partition_mode or metadata.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL,
+            stage_count=count,
+        )
     stage_plan = next(
         (
             row
@@ -553,12 +824,211 @@ def _tensor_nbytes(tensor: Any) -> int:
         return 0
 
 
+def _module_by_name(root: Any, dotted: str) -> Any:
+    current = root
+    for part in str(dotted or "").split("."):
+        if not part:
+            continue
+        if part.isdigit() and isinstance(current, (list, tuple)):
+            current = current[int(part)]
+        else:
+            current = getattr(current, part)
+    return current
+
+
+def _parent_module_and_attr(root: Any, dotted: str) -> tuple[Any, str]:
+    parts = [part for part in str(dotted or "").split(".") if part]
+    if not parts:
+        raise ValueError("module path is empty")
+    parent_path = ".".join(parts[:-1])
+    return (_module_by_name(root, parent_path) if parent_path else root, parts[-1])
+
+
+def _module_filter_for_stage(
+    model: Any,
+    *,
+    stage_id: int | None = None,
+    split_index: int | None = None,
+    family: str | None = None,
+) -> set[int] | None:
+    if stage_id is None or split_index is None:
+        return None
+    try:
+        modules, _range, _kinds = _stage_modules(
+            model,
+            stage_id=int(stage_id),
+            split_index=int(split_index),
+            family=family or execution_family_from_metadata({}),
+        )
+    except Exception:
+        return None
+    module_filter = {id(module) for module in modules}
+    for module in modules:
+        module_filter.update(id(child) for child in module.modules())
+    return module_filter
+
+
+def _awq_dequantize_gemm(qweight: Any, qzeros: Any, scales: Any, *, bits: int = 4, group_size: int = 128) -> Any:
+    import torch  # type: ignore
+
+    shifts = torch.arange(0, 32, int(bits), device=qweight.device, dtype=torch.int32)
+    iweight = torch.bitwise_right_shift(qweight[:, :, None], shifts[None, None, :]).to(torch.int16)
+    iweight = iweight.view(iweight.shape[0], -1)
+    izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(torch.int16)
+    izeros = izeros.view(izeros.shape[0], -1)
+    reverse = torch.arange(iweight.shape[-1], dtype=torch.long, device=iweight.device)
+    reverse = reverse.view(-1, 32 // int(bits))
+    reverse = reverse[:, [0, 4, 1, 5, 2, 6, 3, 7]].reshape(-1)
+    iweight = torch.bitwise_and(iweight[:, reverse], (2**int(bits)) - 1)
+    izeros = torch.bitwise_and(izeros[:, reverse], (2**int(bits)) - 1)
+    scales = scales.repeat_interleave(int(group_size), dim=0)
+    izeros = izeros.repeat_interleave(int(group_size), dim=0)
+    return (iweight.to(scales.dtype) - izeros.to(scales.dtype)) * scales
+
+
+class _AWQGemmLinear:
+    """Minimal AWQ GEMM linear used by the stage-selective proof path."""
+
+    def __init__(self, linear: Any, *, bits: int = 4, group_size: int = 128) -> None:
+        import torch  # type: ignore
+
+        super().__init__()
+        self.in_features = int(linear.in_features)
+        self.out_features = int(linear.out_features)
+        self.w_bit = int(bits)
+        self.group_size = int(group_size)
+        self.training = False
+        self.register_buffer(
+            "qweight",
+            torch.empty((self.in_features, self.out_features // (32 // self.w_bit)), dtype=torch.int32, device="meta"),
+        )
+        self.register_buffer(
+            "qzeros",
+            torch.empty((self.in_features // self.group_size, self.out_features // (32 // self.w_bit)), dtype=torch.int32, device="meta"),
+        )
+        self.register_buffer(
+            "scales",
+            torch.empty((self.in_features // self.group_size, self.out_features), dtype=torch.float16, device="meta"),
+        )
+        if getattr(linear, "bias", None) is not None:
+            self.register_buffer("bias", torch.empty((self.out_features,), dtype=torch.float16, device="meta"))
+        else:
+            self.bias = None
+
+    def __call__(self, x: Any) -> Any:
+        return self.forward(x)
+
+    def forward(self, x: Any) -> Any:
+        import torch  # type: ignore
+
+        out_shape = tuple(x.shape[:-1]) + (self.out_features,)
+        original_dtype = x.dtype
+        flat = x.reshape(-1, x.shape[-1]).to(dtype=torch.float16)
+        weight = _awq_dequantize_gemm(
+            self.qweight,
+            self.qzeros,
+            self.scales,
+            bits=self.w_bit,
+            group_size=self.group_size,
+        )
+        output = torch.matmul(flat, weight)
+        if self.bias is not None:
+            output = output + self.bias
+        output = output.reshape(out_shape)
+        if output.dtype != original_dtype:
+            output = output.to(dtype=original_dtype)
+        return output
+
+
+def _make_awq_gemm_linear(linear: Any, *, bits: int = 4, group_size: int = 128) -> Any:
+    import torch.nn as nn  # type: ignore
+
+    class AWQGemmLinearModule(_AWQGemmLinear, nn.Module):  # type: ignore[misc]
+        def __init__(self, source: Any) -> None:
+            nn.Module.__init__(self)
+            _AWQGemmLinear.__init__(self, source, bits=bits, group_size=group_size)
+
+    return AWQGemmLinearModule(linear)
+
+
+def _prepare_awq_stage_model(
+    model: Any,
+    metadata: dict[str, Any] | None = None,
+    *,
+    stage_id: int,
+    split_index: int,
+    family: str,
+) -> dict[str, Any]:
+    if not _metadata_uses_awq(metadata):
+        return {
+            "awq_stage_model_prepared": False,
+            "awq_linear_replacement_count": 0,
+            "diagnosis_codes": [],
+            "blockers": [],
+        }
+    quant = _quantization_config_from_metadata(metadata)
+    bits = int(quant.get("bits") or 4)
+    group_size = int(quant.get("group_size") or 128)
+    blockers: list[str] = []
+    diagnosis_codes: list[str] = []
+    replaced: list[str] = []
+    try:
+        import torch.nn as nn  # type: ignore
+    except ModuleNotFoundError:
+        return {
+            "awq_stage_model_prepared": False,
+            "awq_linear_replacement_count": 0,
+            "diagnosis_codes": ["real_llm_awq_stage_model_prepare_dependencies_missing"],
+            "blockers": ["torch_dependency_missing"],
+        }
+    weight_map = _weight_map_from_metadata(metadata)
+    quantized_module_names = {
+        key[:-len(".qweight")]
+        for key in weight_map
+        if key.endswith(".qweight")
+    }
+    module_filter = _module_filter_for_stage(
+        model,
+        stage_id=stage_id,
+        split_index=split_index,
+        family=family,
+    )
+    for name, module in list(model.named_modules()):
+        if not name or module_filter is not None and id(module) not in module_filter:
+            continue
+        if not isinstance(module, nn.Linear):
+            continue
+        if name not in quantized_module_names:
+            continue
+        try:
+            parent, attr = _parent_module_and_attr(model, name)
+            setattr(parent, attr, _make_awq_gemm_linear(module, bits=bits, group_size=group_size))
+            replaced.append(name)
+        except Exception:
+            blockers.append("real_llm_awq_linear_replacement_failed")
+            break
+    if replaced and not blockers:
+        diagnosis_codes.append("real_llm_awq_stage_linear_replacement_ready")
+    elif not blockers:
+        blockers.append("real_llm_awq_stage_linear_modules_not_found")
+    return {
+        "awq_stage_model_prepared": bool(replaced and not blockers),
+        "awq_linear_replacement_count": len(replaced),
+        "awq_linear_replacement_digest": _hash_payload(sorted(replaced)),
+        "awq_bits": bits,
+        "awq_group_size": group_size,
+        "diagnosis_codes": sorted(set(diagnosis_codes)),
+        "blockers": sorted(set(blockers)),
+    }
+
+
 def _load_stage_selective_safetensors(
     metadata: dict[str, Any] | None = None,
     *,
     stage_id: int,
     weight_root: str | Path,
     partition_mode: str | None = None,
+    stage_count: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load only stage-owned safetensors keys into CPU tensors.
 
@@ -568,11 +1038,14 @@ def _load_stage_selective_safetensors(
     """
 
     source = dict(metadata or {})
-    stage = _normalize_stage_id(stage_id)
+    count = _normalize_stage_count(stage_count or source.get("stage_count") or 2, layer_count=_layer_count_from_metadata(source))
+    source["stage_count"] = count
+    stage = _normalize_stage_id(stage_id, stage_count=count)
     plan, stage_plan, weight_map, assigned_keys = _stage_weight_selection(
         source,
         stage_id=stage,
         partition_mode=partition_mode,
+        stage_count=count,
     )
     assigned_key_set = set(assigned_keys)
     tied_aliases = _tied_weight_aliases_from_metadata(source)
@@ -586,13 +1059,18 @@ def _load_stage_selective_safetensors(
         "execution_family": plan.get("execution_family") or execution_family_from_metadata(source),
         "partition_mode": plan.get("partition_mode") or normalize_partition_mode(partition_mode or source.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL),
         "stage_id": stage,
-        "stage_count": 2,
+        "stage_count": int(plan.get("stage_count") or count),
         "stage_layer_range": list(stage_plan.get("stage_layer_range") or []),
         "stage_layer_range_format": "start_inclusive_end_exclusive",
         "stage_module_kinds": list(stage_plan.get("stage_module_kinds") or []),
         "assigned_weight_key_count": len(assigned_keys),
         "assigned_weight_file_count": len(assigned_files),
         "assigned_weight_files": assigned_files,
+        "stage_weight_download_scope": str(source.get("stage_weight_download_scope") or ""),
+        "stage_weight_download_stage_id": source.get("stage_weight_download_stage_id"),
+        "stage_weight_download_file_count": int(source.get("stage_weight_download_file_count") or 0),
+        "stage_weight_download_file_digest": str(source.get("stage_weight_download_file_digest") or ""),
+        "stage_weight_downloads_only_stage_files": bool(source.get("stage_weight_downloads_only_stage_files")),
         "opened_weight_file_count": 0,
         "loaded_weight_key_count": 0,
         "loaded_weight_file_count": 0,
@@ -731,26 +1209,63 @@ def real_llm_stage_selective_weight_load_summary(
     stage_id: int,
     weight_root: str | Path,
     partition_mode: str | None = None,
+    stage_count: int | None = None,
 ) -> dict[str, Any]:
     _, summary = _load_stage_selective_safetensors(
         metadata,
         stage_id=stage_id,
         weight_root=weight_root,
         partition_mode=partition_mode,
+        stage_count=stage_count,
     )
     return summary
 
 
-def _materialize_runtime_buffers(model: Any, *, device: Any | None = None) -> dict[str, Any]:
+def _materialize_runtime_buffers(
+    model: Any,
+    *,
+    device: Any | None = None,
+    stage_id: int | None = None,
+    split_index: int | None = None,
+    family: str | None = None,
+) -> dict[str, Any]:
     """Materialize small non-parameter buffers needed by stage-local forwards."""
 
     import torch  # type: ignore
 
     target_device = torch.device(device or "cpu")
+    module_filter: set[int] | None = None
+    if stage_id is not None and split_index is not None:
+        try:
+            modules, _range, _kinds = _stage_modules(
+                model,
+                stage_id=int(stage_id),
+                split_index=int(split_index),
+                family=family or execution_family_from_metadata({}),
+            )
+            module_filter = {id(module) for module in modules}
+            for module in modules:
+                module_filter.update(id(child) for child in module.modules())
+        except Exception:
+            module_filter = None
+
+    def _descend(parent: Any, part: str) -> Any:
+        if isinstance(parent, (list, tuple)) and part.isdigit():
+            return parent[int(part)]
+        return getattr(parent, part)
+
     materialized: list[str] = []
     blockers: list[str] = []
     for name, buffer in list(model.named_buffers(recurse=True)):
         if not bool(getattr(buffer, "is_meta", False)):
+            continue
+        if name.endswith((".qweight", ".qzeros", ".scales", ".bias")):
+            continue
+        module = model
+        parts = name.split(".")
+        for part in parts[:-1]:
+            module = _descend(module, part)
+        if module_filter is not None and id(module) not in module_filter:
             continue
         replacement = None
         if name.endswith("rotary_emb.inv_freq") or name.endswith("rotary_emb.original_inv_freq"):
@@ -769,13 +1284,36 @@ def _materialize_runtime_buffers(model: Any, *, device: Any | None = None) -> di
                 )
             except Exception:
                 replacement = None
+        elif name.endswith("rotary_emb.cos_cached") or name.endswith("rotary_emb.sin_cached"):
+            config = getattr(model, "config", None)
+            try:
+                dim = int(getattr(config, "head_dim", 0) or (
+                    int(getattr(config, "hidden_size", 0)) // int(getattr(config, "num_attention_heads", 1) or 1)
+                ))
+                max_positions = int(getattr(config, "max_position_embeddings", 0) or 0)
+                max_positions = max(1, min(max_positions, 131072))
+                theta = float(getattr(config, "rope_theta", 10000.0) or 10000.0)
+                inv_freq = 1.0 / (
+                    theta
+                    ** (
+                        torch.arange(0, dim, 2, dtype=torch.float32, device=target_device)
+                        / max(1, dim)
+                    )
+                )
+                positions = torch.arange(max_positions, dtype=torch.float32, device=target_device)
+                freqs = torch.einsum("i,j->ij", positions, inv_freq)
+                emb = torch.cat((freqs, freqs), dim=-1)
+                if name.endswith("rotary_emb.cos_cached"):
+                    replacement = emb.cos()
+                else:
+                    replacement = emb.sin()
+                if len(tuple(getattr(buffer, "shape", ()))) == 4:
+                    replacement = replacement[None, None, :, :]
+            except Exception:
+                replacement = None
         if replacement is None:
             blockers.append("runtime_buffer_materialization_missing:" + name)
             continue
-        module = model
-        parts = name.split(".")
-        for part in parts[:-1]:
-            module = getattr(module, part)
         try:
             module.register_buffer(parts[-1], replacement, persistent=name not in getattr(module, "_non_persistent_buffers_set", set()))
             if parts[-1] == "inv_freq" and hasattr(module, "original_inv_freq"):
@@ -788,17 +1326,32 @@ def _materialize_runtime_buffers(model: Any, *, device: Any | None = None) -> di
             continue
         materialized.append(name)
     remaining_meta_attribute_count = 0
+    remaining_meta_buffer_count = 0
     for _module_name, module in model.named_modules():
+        if module_filter is not None and id(module) not in module_filter:
+            continue
         for attr_name in ("original_inv_freq",):
             value = getattr(module, attr_name, None)
             if bool(getattr(value, "is_meta", False)):
                 remaining_meta_attribute_count += 1
                 blockers.append("runtime_buffer_materialization_missing_attr:" + attr_name)
+    for _name, item in model.named_buffers(recurse=True):
+        if not bool(getattr(item, "is_meta", False)):
+            continue
+        if _name.endswith((".qweight", ".qzeros", ".scales", ".bias")):
+            continue
+        module = model
+        parts = _name.split(".")
+        for part in parts[:-1]:
+            module = _descend(module, part)
+        if module_filter is not None and id(module) not in module_filter:
+            continue
+        remaining_meta_buffer_count += 1
     return {
         "ready": not blockers,
         "materialized_runtime_buffer_count": len(materialized),
         "materialized_runtime_buffer_digest": _hash_payload(sorted(materialized)),
-        "remaining_meta_buffer_count": sum(1 for _name, item in model.named_buffers(recurse=True) if bool(getattr(item, "is_meta", False))),
+        "remaining_meta_buffer_count": remaining_meta_buffer_count,
         "remaining_meta_buffer_attribute_count": remaining_meta_attribute_count,
         "blockers": sorted(blockers),
     }
@@ -806,6 +1359,16 @@ def _materialize_runtime_buffers(model: Any, *, device: Any | None = None) -> di
 
 def _model_meta_parameter_count(model: Any) -> int:
     return sum(1 for parameter in model.parameters() if bool(getattr(parameter, "is_meta", False)))
+
+
+def _first_materialized_parameter_dtype(model: Any) -> Any | None:
+    for parameter in model.parameters():
+        if bool(getattr(parameter, "is_meta", False)):
+            continue
+        dtype = getattr(parameter, "dtype", None)
+        if dtype is not None:
+            return dtype
+    return None
 
 
 def _instantiate_hf_causal_lm_from_config(config: Any, *, meta: bool = False) -> Any:
@@ -848,6 +1411,8 @@ def _stage_selective_hf_metadata(
     cache_dir: str = "",
     split_index: int | None = None,
     backend: str = BACKEND_CPU,
+    stage_id: int | None = None,
+    stage_count: int | None = None,
 ) -> tuple[Any, dict[str, Any], Path | None]:
     require_hf_dependencies()
     from transformers import AutoConfig  # type: ignore
@@ -869,6 +1434,7 @@ def _stage_selective_hf_metadata(
     split = int(split_index) if split_index is not None else max(1, layer_count // 2)
     if layer_count >= 2:
         split = max(1, min(split, layer_count - 1))
+    count = _normalize_stage_count(stage_count or 2, layer_count=layer_count)
     weight_index = _safe_hf_weight_index_metadata(normalized_model_id, cache_dir=cache_dir)
     weight_root: Path | None = None
     for filename in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
@@ -939,14 +1505,41 @@ def _stage_selective_hf_metadata(
         "hidden_size": hidden_size,
         "vocab_size": vocab_size,
         "split_index": split,
+        "stage_count": count,
         "read_only": True,
         "metadata_only": False,
     }
+    quantization_config = _quantization_config_from_config(config)
+    if quantization_config:
+        metadata["quantization_config"] = quantization_config
+        metadata["quantization_method"] = str(quantization_config.get("quant_method") or "")
     metadata.update({key: value for key, value in weight_index.items() if key != "weight_map"})
     if weight_index.get("weight_map"):
         metadata["weight_map"] = weight_index["weight_map"]
+    download_scope = "all_weight_files"
+    selected_weight_files = sorted(set(_weight_map_from_metadata(metadata).values()))
+    selected_stage_id: int | None = None
+    if stage_id is not None and metadata.get("weight_map"):
+        selected_stage_id = _normalize_stage_id(stage_id, stage_count=count)
+        try:
+            _plan, stage_plan, _weight_map, _assigned = _stage_weight_selection(
+                metadata,
+                stage_id=selected_stage_id,
+                partition_mode=PARTITION_MODE_STAGE_LOCAL,
+                stage_count=count,
+            )
+            stage_files = [
+                str(filename)
+                for filename in list(stage_plan.get("assigned_weight_files") or [])
+                if str(filename or "").strip()
+            ]
+            if stage_files:
+                selected_weight_files = sorted(set(stage_files))
+                download_scope = "stage_owned_weight_files"
+        except Exception:
+            download_scope = "all_weight_files_stage_selection_failed"
     if weight_root is not None and metadata.get("weight_map"):
-        for filename in sorted(set(_weight_map_from_metadata(metadata).values())):
+        for filename in selected_weight_files:
             if (weight_root / filename).is_file():
                 continue
             try:
@@ -957,6 +1550,11 @@ def _stage_selective_hf_metadata(
                 candidate = Path(str(cached))
                 if candidate.is_file() and candidate.parent != weight_root:
                     weight_root = candidate.parent
+    metadata["stage_weight_download_scope"] = download_scope
+    metadata["stage_weight_download_stage_id"] = selected_stage_id
+    metadata["stage_weight_download_file_count"] = len(selected_weight_files)
+    metadata["stage_weight_download_file_digest"] = _hash_payload(selected_weight_files)
+    metadata["stage_weight_downloads_only_stage_files"] = bool(download_scope == "stage_owned_weight_files")
     metadata["artifact_hash"] = _hash_payload({
         key: value
         for key, value in metadata.items()
@@ -1087,6 +1685,38 @@ def run_stage_selective_hf_runtime_smoke(
         stage1_model = _instantiate_hf_causal_lm_from_config(config, meta=True)
         runtime_error_stage = "baseline_model_instantiate"
         baseline_model = _instantiate_hf_causal_lm_from_config(config, meta=True) if baseline_required else None
+        runtime_error_stage = "awq_stage_model_prepare"
+        awq_preparation = {
+            "stage0": _prepare_awq_stage_model(
+                stage0_model,
+                metadata,
+                stage_id=0,
+                split_index=int(metadata.get("split_index") or 1),
+                family=family,
+            ),
+            "stage1": _prepare_awq_stage_model(
+                stage1_model,
+                metadata,
+                stage_id=1,
+                split_index=int(metadata.get("split_index") or 1),
+                family=family,
+            ),
+        }
+        if baseline_model is not None and not _metadata_uses_awq(metadata):
+            awq_preparation["baseline_stage0"] = _prepare_awq_stage_model(
+                baseline_model,
+                metadata,
+                stage_id=0,
+                split_index=int(metadata.get("split_index") or 1),
+                family=family,
+            )
+            awq_preparation["baseline_stage1"] = _prepare_awq_stage_model(
+                baseline_model,
+                metadata,
+                stage_id=1,
+                split_index=int(metadata.get("split_index") or 1),
+                family=family,
+            )
         runtime_error_stage = "runtime_buffer_materialization"
         runtime_buffers = {
             "stage0": _materialize_runtime_buffers(stage0_model, device=stage0_device_obj),
@@ -1193,7 +1823,11 @@ def run_stage_selective_hf_runtime_smoke(
     load_ready = bool(stage0_load.get("ready") and stage1_load.get("ready"))
     apply_ready = bool(stage0_apply.get("ready") and stage1_apply.get("ready"))
     buffer_ready = all(bool(item.get("ready")) for item in runtime_buffers.values())
-    ready = bool(runtime_ready and load_ready and apply_ready and buffer_ready)
+    awq_ready = (
+        not _metadata_uses_awq(metadata)
+        or all(bool(row.get("awq_stage_model_prepared")) for row in awq_preparation.values())
+    )
+    ready = bool(runtime_ready and load_ready and apply_ready and buffer_ready and awq_ready)
     support = real_llm_execution_support_summary({
         **metadata,
         "stage_selective_weight_load_summaries": [stage0_load, stage1_load],
@@ -1230,6 +1864,8 @@ def run_stage_selective_hf_runtime_smoke(
         "stage_summaries": [stage0_load, stage1_load],
         "stage_application_summaries": [stage0_apply, stage1_apply],
         "runtime_buffers": runtime_buffers,
+        "awq_stage_preparation": awq_preparation,
+        "awq_stage_runtime_ready": awq_ready,
         "stage0_remaining_meta_parameter_count": _model_meta_parameter_count(stage0_model),
         "stage1_remaining_meta_parameter_count": _model_meta_parameter_count(stage1_model),
         "baseline_loaded": baseline_model is not None,
@@ -1271,6 +1907,9 @@ def run_stage_selective_hf_runtime_smoke(
             "real_llm_stage_selective_runtime_buffers_ready"
             if buffer_ready
             else "real_llm_stage_selective_runtime_buffers_not_ready",
+            "real_llm_awq_stage_runtime_ready"
+            if awq_ready
+            else "real_llm_awq_stage_runtime_not_ready",
         ] + list(runtime.get("diagnosis_codes") or []))),
         "blockers": [] if ready else sorted(set(
             list(stage0_load.get("blockers") or [])
@@ -1278,6 +1917,7 @@ def run_stage_selective_hf_runtime_smoke(
             + list(stage0_apply.get("blockers") or [])
             + list(stage1_apply.get("blockers") or [])
             + [item for summary in runtime_buffers.values() for item in list(summary.get("blockers") or [])]
+            + [item for summary in awq_preparation.values() for item in list(summary.get("blockers") or [])]
             + list(runtime.get("blockers") or [])
         )),
     }
@@ -1296,6 +1936,7 @@ def _apply_stage_selective_tensors_to_model(
     stage_id: int,
     partition_mode: str | None = None,
     target_device: Any | None = None,
+    target_dtype: Any | None = None,
 ) -> dict[str, Any]:
     """Apply already-loaded stage tensors to matching model state entries.
 
@@ -1315,6 +1956,7 @@ def _apply_stage_selective_tensors_to_model(
     provided_keys = sorted(str(key) for key in dict(tensors or {}))
     model_state = model.state_dict() if hasattr(model, "state_dict") else {}
     model_keys = set(str(key) for key in model_state)
+    named_buffers = dict(model.named_buffers(recurse=True)) if hasattr(model, "named_buffers") else {}
     summary: dict[str, Any] = {
         "schema": REAL_LLM_STAGE_SELECTIVE_WEIGHT_APPLY_SCHEMA_VERSION,
         "ready": False,
@@ -1360,6 +2002,7 @@ def _apply_stage_selective_tensors_to_model(
     dtype_conversions = 0
     applied: list[str] = []
     applied_bytes = 0
+    applied_parameters = 0
     try:
         import torch  # type: ignore
     except ModuleNotFoundError:
@@ -1368,6 +2011,7 @@ def _apply_stage_selective_tensors_to_model(
     target_device_obj = None
     if target_device is not None and torch is not None:
         target_device_obj = torch.device(target_device)
+    target_dtype_obj = target_dtype
     for key in provided_keys:
         tensor = tensors[key]
         if key not in assigned_key_set:
@@ -1379,7 +2023,10 @@ def _apply_stage_selective_tensors_to_model(
         if tuple(getattr(target, "shape", ())) != tuple(getattr(tensor, "shape", ())):
             shape_mismatches.append(key)
             continue
-        if str(getattr(target, "dtype", "")) != str(getattr(tensor, "dtype", "")):
+        desired_dtype = target_dtype_obj or target.dtype
+        if key in named_buffers:
+            desired_dtype = getattr(target, "dtype", desired_dtype)
+        if str(getattr(tensor, "dtype", "")) != str(desired_dtype):
             dtype_conversions += 1
         if torch is not None:
             with torch.no_grad():
@@ -1387,8 +2034,17 @@ def _apply_stage_selective_tensors_to_model(
                 destination = target_device_obj if target_is_meta and target_device_obj is not None else target.device
                 if target_is_meta and target_device_obj is None:
                     destination = torch.device("cpu")
-                prepared = tensor.to(device=destination, dtype=target.dtype)
-                if target_is_meta:
+                prepared = tensor.to(device=destination, dtype=desired_dtype)
+                if target_is_meta and key in named_buffers:
+                    module_path, attr = key.rsplit(".", 1)
+                    module = _module_by_name(model, module_path)
+                    module.register_buffer(
+                        attr,
+                        prepared,
+                        persistent=attr not in getattr(module, "_non_persistent_buffers_set", set()),
+                    )
+                    assign_state[key] = prepared
+                elif target_is_meta:
                     assign_state[key] = prepared
                 else:
                     target.copy_(prepared.to(device=target.device, dtype=target.dtype))
@@ -1396,9 +2052,15 @@ def _apply_stage_selective_tensors_to_model(
             target.copy_(tensor)
         applied.append(key)
         applied_bytes += _tensor_nbytes(target)
-    if assign_state:
+        applied_parameters += int(getattr(tensor, "numel", lambda: 0)())
+    parameter_assign_state = {
+        key: value
+        for key, value in assign_state.items()
+        if key not in named_buffers
+    }
+    if parameter_assign_state:
         try:
-            model.load_state_dict(assign_state, strict=False, assign=True)
+            model.load_state_dict(parameter_assign_state, strict=False, assign=True)
         except TypeError:
             blockers.add("real_llm_stage_selective_meta_assignment_unsupported")
             applied = []
@@ -1407,6 +2069,7 @@ def _apply_stage_selective_tensors_to_model(
             blockers.add("real_llm_stage_selective_meta_assignment_failed")
             applied = []
             applied_bytes = 0
+            applied_parameters = 0
     ready = bool(
         applied
         and not unexpected_keys
@@ -1444,6 +2107,7 @@ def _apply_stage_selective_tensors_to_model(
         "cross_stage_weight_keys_loaded": bool(unexpected_keys),
         "applied_weight_key_digest": _hash_payload(sorted(applied)),
         "applied_tensor_bytes": int(applied_bytes),
+        "applied_parameter_count": int(applied_parameters),
         "loads_only_stage_weight_keys": bool(ready and not unexpected_keys),
         "diagnosis_codes": sorted(diagnosis_codes),
         "blockers": sorted(blockers),
@@ -1744,7 +2408,13 @@ def real_llm_execution_support_summary(
     current_supported = family in SUPPORTED_EXECUTION_FAMILIES
     parameter_count_estimate = estimate_parameter_count_from_metadata(source, family=family)
     partial_plan = real_llm_partial_weight_loading_plan(source, partition_mode=mode)
+    n_stage_plan = real_llm_n_stage_partition_plan(
+        source,
+        partition_mode=mode,
+        stage_count=source.get("stage_count") or 2,
+    )
     partial_plan_ready = bool(partial_plan.get("ready"))
+    n_stage_plan_ready = bool(n_stage_plan.get("ready"))
     tensor_materialization_ready = _partial_weight_tensor_materialization_ready(source)
     tensor_application_ready = _partial_weight_tensor_application_ready(source)
     runtime_execution_ready = _partial_weight_runtime_execution_ready(source)
@@ -1794,6 +2464,11 @@ def real_llm_execution_support_summary(
         else:
             diagnosis_codes.append("real_llm_stage_local_full_model_cpu_load_required")
     diagnosis_codes.extend(str(code) for code in partial_plan.get("diagnosis_codes") or [])
+    if n_stage_plan_ready:
+        diagnosis_codes.append("real_llm_n_stage_partition_plan_ready")
+        if int(n_stage_plan.get("stage_count") or 0) > 2:
+            diagnosis_codes.append("real_llm_n_stage_partition_abstraction_ready")
+    diagnosis_codes.extend(str(code) for code in n_stage_plan.get("diagnosis_codes") or [])
     if large_candidate:
         diagnosis_codes.append("real_llm_large_model_candidate_detected")
         if not current_supported:
@@ -1835,6 +2510,8 @@ def real_llm_execution_support_summary(
         ),
         "partial_weight_loading_plan_ready": partial_plan_ready,
         "partial_weight_loading_plan": partial_plan,
+        "n_stage_partition_plan_ready": n_stage_plan_ready,
+        "n_stage_partition_plan": n_stage_plan,
         "partial_weight_tensor_materialization_ready": bool(tensor_materialization_ready or tensor_application_ready or runtime_execution_ready),
         "partial_weight_tensor_application_ready": bool(tensor_application_ready or runtime_execution_ready),
         "true_partial_weight_loading_ready": bool(tensor_materialization_ready or tensor_application_ready or runtime_execution_ready),
@@ -2310,6 +2987,10 @@ def inspect_real_llm_artifact(
         "read_only": True,
         "metadata_only": not require_runtime,
     }
+    quantization_config = _quantization_config_from_config(config)
+    if quantization_config:
+        artifact["quantization_config"] = quantization_config
+        artifact["quantization_method"] = str(quantization_config.get("quant_method") or "")
     weight_index = _safe_hf_weight_index_metadata(normalized_model_id, cache_dir=cache_dir)
     artifact.update({key: value for key, value in weight_index.items() if key != "weight_map"})
     if weight_index.get("weight_map"):
@@ -2505,6 +3186,88 @@ def _partition_summary(
     return summary
 
 
+def _stage_selective_partition_summary(
+    model: Any,
+    metadata: dict[str, Any],
+    stage_apply: dict[str, Any],
+    *,
+    stage_id: int,
+    split_index: int,
+    partition_mode: str,
+    device: Any,
+    family: str = EXECUTION_FAMILY_GPT2,
+    baseline_device: str = "",
+) -> dict[str, Any]:
+    """Build partition evidence for a partially materialized stage model.
+
+    The large-model stage-selective path intentionally leaves non-stage weights
+    on meta. Use the model structure for layer ranges and the public-safe apply
+    summary for materialized stage size instead of requiring the whole model to
+    be backed by real tensors.
+    """
+
+    transformer, blocks = _model_parts(model, family)
+    split = max(1, min(int(split_index), len(blocks) - 1))
+    mode = normalize_partition_mode(partition_mode)
+    _modules, layer_range, module_kinds = _stage_modules(model, stage_id=stage_id, split_index=split, family=family)
+    applied_parameters = max(0, int(stage_apply.get("applied_parameter_count") or 0))
+    applied_bytes = max(0, int(stage_apply.get("applied_tensor_bytes") or 0))
+    stage_count = applied_parameters or (applied_bytes // FP32_BYTES_PER_PARAMETER if applied_bytes else 0)
+    if stage_count <= 0:
+        try:
+            modules, _range, _kinds = _stage_modules(model, stage_id=stage_id, split_index=split, family=family)
+            stage_count = _module_parameter_count(modules)
+        except Exception:
+            stage_count = 0
+    full_count = estimate_parameter_count_from_metadata(metadata, family=family)
+    if full_count <= 0:
+        try:
+            full_count = _parameter_count(model)
+        except Exception:
+            full_count = 0
+    if full_count <= stage_count and stage_count > 0:
+        full_count = stage_count * 2
+    split_valid = bool(
+        len(blocks) >= 2
+        and 0 <= layer_range[0] < layer_range[1] <= len(blocks)
+        and (mode != PARTITION_MODE_STAGE_LOCAL or (0 < stage_count < full_count))
+    )
+    fraction = round(float(stage_count) / float(full_count), 8) if full_count else 0.0
+    device_name = str(device)
+    summary: dict[str, Any] = {
+        "partition_mode": mode,
+        "stage_id": int(stage_id),
+        "stage_layer_range": [int(layer_range[0]), int(layer_range[1])],
+        "stage_layer_range_format": "start_inclusive_end_exclusive",
+        "stage_module_kinds": module_kinds,
+        "stage_parameter_count": int(stage_count),
+        "full_model_parameter_count": int(full_count),
+        "stage_parameter_fraction": fraction,
+        "device_parameter_count": int(stage_count),
+        "partition_parameter_split_valid": split_valid,
+        "stage_local_partition_ready": bool(mode == PARTITION_MODE_STAGE_LOCAL and split_valid),
+        "stage_gpu_memory_reduced": bool(
+            mode == PARTITION_MODE_STAGE_LOCAL
+            and split_valid
+            and device_name.startswith("cuda")
+            and stage_count < full_count
+        ),
+        "stage_cpu_partition_ready": bool(
+            mode == PARTITION_MODE_STAGE_LOCAL
+            and split_valid
+            and not device_name.startswith("cuda")
+        ),
+        "stage_selective_partition_summary": True,
+    }
+    if baseline_device:
+        summary["baseline_device"] = baseline_device
+    if stage_id == 0:
+        summary["stage0_partition_loaded"] = bool(mode == PARTITION_MODE_STAGE_LOCAL and split_valid)
+    if stage_id == 1:
+        summary["stage1_partition_loaded"] = bool(mode == PARTITION_MODE_STAGE_LOCAL and split_valid)
+    return summary
+
+
 def _normalized_requests(
     *,
     request_count: int,
@@ -2561,13 +3324,20 @@ def real_llm_sharded_inference_spec_for(
     generation_step: int = 0,
     requests: list[dict[str, Any]] | None = None,
     activation_results: list[dict[str, Any]] | None = None,
+    execution_mode: str | None = None,
 ) -> dict[str, Any]:
     stage = int(stage_id)
     if stage not in {0, 1}:
         raise ValueError("real LLM sharded inference stage_id must be 0 or 1")
     partition_mode = normalize_partition_mode(artifact.get("partition_mode") or PARTITION_MODE_FULL)
+    resolved_execution_mode = normalize_execution_mode(
+        execution_mode
+        or artifact.get("execution_mode")
+        or EXECUTION_MODE_FULL_MODEL
+    )
     artifact_snapshot = dict(artifact)
     artifact_snapshot["partition_mode"] = partition_mode
+    artifact_snapshot["execution_mode"] = resolved_execution_mode
     execution_support = real_llm_execution_support_summary(
         artifact_snapshot,
         partition_mode=partition_mode,
@@ -2591,6 +3361,7 @@ def real_llm_sharded_inference_spec_for(
         "model_id": artifact.get("model_id") or DEFAULT_MODEL_ID,
         "backend": artifact.get("backend") or "hf_transformers_cpu",
         "partition_mode": partition_mode,
+        "execution_mode": resolved_execution_mode,
         "execution_family": execution_support["execution_family"],
         "execution_support": execution_support,
         "session_id": str(session_id or task_id),
@@ -2682,7 +3453,10 @@ def _stage0_activation(
                     )
                     hidden = _ensure_batched_hidden(_decoder_output_hidden(output))
             except Exception as exc:
-                raise RuntimeError(stage0_substage) from exc
+                wrapped = RuntimeError(stage0_substage)
+                setattr(wrapped, "crowdtensor_inner_error_type", type(exc).__name__)
+                setattr(wrapped, "crowdtensor_inner_error_digest", _hash_payload(str(exc)))
+                raise wrapped from exc
         elif cached and int(cached.get("input_token_count") or 0) == int(input_ids.shape[1]) - 1:
             previous_hidden = cached.get("hidden")
             past_key_values = list(cached.get("past_key_values") or [])
@@ -2791,7 +3565,8 @@ def _stage1_result(
     input_ids = torch.tensor([list(activation.get("input_ids") or [])], dtype=torch.long, device=device)
     if input_ids.numel() <= 0:
         raise ValueError("real LLM activation input_ids are empty")
-    hidden = _ensure_batched_hidden(torch.tensor(activation.get("hidden_state"), dtype=torch.float32, device=device))
+    hidden_dtype = _first_materialized_parameter_dtype(model) or torch.float32
+    hidden = _ensure_batched_hidden(torch.tensor(activation.get("hidden_state"), dtype=hidden_dtype, device=device))
     if hidden.ndim != 3 or hidden.shape[0] != 1:
         raise ValueError("real LLM activation hidden_state has invalid shape")
     cache_key = _stage1_cache_key(spec=spec, activation=activation, split_index=split)
@@ -2804,21 +3579,31 @@ def _stage1_result(
     cache_tokens_before = 0
     with torch.no_grad():
         if family == EXECUTION_FAMILY_LLAMA_LIKE:
-            position_ids = torch.tensor([list(activation.get("position_ids") or range(hidden.shape[1]))], dtype=torch.long, device=device)
-            attention_mask = _causal_attention_mask(token_count=int(hidden.shape[1]), dtype=hidden.dtype, device=device)
-            cache_pos = _cache_position(token_count=int(hidden.shape[1]), device=device)
-            position_embeddings = _llama_like_position_embeddings(transformer, hidden, position_ids)
-            for layer in blocks[split:]:
-                output = _call_llama_like_layer(
-                    layer,
-                    hidden,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    cache_position=cache_pos,
-                    position_embeddings=position_embeddings,
-                )
-                hidden = _ensure_batched_hidden(_decoder_output_hidden(output))
-            cache_ready = False
+            try:
+                stage1_substage = "stage1_position_ids"
+                position_ids = torch.tensor([list(activation.get("position_ids") or range(hidden.shape[1]))], dtype=torch.long, device=device)
+                stage1_substage = "stage1_attention_mask"
+                attention_mask = _causal_attention_mask(token_count=int(hidden.shape[1]), dtype=hidden.dtype, device=device)
+                cache_pos = _cache_position(token_count=int(hidden.shape[1]), device=device)
+                stage1_substage = "stage1_position_embeddings"
+                position_embeddings = _llama_like_position_embeddings(transformer, hidden, position_ids)
+                for layer_index, layer in enumerate(blocks[split:], start=split):
+                    stage1_substage = f"stage1_layer_{layer_index}"
+                    output = _call_llama_like_layer(
+                        layer,
+                        hidden,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        cache_position=cache_pos,
+                        position_embeddings=position_embeddings,
+                    )
+                    hidden = _ensure_batched_hidden(_decoder_output_hidden(output))
+                cache_ready = False
+            except Exception as exc:
+                wrapped = RuntimeError(stage1_substage)
+                setattr(wrapped, "crowdtensor_inner_error_type", type(exc).__name__)
+                setattr(wrapped, "crowdtensor_inner_error_digest", _hash_payload(str(exc)))
+                raise wrapped from exc
         elif (
             cached
             and int(cached.get("input_token_count") or 0) == int(hidden.shape[1]) - 1
@@ -2933,6 +3718,367 @@ def _stage1_result(
     return result
 
 
+def _stage_selective_failure_result(
+    *,
+    spec: dict[str, Any],
+    model_id: str,
+    backend: str,
+    partition_mode: str,
+    stage_id: int,
+    split_index: int,
+    family: str = "",
+    error_stage: str,
+    exc: Exception,
+    elapsed_ms: float,
+    runtime_buffer: dict[str, Any] | None = None,
+    stage_load: dict[str, Any] | None = None,
+    stage_apply: dict[str, Any] | None = None,
+    partition: dict[str, Any] | None = None,
+    awq_preparation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    buffer_summary = dict(runtime_buffer or {})
+    load_summary = dict(stage_load or {})
+    apply_summary = dict(stage_apply or {})
+    partition_summary = dict(partition or {})
+    awq_summary = dict(awq_preparation or {})
+    child_blockers = sorted(set(
+        str(item)
+        for item in (
+            list(buffer_summary.get("blockers") or [])
+            + list(load_summary.get("blockers") or [])
+            + list(apply_summary.get("blockers") or [])
+            + list(awq_summary.get("blockers") or [])
+        )
+    ))
+    child_codes = sorted(set(
+        str(item)
+        for item in (
+            list(load_summary.get("diagnosis_codes") or [])
+            + list(apply_summary.get("diagnosis_codes") or [])
+            + list(awq_summary.get("diagnosis_codes") or [])
+        )
+    ))
+    return {
+        "schema_version": REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
+        "type": WORKLOAD_TYPE,
+        "session_id": spec.get("session_id"),
+        "stage_id": int(stage_id),
+        "stage_count": 2,
+        "model_id": model_id,
+        "backend": backend,
+        "partition_mode": partition_mode,
+        "execution_mode": EXECUTION_MODE_STAGE_SELECTIVE_HF,
+        "execution_family": family or str(spec.get("execution_family") or ""),
+        "artifact_schema": spec.get("artifact_schema"),
+        "artifact_hash": spec.get("artifact_hash"),
+        "split_index": int(split_index),
+        "request_count": 0,
+        "activation_count": 0,
+        "activation_transport_ready": False,
+        "stage_local_partition_ready": bool(partition_summary.get("stage_local_partition_ready")),
+        "partition_parameter_split_valid": bool(partition_summary.get("partition_parameter_split_valid")),
+        "stage_parameter_count": int(partition_summary.get("stage_parameter_count") or 0),
+        "full_model_parameter_count": int(partition_summary.get("full_model_parameter_count") or 0),
+        "stage_parameter_fraction": float(partition_summary.get("stage_parameter_fraction") or 0.0),
+        "stage_selective_hf_runtime_ready": False,
+        "stage_selective_weight_load_ready": bool(load_summary.get("ready")),
+        "stage_selective_weight_application_ready": bool(apply_summary.get("ready")),
+        "runtime_buffer_materialization_ready": bool(buffer_summary.get("ready")),
+        "stage_selective_weight_load": load_summary,
+        "stage_selective_weight_application": apply_summary,
+        "runtime_buffer_materialization": buffer_summary,
+        "awq_stage_preparation": awq_summary,
+        "awq_stage_runtime_ready": bool(awq_summary.get("awq_stage_model_prepared")),
+        "stage_selective_partition": partition_summary,
+        "baseline_validation_skipped": False,
+        "baseline_match": False,
+        "decoded_tokens_match": False,
+        "real_llm_artifact_ready": False,
+        "error_type": type(exc).__name__,
+        "error_stage": str(error_stage),
+        "error_digest": _hash_payload(str(exc)),
+        "runtime_inner_error_type": str(getattr(exc, "crowdtensor_inner_error_type", "")),
+        "runtime_inner_error_digest": str(getattr(exc, "crowdtensor_inner_error_digest", "")),
+        "diagnosis_codes": sorted(set([
+            "real_llm_stage_selective_hf_remote_runtime_failed",
+            *child_codes,
+        ])),
+        "blockers": sorted(set([
+            "real_llm_stage_selective_hf_remote_runtime_failed",
+            *child_blockers,
+        ])),
+        "elapsed_ms": round(elapsed_ms, 6),
+    }
+
+
+def run_stage_selective_hf_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: str = "") -> dict[str, Any]:
+    """Run one remote stage using HF weight-index selective loading.
+
+    This is the large-model remote Miner path. Unlike the default tiny-model
+    path, it never loads a full baseline model on the Miner or Coordinator.
+    Stage 1 reports baseline validation as intentionally skipped, while the
+    Coordinator still verifies task/session hashes and output self-consistency.
+    """
+
+    start = time.monotonic()
+    spec = dict(workload_spec or {})
+    if str(spec.get("schema_version")) != REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION:
+        raise ValueError("real LLM sharded workload spec schema mismatch")
+    stage_id = int(spec.get("stage_id", -1))
+    if stage_id not in {0, 1}:
+        raise ValueError("real LLM sharded inference stage_id must be 0 or 1")
+    model_id = str(spec.get("model_id") or DEFAULT_MODEL_ID)
+    backend = resolve_backend(str(spec.get("backend") or BACKEND_CPU))
+    partition_mode = normalize_partition_mode(spec.get("partition_mode") or PARTITION_MODE_STAGE_LOCAL)
+    if partition_mode != PARTITION_MODE_STAGE_LOCAL:
+        raise ValueError("stage_selective_hf execution requires stage_local partition_mode")
+    split_index = int(spec.get("split_index", 1))
+    max_new_tokens = max(1, min(int(spec.get("max_new_tokens", 1)), MAX_NEW_TOKENS))
+    generation_step = max(0, min(int(spec.get("generation_step", 0)), max_new_tokens - 1))
+    runtime_error_stage = "initialize"
+    family = ""
+    try:
+        import gc
+        import torch  # type: ignore
+        from transformers import AutoTokenizer  # type: ignore
+
+        runtime_error_stage = "metadata"
+        config, metadata, weight_root = _stage_selective_hf_metadata(
+            model_id=model_id,
+            cache_dir=cache_dir,
+            split_index=split_index,
+            backend=backend,
+            stage_id=stage_id,
+        )
+        metadata["artifact_hash"] = str(spec.get("artifact_hash") or metadata.get("artifact_hash") or "")
+        metadata["partition_mode"] = PARTITION_MODE_STAGE_LOCAL
+        metadata["execution_mode"] = EXECUTION_MODE_STAGE_SELECTIVE_HF
+        family = execution_family_from_metadata(metadata)
+        if family not in SUPPORTED_EXECUTION_FAMILIES:
+            raise ValueError(f"unsupported stage-selective execution_family={family}")
+        if weight_root is None:
+            raise RuntimeError("stage-selective HF weight root missing")
+        device = torch.device("cuda:0" if backend == BACKEND_CUDA else "cpu")
+        stage_target_dtype = torch.float16 if backend == BACKEND_CUDA else None
+        runtime_error_stage = "tokenizer_load"
+        tokenizer = AutoTokenizer.from_pretrained(model_id, **_cache_kwargs(cache_dir))
+        runtime_error_stage = "stage_model_instantiate"
+        model = _instantiate_hf_causal_lm_from_config(config, meta=True)
+        runtime_error_stage = "awq_stage_model_prepare"
+        awq_preparation = _prepare_awq_stage_model(
+            model,
+            metadata,
+            stage_id=stage_id,
+            split_index=split_index,
+            family=family,
+        )
+        runtime_error_stage = "runtime_buffer_materialization"
+        runtime_buffer = _materialize_runtime_buffers(
+            model,
+            device=device,
+            stage_id=stage_id,
+            split_index=split_index,
+            family=family,
+        )
+        runtime_error_stage = "stage_weight_load"
+        stage_tensors, stage_load = _load_stage_selective_safetensors(
+            metadata,
+            stage_id=stage_id,
+            weight_root=weight_root,
+            partition_mode=PARTITION_MODE_STAGE_LOCAL,
+        )
+        runtime_error_stage = "stage_weight_apply"
+        stage_apply = _apply_stage_selective_tensors_to_model(
+            model,
+            stage_tensors,
+            metadata,
+            stage_id=stage_id,
+            partition_mode=PARTITION_MODE_STAGE_LOCAL,
+            target_device=device,
+            target_dtype=stage_target_dtype,
+        )
+        stage_tensors.clear()
+        del stage_tensors
+        gc.collect()
+        if backend == BACKEND_CUDA and hasattr(torch, "cuda"):
+            torch.cuda.empty_cache()
+        model.eval()
+        runtime_error_stage = "partition_summary"
+        partition = _stage_selective_partition_summary(
+            model,
+            metadata,
+            stage_apply,
+            stage_id=stage_id,
+            split_index=split_index,
+            partition_mode=PARTITION_MODE_STAGE_LOCAL,
+            device=device,
+            family=family,
+            baseline_device="skipped-stage-selective-hf" if stage_id == 1 else "",
+        )
+        stage_ready = bool(
+            runtime_buffer.get("ready")
+            and stage_load.get("ready")
+            and stage_apply.get("ready")
+            and partition.get("stage_local_partition_ready")
+            and (
+                not _metadata_uses_awq(metadata)
+                or awq_preparation.get("awq_stage_model_prepared")
+            )
+        )
+        if not stage_ready:
+            blockers = (
+                list(runtime_buffer.get("blockers") or [])
+                + list(stage_load.get("blockers") or [])
+                + list(stage_apply.get("blockers") or [])
+                + list(awq_preparation.get("blockers") or [])
+            )
+            raise RuntimeError("stage-selective runtime not ready: " + ",".join(str(item) for item in blockers[:8]))
+        if stage_id == 0:
+            runtime_error_stage = "stage0_activation"
+            activations = [
+                _stage0_activation(
+                    tokenizer=tokenizer,
+                    model=model,
+                    request=dict(request),
+                    spec=spec,
+                    split_index=split_index,
+                    device=device,
+                    family=family,
+                )
+                for request in list(spec.get("requests") or [])
+            ]
+            activation_bytes = len(_json_payload(activations).encode("utf-8"))
+            return {
+                "schema_version": REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
+                "type": WORKLOAD_TYPE,
+                "session_id": spec.get("session_id"),
+                "stage_id": 0,
+                "stage_count": 2,
+                "model_id": model_id,
+                "backend": backend,
+                "device": str(device),
+                **partition,
+                "execution_mode": EXECUTION_MODE_STAGE_SELECTIVE_HF,
+                "execution_family": family,
+                "artifact_schema": spec.get("artifact_schema"),
+                "artifact_hash": spec.get("artifact_hash"),
+                "split_index": split_index,
+                "max_new_tokens": max_new_tokens,
+                "generation_step": generation_step,
+                "request_count": len(activations),
+                "activation_count": len(activations),
+                "activation_bytes": activation_bytes,
+                "activation_hashes": [row["activation_hash"] for row in activations],
+                "activation_transport_ready": bool(activations),
+                "activation_results": activations,
+                "stage_selective_hf_runtime_ready": True,
+                "stage_selective_runtime_execution_ready": True,
+                "stage_selective_weight_load": stage_load,
+                "stage_selective_weight_application": stage_apply,
+                "stage_selective_weight_load_ready": bool(stage_load.get("ready")),
+                "stage_selective_weight_application_ready": bool(stage_apply.get("ready")),
+                "runtime_buffer_materialization": runtime_buffer,
+                "runtime_buffer_materialization_ready": bool(runtime_buffer.get("ready")),
+                "awq_stage_preparation": awq_preparation,
+                "awq_stage_runtime_ready": bool(
+                    not _metadata_uses_awq(metadata)
+                    or awq_preparation.get("awq_stage_model_prepared")
+                ),
+                "baseline_validation_skipped": False,
+                "real_llm_artifact_ready": True,
+                "elapsed_ms": round((time.monotonic() - start) * 1000.0, 6),
+            }
+        runtime_error_stage = "stage1_decode"
+        activations = list(spec.get("activation_results") or [])
+        results = [
+            _stage1_result(
+                tokenizer=tokenizer,
+                model=model,
+                baseline_model=None,
+                activation=dict(activation),
+                spec=spec,
+                device=device,
+                baseline_device=None,
+                family=family,
+                baseline_required=False,
+            )
+            for activation in activations
+        ]
+        stage_selective_decoded = bool(results) and all(
+            bool(row.get("baseline_validation_skipped"))
+            and int(row.get("generated_token_count") or 0) >= generation_step + 1
+            and str(row.get("output_hash") or "") == _output_hash(row)
+            for row in results
+        )
+        first_result = results[0] if results else {}
+        return {
+            "schema_version": REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
+            "type": WORKLOAD_TYPE,
+            "session_id": spec.get("session_id"),
+            "stage_id": 1,
+            "stage_count": 2,
+            "model_id": model_id,
+            "backend": backend,
+            "device": str(device),
+            **partition,
+            "execution_mode": EXECUTION_MODE_STAGE_SELECTIVE_HF,
+            "execution_family": family,
+            "artifact_schema": spec.get("artifact_schema"),
+            "artifact_hash": spec.get("artifact_hash"),
+            "split_index": split_index,
+            "max_new_tokens": max_new_tokens,
+            "generation_step": generation_step,
+            "request_count": len(results),
+            "activation_count": len(activations),
+            "activation_bytes": len(_json_payload(activations).encode("utf-8")),
+            "activation_hashes": [str(row.get("activation_hash") or "") for row in activations],
+            "activation_transport_ready": bool(activations),
+            "inference_results": results,
+            "inference_result": first_result,
+            "baseline_device": "skipped-stage-selective-hf",
+            "baseline_match": False,
+            "baseline_validation_skipped": True,
+            "decoded_tokens_match": stage_selective_decoded,
+            "generated_token_ids": list(first_result.get("generated_token_ids") or []),
+            "generated_token_count": int(first_result.get("generated_token_count") or 0),
+            "generated_text": str(first_result.get("generated_text") or ""),
+            "generated_text_hash": str(first_result.get("generated_text_hash") or _generated_text_hash("")),
+            "stage_selective_hf_runtime_ready": True,
+            "stage_selective_runtime_execution_ready": True,
+            "stage_selective_weight_load": stage_load,
+            "stage_selective_weight_application": stage_apply,
+            "stage_selective_weight_load_ready": bool(stage_load.get("ready")),
+            "stage_selective_weight_application_ready": bool(stage_apply.get("ready")),
+            "runtime_buffer_materialization": runtime_buffer,
+            "runtime_buffer_materialization_ready": bool(runtime_buffer.get("ready")),
+            "awq_stage_preparation": awq_preparation,
+            "awq_stage_runtime_ready": bool(
+                not _metadata_uses_awq(metadata)
+                or awq_preparation.get("awq_stage_model_prepared")
+            ),
+            "real_llm_artifact_ready": True,
+            "elapsed_ms": round((time.monotonic() - start) * 1000.0, 6),
+        }
+    except Exception as exc:
+        return _stage_selective_failure_result(
+            spec=spec,
+            model_id=model_id,
+            backend=backend,
+            partition_mode=partition_mode,
+            stage_id=stage_id,
+            split_index=split_index,
+            family=family,
+            error_stage=runtime_error_stage,
+            exc=exc,
+            elapsed_ms=(time.monotonic() - start) * 1000.0,
+            runtime_buffer=locals().get("runtime_buffer"),
+            stage_load=locals().get("stage_load"),
+            stage_apply=locals().get("stage_apply"),
+            partition=locals().get("partition"),
+            awq_preparation=locals().get("awq_preparation"),
+        )
+
+
 def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: str = "") -> dict[str, Any]:
     start = time.monotonic()
     spec = dict(workload_spec or {})
@@ -2944,6 +4090,13 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
     model_id = str(spec.get("model_id") or DEFAULT_MODEL_ID)
     backend = resolve_backend(str(spec.get("backend") or BACKEND_CPU))
     partition_mode = normalize_partition_mode(spec.get("partition_mode") or PARTITION_MODE_FULL)
+    execution_mode = normalize_execution_mode(
+        spec.get("execution_mode")
+        or (spec.get("artifact") or {}).get("execution_mode")
+        or EXECUTION_MODE_FULL_MODEL
+    )
+    if execution_mode == EXECUTION_MODE_STAGE_SELECTIVE_HF:
+        return run_stage_selective_hf_sharded_inference(spec, cache_dir=cache_dir)
     artifact_metadata = dict(spec.get("artifact") or {})
     artifact_metadata.setdefault("model_id", model_id)
     artifact_metadata.setdefault("partition_mode", partition_mode)
@@ -3012,6 +4165,7 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
             "backend": backend,
             "device": str(device),
             **partition,
+            "execution_mode": execution_mode,
             "execution_family": execution_support["execution_family"],
             "execution_support": execution_support,
             "artifact_schema": spec.get("artifact_schema"),
@@ -3066,6 +4220,7 @@ def run_real_llm_sharded_inference(workload_spec: dict[str, Any], *, cache_dir: 
         "backend": backend,
         "device": str(device),
         **partition,
+        "execution_mode": execution_mode,
         "execution_family": execution_support["execution_family"],
         "execution_support": execution_support,
         "artifact_schema": spec.get("artifact_schema"),
@@ -3116,6 +4271,18 @@ def _safe_trace(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _public_stage_runtime_summary(source: dict[str, Any], key: str) -> dict[str, Any]:
+    value = source.get(key)
+    if not isinstance(value, dict):
+        return {}
+    summary = dict(value)
+    summary.pop("tensor_values", None)
+    summary.pop("local_path", None)
+    summary.pop("weight_root", None)
+    summary["public_safe"] = bool(summary.get("public_safe", True))
+    return summary
+
+
 def validate_real_llm_sharded_inference(
     sharded_result: dict[str, Any] | None,
     *,
@@ -3159,12 +4326,27 @@ def validate_real_llm_sharded_inference(
         )
     expected_partition_mode = normalize_partition_mode(expected_spec.get("partition_mode") or PARTITION_MODE_FULL)
     observed_partition_mode = normalize_partition_mode(sharded_result.get("partition_mode") or PARTITION_MODE_FULL)
+    expected_execution_mode = normalize_execution_mode(
+        expected_spec.get("execution_mode")
+        or (expected_spec.get("artifact") or {}).get("execution_mode")
+        or EXECUTION_MODE_FULL_MODEL
+    )
+    observed_execution_mode = normalize_execution_mode(
+        sharded_result.get("execution_mode")
+        or expected_execution_mode
+    )
     max_new_tokens = max(1, min(int(expected_spec.get("max_new_tokens", 1)), MAX_NEW_TOKENS))
     generation_step = max(0, min(int(expected_spec.get("generation_step", 0)), max_new_tokens - 1))
     if observed_partition_mode != expected_partition_mode:
         return _reject(
             "real_llm_partition_mode_mismatch",
             "sharded result partition_mode does not match claim-time partition mode",
+            sharded_result,
+        )
+    if observed_execution_mode != expected_execution_mode:
+        return _reject(
+            "real_llm_execution_mode_mismatch",
+            "sharded result execution_mode does not match claim-time execution mode",
             sharded_result,
         )
     if expected_partition_mode == PARTITION_MODE_STAGE_LOCAL:
@@ -3262,6 +4444,7 @@ def validate_real_llm_sharded_inference(
             "model_id": expected_spec.get("model_id"),
             "backend": expected_spec.get("backend"),
             "partition_mode": str(sharded_result.get("partition_mode") or expected_spec.get("partition_mode") or PARTITION_MODE_FULL),
+            "execution_mode": expected_execution_mode,
             "max_new_tokens": max_new_tokens,
             "generation_step": generation_step,
             "stage_layer_range": list(sharded_result.get("stage_layer_range") or []),
@@ -3282,6 +4465,16 @@ def validate_real_llm_sharded_inference(
             "activation_bytes": activation_bytes,
             "activation_hashes": [str(row.get("activation_hash") or "") for row in observed],
             "activation_transport_ready": bool(observed),
+            "stage_selective_hf_runtime_ready": bool(sharded_result.get("stage_selective_hf_runtime_ready", False)),
+            "stage_selective_runtime_execution_ready": bool(sharded_result.get("stage_selective_runtime_execution_ready", False)),
+            "stage_selective_weight_load_ready": bool(sharded_result.get("stage_selective_weight_load_ready", False)),
+            "stage_selective_weight_application_ready": bool(sharded_result.get("stage_selective_weight_application_ready", False)),
+            "stage_selective_weight_load": _public_stage_runtime_summary(sharded_result, "stage_selective_weight_load"),
+            "stage_selective_weight_application": _public_stage_runtime_summary(
+                sharded_result,
+                "stage_selective_weight_application",
+            ),
+            "runtime_buffer_materialization_ready": bool(sharded_result.get("runtime_buffer_materialization_ready", False)),
             "real_llm_artifact_ready": True,
             "runtime_replay_performed": bool(replay_runtime),
             "remote_runtime_validation": not bool(replay_runtime),
@@ -3335,13 +4528,30 @@ def validate_real_llm_sharded_inference(
                 sharded_result,
             )
     baseline_match = bool(observed_results) and all(bool(row.get("baseline_match")) for row in observed_results)
+    stage_selective_remote_ok = bool(
+        expected_execution_mode == EXECUTION_MODE_STAGE_SELECTIVE_HF
+        and observed_results
+        and sharded_result.get("stage_selective_hf_runtime_ready")
+        and sharded_result.get("stage_selective_runtime_execution_ready")
+        and sharded_result.get("stage_selective_weight_load_ready")
+        and sharded_result.get("stage_selective_weight_application_ready")
+        and sharded_result.get("runtime_buffer_materialization_ready")
+        and sharded_result.get("baseline_validation_skipped")
+        and sharded_result.get("decoded_tokens_match")
+        and all(
+            bool(row.get("baseline_validation_skipped"))
+            and int(row.get("generated_token_count") or 0) >= generation_step + 1
+            for row in observed_results
+        )
+    )
+    accepted = bool(baseline_match or stage_selective_remote_ok)
     first_result = observed_results[0] if observed_results else {}
     generated_token_ids = [int(value) for value in list(first_result.get("generated_token_ids") or [])]
     generated_text = str(first_result.get("generated_text") or "")
     return {
-        "accepted": bool(baseline_match),
-        "code": "ok" if baseline_match else "real_llm_baseline_mismatch",
-        "reason": "accepted" if baseline_match else "stage 1 output does not match single-runtime baseline",
+        "accepted": accepted,
+        "code": "ok" if accepted else "real_llm_baseline_mismatch",
+        "reason": "accepted" if accepted else "stage 1 output does not match single-runtime baseline",
         "workload_type": WORKLOAD_TYPE,
         "schema_version": REAL_LLM_SHARDED_INFERENCE_SCHEMA_VERSION,
         "session_id": expected_spec.get("session_id"),
@@ -3350,6 +4560,7 @@ def validate_real_llm_sharded_inference(
         "model_id": expected_spec.get("model_id"),
         "backend": expected_spec.get("backend"),
         "partition_mode": str(sharded_result.get("partition_mode") or expected_spec.get("partition_mode") or PARTITION_MODE_FULL),
+        "execution_mode": expected_execution_mode,
         "max_new_tokens": max_new_tokens,
         "generation_step": generation_step,
         "stage_layer_range": list(sharded_result.get("stage_layer_range") or []),
@@ -3372,7 +4583,19 @@ def validate_real_llm_sharded_inference(
         "activation_hashes": list(sharded_result.get("activation_hashes") or []),
         "activation_transport_ready": bool(sharded_result.get("activation_transport_ready", False)),
         "baseline_match": baseline_match,
-        "decoded_tokens_match": baseline_match,
+        "baseline_validation_skipped": bool(sharded_result.get("baseline_validation_skipped", False)),
+        "stage_selective_remote_validation": stage_selective_remote_ok,
+        "stage_selective_hf_runtime_ready": bool(sharded_result.get("stage_selective_hf_runtime_ready", False)),
+        "stage_selective_runtime_execution_ready": bool(sharded_result.get("stage_selective_runtime_execution_ready", False)),
+        "stage_selective_weight_load_ready": bool(sharded_result.get("stage_selective_weight_load_ready", False)),
+        "stage_selective_weight_application_ready": bool(sharded_result.get("stage_selective_weight_application_ready", False)),
+        "stage_selective_weight_load": _public_stage_runtime_summary(sharded_result, "stage_selective_weight_load"),
+        "stage_selective_weight_application": _public_stage_runtime_summary(
+            sharded_result,
+            "stage_selective_weight_application",
+        ),
+        "runtime_buffer_materialization_ready": bool(sharded_result.get("runtime_buffer_materialization_ready", False)),
+        "decoded_tokens_match": bool(baseline_match or stage_selective_remote_ok),
         "generated_token_ids": generated_token_ids,
         "generated_token_count": len(generated_token_ids),
         "generated_text": generated_text,

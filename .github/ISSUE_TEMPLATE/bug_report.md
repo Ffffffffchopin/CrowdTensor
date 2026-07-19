@@ -30,7 +30,7 @@ assignees: ""
 If possible, attach output from:
 
 ```bash
-python3 scripts/support_bundle.py --json-out /tmp/crowdtensor_support_bundle.json
+python3 scripts/support_bundle.py --json-out dist/crowdtensor_support_bundle.json
 ```
 
 ## Logs or output

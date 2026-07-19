@@ -2,6 +2,91 @@
 
 ## Unreleased
 
+- Added the Qwen2.5-7B Elastic GSM8K SFT Showcase RC: pinned model/data
+  revisions, 256 optimizer steps and 262,144 tokens over two generations of
+  concurrent T4x2 Kernels, forced step-128 deletion and central exactly-once
+  restore, standard 392-tensor PEFT export/reload, and complete cleanup.
+- Added preregistered before/after GSM8K evaluation on a 128-item confirmatory
+  holdout disjoint from development. Normalized exact match improves from
+  92/128 to 95/128 (+2.344 percentage points), passing the practical gate;
+  the bootstrap interval includes zero and is not presented as statistically
+  significant. The failed `1e-4` development result remains public evidence.
+- Added Qwen7B multi-shard stage loading, masked SFT payload preparation,
+  hash-bound Kaggle benchmark inputs, fresh-holdout exclusion, attempt-contract
+  checking, Model Card/showcase/reproduction pack, ZIP-aware comparison
+  example, and multi-manifest private-payload cleanup audit.
+
+- Added the Volunteer Training founding-preview public surface: aggregate
+  Campaign Dashboard and snapshot routes, an immutable Campaign proposal
+  validator with license/evaluation/governance fields, a bounded two-Cell real
+  PEFT demo, public-safety and cleanup checkers, Playwright desktop/mobile
+  visual evidence, and an offline launch pack that separates
+  `founding_preview_ready` from the still-blocked `formal_launch_ready` gate.
+- Added public Campaign governance and Reddit/LocalLLaMA launch guidance with
+  an explicit claim matrix. The documentation preserves the same-host and
+  non-permissionless boundaries and does not claim useful model-quality
+  improvement without a held-out evaluation.
+
+- Added the Volunteer Training Internet Beta Engineering RC: exact public
+  SmolLM2-135M/WikiText Campaign import, per-file provenance hashes, local and
+  S3/MinIO content-addressed storage contracts, persistent chunk uploads,
+  trusted HTTPS reverse-proxy enforcement, and Coordinator/Cell restart
+  recovery.
+- Added a strict three-round real-PEFT gate using six independent Cell CLI
+  processes. It covers Cell disappearance, network loss, upload interruption
+  without retraining, two Coordinator restarts, checkpoint lineage, an equal
+  six-step/96-token centralized baseline, independent replay, public-safe RC
+  packing/checking, and complete private-runtime cleanup. Independent physical
+  Internet-machine execution remains the next external gate.
+
+- Added versioned Campaign, round, work-unit, lease-generation, and submission
+  contracts for low-frequency WAN LoRA training.
+- Added a persistent Volunteer Training Coordinator with stale/fork/duplicate
+  fencing, tensor and finite-value admission, norm clipping, distinct-Cell
+  quorum, atomic DiLoCo/Local-SGD Adapter advancement, and a hash-chained public
+  audit ledger.
+- Added authenticated HTTP claim/heartbeat/artifact/binary-safetensors routes
+  and the one-command `crowdtensor volunteer join <private-invite>` Training
+  Cell workflow with hardware detection, content-addressed cache, limits,
+  pause/resume, and cleanup.
+- Added a strict real-PEFT Volunteer Training Alpha proof covering two rounds,
+  Cell dropout and work reassignment, invalid/stale update rejection,
+  idempotent retry, an equal optimizer-step/token centralized baseline,
+  public-artifact safety, and cleanup. The proof is loopback HTTP, not physical
+  Internet multi-machine or permissionless Byzantine evidence.
+
+- Added the fail-closed `crowdtensor.model_adapters.v1` Python entry-point
+  plugin registry with provenance, conformance checking, built-in shadow
+  prevention, disable switch, Adapter list/check CLI, and dual-wheel
+  authenticated Coordinator distribution.
+- Added the separately packaged `mistral_lora_v1` Adapter pinned to the
+  Apache-2.0 `Locutusque/TinyMistral-248M-v2` revision and a strict Model
+  Ecosystem Beta RC. One Kaggle T4x2 Kernel plus one CPU Kernel completed eight
+  contiguous real-weight LoRA steps, restored a replacement CUDA worker from
+  step 4 LoRA/Adam state, exported 168 PEFT tensors, independently reloaded
+  finite logits, and cleaned all live resources.
+
+- Added the versioned `crowdtensor community` golden workflow covering init,
+  validate, plan, Coordinator, Miner join, train, status, pause/resume,
+  rebalance, PEFT export, stop, and cleanup with dry-run, stable exit codes,
+  run IDs, and public-safe next commands.
+- Added `model_adapter_v1.0`, migrated Qwen Production manifest creation behind
+  `qwen2_lora_v1`, and added the pinned Apache-2.0 SmolLM2-135M two-stage LoRA
+  adapter/runtime with real-weight checkpoint, merge, and independent reload.
+- Added Community RBAC, short-lived credential rotation, task signatures and
+  replay protection, TLS proxy contract, restricted worker execution, update
+  anomaly quarantine, recursive privacy scanning, and API negative tests.
+- Added a bounded 12-scenario chaos runner, strict 45-minute/100-step Kaggle
+  reliability contract, clean-wheel Kaggle logical-node packages, real MinIO
+  API restart/repair integration, and CPU/GPU benchmark evidence.
+- Added Community governance, threat model, Provider/Adapter/benchmark and
+  compatibility docs, Code of Conduct, RFC/Good First Issue templates,
+  CycloneDX/release-manifest infrastructure, and `0.2.0rc1` package metadata.
+- Added portable P0-P4 Community Maturity RC packing/checking, final Kaggle and
+  local cleanup auditing, an exact Kaggle direct-runtime lock, temporary-root
+  clean installs, and a fail-closed PEFT compatibility shim for provider images
+  with an outdated optional TorchAO package.
+
 - Added `crowdtensor swarm-bootstrap-check`, an offline/live package validator for generated swarm bootstrap directories. It emits `crowdtensor_swarm_bootstrap_check_v1`, verifies required files, `0600` private env/invite/join-code files, `0700` helper scripts, hashed registries, Coordinator/operator env separation, stage invite Coordinator URL consistency, generated `verify_bootstrap.sh` live-admission wiring, generated `miner.join-code.txt` consistency, optional `--expect-remote-miners` remote route readiness, optional live `/ready` checks through `--check-coordinator`, optional token-backed no-claim `/tasks/preflight` checks through `--check-admission`, and plaintext token leakage in scripts or public Markdown before stage package handoff.
 - Added `crowdtensor swarm-bootstrap`, a local private setup helper that creates an operator registry, Miner registry, separated coordinator/operator private env files, private operator invite, stage0/stage1 Miner packages with `miner.join-code.txt`, executable `start_coordinator.sh` / `verify_bootstrap.sh` / `join.sh` / generation scripts, and `SWARM_BOOTSTRAP.md` for a controlled two-stage swarm without exposing plaintext tokens in the public report. Stage `join.sh` defaults to `crowdtensor join --invite-code-file miner.join-code.txt`, and `verify_bootstrap.sh` wraps the live no-claim admission preflight after the Coordinator starts and before stage package handoff. Product `crowdtensor serve` now forwards `--miner-token-registry` alongside `--operator-token-registry`.
 - Added `crowdtensor operator-invite` and `scripts/create_operator_invite.py` for role-scoped operator onboarding. The helper writes a hashed `--operator-token-registry` entry plus a private `crowdtensor_operator_invite_v1` file with optional `/admin/inference-sessions` workload, request, token, active-session, total-session, and rate limits; the product CLI report redacts plaintext operator tokens and invite codes.

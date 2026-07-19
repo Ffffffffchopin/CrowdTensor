@@ -11,6 +11,7 @@ from crowdtensor import cli
 from crowdtensor import large_model_shard as lms
 from scripts import large_model_shard_alpha_check as check
 from scripts import large_model_shard_alpha_pack as pack
+from scripts import large_model_stage_selective_plan_pack as stage_plan_pack
 
 
 class LargeModelShardAlphaTests(unittest.TestCase):
@@ -157,6 +158,31 @@ class LargeModelShardAlphaTests(unittest.TestCase):
         self.assertIn("real_runtime_verified=False", output)
         self.assertIn("llama_cpp_rpc", output)
 
+    def test_cli_wrapper_can_attach_stage_selective_7b_14b_plan(self) -> None:
+        output_dir = self._tmp_dir()
+        args = cli.parse_args([
+            "large-model-shard",
+            "--output-dir",
+            str(output_dir),
+            "--stage-selective-plan",
+            "--stage-count",
+            "4",
+            "--kaggle-gpu-memory-gb",
+            "15",
+        ])
+
+        summary = cli.build_large_model_shard_alpha(args)
+
+        self.assertTrue(summary["ok"])
+        self.assertTrue(summary["stage_selective_plan_ready"])
+        self.assertEqual(summary["stage_selective_plan"]["schema"], stage_plan_pack.SCHEMA)
+        self.assertIn("large_model_14b_partition_plan_ready", summary["diagnosis_codes"])
+        self.assertIn("large_model_n_stage_partition_plan_ready", summary["diagnosis_codes"])
+        self.assertIn("large_model_stage_selective_plan_json", summary["artifacts"])
+        self.assertTrue((output_dir / "stage-selective-plan" / "large_model_stage_selective_plan.json").is_file())
+        self.assertTrue((output_dir / "stage-selective-plan" / "large_model_stage_selective_plan.md").is_file())
+        self.assertFalse(summary["stage_selective_plan"]["model_plans"][1]["runtime_verified"])
+
     def test_cli_rejects_bad_large_model_args(self) -> None:
         with self.assertRaises(SystemExit):
             cli.parse_args(["large-model-shard", "--layer-count", "0"])
@@ -164,6 +190,39 @@ class LargeModelShardAlphaTests(unittest.TestCase):
             cli.parse_args(["large-model-shard", "--reserved-kv-cache-mb", "-1"])
         with self.assertRaises(SystemExit):
             cli.parse_args(["large-model-shard", "--real-benchmark-report", "/tmp/does-not-exist.json"])
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["large-model-shard", "--stage-count", "1"])
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["large-model-shard", "--kaggle-gpu-memory-gb", "0"])
+
+    def test_stage_selective_plan_pack_covers_7b_and_14b_without_runtime_claim(self) -> None:
+        output_dir = self._tmp_dir()
+        report = stage_plan_pack.build_report(stage_plan_pack.parse_args([
+            "--output-dir",
+            str(output_dir),
+            "--stage-count",
+            "4",
+            "--kaggle-gpu-memory-gb",
+            "15",
+        ]))
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["schema"], stage_plan_pack.SCHEMA)
+        self.assertIn("large_model_7b_partition_plan_ready", report["diagnosis_codes"])
+        self.assertIn("large_model_14b_partition_plan_ready", report["diagnosis_codes"])
+        self.assertIn("large_model_n_stage_partition_plan_ready", report["diagnosis_codes"])
+        by_model = {item["model_id"]: item for item in report["model_plans"]}
+        self.assertTrue(by_model["Qwen/Qwen2.5-7B-Instruct"]["n_stage_plan_ready"])
+        self.assertTrue(by_model["Qwen/Qwen2.5-14B-Instruct"]["n_stage_plan_ready"])
+        self.assertTrue(by_model["Qwen/Qwen2.5-7B-Instruct"]["dual_kaggle_kernel_fit_estimate"])
+        self.assertFalse(by_model["Qwen/Qwen2.5-7B-Instruct"]["requires_more_than_two_stages_estimate"])
+        self.assertFalse(by_model["Qwen/Qwen2.5-14B-Instruct"]["runtime_verified"])
+        self.assertTrue(by_model["Qwen/Qwen2.5-14B-Instruct"]["requires_more_than_two_stages_estimate"])
+        self.assertTrue(report["safety"]["public_artifact_safe"])
+        self.assertEqual(stage_plan_pack.public_redaction_errors(report), [])
+        self.assertTrue((output_dir / "large_model_stage_selective_plan.json").is_file())
+        self.assertTrue((output_dir / "large_model_stage_selective_plan.md").is_file())
+        self.assertTrue((output_dir / "support_bundle.json").is_file())
 
 
 if __name__ == "__main__":

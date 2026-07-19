@@ -26,7 +26,11 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         self.assertTrue(report["core_validation_ready"])
         self.assertTrue(report["small_tier_gpu_validated"])
         self.assertTrue(report["seven_b_eight_b_validated"])
-        self.assertEqual(report["largest_successful_tier"], "7b")
+        self.assertTrue(report["seven_b_multi_token_validated"])
+        self.assertTrue(report["fourteen_b_validated"])
+        self.assertTrue(report["n_stage_partition_ready"])
+        self.assertTrue(report["stage_selective_performance_report_ready"])
+        self.assertEqual(report["largest_successful_tier"], "14b")
         self.assertIn("core_technology_validation_ready", report["diagnosis_codes"])
         self.assertEqual(report["blockers"], [])
         self.assertFalse(report["readiness_truth"]["small_tier_success_is_not_7b_8b_completion"])
@@ -34,6 +38,7 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         self.assertIn("llama_like_local_evidence", report)
         self.assertFalse(report["llama_like_local_evidence"].get("large_model_validation"))
         self.assertIn("stage_selective_weight_loading_evidence", report)
+        self.assertIn("handoff_stage_selective_evidence", report)
         self.assertIn("seven_b_eight_b_evidence", report)
         self.assertIn("core_stage_selective_weight_materialization_validated", report["diagnosis_codes"])
         self.assertTrue(report["stage_selective_weight_loading_evidence"].get("ready"))
@@ -41,6 +46,8 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         self.assertTrue(report["seven_b_eight_b_evidence"].get("real_7b_runtime_verified"))
         self.assertEqual(report["seven_b_eight_b_evidence"].get("generated_token_count"), 1)
         self.assertTrue(report["seven_b_eight_b_evidence"].get("kaggle_kernels_deleted"))
+        self.assertTrue(report["handoff_stage_selective_evidence"].get("ready"))
+        self.assertEqual(report["handoff_stage_selective_evidence"].get("fourteen_b_generated_token_count"), 1)
         check.validate_report(report, require_core_ready=True)
 
         for name in [
@@ -207,6 +214,118 @@ class CoreTechnologyValidationStatusTests(unittest.TestCase):
         self.assertTrue(report["seven_b_eight_b_validated"])
         self.assertTrue(report["seven_b_eight_b_evidence"]["real_7b_runtime_verified"])
         self.assertIn("core_technology_validation_ready", report["diagnosis_codes"])
+        check.validate_report(report, require_core_ready=True)
+
+    def test_handoff_stage_selective_evidence_promotes_14b_status(self) -> None:
+        output_dir = self._tmp_dir()
+        small_report = self._write_json(
+            output_dir / "small.json",
+            {
+                "schema": "public_swarm_gpu_inference_beta_v1",
+                "ok": True,
+                "beta": {"model_id": "gpt2-xl", "backend": "hf_transformers_cuda"},
+                "payload_summaries": {
+                    "real_llm_internet_beta": {
+                        "generation": {
+                            "generated_token_count": 1,
+                            "generated_text_redacted": True,
+                        }
+                    }
+                },
+                "model_execution_support": {},
+                "diagnosis_codes": [
+                    "public_swarm_gpu_beta_kaggle_auto_ready",
+                    "external_runtime_verified",
+                    "kaggle_kernels_deleted",
+                ],
+            },
+        )
+        seven_report = self._write_json(
+            output_dir / "seven.json",
+            {
+                "schema": "large_model_kaggle_validation_run_v1",
+                "ok": True,
+                "validation": {
+                    "real_7b_runtime_verified": True,
+                    "real_runtime_verified": True,
+                    "gpu_runtime_verified": True,
+                    "sharded_path_verified": True,
+                    "multi_worker_sharded_path_verified": True,
+                    "core_validation_ready": True,
+                },
+                "hardware": {
+                    "kaggle_gpu_verified": True,
+                    "gpu_count": 2,
+                    "gpu_names": ["Tesla T4", "Tesla T4"],
+                },
+                "diagnosis_codes": ["large_model_kaggle_gpu_hardware_verified"],
+            },
+        )
+        handoff_report = self._write_json(
+            output_dir / "handoff.json",
+            {
+                "schema": "core_technology_handoff_rc_v1",
+                "ok": True,
+                "core_technology_large_model_alpha_ready": True,
+                "evidence_scope": "live-kaggle-stage-selective-handoff",
+                "large_model_stage_selective_evidence": {
+                    "schema": "core_technology_large_model_stage_selective_evidence_v1",
+                    "core_technology_large_model_alpha_ready": True,
+                    "checks": {
+                        "seven_b_multi_token_verified": True,
+                        "fourteen_b_dual_kaggle_verified": True,
+                        "n_stage_partition_plan_ready": True,
+                        "stage_selective_performance_report_ready": True,
+                    },
+                    "seven_b_live": {
+                        "model_id": "Qwen/Qwen2.5-7B-Instruct",
+                        "generated_token_count": 2,
+                    },
+                    "fourteen_b_live": {
+                        "model_id": "Qwen/Qwen2.5-14B-Instruct",
+                        "generated_token_count": 1,
+                    },
+                    "n_stage_partition": {"target_stage_count": 4},
+                    "stage_selective_performance": {
+                        "throughput": {"tokens_per_second_effective": 0.0037},
+                        "memory": {
+                            "stage0_weight_download_scope": "stage_owned_weight_files",
+                            "stage1_weight_download_scope": "stage_owned_weight_files",
+                            "stage_weight_downloads_only_stage_files": True,
+                        },
+                        "latency": {"effective_elapsed_seconds": 264.3},
+                    },
+                    "not_completed": [],
+                    "limitations": [
+                        "This is not production P2P, not arbitrary public prompt serving, and not unbounded GPU pooling."
+                    ],
+                },
+                "diagnosis_codes": ["core_technology_large_model_alpha_ready"],
+            },
+        )
+
+        report = pack.build_report(pack.parse_args([
+            "--output-dir",
+            str(output_dir / "status"),
+            "--small-gpu-report",
+            str(small_report),
+            "--seven-b-blocker-report",
+            str(seven_report),
+            "--handoff-report",
+            str(handoff_report),
+        ]))
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["core_validation_ready"])
+        self.assertTrue(report["seven_b_multi_token_validated"])
+        self.assertTrue(report["fourteen_b_validated"])
+        self.assertTrue(report["n_stage_partition_ready"])
+        self.assertTrue(report["stage_selective_performance_report_ready"])
+        self.assertEqual(report["largest_successful_tier"], "14b")
+        self.assertTrue(report["handoff_stage_selective_evidence"]["ready"])
+        self.assertEqual(report["handoff_stage_selective_evidence"]["fourteen_b_generated_token_count"], 1)
+        self.assertIn("core_14b_kaggle_stage_selective_validated", report["diagnosis_codes"])
+        self.assertTrue(report["readiness_truth"]["handoff_stage_selective_evidence_is_live_kaggle_but_not_production"])
         check.validate_report(report, require_core_ready=True)
 
     def test_stage_selective_runtime_ready_does_not_mark_core_ready_without_7b_runtime(self) -> None:

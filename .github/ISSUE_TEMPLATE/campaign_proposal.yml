@@ -1,0 +1,54 @@
+name: Public training Campaign proposal
+description: Propose an auditable volunteer training Campaign before contributor recruitment.
+title: "[Campaign]: "
+labels: ["campaign-proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals must use immutable public model and dataset revisions. Do not paste private data, credentials, access URLs, or unpublished samples.
+  - type: input
+    id: proposal
+    attributes:
+      label: Proposal artifact
+      description: Link to a committed JSON artifact that passes `crowdtensor volunteer campaign validate-proposal`.
+      placeholder: examples/volunteer-campaign/campaign-proposal.json
+    validations:
+      required: true
+  - type: input
+    id: objective
+    attributes:
+      label: Literal training objective
+      placeholder: Adapt SmolLM2-135M on an immutable openly licensed corpus.
+    validations:
+      required: true
+  - type: textarea
+    id: evaluation
+    attributes:
+      label: Before/after evaluation
+      description: Name the held-out split, baseline, metrics, and publication plan.
+    validations:
+      required: true
+  - type: textarea
+    id: licensing
+    attributes:
+      label: Model, data, and result licensing
+      description: Include SPDX identifiers, redistribution rights, and attribution obligations.
+    validations:
+      required: true
+  - type: textarea
+    id: governance
+    attributes:
+      label: Maintainers and rollback authority
+      description: Name at least two maintainers, conflict policy, moderation owner, and pause/rollback owner.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Trust boundary
+      options:
+        - label: I will not advertise permissionless admission, Sybil resistance, or poisoning safety without separate evidence.
+          required: true
+        - label: I will publish the Campaign manifest, checkpoint lineage, audit ledger, and before/after evaluation.
+          required: true
