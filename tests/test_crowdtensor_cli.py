@@ -922,7 +922,9 @@ class CrowdTensorCliTests(unittest.TestCase):
         readme = (cli.ROOT / "README.md").read_text(encoding="utf-8")
         quickstart = (cli.ROOT / "docs" / "quickstart.md").read_text(encoding="utf-8")
 
-        for rendered in [readme, quickstart]:
+        self.assertIn("detailed quickstart", readme)
+        self.assertIn("docs/quickstart.md", readme)
+        for rendered in [quickstart]:
             self.assertIn("export CROWDTENSOR_ADMIN_TOKEN=local-admin", rendered)
             self.assertIn("export CROWDTENSOR_MINER_TOKEN=local-miner", rendered)
             self.assertIn("export CROWDTENSOR_OBSERVER_TOKEN=local-observer", rendered)
@@ -1090,12 +1092,14 @@ class CrowdTensorCliTests(unittest.TestCase):
         operations = (cli.ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
         memory = (cli.ROOT / "docs" / "project-memory.md").read_text(encoding="utf-8")
 
-        for rendered in [readme, quickstart, operations, memory]:
+        self.assertIn("operations guide", readme)
+        self.assertIn("docs/operations.md", readme)
+        for rendered in [quickstart, operations, memory]:
             self.assertIn("crowdtensor public-real-llm-swarm-beta check", rendered)
             self.assertIn("--beta-report", rendered)
             self.assertIn("public_real_llm_swarm_beta_check", rendered)
             self.assertIn("public_real_llm_swarm_beta.json", rendered)
-        for rendered in [readme, quickstart, operations]:
+        for rendered in [quickstart, operations]:
             self.assertIn("checked_evidence_scope", rendered)
             self.assertIn("checked_runtime_provenance", rendered)
             self.assertIn("checked_gpu_status", rendered)
@@ -1124,7 +1128,6 @@ class CrowdTensorCliTests(unittest.TestCase):
         self.assertIn("`checked_gpu_status`", memory)
         self.assertIn("`checked_gpu_proof_next_step`", memory)
         self.assertIn("default quick-start `infer` path is local CPU / local loopback", memory)
-        self.assertIn("official user-facing validation entry", readme)
         self.assertIn("official user-facing validation entry", quickstart)
         self.assertIn("official user-facing validation wrapper", operations)
         self.assertIn("check_source: beta-report", operations)

@@ -72,6 +72,7 @@ include = ["crowdtensor*"]
 
 [tool.setuptools.package-data]
 "crowdtensor.volunteer_dashboard" = ["*.html", "*.css", "*.js"]
+"crowdtensor.project_site" = ["*.html", "*.css", "*.js", "*.png"]
 
 [tool.pytest.ini_options]
 markers = [

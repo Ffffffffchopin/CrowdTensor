@@ -1958,3 +1958,15 @@ The Miner capabilities do not match queued lanes. Check `--task-lane` values and
 **Playwright browser not found**
 
 Install browser dependencies or pass `--browser /path/to/chrome` to the browser smoke scripts.
+
+## Legacy Inference Release Markers
+
+The detailed inference path remains supported for compatibility even though the
+README now leads with volunteer training. Real small-LLM split inference uses
+the optional [hf] dependency set. Its retained Kaggle package checker reports
+`kaggle_real_llm_live_package_ready`, while the older public swarm Beta reports
+`public_swarm_inference_beta_ready` only after its own strict evidence gate.
+
+These marker names describe legacy inference RC artifacts. They do not imply
+that the current public training Campaign ran those inference paths or that a
+fresh external GPU allocation was performed.

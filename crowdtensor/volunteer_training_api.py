@@ -32,6 +32,12 @@ from .volunteer_training_storage import (
 
 
 SERVICE_SCHEMA = "crowdtensor_volunteer_training_http_service_v1"
+PROJECT_SITE_MEDIA_TYPES = {
+    "favicon.png": "image/png",
+    "site.css": "text/css; charset=utf-8",
+    "site.js": "text/javascript; charset=utf-8",
+    "hero-dashboard.png": "image/png",
+}
 
 
 def _dashboard_asset(name: str) -> bytes:
@@ -52,6 +58,27 @@ def _dashboard_headers() -> dict[str, str]:
             "base-uri 'none'; frame-ancestors 'none'"
         ),
         "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+    }
+
+
+def _project_site_asset(name: str) -> bytes:
+    allowed = {"index.html", *PROJECT_SITE_MEDIA_TYPES}
+    if name not in allowed:
+        raise VolunteerProtocolError("project_site_asset_not_found", status_code=404)
+    return resources.files("crowdtensor.project_site").joinpath(name).read_bytes()
+
+
+def _project_site_headers(*, cache_assets: bool = False) -> dict[str, str]:
+    return {
+        "Cache-Control": "public, max-age=300" if cache_assets else "no-cache",
+        "Content-Security-Policy": (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
+            "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+        ),
+        "Referrer-Policy": "strict-origin-when-cross-origin",
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
     }
@@ -150,6 +177,37 @@ def create_volunteer_training_app(
     @app.exception_handler(VolunteerProtocolError)
     async def protocol_error(_request: Request, exc: VolunteerProtocolError) -> JSONResponse:
         return JSONResponse(public_error(exc.code), status_code=exc.status_code)
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def project_site() -> HTMLResponse:
+        return HTMLResponse(
+            _project_site_asset("index.html"), headers=_project_site_headers()
+        )
+
+    @app.head("/", include_in_schema=False)
+    async def project_site_head() -> Response:
+        return Response(
+            media_type="text/html; charset=utf-8", headers=_project_site_headers()
+        )
+
+    @app.get("/assets/{asset_name}", include_in_schema=False)
+    async def project_site_asset(asset_name: str) -> Response:
+        media_type = PROJECT_SITE_MEDIA_TYPES.get(asset_name)
+        if media_type is None:
+            raise VolunteerProtocolError("project_site_asset_not_found", status_code=404)
+        return Response(
+            _project_site_asset(asset_name),
+            media_type=media_type,
+            headers=_project_site_headers(cache_assets=True),
+        )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def project_site_favicon() -> Response:
+        return Response(
+            _project_site_asset("favicon.png"),
+            media_type="image/png",
+            headers=_project_site_headers(cache_assets=True),
+        )
 
     @app.get("/v1/volunteer/health")
     async def health() -> dict[str, Any]:

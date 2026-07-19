@@ -1,0 +1,22 @@
+[Unit]
+Description=CrowdTensor Campaign Coordinator and website
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/crowdtensor/site.env
+ExecStart=/opt/crowdtensor/deploy/site/run-coordinator.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/crowdtensor
+
+[Install]
+WantedBy=multi-user.target

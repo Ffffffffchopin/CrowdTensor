@@ -98,6 +98,27 @@ def test_http_routes_authenticate_binary_submission_and_remove_upload(tmp_path) 
 
 def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     client = TestClient(create_volunteer_training_app(StubCoordinator(tmp_path)))
+    home = client.get("/")
+    assert home.status_code == 200
+    assert client.head("/").status_code == 200
+    assert "Train a model together" in home.text
+    assert "/v1/volunteer/public-snapshot" not in home.text
+    assert "default-src 'self'" in home.headers["content-security-policy"]
+    site_css = client.get("/assets/site.css")
+    site_script = client.get("/assets/site.js")
+    hero = client.get("/assets/hero-dashboard.png")
+    favicon = client.get("/favicon.ico")
+    assert site_css.status_code == 200
+    assert "campaign-layout" in site_css.text
+    assert "gradient" not in site_css.text
+    assert site_script.status_code == 200
+    assert "/v1/volunteer/public-snapshot" in site_script.text
+    assert hero.status_code == 200
+    assert hero.headers["content-type"] == "image/png"
+    assert hero.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert favicon.status_code == 200
+    assert favicon.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert client.get("/assets/private.json").status_code == 404
     dashboard = client.get("/v1/volunteer/dashboard")
     assert dashboard.status_code == 200
     assert "CrowdTensor" in dashboard.text

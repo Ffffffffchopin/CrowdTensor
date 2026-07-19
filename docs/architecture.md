@@ -160,3 +160,15 @@ controlled swarm inference beta
 - large-model serving
 - permissionless public mining
 ```
+## Open-Source Entry Points
+
+CrowdTensor now presents democratic training on the project website and keeps
+the older inference material as an engineering reference. The original
+5-minute local swarm demo remains documented in the detailed quickstart.
+
+- **What Works Today:** start with `README.md`, then use `docs/protocol.md` for
+  the protocol contract and `docs/use-cases.md` for bounded deployment cases.
+- **What Is Not Ready:** permissionless admission, production-grade public
+  Swarm Inference, and large-model community training remain explicit gates.
+- The deployable website source is `site/index.html`; the packaged copy is
+  served by the Volunteer Coordinator at `/`.
