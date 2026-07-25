@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Protocol
 
+from .model_adapter import disable_incompatible_optional_torchao_dispatch
 from .named_tensor_optimizer import adapter_delta, load_tensors, named_tensor_hash, save_tensors
 from .training_contract import (
     DATASET_SCHEMA,
@@ -64,6 +65,26 @@ def _deps() -> tuple[Any, Any, Any, Any, Any, Any]:
     from transformers import LlamaConfig, LlamaForCausalLM
 
     return torch, LoraConfig, PeftModel, get_peft_model, LlamaConfig, LlamaForCausalLM
+
+
+def _load_peft_adapter(
+    base: Any,
+    PeftModel: Any,
+    adapter_path: str | Path,
+    *,
+    is_trainable: bool,
+) -> tuple[Any, bool]:
+    torchao_dispatch_disabled = disable_incompatible_optional_torchao_dispatch(base)
+    model = PeftModel.from_pretrained(
+        base,
+        adapter_path,
+        is_trainable=is_trainable,
+        local_files_only=True,
+    )
+    model._crowdtensor_outdated_optional_torchao_dispatch_disabled = (
+        torchao_dispatch_disabled
+    )
+    return model, torchao_dispatch_disabled
 
 
 def configure_cpu_determinism(seed: int) -> Any:
@@ -410,7 +431,9 @@ def evaluate_adapter(
     model = LlamaForCausalLM.from_pretrained(base_model_path, local_files_only=True)
     adapter_loaded = bool(adapter_path)
     if adapter_path:
-        model = PeftModel.from_pretrained(model, adapter_path, is_trainable=False, local_files_only=True)
+        model, _torchao_dispatch_disabled = _load_peft_adapter(
+            model, PeftModel, adapter_path, is_trainable=False
+        )
     model.to("cpu")
     model.eval()
     rows = load_token_rows(dataset_path)
@@ -466,11 +489,11 @@ class CPULoRATrainingRuntime:
         started = time.monotonic()
 
         base = LlamaForCausalLM.from_pretrained(training_spec["base_model_path"], local_files_only=True)
-        model = PeftModel.from_pretrained(
+        model, torchao_dispatch_disabled = _load_peft_adapter(
             base,
+            PeftModel,
             training_spec["adapter_path"],
             is_trainable=True,
-            local_files_only=True,
         )
         model.to("cpu")
         trainable = [(name, value) for name, value in model.named_parameters() if value.requires_grad]
@@ -547,6 +570,10 @@ class CPULoRATrainingRuntime:
             tokens_seen=tokens_seen,
         )
         elapsed = time.monotonic() - started
+        runtime = self.capability()
+        runtime["outdated_optional_torchao_dispatch_disabled"] = (
+            torchao_dispatch_disabled
+        )
         private_result = {
             "schema": RESULT_SCHEMA,
             "workload_type": WORKLOAD_TYPE,
@@ -576,7 +603,7 @@ class CPULoRATrainingRuntime:
             "tokens_seen": tokens_seen,
             "data_cursor": cursor,
             "elapsed_seconds": elapsed,
-            "runtime": self.capability(),
+            "runtime": runtime,
             "raw_dataset_public": False,
             "private_paths_public": False,
         }
@@ -817,11 +844,11 @@ class CUDALoRATrainingRuntime:
         started = time.monotonic()
         try:
             base = LlamaForCausalLM.from_pretrained(training_spec["base_model_path"], local_files_only=True)
-            model = PeftModel.from_pretrained(
+            model, torchao_dispatch_disabled = _load_peft_adapter(
                 base,
+                PeftModel,
                 training_spec["adapter_path"],
                 is_trainable=True,
-                local_files_only=True,
             )
             model.to(device)
             model.train()
@@ -947,6 +974,9 @@ class CUDALoRATrainingRuntime:
                 {
                     "cuda_used": True,
                     "gpu_live_verified": True,
+                    "outdated_optional_torchao_dispatch_disabled": (
+                        torchao_dispatch_disabled
+                    ),
                     "device_name_hash": sha256_json(
                         {"device_name": torch.cuda.get_device_name(self.device_index)}
                     ),

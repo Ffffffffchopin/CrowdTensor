@@ -4,6 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import crowdtensor.hf_lora_training as hf_lora_training
 from crowdtensor.hf_lora_training import (
     CPULoRATrainingRuntime,
     create_local_training_fixture,
@@ -67,3 +68,37 @@ def test_real_cpu_transformers_peft_lora_runtime_and_export_load() -> None:
     serialized = json.dumps(public, sort_keys=True)
     assert "private_dataset.jsonl" not in serialized
     assert str(root) not in serialized
+
+
+def test_runtime_disables_incompatible_optional_torchao_before_peft_load(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class FakePeftModel:
+        @staticmethod
+        def from_pretrained(base, adapter_path, *, is_trainable, local_files_only):
+            calls.append("peft_load")
+            assert base == "dense-base"
+            assert adapter_path == "adapter"
+            assert is_trainable is True
+            assert local_files_only is True
+            return type("Loaded", (), {})()
+
+    def disable(base) -> bool:
+        calls.append("torchao_check")
+        assert base == "dense-base"
+        return True
+
+    monkeypatch.setattr(
+        hf_lora_training,
+        "disable_incompatible_optional_torchao_dispatch",
+        disable,
+    )
+    model, disabled = hf_lora_training._load_peft_adapter(
+        "dense-base", FakePeftModel, "adapter", is_trainable=True
+    )
+
+    assert calls == ["torchao_check", "peft_load"]
+    assert disabled is True
+    assert model._crowdtensor_outdated_optional_torchao_dispatch_disabled is True
