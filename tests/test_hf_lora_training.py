@@ -77,12 +77,20 @@ def test_runtime_disables_incompatible_optional_torchao_before_peft_load(
 
     class FakePeftModel:
         @staticmethod
-        def from_pretrained(base, adapter_path, *, is_trainable, local_files_only):
+        def from_pretrained(
+            base,
+            adapter_path,
+            *,
+            is_trainable,
+            local_files_only,
+            torch_device,
+        ):
             calls.append("peft_load")
             assert base == "dense-base"
             assert adapter_path == "adapter"
             assert is_trainable is True
             assert local_files_only is True
+            assert torch_device == "cpu"
             return type("Loaded", (), {})()
 
     def disable(base) -> bool:

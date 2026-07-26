@@ -80,6 +80,7 @@ def _load_peft_adapter(
         adapter_path,
         is_trainable=is_trainable,
         local_files_only=True,
+        torch_device="cpu",
     )
     model._crowdtensor_outdated_optional_torchao_dispatch_disabled = (
         torchao_dispatch_disabled
