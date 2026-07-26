@@ -1,0 +1,71 @@
+name: Founding Campaign beta enrollment
+description: Request a private invite for one bounded volunteer-training contribution.
+title: "[Beta enrollment]: "
+labels: ["beta-enrollment"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        CrowdTensor enrollment is controlled during the engineering beta. Do not paste API tokens, Campaign invites, credentials, private URLs, raw training data, or machine identifiers into this public issue.
+
+        Accepted contributors receive the private invite through a separate maintainer-approved channel. Opening this issue does not grant access automatically.
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Contribution type
+      options:
+        - Founding SmolLM2 Campaign compute
+        - 7B Campaign RFC review
+        - Security or governance review
+        - Documentation or onboarding test
+    validations:
+      required: true
+  - type: dropdown
+    id: operating_system
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - Windows with WSL2
+        - macOS
+        - Kaggle or another managed notebook runtime
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Public hardware summary
+      description: Share only a broad CPU/GPU model and memory class. Do not include hostnames, IP addresses, account names, or serial numbers.
+      placeholder: Linux, 8 CPU cores, 32 GB RAM, one 16 GB NVIDIA GPU
+    validations:
+      required: true
+  - type: dropdown
+    id: availability
+    attributes:
+      label: Typical availability
+      options:
+        - One bounded work unit
+        - Up to 1 hour
+        - 1-4 hours
+        - Recurring but intermittent
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: What would you like to validate?
+      description: Describe the workflow, failure mode, or governance question you want to test.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Beta boundaries
+      options:
+        - label: I understand that this is controlled enrollment, not a permissionless or production service.
+          required: true
+        - label: I will keep the Campaign invite and all issued credentials private.
+          required: true
+        - label: I will use only hardware and accounts that I am authorized to operate.
+          required: true

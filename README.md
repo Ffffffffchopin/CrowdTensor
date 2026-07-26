@@ -34,8 +34,8 @@ machine to stay online:
 
 | Campaign | Status | Scope |
 | --- | --- | --- |
-| Founding systems campaign | Coordinator live, controlled enrollment | Pinned SmolLM2-135M and WikiText-2 LoRA campaign used to harden the public contribution loop |
-| Community 7B campaign | Proposal phase | Community-selected 7B instruction or domain LoRA campaign with public data, benchmark, and decision log |
+| Founding systems campaign | Live, controlled enrollment; first round seeded | Pinned SmolLM2-135M and WikiText-2 LoRA campaign used to harden the public contribution loop |
+| [Community 7B campaign](docs/campaigns/qwen25-7b-gsm8k-rfc.md) | Draft RFC | Candidate Qwen2.5-7B GSM8K LoRA Campaign; ordinary-user runtime, governance, and external-host gates remain open |
 | Qwen2.5-7B GSM8K proof run | Completed | 256-step elastic training showcase used as evidence for the larger Campaign path |
 
 The website is the source of truth for live round progress, accepted updates,
@@ -75,7 +75,9 @@ python -m pip install -e '.[hf]'
 ```
 
 Campaign enrollment uses a private, mode-0600 invite while admission remains
-controlled. Once an operator approves a contributor:
+controlled. [Request Founding Beta access](https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=beta_enrollment.yml)
+without posting credentials or machine identifiers. Once an operator approves
+a contributor:
 
 ```bash
 crowdtensor volunteer join campaign-invite.json --device auto
@@ -119,6 +121,8 @@ evidence, not proof of unrelated Internet contributors.
 ## Build Or Operate
 
 - [Contributor quickstart](docs/community-quickstart.md)
+- [Draft 7B Campaign RFC](docs/campaigns/qwen25-7b-gsm8k-rfc.md)
+- [Community soft-launch posts](docs/community-soft-launch-posts.md)
 - [Campaign governance](docs/volunteer-campaign-governance.md)
 - [Operator runbook](docs/volunteer-training-operator-beta.md)
 - [Project website deployment](docs/project-site.md)

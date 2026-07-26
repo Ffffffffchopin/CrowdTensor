@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Live Founding Campaign status
+    url: https://crowdtensor.24.199.118.54.nip.io/v1/volunteer/dashboard
+    about: View aggregate progress without exposing contributor identities or credentials.
+  - name: 7B Campaign RFC
+    url: https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/campaigns/qwen25-7b-gsm8k-rfc.md
+    about: Review the candidate model, data, evaluation, governance, and launch blockers.

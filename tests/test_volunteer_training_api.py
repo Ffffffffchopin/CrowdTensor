@@ -103,6 +103,9 @@ def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     assert client.head("/").status_code == 200
     assert "Train a model together" in home.text
     assert "/v1/volunteer/public-snapshot" not in home.text
+    assert "issues/new?template=beta_enrollment.yml" in home.text
+    assert "docs/campaigns/qwen25-7b-gsm8k-rfc.md" in home.text
+    assert "/CrowdTensor/discussions" not in home.text
     assert "default-src 'self'" in home.headers["content-security-policy"]
     site_css = client.get("/assets/site.css")
     site_script = client.get("/assets/site.js")

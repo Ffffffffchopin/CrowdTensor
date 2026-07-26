@@ -5,6 +5,10 @@ vision. It is written for a technical audience that will inspect the evidence,
 not for a claim that the project already operates an open global training
 network.
 
+The current LocalLLaMA, Hugging Face, and Chinese soft-launch drafts are kept in
+[`community-soft-launch-posts.md`](community-soft-launch-posts.md). The older
+template below remains as the conservative same-host preview wording.
+
 ## Positioning
 
 Use this one-sentence description:

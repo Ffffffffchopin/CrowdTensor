@@ -23,6 +23,11 @@ The current workload proves and hardens the public contribution loop. It is not
 presented as the final large-model Campaign or as evidence of useful model
 quality improvement.
 
+The website's access request opens the public-safe Founding Beta enrollment
+Issue Form. Maintainers send approved invites through a separate private
+channel; no invite or issued credential belongs in a GitHub issue. The 7B card
+links to the Draft [Qwen2.5-7B GSM8K Campaign RFC](campaigns/qwen25-7b-gsm8k-rfc.md).
+
 ## Prepare A Campaign
 
 Create a private Campaign directory outside the repository:
