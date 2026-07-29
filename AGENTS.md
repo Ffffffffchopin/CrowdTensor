@@ -50,6 +50,19 @@ removal, release notes, installer, checksums, browser screenshot, and browser
 plus real PEFT Agent E2E are bound into the RC. The local E2E report SHA-256 is
 `9871d43e431d358eef7375e30240a21b2a5e14328ebb7678200be38ff73c85de`.
 
+The public GitHub prerelease is
+`https://github.com/Ffffffffchopin/CrowdTensor/releases/tag/v0.2.0rc7`.
+Tag workflow run `30443840033` completed successfully and published six assets
+plus one workflow artifact. The GitHub-runner wheel SHA-256 is
+`1c2683e6de7889f96baab30a15f226b20beb79de673a4590d912f10c15cbd559`;
+its attached `release.json` and `SHA256SUMS` verify that build. The server wheel
+hash above and the GitHub wheel hash differ because they are independent
+current-source Python archive builds; each channel is internally strict-checked
+and its checksums must not be applied to the other channel. The dedicated
+One-Click workflow is green. Generic CI and Community RC retain their
+pre-existing failures at the same Compile/readiness/Community-contract steps
+seen on `ed76a2b`; they are not One-Click release evidence.
+
 The final exact-public-wheel live Agent gate is
 `dist/one-click-live-agent-rc7/live_agent_rc7_gate.json`, SHA-256
 `f27348ab7a0a079a470c6d7d49bd2afe8ed8489c164025d7f0708abf00db0b79`.
