@@ -49,7 +49,8 @@ from .volunteer_training_protocol import (
 )
 from .volunteer_training_storage import LocalVolunteerBlobStore
 from .volunteer_training_operator import (
-    CELL_SCOPES,
+    BROWSER_CELL_SCOPES,
+    NATIVE_CELL_SCOPES,
     STATE_SCHEMA_V2,
     authorize_cell_credential,
     default_operator_policy,
@@ -58,12 +59,43 @@ from .volunteer_training_operator import (
     public_policy_status,
     revoke_cell_credential,
 )
+from .volunteer_browser_probe import (
+    BROWSER_PROBE_LEASE_SECONDS,
+    BROWSER_PROBE_MAX_ACTIVE,
+    BROWSER_PROBE_RESULT_RETENTION_SECONDS,
+    BROWSER_PROBE_RESULT_SCHEMA,
+    BROWSER_PROBE_ROUNDS,
+    BROWSER_PROBE_RUNTIMES,
+    BROWSER_PROBE_SCHEMA,
+    BROWSER_PROBE_VECTOR_LENGTH,
+    browser_probe_digest,
+)
 
 
 PRIVATE_STATE_SCHEMA = "crowdtensor_volunteer_training_coordinator_state_v1"
 AGGREGATION_RECORD_SCHEMA = "crowdtensor_volunteer_training_aggregation_v1"
 ARTIFACT_REF_SCHEMA = "crowdtensor_volunteer_training_artifact_ref_v1"
 DEFAULT_MAX_DELTA_BYTES = 256 * 1024 * 1024
+PAIRING_CODE_SCHEMA = "crowdtensor_volunteer_pairing_code_v1"
+PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+PAIRING_CODE_MIN_TTL_SECONDS = 60
+PAIRING_CODE_MAX_TTL_SECONDS = 3600
+PAIRING_CODE_RETENTION_SECONDS = 24 * 60 * 60
+PAIRING_CODE_MAX_ACTIVE = 10_000
+
+
+def _normalize_pairing_code(value: str) -> str:
+    normalized = "".join(character for character in str(value).upper() if character.isalnum())
+    if not normalized.startswith("CT") or len(normalized) != 14:
+        raise VolunteerProtocolError("volunteer_pairing_code_invalid", status_code=401)
+    if any(character not in PAIRING_CODE_ALPHABET for character in normalized[2:]):
+        raise VolunteerProtocolError("volunteer_pairing_code_invalid", status_code=401)
+    return normalized
+
+
+def _new_pairing_code() -> str:
+    suffix = "".join(secrets.choice(PAIRING_CODE_ALPHABET) for _ in range(12))
+    return "CT-" + "-".join(suffix[index : index + 4] for index in range(0, 12, 4))
 
 
 def _atomic_write_bytes(path: Path, value: bytes, *, mode: int = 0o600) -> None:
@@ -571,6 +603,186 @@ class VolunteerTrainingCoordinator:
                 }
             )
 
+    def _prune_pairing_codes_in_state(
+        self, state: dict[str, Any], *, now: float
+    ) -> None:
+        records = state.setdefault("pairing_codes", {})
+        stale = [
+            digest
+            for digest, record in records.items()
+            if isinstance(record, dict)
+            and (
+                float(record.get("expires_at") or 0.0)
+                <= now - PAIRING_CODE_RETENTION_SECONDS
+                or (
+                    bool(record.get("redeemed"))
+                    and float(record.get("redeemed_at") or 0.0)
+                    <= now - PAIRING_CODE_RETENTION_SECONDS
+                )
+            )
+        ]
+        for digest in stale:
+            records.pop(digest, None)
+
+    def create_pairing_code(
+        self,
+        *,
+        invite_token: str,
+        mode: str = "agent",
+        ttl_seconds: int = 600,
+    ) -> dict[str, Any]:
+        """Create one short, one-time enrollment code and persist only its hash."""
+
+        normalized_mode = str(mode).strip().lower()
+        if normalized_mode not in {"agent", "browser"}:
+            raise VolunteerProtocolError("volunteer_pairing_mode_invalid", status_code=400)
+        ttl = int(ttl_seconds)
+        if ttl < PAIRING_CODE_MIN_TTL_SECONDS or ttl > PAIRING_CODE_MAX_TTL_SECONDS:
+            raise VolunteerProtocolError("volunteer_pairing_ttl_invalid", status_code=400)
+        now = float(self.clock())
+        with self._locked_state() as state:
+            self._authenticate(state, invite_token)
+            self._prune_pairing_codes_in_state(state, now=now)
+            active_count = sum(
+                isinstance(record, dict)
+                and not record.get("redeemed")
+                and float(record.get("expires_at") or 0.0) > now
+                for record in state["pairing_codes"].values()
+            )
+            if active_count >= PAIRING_CODE_MAX_ACTIVE:
+                raise VolunteerProtocolError(
+                    "volunteer_pairing_capacity_exceeded", status_code=429
+                )
+            pairing_code = _new_pairing_code()
+            normalized_code = _normalize_pairing_code(pairing_code)
+            digest = token_hash(normalized_code)
+            expires_at = now + ttl
+            state["pairing_codes"][digest] = {
+                "schema": PAIRING_CODE_SCHEMA,
+                "code_hash": digest,
+                "mode": normalized_mode,
+                "created_at": now,
+                "expires_at": expires_at,
+                "redeemed": False,
+                "redeemed_at": 0.0,
+                "cell_id_hash": "",
+            }
+            state["pairing_counters"]["created"] += 1
+            self._append_event(
+                state,
+                "pairing_code_created",
+                {
+                    "pairing_mode": normalized_mode,
+                    "expires_at": expires_at,
+                    "one_time": True,
+                },
+            )
+            self._save_state(state)
+            self._write_status(state)
+            return {
+                "schema": PAIRING_CODE_SCHEMA,
+                "ok": True,
+                "pairing_code": pairing_code,
+                "pairing_mode": normalized_mode,
+                "created_at": now,
+                "expires_at": expires_at,
+                "ttl_seconds": ttl,
+                "one_time": True,
+                "stored_as_hash_only": True,
+                "credential_values_public": False,
+                "public_artifact_safe": False,
+            }
+
+    def redeem_pairing_code(
+        self, *, pairing_code: str, cell_id: str, expected_mode: str = ""
+    ) -> dict[str, Any]:
+        """Consume one code atomically and return one short-lived Cell credential."""
+
+        normalized_code = _normalize_pairing_code(pairing_code)
+        digest = token_hash(normalized_code)
+        cell_hash = hash_cell_id(cell_id)
+        now = float(self.clock())
+        with self._locked_state() as state:
+            self._prune_pairing_codes_in_state(state, now=now)
+            record = state["pairing_codes"].get(digest)
+            if not isinstance(record, dict):
+                state["pairing_counters"]["rejected"] += 1
+                self._save_state(state)
+                self._write_status(state)
+                raise VolunteerProtocolError("volunteer_pairing_code_invalid", status_code=401)
+            if record.get("redeemed"):
+                state["pairing_counters"]["rejected"] += 1
+                self._save_state(state)
+                self._write_status(state)
+                raise VolunteerProtocolError("volunteer_pairing_code_consumed", status_code=409)
+            if float(record.get("expires_at") or 0.0) <= now:
+                state["pairing_counters"]["expired"] += 1
+                state["pairing_counters"]["rejected"] += 1
+                self._save_state(state)
+                self._write_status(state)
+                raise VolunteerProtocolError("volunteer_pairing_code_expired", status_code=410)
+            mode = str(record.get("mode") or "")
+            if expected_mode and str(expected_mode).strip().lower() != mode:
+                state["pairing_counters"]["rejected"] += 1
+                self._save_state(state)
+                self._write_status(state)
+                raise VolunteerProtocolError(
+                    "volunteer_pairing_mode_mismatch", status_code=400
+                )
+            scopes = BROWSER_CELL_SCOPES if mode == "browser" else NATIVE_CELL_SCOPES
+            credential_limit = 900 if mode == "browser" else 3600
+            remaining_ttl = max(
+                PAIRING_CODE_MIN_TTL_SECONDS,
+                min(credential_limit, int(float(record["expires_at"]) - now)),
+            )
+            credential_token, public = issue_cell_credential(
+                state,
+                cell_id=cell_id,
+                scopes=sorted(scopes),
+                ttl_seconds=remaining_ttl,
+                now=now,
+            )
+            record.update(
+                {
+                    "redeemed": True,
+                    "redeemed_at": now,
+                    "cell_id_hash": cell_hash,
+                }
+            )
+            state["pairing_counters"]["redeemed"] += 1
+            self._append_event(
+                state,
+                "cell_credential_issued",
+                {
+                    "credential_id": public["credential_id"],
+                    "cell_id_hash": public["cell_id_hash"],
+                    "scopes": public["scopes"],
+                    "expires_at": public["expires_at"],
+                    "enrollment_mode": "one_time_pairing_code",
+                },
+            )
+            self._append_event(
+                state,
+                "pairing_code_redeemed",
+                {
+                    "pairing_mode": mode,
+                    "cell_id_hash": cell_hash,
+                    "credential_id": public["credential_id"],
+                    "one_time": True,
+                },
+            )
+            self._save_state(state)
+            self._write_status(state)
+            return {
+                **public,
+                "ok": True,
+                "campaign_id": state["campaign"]["campaign_id"],
+                "campaign_manifest_hash": state["campaign"]["manifest_hash"],
+                "pairing_mode": mode,
+                "pairing_code_consumed": True,
+                "credential_token": credential_token,
+            }
+
     def issue_cell_credential(
         self,
         *,
@@ -712,6 +924,350 @@ class VolunteerTrainingCoordinator:
         state["ledger_sequence"] = sequence
         state["ledger_head_hash"] = event["event_hash"]
         return event
+
+    def _expire_browser_probes_in_state(
+        self, state: dict[str, Any], *, now: float
+    ) -> int:
+        tasks = state.setdefault("browser_probe_tasks", {})
+        expired = 0
+        for task in tasks.values():
+            if (
+                isinstance(task, dict)
+                and task.get("state") == "leased"
+                and float(task.get("lease_expires_at") or 0.0) <= now
+            ):
+                task.update(
+                    {
+                        "state": "expired",
+                        "lease_token": "",
+                        "completed_at": now,
+                    }
+                )
+                expired += 1
+                state["browser_probe_counters"]["expired"] += 1
+                self._append_event(
+                    state,
+                    "browser_probe_expired",
+                    {
+                        "task_id_hash": sha256_json(
+                            {"browser_task_id": task.get("task_id")}
+                        ),
+                        "lease_generation": int(task.get("lease_generation") or 0),
+                    },
+                )
+        stale = [
+            task_id
+            for task_id, task in tasks.items()
+            if isinstance(task, dict)
+            and task.get("state") in {"accepted", "rejected", "expired"}
+            and float(task.get("completed_at") or 0.0)
+            <= now - BROWSER_PROBE_RESULT_RETENTION_SECONDS
+        ]
+        for task_id in stale:
+            tasks.pop(task_id, None)
+        return expired
+
+    @staticmethod
+    def _browser_probe_payload(task: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "schema": BROWSER_PROBE_SCHEMA,
+            "task_id": task["task_id"],
+            "lease_generation": int(task["lease_generation"]),
+            "lease_token": task["lease_token"],
+            "lease_expires_at": float(task["lease_expires_at"]),
+            "seed": int(task["seed"]),
+            "vector_length": int(task["vector_length"]),
+            "rounds": int(task["rounds"]),
+            "algorithm": "xorshift32_indexed_v1",
+            "output_encoding": "little_endian_u32_sha256",
+            "runtime_priority": ["webgpu", "wasm-cpu", "cpu-js"],
+            "model_update": False,
+            "browser_training": False,
+            "scheduler_calibration": True,
+        }
+
+    def claim_browser_probe(
+        self,
+        *,
+        cell_id: str,
+        credential_token: str,
+        capability: dict[str, Any] | None = None,
+        request_nonce: str = "",
+    ) -> dict[str, Any]:
+        now = float(self.clock())
+        cell_hash = hash_cell_id(cell_id)
+        with self._locked_state() as state:
+            auth = self._authorize_cell(
+                state,
+                token=credential_token,
+                cell_id=cell_id,
+                scope="browser:claim",
+                request_nonce=request_nonce,
+            )
+            self._expire_browser_probes_in_state(state, now=now)
+            lifecycle = str(state.get("campaign_lifecycle") or "running")
+            if lifecycle != "running":
+                self._save_state(state)
+                self._write_status(state)
+                return with_public_safety(
+                    {
+                        "schema": BROWSER_PROBE_SCHEMA,
+                        "ok": True,
+                        "state": "campaign_" + lifecycle,
+                        "task": None,
+                    }
+                )
+            existing = next(
+                (
+                    task
+                    for task in state["browser_probe_tasks"].values()
+                    if isinstance(task, dict)
+                    and task.get("state") == "leased"
+                    and task.get("cell_id_hash") == cell_hash
+                ),
+                None,
+            )
+            if existing is not None:
+                self._save_state(state)
+                self._write_status(state)
+                return {
+                    "schema": BROWSER_PROBE_SCHEMA,
+                    "ok": True,
+                    "state": "leased",
+                    "idempotent_replay": True,
+                    "task": self._browser_probe_payload(existing),
+                }
+            active_count = sum(
+                isinstance(task, dict) and task.get("state") == "leased"
+                for task in state["browser_probe_tasks"].values()
+            )
+            if active_count >= BROWSER_PROBE_MAX_ACTIVE:
+                raise VolunteerProtocolError(
+                    "volunteer_browser_probe_capacity_exceeded", status_code=429
+                )
+            seed = secrets.randbits(32)
+            task_id = sha256_json(
+                {
+                    "campaign_id": state["campaign"]["campaign_id"],
+                    "seed": seed,
+                    "issued_at": now,
+                    "nonce": secrets.token_hex(16),
+                }
+            )
+            task = {
+                "schema": BROWSER_PROBE_SCHEMA,
+                "task_id": task_id,
+                "state": "leased",
+                "cell_id_hash": cell_hash,
+                "lease_generation": 1,
+                "lease_token": secrets.token_urlsafe(32),
+                "lease_expires_at": now + BROWSER_PROBE_LEASE_SECONDS,
+                "seed": seed,
+                "vector_length": BROWSER_PROBE_VECTOR_LENGTH,
+                "rounds": BROWSER_PROBE_ROUNDS,
+                "created_at": now,
+                "completed_at": 0.0,
+                "runtime": "",
+                "duration_ms": 0,
+                "heartbeat_count": 0,
+            }
+            state["browser_probe_tasks"][task_id] = task
+            self._append_event(
+                state,
+                "browser_probe_leased",
+                {
+                    "task_id_hash": sha256_json({"browser_task_id": task_id}),
+                    "vector_length": BROWSER_PROBE_VECTOR_LENGTH,
+                    "rounds": BROWSER_PROBE_ROUNDS,
+                    "capability": public_safe(capability or {}),
+                    "authentication_mode": auth["authentication_mode"],
+                    "model_update": False,
+                },
+            )
+            self._save_state(state)
+            self._write_status(state)
+            return {
+                "schema": BROWSER_PROBE_SCHEMA,
+                "ok": True,
+                "state": "leased",
+                "idempotent_replay": False,
+                "task": self._browser_probe_payload(task),
+            }
+
+    def heartbeat_browser_probe(
+        self,
+        *,
+        cell_id: str,
+        credential_token: str,
+        task_id: str,
+        lease_generation: int,
+        lease_token: str,
+        request_nonce: str = "",
+    ) -> dict[str, Any]:
+        now = float(self.clock())
+        cell_hash = hash_cell_id(cell_id)
+        with self._locked_state() as state:
+            self._authorize_cell(
+                state,
+                token=credential_token,
+                cell_id=cell_id,
+                scope="browser:heartbeat",
+                request_nonce=request_nonce,
+            )
+            self._expire_browser_probes_in_state(state, now=now)
+            task = state["browser_probe_tasks"].get(str(task_id))
+            if not isinstance(task, dict) or task.get("state") != "leased":
+                raise VolunteerProtocolError("volunteer_browser_probe_lease_not_active")
+            if int(task.get("lease_generation") or 0) != int(lease_generation):
+                raise VolunteerProtocolError("volunteer_browser_probe_generation_mismatch")
+            if task.get("cell_id_hash") != cell_hash:
+                raise VolunteerProtocolError(
+                    "volunteer_browser_probe_cell_mismatch", status_code=403
+                )
+            if not hmac.compare_digest(str(task.get("lease_token")), str(lease_token)):
+                raise VolunteerProtocolError(
+                    "volunteer_browser_probe_token_mismatch", status_code=403
+                )
+            task["lease_expires_at"] = now + BROWSER_PROBE_LEASE_SECONDS
+            task["heartbeat_count"] = int(task.get("heartbeat_count") or 0) + 1
+            state["browser_probe_counters"]["heartbeats"] += 1
+            self._save_state(state)
+            self._write_status(state)
+            return with_public_safety(
+                {
+                    "schema": BROWSER_PROBE_SCHEMA,
+                    "ok": True,
+                    "state": "leased",
+                    "lease_expires_at": task["lease_expires_at"],
+                    "heartbeat_count": task["heartbeat_count"],
+                }
+            )
+
+    def submit_browser_probe(
+        self,
+        *,
+        cell_id: str,
+        credential_token: str,
+        task_id: str,
+        lease_generation: int,
+        lease_token: str,
+        output_sha256: str,
+        runtime: str,
+        duration_ms: int,
+        request_nonce: str = "",
+    ) -> dict[str, Any]:
+        now = float(self.clock())
+        cell_hash = hash_cell_id(cell_id)
+        normalized_runtime = str(runtime).strip().lower()
+        duration = int(duration_ms)
+        if normalized_runtime not in BROWSER_PROBE_RUNTIMES:
+            raise VolunteerProtocolError(
+                "volunteer_browser_probe_runtime_invalid", status_code=400
+            )
+        if duration < 1 or duration > 10 * 60 * 1000:
+            raise VolunteerProtocolError(
+                "volunteer_browser_probe_duration_invalid", status_code=400
+            )
+        with self._locked_state() as state:
+            self._authorize_cell(
+                state,
+                token=credential_token,
+                cell_id=cell_id,
+                scope="browser:submit",
+                request_nonce=request_nonce,
+                submission=True,
+            )
+            self._expire_browser_probes_in_state(state, now=now)
+            task = state["browser_probe_tasks"].get(str(task_id))
+            if not isinstance(task, dict) or task.get("state") != "leased":
+                raise VolunteerProtocolError("volunteer_browser_probe_lease_not_active")
+            if int(task.get("lease_generation") or 0) != int(lease_generation):
+                raise VolunteerProtocolError("volunteer_browser_probe_generation_mismatch")
+            if task.get("cell_id_hash") != cell_hash:
+                raise VolunteerProtocolError(
+                    "volunteer_browser_probe_cell_mismatch", status_code=403
+                )
+            if not hmac.compare_digest(str(task.get("lease_token")), str(lease_token)):
+                raise VolunteerProtocolError(
+                    "volunteer_browser_probe_token_mismatch", status_code=403
+                )
+            expected = browser_probe_digest(
+                seed=int(task["seed"]),
+                vector_length=int(task["vector_length"]),
+                rounds=int(task["rounds"]),
+            )
+            supplied = str(output_sha256).strip().lower()
+            if not hmac.compare_digest(expected, supplied):
+                task.update(
+                    {
+                        "state": "rejected",
+                        "lease_token": "",
+                        "completed_at": now,
+                        "runtime": normalized_runtime,
+                        "duration_ms": duration,
+                    }
+                )
+                state["browser_probe_counters"]["rejected"] += 1
+                self._append_event(
+                    state,
+                    "browser_probe_rejected",
+                    {
+                        "task_id_hash": sha256_json({"browser_task_id": task_id}),
+                        "runtime": normalized_runtime,
+                        "reason": "output_hash_mismatch",
+                    },
+                )
+                self._save_state(state)
+                self._write_status(state)
+                raise VolunteerProtocolError(
+                    "volunteer_browser_probe_output_invalid", status_code=400
+                )
+            task.update(
+                {
+                    "state": "accepted",
+                    "lease_token": "",
+                    "completed_at": now,
+                    "runtime": normalized_runtime,
+                    "duration_ms": duration,
+                    "output_sha256": expected,
+                }
+            )
+            counters = state["browser_probe_counters"]
+            counters["accepted"] += 1
+            counters[normalized_runtime.replace("-", "_")] += 1
+            counters["total_vector_elements"] += int(task["vector_length"])
+            counters["total_duration_ms"] += duration
+            self._append_event(
+                state,
+                "browser_probe_accepted",
+                {
+                    "task_id_hash": sha256_json({"browser_task_id": task_id}),
+                    "runtime": normalized_runtime,
+                    "duration_ms": duration,
+                    "vector_length": int(task["vector_length"]),
+                    "heartbeat_count": int(task.get("heartbeat_count") or 0),
+                    "server_recomputed": True,
+                    "model_update": False,
+                },
+            )
+            self._save_state(state)
+            self._write_status(state)
+            return with_public_safety(
+                {
+                    "schema": BROWSER_PROBE_RESULT_SCHEMA,
+                    "ok": True,
+                    "accepted": True,
+                    "state": "accepted",
+                    "runtime": normalized_runtime,
+                    "duration_ms": duration,
+                    "vector_length": int(task["vector_length"]),
+                    "heartbeat_count": int(task.get("heartbeat_count") or 0),
+                    "server_recomputed": True,
+                    "scheduler_calibration": True,
+                    "model_update": False,
+                    "browser_training": False,
+                }
+            )
 
     def _current_round(self, state: dict[str, Any]) -> dict[str, Any] | None:
         if state.get("campaign_complete"):
@@ -1862,6 +2418,10 @@ class VolunteerTrainingCoordinator:
         completed_rounds = sum(item.get("state") == "completed" for item in state.get("rounds") or [])
         total_tokens = sum(int(item.get("tokens_seen") or 0) for item in accepted)
         lifecycle = str(state.get("campaign_lifecycle") or "running")
+        now = float(self.clock())
+        browser_tasks = list(state.get("browser_probe_tasks", {}).values())
+        browser_counters = dict(state.get("browser_probe_counters") or {})
+        pairing_records = list(state.get("pairing_codes", {}).values())
         status = with_public_safety(
             {
                 "schema": STATUS_SCHEMA,
@@ -1905,8 +2465,44 @@ class VolunteerTrainingCoordinator:
                 "permissionless_byzantine_safety": False,
                 "sybil_resistance": False,
                 "operator_policy": public_policy_status(
-                    state, now=float(self.clock())
+                    state, now=now
                 ),
+                "contributor_access": {
+                    "controlled_enrollment": True,
+                    "one_time_pairing_codes": True,
+                    "active_pairing_code_count": sum(
+                        isinstance(item, dict)
+                        and not item.get("redeemed")
+                        and float(item.get("expires_at") or 0.0) > now
+                        for item in pairing_records
+                    ),
+                    "pairing_counters": dict(state.get("pairing_counters") or {}),
+                    "pairing_code_values_public": False,
+                },
+                "browser_calibration": {
+                    "accepted_task_count": int(browser_counters.get("accepted") or 0),
+                    "rejected_task_count": int(browser_counters.get("rejected") or 0),
+                    "expired_task_count": int(browser_counters.get("expired") or 0),
+                    "active_task_count": sum(
+                        isinstance(item, dict)
+                        and item.get("state") == "leased"
+                        and float(item.get("lease_expires_at") or 0.0) > now
+                        for item in browser_tasks
+                    ),
+                    "webgpu_task_count": int(browser_counters.get("webgpu") or 0),
+                    "wasm_cpu_task_count": int(browser_counters.get("wasm_cpu") or 0),
+                    "cpu_js_task_count": int(browser_counters.get("cpu_js") or 0),
+                    "heartbeat_count": int(browser_counters.get("heartbeats") or 0),
+                    "total_vector_elements": int(
+                        browser_counters.get("total_vector_elements") or 0
+                    ),
+                    "total_duration_ms": int(
+                        browser_counters.get("total_duration_ms") or 0
+                    ),
+                    "server_recomputed": True,
+                    "model_update_count": 0,
+                    "browser_training": False,
+                },
                 "state_schema": state.get("schema"),
                 "state_revision": int(state.get("state_revision") or 0),
                 "migration_count": len(state.get("migration_history") or []),
@@ -1926,12 +2522,16 @@ class VolunteerTrainingCoordinator:
         with self._locked_state() as state:
             if invite_token:
                 self._authenticate(state, invite_token)
+            self._expire_browser_probes_in_state(state, now=float(self.clock()))
+            self._save_state(state)
             return self._write_status(state)
 
     def public_campaign_snapshot(self) -> dict[str, Any]:
         """Return dashboard data without Cell, work, lease, or credential IDs."""
 
         with self._locked_state() as state:
+            self._expire_browser_probes_in_state(state, now=float(self.clock()))
+            self._save_state(state)
             campaign = state["campaign"]
             rounds = list(state.get("rounds") or [])
             submissions = list(state.get("submissions", {}).values())
@@ -1940,6 +2540,8 @@ class VolunteerTrainingCoordinator:
             target_rounds = int(campaign["round_policy"]["target_rounds"])
             current = self._current_round(state)
             current_work = list((current or {}).get("work_units", {}).values())
+            browser_tasks = list(state.get("browser_probe_tasks", {}).values())
+            browser_counters = dict(state.get("browser_probe_counters") or {})
             loss_starts = [float(item.get("loss_start") or 0.0) for item in submissions]
             loss_ends = [float(item.get("loss_end") or 0.0) for item in submissions]
             model_source = campaign.get("model_source")
@@ -2025,6 +2627,26 @@ class VolunteerTrainingCoordinator:
                         "uploaded_delta_bytes": int(
                             state.get("uploaded_delta_bytes") or 0
                         ),
+                        "accepted_browser_task_count": int(
+                            browser_counters.get("accepted") or 0
+                        ),
+                        "active_browser_contributor_count": sum(
+                            isinstance(item, dict) and item.get("state") == "leased"
+                            for item in browser_tasks
+                        ),
+                    },
+                    "browser_calibration": {
+                        "accepted_task_count": int(
+                            browser_counters.get("accepted") or 0
+                        ),
+                        "webgpu_task_count": int(browser_counters.get("webgpu") or 0),
+                        "fallback_task_count": int(
+                            browser_counters.get("wasm_cpu") or 0
+                        )
+                        + int(browser_counters.get("cpu_js") or 0),
+                        "server_recomputed": True,
+                        "model_update_count": 0,
+                        "browser_training": False,
                     },
                     "rounds": round_summaries,
                     "evaluation": {
@@ -2073,12 +2695,15 @@ class VolunteerTrainingCoordinator:
                         "secure_aggregation": False,
                         "physical_multi_host_verified": False,
                         "quality_improvement_verified": False,
+                        "browser_model_training": False,
+                        "browser_large_model_sharding": False,
                     },
                     "privacy": {
                         "cell_identifiers_public": False,
                         "work_identifiers_public": False,
                         "lease_material_public": False,
                         "credential_identifiers_public": False,
+                        "pairing_code_values_public": False,
                         "raw_training_data_public": False,
                     },
                 }
@@ -2122,6 +2747,15 @@ class VolunteerTrainingCoordinator:
                 "crowdtensor_volunteer_replay_rejections_total": policy[
                     "counters"
                 ]["replay_rejections"],
+                "crowdtensor_volunteer_browser_tasks_accepted_total": status[
+                    "browser_calibration"
+                ]["accepted_task_count"],
+                "crowdtensor_volunteer_browser_tasks_active": status[
+                    "browser_calibration"
+                ]["active_task_count"],
+                "crowdtensor_volunteer_pairing_codes_active": status[
+                    "contributor_access"
+                ]["active_pairing_code_count"],
             }
             return "".join(f"{name} {int(value)}\n" for name, value in values.items())
 

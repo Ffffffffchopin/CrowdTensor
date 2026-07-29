@@ -1,3 +1,74 @@
+## Latest One-Click Contributor Beta RC Status
+
+Current superseding contributor-onboarding status on 2026-07-29: the
+CrowdTensor One-Click Contributor Beta RC is achieved and deployed. The
+canonical self-contained report is
+`dist/one-click-contributor-beta-rc6/one_click_contributor_release_rc.json`;
+file SHA-256 is
+`24a635bab24a29e11c6763e6004038ca00de0d58581aac0b1c6b46696d8a3bd1`
+and content hash is
+`sha256:f5a9130e061382dcfc102f77f51ea2aa14677be10bddd3321b6df3ed87a5ab78`.
+The strict checker passes with zero errors and
+`one_click_contributor_beta_ready=true`:
+`PYTHONPATH=. python scripts/one_click_contributor_release_check.py --report dist/one-click-contributor-beta-rc6/one_click_contributor_release_rc.json --require-ready --json`.
+
+The public contributor UI is
+`https://crowdtensor.24.199.118.54.nip.io/join`. It has a three-step browser
+flow, hardware/capability detection, start/pause/exit controls, and explicit
+privacy/resource boundaries. One-time codes are stored only as hashes and are
+atomically exchanged for short-lived, Cell-bound scoped credentials. Browser
+credentials can only claim deterministic scheduler-calibration tasks; native
+credentials can only use the existing real LoRA work path. Browser tasks run
+in a Worker, prefer WebGPU, fall back through WASM/CPU, and are independently
+recomputed by the Coordinator. They increment a separate accepted-task counter
+and never change Adapter lineage.
+
+The native URL-plus-code Agent auto-detects CPU/CUDA, enforces step/download
+limits, caches enrollment privately with mode `0600`, serves a loopback-only
+credential-free status/control page, and converts SIGINT/SIGTERM into a
+stop-after-current-atomic-work request. The public installer creates its own
+venv, installs the hash-bound wheel, and immediately joins when given a code;
+no clone, manual venv, or invite JSON is required. On CPU hosts it installs
+`torch==2.11.0+cpu` from the official CPU wheel index, pins the verified HF
+stack, omits the unnecessary storage extra, and accepts a Provider-managed
+PyTorch index override for CUDA hosts. RC5 is superseded: its first public live
+install exposed generic PyPI resolving CUDA 13 packages on a CPU host and was
+cleaned before Agent enrollment. Legacy mode-0600 invite files remain
+compatible.
+
+The immutable release wheel is
+`crowdtensord-0.2.0rc6-py3-none-any.whl`, SHA-256
+`b42978e5982e1f4bf055adc6a6fd8d52ec831f5a654bdb77e2b01efabe9ec5f9`.
+The release bundle SHA-256 is
+`3f59fb7e72b7e210999a7066b12fbb383e402df954fe46eefda6a38a46d557b5`.
+Wheel/sdist, clean-install golden commands, current-source container build and
+removal, release notes, installer, checksums, browser screenshot, and browser
+plus real PEFT Agent E2E are bound into the RC. The local E2E report SHA-256 is
+`f3c172091a4a9c5db421be6242ddf7e49babd9c7c7820a3ed98bee2c19392e04`.
+
+The final exact-public-wheel live Agent gate is
+`dist/one-click-live-agent-rc6/live_agent_rc6_gate.json`, SHA-256
+`8733692aacef1de17b3189dd1cd8045f1d833167edd7776fe92d15f06c6b8345`.
+It used the exact public one-line command, installed RC6 outside the workspace,
+verified the pinned CPU runtime and loopback status page, submitted one real
+CPU PEFT update, and removed its 1.8 GB temporary environment. The final live
+browser gate is `dist/one-click-live-browser-rc6/live_browser_rc6_gate.json`,
+SHA-256
+`bddbeb0cdcb3f872e90ac98d8de9d3835ebd8a20df940e9442cb3a587dabcefd`.
+It records one accepted server-recomputed WASM fallback task, zero Adapter
+change, zero console errors, and passing 1440x900 plus 390x844 visual checks.
+Public Campaign status now records five real training updates, 320 tokens,
+three accepted browser tasks, Adapter v2/round 2, and zero active contributors.
+The full suite passes 2,584 tests with two conditional skips.
+
+Keep the boundary exact. Enrollment remains controlled. Browser work is
+scheduler calibration, not browser LoRA, a model update, or large-model WebGPU
+sharding. The one-click Agent supports CPU/CUDA Volunteer LoRA only; JAX/TPU
+remains in the managed heterogeneous-stage Miner workflow and must not be
+advertised as one-click. This RC does not establish anonymous permissionless
+admission, Sybil/semantic-poisoning safety, Kimi K3 support, independent
+physical multi-host evidence, billing/rewards, GA, or an SLA.
+
 ## Latest Qwen2.5-7B Elastic GSM8K Showcase RC Status
 
 Current superseding 7B publicity-training status on 2026-07-19: the Elastic

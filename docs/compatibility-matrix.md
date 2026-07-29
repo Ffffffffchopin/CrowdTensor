@@ -5,7 +5,7 @@
 | Surface | Supported | Rejection policy |
 | --- | --- | --- |
 | Python | 3.11, 3.12 | other versions unsupported |
-| Package | `0.2.0rc1` | semantic version recorded in every release manifest |
+| Package | `0.2.0rc6` | semantic version recorded in every release manifest |
 | Community protocol | `community_training_v1.0` | family/major mismatch and newer minor rejected |
 | Model Adapter API | `model_adapter_v1.0` | unknown adapter fails closed |
 | Model Adapter plugins | `crowdtensor.model_adapters.v1`; official `mistral_lora_v1` Beta | invalid metadata, shadowing, name mismatch, or failed conformance rejects discovery |
@@ -14,7 +14,7 @@
 | CUDA | explicit Provider | optional locally, required in Kaggle live |
 | Kaggle HF runtime | exact direct pins in `requirements/community-kaggle-runtime.lock` | drifted direct versions rejected by evidence gate |
 | Optional TorchAO | `>=0.16`, or ignored for ordinary dense weights when an older provider copy is present | old TorchAO-backed quantized weights fail closed |
-| JAX TPU | pinned Qwen stage | optional in Community short gate |
+| JAX TPU | pinned Qwen stage through managed heterogeneous Miner; not one-click Volunteer Agent | optional in Community short gate |
 | Checkpoint storage | local, S3/MinIO, mirrored | other backends rejected |
 
 Same-major older protocol minors are accepted only when the local runtime

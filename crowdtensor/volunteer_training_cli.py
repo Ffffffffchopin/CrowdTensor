@@ -6,7 +6,9 @@ import argparse
 import hashlib
 import json
 import os
+import secrets
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,10 @@ import httpx
 from .community_security import TLSProxyPolicy
 from .hf_lora_training import create_local_training_fixture
 from .volunteer_training_api import create_volunteer_training_app, service_contract
+from .volunteer_agent_status import (
+    VolunteerAgentStatusServer,
+    graceful_agent_signals,
+)
 from .volunteer_campaign_proposal import (
     load_and_validate_proposal,
     write_proposal_template,
@@ -47,9 +53,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     join = actions.add_parser(
         "join",
-        help="Join a campaign from one private invite and contribute local training work.",
+        help="Join from a Coordinator URL plus one-time code, or a legacy private invite.",
     )
-    join.add_argument("campaign", help="private invite JSON file")
+    join.add_argument("campaign", help="Coordinator HTTPS URL or legacy private invite JSON")
+    join.add_argument("--code", default="", help="one-time Agent pairing code")
     join.add_argument("--workspace", default="")
     join.add_argument("--cell-id", default="")
     join.add_argument("--device", default="auto")
@@ -60,6 +67,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     join.add_argument("--once", action="store_true")
     join.add_argument("--poll-interval-seconds", type=float, default=2.0)
     join.add_argument("--timeout-seconds", type=float, default=120.0)
+    join.add_argument(
+        "--status-page", action=argparse.BooleanOptionalAction, default=True
+    )
+    join.add_argument("--status-port", type=int, default=8765)
     join.add_argument("--dry-run", action="store_true")
     join.add_argument(
         "--test-proxy-id", default="", help=argparse.SUPPRESS
@@ -81,6 +92,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remote_status.add_argument("campaign", help="private invite JSON file")
     remote_status.add_argument("--timeout-seconds", type=float, default=30.0)
     remote_status.add_argument("--json", action="store_true")
+
+    pair_code = actions.add_parser(
+        "pair-code", help="Create one short-lived, single-use contributor pairing code."
+    )
+    pair_code.add_argument("campaign_dir")
+    pair_code.add_argument("--mode", choices=("agent", "browser"), default="agent")
+    pair_code.add_argument("--ttl-seconds", type=int, default=3600)
+    pair_code.add_argument("--json", action="store_true")
 
     campaign = actions.add_parser("campaign")
     campaign_actions = campaign.add_subparsers(dest="campaign_action", required=True)
@@ -213,6 +232,75 @@ def _default_workspace(invite: dict[str, Any]) -> Path:
     return Path.home() / ".cache" / "crowdtensor" / "volunteer" / suffix
 
 
+def _is_coordinator_url(value: str) -> bool:
+    text = str(value).strip().lower()
+    return text.startswith("https://") or text.startswith("http://127.0.0.1") or text.startswith(
+        "http://localhost"
+    )
+
+
+def _campaign_from_url(
+    coordinator_url: str,
+    *,
+    timeout_seconds: float,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    response = httpx.get(
+        str(coordinator_url).rstrip("/") + "/v1/volunteer/campaign",
+        headers=dict(extra_headers or {}),
+        timeout=float(timeout_seconds),
+    )
+    return HTTPVolunteerTransport._response(response)
+
+
+def _cell_id_for_workspace(workspace: Path, requested: str) -> str:
+    state_path = workspace / ".private" / "cell_state.json"
+    if state_path.is_file():
+        value = json.loads(state_path.read_text(encoding="utf-8"))
+        cell_id = str(value.get("cell_id") or "") if isinstance(value, dict) else ""
+        if cell_id:
+            return cell_id
+    return str(requested or "agent-" + secrets.token_hex(12))
+
+
+def _load_agent_enrollment(
+    workspace: Path, *, coordinator_url: str, cell_id: str
+) -> dict[str, Any] | None:
+    path = workspace / ".private" / "agent_enrollment.json"
+    if not path.is_file() or path.stat().st_mode & 0o077:
+        return None
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        return None
+    if (
+        value.get("schema") != "crowdtensor_volunteer_agent_enrollment_v1"
+        or str(value.get("coordinator_url") or "").rstrip("/")
+        != str(coordinator_url).rstrip("/")
+        or value.get("cell_id") != cell_id
+        or float(value.get("expires_at") or 0.0) <= time.time() + 5.0
+        or not str(value.get("credential_token") or "")
+    ):
+        return None
+    return value
+
+
+def _save_agent_enrollment(workspace: Path, value: dict[str, Any]) -> Path:
+    path = workspace / ".private" / "agent_enrollment.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
 def _existing_cell(workspace: str | Path) -> VolunteerTrainingCell:
     class _OfflineTransport:
         def __getattr__(self, _name: str) -> Any:
@@ -236,6 +324,8 @@ def _emit(value: dict[str, Any], *, json_output: bool) -> None:
         print(f"adapter_version={value['adapter_version']}")
     if value.get("error"):
         print(f"error={value['error']}")
+    if value.get("pairing_code"):
+        print(f"pairing_code={value['pairing_code']}")
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -491,13 +581,15 @@ def run(argv: list[str] | None = None) -> int:
                 args.campaign, timeout_seconds=float(args.timeout_seconds)
             )
             value = transport.status()
-        elif args.action == "join":
-            invite = _read_invite(args.campaign)
-            workspace = (
-                Path(args.workspace).expanduser().resolve()
-                if args.workspace
-                else _default_workspace(invite)
+        elif args.action == "pair-code":
+            coordinator = VolunteerTrainingCoordinator(args.campaign_dir)
+            value = coordinator.create_pairing_code(
+                invite_token=coordinator.private_invite()["invite_token"],
+                mode=args.mode,
+                ttl_seconds=int(args.ttl_seconds),
             )
+        elif args.action == "join":
+            url_join = _is_coordinator_url(args.campaign)
             test_headers = (
                 {
                     "X-Forwarded-Proto": "https",
@@ -506,14 +598,65 @@ def run(argv: list[str] | None = None) -> int:
                 if args.test_proxy_id
                 else {}
             )
-            transport = HTTPVolunteerTransport.from_invite(
-                args.campaign,
-                timeout_seconds=float(args.timeout_seconds),
-                extra_headers=test_headers,
-                interrupt_after_chunks=int(
-                    args.test_interrupt_upload_after_chunks
-                ),
+            invite = (
+                _campaign_from_url(
+                    args.campaign,
+                    timeout_seconds=float(args.timeout_seconds),
+                    extra_headers=test_headers,
+                )
+                if url_join
+                else _read_invite(args.campaign)
             )
+            workspace = (
+                Path(args.workspace).expanduser().resolve()
+                if args.workspace
+                else _default_workspace(invite)
+            )
+            selected_cell_id = _cell_id_for_workspace(workspace, args.cell_id)
+            if url_join:
+                enrollment = _load_agent_enrollment(
+                    workspace,
+                    coordinator_url=args.campaign,
+                    cell_id=selected_cell_id,
+                )
+                if enrollment is not None:
+                    transport = HTTPVolunteerTransport.from_cell_credential(
+                        args.campaign,
+                        cell_id=selected_cell_id,
+                        credential_token=str(enrollment["credential_token"]),
+                        credential_id=str(enrollment.get("credential_id") or ""),
+                        expires_at=float(enrollment["expires_at"]),
+                        timeout_seconds=float(args.timeout_seconds),
+                        extra_headers=test_headers,
+                        interrupt_after_chunks=int(
+                            args.test_interrupt_upload_after_chunks
+                        ),
+                    )
+                else:
+                    if not args.code:
+                        raise VolunteerProtocolError(
+                            "volunteer_pairing_code_required", status_code=401
+                        )
+                    transport = HTTPVolunteerTransport.from_pairing_code(
+                        args.campaign,
+                        args.code,
+                        cell_id=selected_cell_id,
+                        timeout_seconds=float(args.timeout_seconds),
+                        extra_headers=test_headers,
+                        interrupt_after_chunks=int(
+                            args.test_interrupt_upload_after_chunks
+                        ),
+                    )
+                    _save_agent_enrollment(workspace, transport.private_enrollment())
+            else:
+                transport = HTTPVolunteerTransport.from_invite(
+                    args.campaign,
+                    timeout_seconds=float(args.timeout_seconds),
+                    extra_headers=test_headers,
+                    interrupt_after_chunks=int(
+                        args.test_interrupt_upload_after_chunks
+                    ),
+                )
             campaign = transport.campaign()
             validate_campaign_manifest(campaign)
             if args.dry_run:
@@ -536,17 +679,44 @@ def run(argv: list[str] | None = None) -> int:
                 cell = VolunteerTrainingCell(
                     transport,
                     workspace,
-                    cell_id=args.cell_id,
+                    cell_id=selected_cell_id,
                     device=args.device,
                     max_local_steps=int(args.max_local_steps),
                     max_download_bytes=int(float(args.max_download_gib) * 1024**3),
                     cache_dir=args.cache_dir or None,
                 )
-                limit = 1 if args.once else int(args.max_work_units)
-                value = cell.run(
-                    max_work_units=limit,
-                    poll_interval_seconds=float(args.poll_interval_seconds),
+                limit = (
+                    1
+                    if args.once or (url_join and int(args.max_work_units) == 0)
+                    else int(args.max_work_units)
                 )
+                if args.status_page:
+                    with VolunteerAgentStatusServer(
+                        cell, port=int(args.status_port)
+                    ) as control:
+                        if not args.json:
+                            print(f"local_status={control.endpoint}")
+                        with graceful_agent_signals(control.stop_event):
+                            value = cell.run(
+                                max_work_units=limit,
+                                poll_interval_seconds=float(
+                                    args.poll_interval_seconds
+                                ),
+                                stop_requested=control.stop_event.is_set,
+                            )
+                        value = with_public_safety(
+                            {
+                                **value,
+                                "local_status_endpoint": control.endpoint,
+                                "local_status_page_enabled": True,
+                                "graceful_signal_stop": True,
+                            }
+                        )
+                else:
+                    value = cell.run(
+                        max_work_units=limit,
+                        poll_interval_seconds=float(args.poll_interval_seconds),
+                    )
         else:
             cell = _existing_cell(args.workspace)
             if args.action == "status":

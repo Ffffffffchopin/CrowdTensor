@@ -26,7 +26,7 @@ CELL_CREDENTIAL_SCHEMA = "crowdtensor_volunteer_cell_credential_v1"
 POLICY_STATUS_SCHEMA = "crowdtensor_volunteer_operator_policy_status_v1"
 STATE_SCHEMA_V2 = "crowdtensor_volunteer_training_coordinator_state_v2"
 
-CELL_SCOPES = frozenset(
+NATIVE_CELL_SCOPES = frozenset(
     {
         "artifact:read",
         "upload:read",
@@ -36,6 +36,14 @@ CELL_SCOPES = frozenset(
         "work:submit",
     }
 )
+BROWSER_CELL_SCOPES = frozenset(
+    {
+        "browser:claim",
+        "browser:heartbeat",
+        "browser:submit",
+    }
+)
+CELL_SCOPES = NATIVE_CELL_SCOPES | BROWSER_CELL_SCOPES
 
 
 def default_operator_policy() -> dict[str, Any]:
@@ -69,7 +77,29 @@ def migrate_operator_state(state: dict[str, Any], *, now: float) -> tuple[dict[s
     """Idempotently migrate a v1 campaign state into the Operator Beta v2 state."""
 
     previous_schema = str(state.get("schema") or "")
-    changed = previous_schema != STATE_SCHEMA_V2
+    additive_fields = {
+        "pairing_codes": {},
+        "pairing_counters": {
+            "created": 0,
+            "redeemed": 0,
+            "expired": 0,
+            "rejected": 0,
+        },
+        "browser_probe_tasks": {},
+        "browser_probe_counters": {
+            "accepted": 0,
+            "rejected": 0,
+            "expired": 0,
+            "heartbeats": 0,
+            "webgpu": 0,
+            "wasm_cpu": 0,
+            "cpu_js": 0,
+            "total_vector_elements": 0,
+            "total_duration_ms": 0,
+        },
+    }
+    missing_additive_fields = [key for key in additive_fields if key not in state]
+    changed = previous_schema != STATE_SCHEMA_V2 or bool(missing_additive_fields)
     campaign_id = str((state.get("campaign") or {}).get("campaign_id") or "unknown")
     state["schema"] = STATE_SCHEMA_V2
     state.setdefault("state_revision", 2)
@@ -95,6 +125,8 @@ def migrate_operator_state(state: dict[str, Any], *, now: float) -> tuple[dict[s
     state.setdefault("validated_at", float(now))
     state.setdefault("finalized_at", 0.0)
     state.setdefault("migration_history", [])
+    for key, value in additive_fields.items():
+        state.setdefault(key, value)
     if changed:
         state["migration_history"].append(
             {
@@ -102,6 +134,7 @@ def migrate_operator_state(state: dict[str, Any], *, now: float) -> tuple[dict[s
                 "to_schema": STATE_SCHEMA_V2,
                 "migrated_at": float(now),
                 "private_state_migration": True,
+                "additive_fields": sorted(missing_additive_fields),
             }
         )
     return state, {
@@ -156,7 +189,7 @@ def issue_cell_credential(
 ) -> tuple[str, dict[str, Any]]:
     cell_hash = hash_cell_id(cell_id)
     policy = state["operator_policy"]
-    requested = sorted(set(scopes or CELL_SCOPES))
+    requested = sorted(set(NATIVE_CELL_SCOPES if scopes is None else scopes))
     if not requested or not set(requested).issubset(CELL_SCOPES):
         _raise("volunteer_credential_scope_invalid", status_code=400)
     ttl = int(

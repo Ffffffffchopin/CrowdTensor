@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import time
 from importlib import resources
@@ -13,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from .community_security import SecurityContractError, TLSProxyPolicy
+from .version import __version__
 from .volunteer_training_coordinator import VolunteerTrainingCoordinator
 from .volunteer_training_protocol import (
     MAX_SUBMISSION_METADATA_BYTES,
@@ -34,6 +36,9 @@ from .volunteer_training_storage import (
 SERVICE_SCHEMA = "crowdtensor_volunteer_training_http_service_v1"
 PROJECT_SITE_MEDIA_TYPES = {
     "favicon.png": "image/png",
+    "join.css": "text/css; charset=utf-8",
+    "join.js": "text/javascript; charset=utf-8",
+    "join_worker.js": "text/javascript; charset=utf-8",
     "site.css": "text/css; charset=utf-8",
     "site.js": "text/javascript; charset=utf-8",
     "hero-dashboard.png": "image/png",
@@ -64,7 +69,7 @@ def _dashboard_headers() -> dict[str, str]:
 
 
 def _project_site_asset(name: str) -> bytes:
-    allowed = {"index.html", *PROJECT_SITE_MEDIA_TYPES}
+    allowed = {"index.html", "join.html", *PROJECT_SITE_MEDIA_TYPES}
     if name not in allowed:
         raise VolunteerProtocolError("project_site_asset_not_found", status_code=404)
     return resources.files("crowdtensor.project_site").joinpath(name).read_bytes()
@@ -74,7 +79,7 @@ def _project_site_headers(*, cache_assets: bool = False) -> dict[str, str]:
     return {
         "Cache-Control": "public, max-age=300" if cache_assets else "no-cache",
         "Content-Security-Policy": (
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
             "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
             "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         ),
@@ -126,6 +131,7 @@ def create_volunteer_training_app(
     tls_policy: TLSProxyPolicy | None = None,
     upload_chunk_bytes: int = DEFAULT_CHUNK_BYTES,
     upload_blob_store: VolunteerBlobStore | None = None,
+    public_release_dir: str | Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="CrowdTensor Volunteer Training Alpha", version="1.0")
     policy = tls_policy or TLSProxyPolicy(require_https=False)
@@ -140,6 +146,22 @@ def create_volunteer_training_app(
         chunk_bytes=int(upload_chunk_bytes),
         clock=getattr(coordinator, "clock", time.time),
     )
+    configured_release_dir = str(
+        public_release_dir or os.environ.get("CROWDTENSOR_PUBLIC_RELEASE_DIR") or ""
+    ).strip()
+    release_root = (
+        Path(configured_release_dir).expanduser().resolve()
+        if configured_release_dir
+        else None
+    )
+    release_artifact_names = {
+        f"crowdtensord-{__version__}-py3-none-any.whl",
+        f"crowdtensord-{__version__}.tar.gz",
+        "SHA256SUMS",
+        "RELEASE_NOTES.md",
+        "install-contributor.sh",
+        "release.json",
+    }
 
     def _authenticated_bearer(
         request: Request,
@@ -190,6 +212,18 @@ def create_volunteer_training_app(
             media_type="text/html; charset=utf-8", headers=_project_site_headers()
         )
 
+    @app.get("/join", response_class=HTMLResponse, include_in_schema=False)
+    async def contributor_join() -> HTMLResponse:
+        return HTMLResponse(
+            _project_site_asset("join.html"), headers=_project_site_headers()
+        )
+
+    @app.head("/join", include_in_schema=False)
+    async def contributor_join_head() -> Response:
+        return Response(
+            media_type="text/html; charset=utf-8", headers=_project_site_headers()
+        )
+
     @app.get("/assets/{asset_name}", include_in_schema=False)
     async def project_site_asset(asset_name: str) -> Response:
         media_type = PROJECT_SITE_MEDIA_TYPES.get(asset_name)
@@ -209,6 +243,38 @@ def create_volunteer_training_app(
             headers=_project_site_headers(cache_assets=True),
         )
 
+    @app.get("/downloads/{artifact_name}", include_in_schema=False)
+    async def release_download(artifact_name: str) -> FileResponse:
+        if release_root is None or artifact_name not in release_artifact_names:
+            raise VolunteerProtocolError(
+                "volunteer_release_artifact_not_found", status_code=404
+            )
+        path = (release_root / artifact_name).resolve()
+        if path.parent != release_root or not path.is_file():
+            raise VolunteerProtocolError(
+                "volunteer_release_artifact_not_found", status_code=404
+            )
+        media_type = (
+            "application/x-sh"
+            if artifact_name.endswith(".sh")
+            else "text/markdown; charset=utf-8"
+            if artifact_name.endswith(".md")
+            else "application/json"
+            if artifact_name.endswith(".json")
+            else "text/plain; charset=utf-8"
+            if artifact_name == "SHA256SUMS"
+            else "application/octet-stream"
+        )
+        return FileResponse(
+            path,
+            media_type=media_type,
+            filename=artifact_name,
+            headers={
+                "Cache-Control": "public, max-age=300",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     @app.get("/v1/volunteer/health")
     async def health() -> dict[str, Any]:
         return with_public_safety(
@@ -220,6 +286,10 @@ def create_volunteer_training_app(
                 "binary_safetensors_submission": True,
                 "authenticated_artifact_download": True,
                 "resumable_chunk_upload": True,
+                "one_time_pairing_codes": hasattr(coordinator, "redeem_pairing_code"),
+                "browser_calibration_task": hasattr(coordinator, "claim_browser_probe"),
+                "browser_training": False,
+                "public_release_download": bool(release_root),
                 "tls_required": bool(policy.require_https),
                 "trusted_forwarded_headers": bool(policy.trust_forwarded_headers),
             }
@@ -297,6 +367,19 @@ def create_volunteer_training_app(
             ttl_seconds=int(ttl) if ttl is not None else None,
         )
 
+    @app.post("/v1/volunteer/pairing/redeem")
+    async def pairing_redeem(request: Request) -> dict[str, Any]:
+        payload = await _json_object(request, max_bytes=4096)
+        if not hasattr(coordinator, "redeem_pairing_code"):
+            raise VolunteerProtocolError(
+                "volunteer_pairing_unavailable", status_code=404
+            )
+        return coordinator.redeem_pairing_code(
+            pairing_code=str(payload.get("pairing_code") or ""),
+            cell_id=str(payload.get("cell_id") or ""),
+            expected_mode=str(payload.get("expected_mode") or ""),
+        )
+
     @app.post("/v1/volunteer/credentials/revoke")
     async def credential_revoke(request: Request) -> dict[str, Any]:
         token = _bearer_token(request)
@@ -339,6 +422,59 @@ def create_volunteer_training_app(
         if hasattr(coordinator, "authorize_cell_request"):
             kwargs["request_nonce"] = _request_nonce(request)
         return coordinator.heartbeat(**kwargs)
+
+    @app.post("/v1/volunteer/browser/claim")
+    async def browser_claim(request: Request) -> dict[str, Any]:
+        token = _bearer_token(request)
+        payload = await _json_object(request, max_bytes=16 * 1024)
+        if not hasattr(coordinator, "claim_browser_probe"):
+            raise VolunteerProtocolError(
+                "volunteer_browser_probe_unavailable", status_code=404
+            )
+        capability = payload.get("capability")
+        return coordinator.claim_browser_probe(
+            cell_id=str(payload.get("cell_id") or ""),
+            credential_token=token,
+            capability=capability if isinstance(capability, dict) else {},
+            request_nonce=_request_nonce(request),
+        )
+
+    @app.post("/v1/volunteer/browser/heartbeat")
+    async def browser_heartbeat(request: Request) -> dict[str, Any]:
+        token = _bearer_token(request)
+        payload = await _json_object(request, max_bytes=4096)
+        if not hasattr(coordinator, "heartbeat_browser_probe"):
+            raise VolunteerProtocolError(
+                "volunteer_browser_probe_unavailable", status_code=404
+            )
+        return coordinator.heartbeat_browser_probe(
+            cell_id=str(payload.get("cell_id") or ""),
+            credential_token=token,
+            task_id=str(payload.get("task_id") or ""),
+            lease_generation=int(payload.get("lease_generation") or 0),
+            lease_token=str(payload.get("lease_token") or ""),
+            request_nonce=_request_nonce(request),
+        )
+
+    @app.post("/v1/volunteer/browser/submit")
+    async def browser_submit(request: Request) -> dict[str, Any]:
+        token = _bearer_token(request)
+        payload = await _json_object(request, max_bytes=4096)
+        if not hasattr(coordinator, "submit_browser_probe"):
+            raise VolunteerProtocolError(
+                "volunteer_browser_probe_unavailable", status_code=404
+            )
+        return coordinator.submit_browser_probe(
+            cell_id=str(payload.get("cell_id") or ""),
+            credential_token=token,
+            task_id=str(payload.get("task_id") or ""),
+            lease_generation=int(payload.get("lease_generation") or 0),
+            lease_token=str(payload.get("lease_token") or ""),
+            output_sha256=str(payload.get("output_sha256") or ""),
+            runtime=str(payload.get("runtime") or ""),
+            duration_ms=int(payload.get("duration_ms") or 0),
+            request_nonce=_request_nonce(request),
+        )
 
     @app.get("/v1/volunteer/artifacts/{artifact_id}")
     async def artifact(artifact_id: str, request: Request) -> FileResponse:
@@ -539,8 +675,12 @@ def service_contract() -> dict[str, Any]:
                 "GET /v1/volunteer/metrics",
                 "POST /v1/volunteer/credentials/issue",
                 "POST /v1/volunteer/credentials/revoke",
+                "POST /v1/volunteer/pairing/redeem",
                 "POST /v1/volunteer/work/claim",
                 "POST /v1/volunteer/work/heartbeat",
+                "POST /v1/volunteer/browser/claim",
+                "POST /v1/volunteer/browser/heartbeat",
+                "POST /v1/volunteer/browser/submit",
                 "GET /v1/volunteer/artifacts/{artifact_id}",
                 "POST /v1/volunteer/work/submit",
                 "POST /v1/volunteer/uploads/start",
@@ -551,6 +691,9 @@ def service_contract() -> dict[str, Any]:
             ],
             "invite_bearer_required_for_private_routes": True,
             "per_cell_short_lived_credentials": True,
+            "one_time_pairing_codes": True,
+            "browser_calibration_task": True,
+            "browser_calibration_updates_model": False,
             "credential_scope_and_revocation_enforced": True,
             "request_nonce_replay_protection": True,
             "request_upload_quota_and_rate_limits": True,

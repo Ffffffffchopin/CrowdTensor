@@ -33,6 +33,7 @@ _PRIVATE_KEYS = {
     "dataset_path",
     "delta_path",
     "invite_token",
+    "pairing_code",
     "lease_token",
     "local_path",
     "private_path",

@@ -7,7 +7,11 @@ training**. Ordinary CPU, GPU, and TPU machines can contribute one bounded
 update at a time. When compute arrives, training advances. When it leaves, the
 shared checkpoint waits and resumes later.
 
-[Website](https://crowdtensor.24.199.118.54.nip.io) | [Founding campaign dashboard](https://crowdtensor.24.199.118.54.nip.io/v1/volunteer/dashboard) | [How to contribute](docs/community-quickstart.md) | [Governance](docs/volunteer-campaign-governance.md)
+[Contribute in your browser](https://crowdtensor.24.199.118.54.nip.io/join) | [Live dashboard](https://crowdtensor.24.199.118.54.nip.io/v1/volunteer/dashboard) | [Website](https://crowdtensor.24.199.118.54.nip.io) | [Governance](docs/volunteer-campaign-governance.md)
+
+1. Request a controlled-beta pairing code.
+2. Open `/join` for a verified browser task, or run the one-line native Agent.
+3. The Coordinator validates the result; checkpoints remain when you leave.
 
 > **Engineering beta:** the public Coordinator and website are live, but
 > contributor enrollment is controlled. CrowdTensor does not yet claim
@@ -64,28 +68,38 @@ practical proof run, not a claim of statistical significance. See the
 
 ## Contribute Compute
 
-Install CrowdTensor with Python 3.11 or newer:
+The browser path needs no installation. It contributes a server-recomputed
+scheduler calibration task through a Web Worker, preferring WebGPU with a
+WASM/CPU fallback:
 
 ```bash
-git clone https://github.com/Ffffffffchopin/CrowdTensor.git
-cd CrowdTensor
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e '.[hf]'
+open https://crowdtensor.24.199.118.54.nip.io/join
 ```
 
-Campaign enrollment uses a private, mode-0600 invite while admission remains
-controlled. [Request Founding Beta access](https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=beta_enrollment.yml)
-without posting credentials or machine identifiers. Once an operator approves
-a contributor:
+For real CPU or CUDA LoRA work, Python 3.11+ users run one command after
+receiving a one-time Agent code:
 
 ```bash
-crowdtensor volunteer join campaign-invite.json --device auto
+curl -fsSL https://crowdtensor.24.199.118.54.nip.io/downloads/install-contributor.sh | sh -s -- https://crowdtensor.24.199.118.54.nip.io CT-XXXX-XXXX-XXXX
 ```
 
-The Cell checks the pinned workload and local resource limits before it claims
-work. Public status never includes Cell identities, credentials, raw training
-data, token IDs, tensor values, or private paths.
+The one-time code is exchanged for a short-lived, Cell-bound credential and is
+not stored by the Coordinator. The native Agent checks workload and download
+limits, auto-detects hardware, exposes a loopback-only status page, and stops
+after the current atomic work unit on SIGINT/SIGTERM. Public status never
+includes pairing codes, Cell identities, credentials, raw training data, token
+IDs, tensor values, or private paths.
+
+The installer selects CPU-only PyTorch wheels when no CUDA device is present.
+CUDA providers can set `CROWDTENSOR_TORCH_INDEX_URL` for their managed runtime.
+
+JAX/TPU training remains available through the managed heterogeneous-stage
+Miner workflow; it is not yet part of this one-click Volunteer Agent.
+
+[Request Founding Beta access](https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=beta_enrollment.yml)
+without posting credentials or machine identifiers. Browser tasks validate the
+contribution path but do not train or update the model; native Cells perform
+the actual LoRA updates.
 
 To rehearse the workflow without external hardware:
 

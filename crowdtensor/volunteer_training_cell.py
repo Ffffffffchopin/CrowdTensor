@@ -13,7 +13,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import httpx
 
@@ -129,12 +129,16 @@ class HTTPVolunteerTransport:
     def __init__(
         self,
         coordinator_url: str,
-        invite_token: str,
+        invite_token: str = "",
         *,
         timeout_seconds: float = 120.0,
         extra_headers: dict[str, str] | None = None,
         resumable_uploads: bool = True,
         interrupt_after_chunks: int = 0,
+        cell_credential_token: str = "",
+        credential_id: str = "",
+        credential_cell_id: str = "",
+        credential_expires_at: float = 0.0,
     ) -> None:
         self.coordinator_url = str(coordinator_url).rstrip("/")
         self.invite_token = str(invite_token)
@@ -143,15 +147,15 @@ class HTTPVolunteerTransport:
         self.resumable_uploads = bool(resumable_uploads)
         self.interrupt_after_chunks = int(interrupt_after_chunks)
         self.last_upload_id = ""
-        self._cell_credential_token = ""
-        self._cell_credential_id = ""
-        self._credential_cell_id = ""
-        self._credential_expires_at = 0.0
+        self._cell_credential_token = str(cell_credential_token)
+        self._cell_credential_id = str(credential_id)
+        self._credential_cell_id = str(credential_cell_id)
+        self._credential_expires_at = float(credential_expires_at)
         self._legacy_invite_fallback = False
         if not self.coordinator_url:
             raise VolunteerProtocolError("volunteer_coordinator_url_missing", status_code=400)
-        if not self.invite_token:
-            raise VolunteerProtocolError("volunteer_invite_token_missing", status_code=400)
+        if not self.invite_token and not self._cell_credential_token:
+            raise VolunteerProtocolError("volunteer_enrollment_credential_missing", status_code=400)
 
     @classmethod
     def from_invite(
@@ -179,6 +183,81 @@ class HTTPVolunteerTransport:
             interrupt_after_chunks=interrupt_after_chunks,
         )
 
+    @classmethod
+    def from_cell_credential(
+        cls,
+        coordinator_url: str,
+        *,
+        cell_id: str,
+        credential_token: str,
+        credential_id: str,
+        expires_at: float,
+        timeout_seconds: float = 120.0,
+        extra_headers: dict[str, str] | None = None,
+        interrupt_after_chunks: int = 0,
+    ) -> "HTTPVolunteerTransport":
+        return cls(
+            coordinator_url,
+            timeout_seconds=timeout_seconds,
+            extra_headers=extra_headers,
+            interrupt_after_chunks=interrupt_after_chunks,
+            cell_credential_token=credential_token,
+            credential_id=credential_id,
+            credential_cell_id=cell_id,
+            credential_expires_at=expires_at,
+        )
+
+    @classmethod
+    def from_pairing_code(
+        cls,
+        coordinator_url: str,
+        pairing_code: str,
+        *,
+        cell_id: str,
+        timeout_seconds: float = 120.0,
+        extra_headers: dict[str, str] | None = None,
+        interrupt_after_chunks: int = 0,
+    ) -> "HTTPVolunteerTransport":
+        base = str(coordinator_url).rstrip("/")
+        response = httpx.post(
+            base + "/v1/volunteer/pairing/redeem",
+            headers={**dict(extra_headers or {}), "Content-Type": "application/json"},
+            json={
+                "pairing_code": str(pairing_code),
+                "cell_id": str(cell_id),
+                "expected_mode": "agent",
+            },
+            timeout=float(timeout_seconds),
+        )
+        value = cls._response(response)
+        if value.get("pairing_mode") != "agent":
+            raise VolunteerProtocolError("volunteer_pairing_mode_mismatch", status_code=400)
+        credential_token = str(value.get("credential_token") or "")
+        if not credential_token:
+            raise VolunteerProtocolError(
+                "volunteer_cell_credential_response_invalid", status_code=502
+            )
+        return cls.from_cell_credential(
+            base,
+            cell_id=cell_id,
+            credential_token=credential_token,
+            credential_id=str(value.get("credential_id") or ""),
+            expires_at=float(value.get("expires_at") or 0.0),
+            timeout_seconds=timeout_seconds,
+            extra_headers=extra_headers,
+            interrupt_after_chunks=interrupt_after_chunks,
+        )
+
+    def private_enrollment(self) -> dict[str, Any]:
+        return {
+            "schema": "crowdtensor_volunteer_agent_enrollment_v1",
+            "coordinator_url": self.coordinator_url,
+            "cell_id": self._credential_cell_id,
+            "credential_id": self._cell_credential_id,
+            "credential_token": self._cell_credential_token,
+            "expires_at": self._credential_expires_at,
+        }
+
     def _ensure_cell_credential(self, cell_id: str) -> None:
         normalized = str(cell_id).strip()
         if not normalized:
@@ -192,6 +271,10 @@ class HTTPVolunteerTransport:
             and self._credential_expires_at > time.time() + 5.0
         ):
             return
+        if not self.invite_token:
+            raise VolunteerProtocolError(
+                "volunteer_cell_credential_expired", status_code=401
+            )
         response = httpx.post(
             self.coordinator_url + "/v1/volunteer/credentials/issue",
             headers={
@@ -917,10 +1000,21 @@ class VolunteerTrainingCell:
         *,
         max_work_units: int = 0,
         poll_interval_seconds: float = 2.0,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         completed = 0
         last: dict[str, Any] = {}
         while max_work_units <= 0 or completed < max_work_units:
+            if stop_requested is not None and stop_requested():
+                last = self._write_public_status(
+                    {
+                        "ok": True,
+                        "state": "stopped",
+                        "work_completed": False,
+                        "graceful_stop": True,
+                    }
+                )
+                break
             if self.pause_path.exists():
                 last = self.local_status()
                 break

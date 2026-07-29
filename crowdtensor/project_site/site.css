@@ -460,7 +460,7 @@ main section {
   display: grid;
   margin: 0;
   padding: 0;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   list-style: none;
   border-top: 3px solid var(--ink);
 }

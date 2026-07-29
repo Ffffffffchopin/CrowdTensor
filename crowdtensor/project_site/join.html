@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Contribute one bounded browser task or join CrowdTensor with a native CPU or CUDA Agent.">
+    <title>Join a CrowdTensor Campaign</title>
+    <link rel="icon" href="/assets/favicon.png" type="image/png">
+    <link rel="stylesheet" href="/assets/join.css">
+    <script src="/assets/join.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="wordmark" href="/" aria-label="CrowdTensor home">
+        <span class="mark" aria-hidden="true">CT</span>
+        <span>CrowdTensor</span>
+      </a>
+      <div class="campaign-chip">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="campaign-name">Loading Campaign</span>
+      </div>
+      <a class="dashboard-link" href="/v1/volunteer/dashboard">Dashboard <span aria-hidden="true">&#8599;</span></a>
+    </header>
+
+    <main>
+      <section class="join-heading">
+        <p class="eyebrow">Controlled beta enrollment</p>
+        <h1>Contribute from this device</h1>
+        <p class="lede">One pairing code. One bounded task. No repository setup.</p>
+      </section>
+
+      <section class="join-workspace" aria-label="Contributor workspace">
+        <div class="contribution-tool">
+          <div class="mode-tabs" role="tablist" aria-label="Contribution method">
+            <button id="browser-tab" class="mode-tab active" type="button" role="tab" aria-selected="true" aria-controls="browser-panel">Browser</button>
+            <button id="agent-tab" class="mode-tab" type="button" role="tab" aria-selected="false" aria-controls="agent-panel">Native Agent</button>
+          </div>
+
+          <div id="browser-panel" role="tabpanel" aria-labelledby="browser-tab">
+            <ol class="steps" aria-label="Browser contribution steps">
+              <li class="step active" id="step-pair">
+                <span>1</span>
+                <div>
+                  <strong>Pair</strong>
+                  <small>One-time code</small>
+                </div>
+              </li>
+              <li class="step" id="step-check">
+                <span>2</span>
+                <div>
+                  <strong>Check</strong>
+                  <small>Local capability</small>
+                </div>
+              </li>
+              <li class="step" id="step-run">
+                <span>3</span>
+                <div>
+                  <strong>Contribute</strong>
+                  <small>Verified task</small>
+                </div>
+              </li>
+            </ol>
+
+            <form id="pair-form" class="pair-form" autocomplete="off">
+              <label for="pairing-code">Pairing code</label>
+              <div class="pair-row">
+                <input id="pairing-code" name="pairing-code" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="20" placeholder="CT-XXXX-XXXX-XXXX" required>
+                <button id="pair-button" class="primary-command" type="submit">Pair device</button>
+              </div>
+              <p class="field-state" id="pair-state" aria-live="polite">Awaiting an approved beta code</p>
+            </form>
+
+            <div class="runtime-table" aria-label="Detected browser resources">
+              <div>
+                <span>Compute path</span>
+                <strong id="compute-path">Detecting</strong>
+              </div>
+              <div>
+                <span>Logical CPU</span>
+                <strong id="cpu-count">-</strong>
+              </div>
+              <div>
+                <span>Memory limit</span>
+                <strong>&lt; 8 MB</strong>
+              </div>
+              <div>
+                <span>Work limit</span>
+                <strong>1 task</strong>
+              </div>
+            </div>
+
+            <div class="run-strip">
+              <div>
+                <span class="run-label">Contribution state</span>
+                <strong id="run-state" aria-live="polite">Not paired</strong>
+              </div>
+              <div class="run-actions">
+                <button id="start-button" class="start-command" type="button" disabled>Start contribution</button>
+                <button id="pause-button" class="icon-command" type="button" title="Pause contribution" aria-label="Pause contribution" disabled><span aria-hidden="true">&#10074;&#10074;</span></button>
+                <button id="exit-button" class="icon-command" type="button" title="Exit and forget this device" aria-label="Exit and forget this device" disabled><span aria-hidden="true">&#9632;</span></button>
+              </div>
+            </div>
+
+            <div class="result-line" id="result-line" hidden>
+              <span class="result-mark" aria-hidden="true">&#10003;</span>
+              <div>
+                <strong>Task accepted</strong>
+                <span id="result-detail">Server-recomputed calibration result</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="agent-panel" role="tabpanel" aria-labelledby="agent-tab" hidden>
+            <div class="agent-intro">
+              <p class="eyebrow">CPU / CUDA</p>
+              <h2>Run a real LoRA Cell</h2>
+            </div>
+            <div class="command-block">
+              <div class="command-topline">
+                <span>Python 3.11+</span>
+                <button id="copy-command" class="copy-command" type="button">Copy</button>
+              </div>
+              <code id="agent-command">curl -fsSL https://crowdtensor.24.199.118.54.nip.io/downloads/install-contributor.sh | sh -s -- https://crowdtensor.24.199.118.54.nip.io CT-XXXX-XXXX-XXXX</code>
+            </div>
+            <dl class="agent-facts">
+              <div><dt>Hardware</dt><dd>Automatic detection</dd></div>
+              <div><dt>Default limit</dt><dd>1 work unit</dd></div>
+              <div><dt>Control</dt><dd>Loopback status page</dd></div>
+              <div><dt>Stop</dt><dd>Checkpoint-safe SIGINT</dd></div>
+            </dl>
+            <p class="agent-note">Agent pairing codes are issued separately from browser codes. JAX/TPU uses the managed heterogeneous Miner workflow.</p>
+          </div>
+        </div>
+
+        <aside class="boundary-panel" aria-label="Contribution boundaries">
+          <div class="snapshot-heading">
+            <span>Live Campaign</span>
+            <strong id="campaign-progress">- / - rounds</strong>
+          </div>
+          <div class="snapshot-track"><span id="snapshot-fill"></span></div>
+          <dl class="live-counts">
+            <div><dt>Training updates</dt><dd id="training-updates">-</dd></div>
+            <div><dt>Browser tasks</dt><dd id="browser-tasks">-</dd></div>
+            <div><dt>Adapter</dt><dd id="adapter-version">-</dd></div>
+          </dl>
+
+          <div class="boundary-list">
+            <h2>Browser task boundary</h2>
+            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>Worker-isolated compute</span></div>
+            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>Server-recomputed result</span></div>
+            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>Short-lived scoped credential</span></div>
+            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>No model weights or private data</span></div>
+            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>Not browser LoRA training</span></div>
+            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>Not large-model WebGPU sharding</span></div>
+          </div>
+
+          <p class="privacy-line">The code and Cell credential stay in this tab. Public status contains aggregate counters only.</p>
+        </aside>
+      </section>
+    </main>
+
+    <footer>
+      <span>CrowdTensor One-Click Contributor Beta</span>
+      <a href="https://github.com/Ffffffffchopin/CrowdTensor">Source</a>
+      <a href="https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=beta_enrollment.yml">Request access</a>
+    </footer>
+  </body>
+</html>

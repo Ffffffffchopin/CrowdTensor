@@ -4,6 +4,8 @@ The CrowdTensor website is packaged with the Volunteer Coordinator. The same
 HTTPS origin serves:
 
 - `/` for the project website;
+- `/join` for the browser and native-Agent contributor entry;
+- `/downloads/*` for hash-bound release artifacts;
 - `/v1/volunteer/public-snapshot` for public Campaign progress;
 - `/v1/volunteer/dashboard` for detailed public metrics;
 - authenticated `/v1/volunteer/*` routes for contributor work.
@@ -24,8 +26,8 @@ presented as the final large-model Campaign or as evidence of useful model
 quality improvement.
 
 The website's access request opens the public-safe Founding Beta enrollment
-Issue Form. Maintainers send approved invites through a separate private
-channel; no invite or issued credential belongs in a GitHub issue. The 7B card
+Issue Form. Maintainers send approved one-time pairing codes through a separate
+private channel; no code or issued credential belongs in a GitHub issue. The 7B card
 links to the Draft [Qwen2.5-7B GSM8K Campaign RFC](campaigns/qwen25-7b-gsm8k-rfc.md).
 
 ## Prepare A Campaign
@@ -58,6 +60,7 @@ CROWDTENSOR_SITE_DOMAIN=train.example.org
 CROWDTENSOR_SITE_PORT=8789
 CROWDTENSOR_PROXY_ID=replace-with-a-private-random-value
 CROWDTENSOR_PYTHON=/opt/crowdtensor/.venv/bin/python
+CROWDTENSOR_PUBLIC_RELEASE_DIR=/var/lib/crowdtensor/releases/one-click-0.2.0rc6
 ```
 
 The Coordinator binds only to `127.0.0.1`. Its TLS policy rejects direct HTTP
@@ -75,6 +78,8 @@ After startup, verify:
 
 ```bash
 curl -I "https://${CROWDTENSOR_SITE_DOMAIN}/"
+curl -I "https://${CROWDTENSOR_SITE_DOMAIN}/join"
+curl -fS -o /dev/null "https://${CROWDTENSOR_SITE_DOMAIN}/downloads/crowdtensord-0.2.0rc6-py3-none-any.whl"
 curl "https://${CROWDTENSOR_SITE_DOMAIN}/v1/volunteer/health"
 curl "https://${CROWDTENSOR_SITE_DOMAIN}/v1/volunteer/public-snapshot"
 ```
@@ -85,8 +90,18 @@ data, token IDs, tensor values, or private paths.
 
 ## Opening Enrollment
 
-Do not publish the invite. Review a contributor, transmit the mode-0600 invite
-privately, and keep the public website limited to aggregate status. Before a
+Do not publish pairing codes. Review a contributor, create a code locally, and
+transmit it through a private channel:
+
+```bash
+crowdtensor volunteer pair-code "$CROWDTENSOR_CAMPAIGN_DIR" --mode browser
+crowdtensor volunteer pair-code "$CROWDTENSOR_CAMPAIGN_DIR" --mode agent
+```
+
+Codes are single-use and their plaintext is never persisted by the
+Coordinator. The browser task is a verified scheduler calibration and does not
+update the model; native Agents perform LoRA work. Keep the public website
+limited to aggregate status. Before a
 large 7B or pretraining Campaign opens, approve its model and dataset licenses,
 evaluation suite, update bounds, moderation owner, rollback plan, and public
 decision log through the Campaign proposal process.

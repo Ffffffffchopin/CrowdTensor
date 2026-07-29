@@ -99,9 +99,14 @@ def test_http_routes_authenticate_binary_submission_and_remove_upload(tmp_path) 
 def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     client = TestClient(create_volunteer_training_app(StubCoordinator(tmp_path)))
     home = client.get("/")
+    join = client.get("/join")
     assert home.status_code == 200
     assert client.head("/").status_code == 200
     assert "Train a model together" in home.text
+    assert join.status_code == 200
+    assert "Contribute from this device" in join.text
+    assert "Not large-model WebGPU sharding" in join.text
+    assert client.head("/join").status_code == 200
     assert "/v1/volunteer/public-snapshot" not in home.text
     assert "issues/new?template=beta_enrollment.yml" in home.text
     assert "docs/campaigns/qwen25-7b-gsm8k-rfc.md" in home.text
@@ -109,6 +114,8 @@ def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     assert "default-src 'self'" in home.headers["content-security-policy"]
     site_css = client.get("/assets/site.css")
     site_script = client.get("/assets/site.js")
+    join_script = client.get("/assets/join.js")
+    join_worker = client.get("/assets/join_worker.js")
     hero = client.get("/assets/hero-dashboard.png")
     favicon = client.get("/favicon.ico")
     assert site_css.status_code == 200
@@ -116,6 +123,12 @@ def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     assert "gradient" not in site_css.text
     assert site_script.status_code == 200
     assert "/v1/volunteer/public-snapshot" in site_script.text
+    assert join_script.status_code == 200
+    assert "/v1/volunteer/pairing/redeem" in join_script.text
+    assert "/v1/volunteer/browser/submit" in join_script.text
+    assert join_worker.status_code == 200
+    assert "requestAdapter" in join_worker.text
+    assert "WebAssembly.instantiate" in join_worker.text
     assert hero.status_code == 200
     assert hero.headers["content-type"] == "image/png"
     assert hero.content.startswith(b"\x89PNG\r\n\x1a\n")

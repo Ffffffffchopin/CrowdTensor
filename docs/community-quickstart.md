@@ -4,17 +4,27 @@ CrowdTensor Community RC has one owner workflow. It is a controlled
 heterogeneous LoRA system, not permissionless training and not a production
 SLA.
 
-## Install
+## Contribute In Three Steps
 
-Use Python 3.11 or 3.12 in an isolated environment:
+1. Receive a one-time `browser` or `agent` pairing code from the Campaign
+   Operator.
+2. Open `https://crowdtensor.24.199.118.54.nip.io/join`, or install and join a
+   native Cell with the command shown there.
+3. Wait for the Coordinator to accept the bounded task or LoRA update, then
+   leave safely.
+
+Browser calibration is verified auxiliary work and never changes the model.
+Use the native Agent for real CPU/CUDA LoRA training.
+
+## Install A Native Agent
+
+Use Python 3.11 or 3.12:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install 'crowdtensord[hf,storage]==0.2.0rc1'
+curl -fsSL https://crowdtensor.24.199.118.54.nip.io/downloads/install-contributor.sh | sh -s -- https://crowdtensor.24.199.118.54.nip.io CT-XXXX-XXXX-XXXX
 ```
 
-For a source checkout, replace the last command with
+For a source checkout, replace the install command with
 `python -m pip install '.[dev,hf,storage]'`.
 
 ## Owner Workflow
@@ -54,7 +64,9 @@ TLS, DNS, NAT traversal, or a durable tunnel.
 
 - Qwen2.5-7B remains the pinned heterogeneous production family.
 - SmolLM2-135M is the second adapter family and live validation model.
-- CPU, CUDA, and optional JAX TPU are explicit Provider capabilities.
+- CPU and CUDA are supported by the one-click Volunteer Agent.
+- Optional JAX TPU is an explicit Provider capability in the managed
+  heterogeneous-stage Miner workflow, not the one-click Agent.
 - Kaggle Kernels are logical nodes in retained validation. They are not proof
   of independent physical multi-machine operation.
 - Only PEFT LoRA is supported. Full-parameter training, data parallelism,
