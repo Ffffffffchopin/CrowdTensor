@@ -211,7 +211,7 @@ def build_release(
     screenshot = output / "one_click_browser_e2e.png"
     shutil.copy2(root / "scripts" / "install_contributor.sh", installer)
     installer.chmod(0o755)
-    shutil.copy2(root / "docs" / "releases" / "one-click-contributor-beta-rc6.md", notes)
+    shutil.copy2(root / "docs" / "releases" / "one-click-contributor-beta-rc7.md", notes)
     shutil.copy2(e2e_path, evidence)
     screenshot_source = e2e_path.parent / str((e2e.get("browser") or {}).get("screenshot_file") or "")
     if not screenshot_source.is_file() or _hash(screenshot_source) != (
@@ -235,7 +235,7 @@ def build_release(
     manifest: dict[str, Any] = {
         "schema": MANIFEST_SCHEMA,
         "package_version": __version__,
-        "release_name": "CrowdTensor One-Click Contributor Beta RC6",
+        "release_name": "CrowdTensor One-Click Contributor Beta RC7",
         "artifacts": artifacts,
         "wheel_contract": wheel_contract,
         "clean_install": clean_install,

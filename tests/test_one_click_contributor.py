@@ -254,7 +254,7 @@ def test_installer_selects_bounded_cpu_runtime_without_storage_extra() -> None:
     script = (
         Path(__file__).resolve().parents[1] / "scripts" / "install_contributor.sh"
     ).read_text(encoding="utf-8")
-    assert 'VERSION="0.2.0rc6"' in script
+    assert 'VERSION="0.2.0rc7"' in script
     assert "https://download.pytorch.org/whl/cpu" in script
     assert 'TORCH_VERSION="${CROWDTENSOR_TORCH_VERSION:-2.11.0}"' in script
     assert "command -v nvidia-smi" in script

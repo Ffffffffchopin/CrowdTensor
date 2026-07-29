@@ -5,7 +5,7 @@
 | Surface | Supported | Rejection policy |
 | --- | --- | --- |
 | Python | 3.11, 3.12 | other versions unsupported |
-| Package | `0.2.0rc6` | semantic version recorded in every release manifest |
+| Package | `0.2.0rc7` | semantic version recorded in every release manifest |
 | Community protocol | `community_training_v1.0` | family/major mismatch and newer minor rejected |
 | Model Adapter API | `model_adapter_v1.0` | unknown adapter fails closed |
 | Model Adapter plugins | `crowdtensor.model_adapters.v1`; official `mistral_lora_v1` Beta | invalid metadata, shadowing, name mismatch, or failed conformance rejects discovery |

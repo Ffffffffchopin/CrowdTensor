@@ -60,7 +60,7 @@ CROWDTENSOR_SITE_DOMAIN=train.example.org
 CROWDTENSOR_SITE_PORT=8789
 CROWDTENSOR_PROXY_ID=replace-with-a-private-random-value
 CROWDTENSOR_PYTHON=/opt/crowdtensor/.venv/bin/python
-CROWDTENSOR_PUBLIC_RELEASE_DIR=/var/lib/crowdtensor/releases/one-click-0.2.0rc6
+CROWDTENSOR_PUBLIC_RELEASE_DIR=/var/lib/crowdtensor/releases/one-click-0.2.0rc7
 ```
 
 The Coordinator binds only to `127.0.0.1`. Its TLS policy rejects direct HTTP
@@ -79,7 +79,7 @@ After startup, verify:
 ```bash
 curl -I "https://${CROWDTENSOR_SITE_DOMAIN}/"
 curl -I "https://${CROWDTENSOR_SITE_DOMAIN}/join"
-curl -fS -o /dev/null "https://${CROWDTENSOR_SITE_DOMAIN}/downloads/crowdtensord-0.2.0rc6-py3-none-any.whl"
+curl -fS -o /dev/null "https://${CROWDTENSOR_SITE_DOMAIN}/downloads/crowdtensord-0.2.0rc7-py3-none-any.whl"
 curl "https://${CROWDTENSOR_SITE_DOMAIN}/v1/volunteer/health"
 curl "https://${CROWDTENSOR_SITE_DOMAIN}/v1/volunteer/public-snapshot"
 ```

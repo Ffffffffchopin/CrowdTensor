@@ -12,7 +12,10 @@ from typing import Any
 from crowdtensor.community_security import scan_public_value
 from crowdtensor.model_adapter import stable_hash
 from crowdtensor.version import __version__
-from scripts.one_click_contributor_release_pack import MANIFEST_SCHEMA, SCHEMA
+if __package__:
+    from .one_click_contributor_release_pack import MANIFEST_SCHEMA, SCHEMA
+else:
+    from one_click_contributor_release_pack import MANIFEST_SCHEMA, SCHEMA
 
 
 def _hash(path: Path) -> str:

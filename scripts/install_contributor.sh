@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="0.2.0rc6"
+VERSION="0.2.0rc7"
 COORDINATOR_URL="${1:-https://crowdtensor.24.199.118.54.nip.io}"
 PAIRING_CODE="${2:-${CROWDTENSOR_PAIRING_CODE:-}}"
 WHEEL_URL="${CROWDTENSOR_WHEEL_URL:-${COORDINATOR_URL%/}/downloads/crowdtensord-${VERSION}-py3-none-any.whl}"

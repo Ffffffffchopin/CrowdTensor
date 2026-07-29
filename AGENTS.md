@@ -3,14 +3,14 @@
 Current superseding contributor-onboarding status on 2026-07-29: the
 CrowdTensor One-Click Contributor Beta RC is achieved and deployed. The
 canonical self-contained report is
-`dist/one-click-contributor-beta-rc6/one_click_contributor_release_rc.json`;
+`dist/one-click-contributor-beta-rc7/one_click_contributor_release_rc.json`;
 file SHA-256 is
-`24a635bab24a29e11c6763e6004038ca00de0d58581aac0b1c6b46696d8a3bd1`
+`d163ca87b65512e2d45414daffa1a52d947c51315a644306810c5456414a2dc5`
 and content hash is
-`sha256:f5a9130e061382dcfc102f77f51ea2aa14677be10bddd3321b6df3ed87a5ab78`.
+`sha256:e1e431b001c31a2d952ae8942f591c0b4e0ce988accee271259ba3ad885b6e01`.
 The strict checker passes with zero errors and
 `one_click_contributor_beta_ready=true`:
-`PYTHONPATH=. python scripts/one_click_contributor_release_check.py --report dist/one-click-contributor-beta-rc6/one_click_contributor_release_rc.json --require-ready --json`.
+`PYTHONPATH=. python scripts/one_click_contributor_release_check.py --report dist/one-click-contributor-beta-rc7/one_click_contributor_release_rc.json --require-ready --json`.
 
 The public contributor UI is
 `https://crowdtensor.24.199.118.54.nip.io/join`. It has a three-step browser
@@ -34,32 +34,40 @@ stack, omits the unnecessary storage extra, and accepts a Provider-managed
 PyTorch index override for CUDA hosts. RC5 is superseded: its first public live
 install exposed generic PyPI resolving CUDA 13 packages on a CPU host and was
 cleaned before Agent enrollment. Legacy mode-0600 invite files remain
-compatible.
+compatible. RC6 is also superseded: its tag workflow reached and passed E2E,
+wheel/sdist/container build, and pack, then the checker failed before execution
+because direct-script mode imported the un-packaged `scripts` namespace. RC7
+supports both direct-script and module imports; a clean editable-install
+reproduction passes without relying on that namespace being packaged.
 
 The immutable release wheel is
-`crowdtensord-0.2.0rc6-py3-none-any.whl`, SHA-256
-`b42978e5982e1f4bf055adc6a6fd8d52ec831f5a654bdb77e2b01efabe9ec5f9`.
+`crowdtensord-0.2.0rc7-py3-none-any.whl`, SHA-256
+`6f3afb5e7e63884275800c84c0671350f0757b31d22ab48516a736287ac3eda6`.
 The release bundle SHA-256 is
-`3f59fb7e72b7e210999a7066b12fbb383e402df954fe46eefda6a38a46d557b5`.
+`b5928d143ab40d813f4d68607be5da02b9c22bf148d0b70cda4319bfecf31ca3`.
 Wheel/sdist, clean-install golden commands, current-source container build and
 removal, release notes, installer, checksums, browser screenshot, and browser
 plus real PEFT Agent E2E are bound into the RC. The local E2E report SHA-256 is
-`f3c172091a4a9c5db421be6242ddf7e49babd9c7c7820a3ed98bee2c19392e04`.
+`9871d43e431d358eef7375e30240a21b2a5e14328ebb7678200be38ff73c85de`.
 
 The final exact-public-wheel live Agent gate is
-`dist/one-click-live-agent-rc6/live_agent_rc6_gate.json`, SHA-256
-`8733692aacef1de17b3189dd1cd8045f1d833167edd7776fe92d15f06c6b8345`.
-It used the exact public one-line command, installed RC6 outside the workspace,
+`dist/one-click-live-agent-rc7/live_agent_rc7_gate.json`, SHA-256
+`f27348ab7a0a079a470c6d7d49bd2afe8ed8489c164025d7f0708abf00db0b79`.
+It used the exact public one-line command, installed RC7 outside the workspace,
 verified the pinned CPU runtime and loopback status page, submitted one real
-CPU PEFT update, and removed its 1.8 GB temporary environment. The final live
-browser gate is `dist/one-click-live-browser-rc6/live_browser_rc6_gate.json`,
+CPU PEFT update, completed quorum, advanced Adapter/round `v2/2 -> v3/3`, and
+removed its 1.8 GB temporary environment. The final live browser gate is
+`dist/one-click-live-browser-rc7/live_browser_rc7_gate.json`,
 SHA-256
-`bddbeb0cdcb3f872e90ac98d8de9d3835ebd8a20df940e9442cb3a587dabcefd`.
+`99ab7c248afa6308d1c87b6f9211badbf1a6988d29f06642ccf30a05cef334ca`.
 It records one accepted server-recomputed WASM fallback task, zero Adapter
 change, zero console errors, and passing 1440x900 plus 390x844 visual checks.
-Public Campaign status now records five real training updates, 320 tokens,
-three accepted browser tasks, Adapter v2/round 2, and zero active contributors.
-The full suite passes 2,584 tests with two conditional skips.
+Public Campaign status now records six real training updates, 384 tokens,
+four accepted browser tasks, Adapter v3/round 3, and zero active contributors.
+The full implementation suite passed 2,584 tests with two conditional skips
+before the release-only RC7 import fix; RC7 focused regression passes 12 tests,
+the clean direct-script checker reproduction, E2E, container, pack, and strict
+release gates.
 
 Keep the boundary exact. Enrollment remains controlled. Browser work is
 scheduler calibration, not browser LoRA, a model update, or large-model WebGPU
