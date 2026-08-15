@@ -41,7 +41,7 @@ jobs:
           tests/test_model_manifests.py
       - name: Build wheel
         if: matrix.python-version == '3.12'
-        run: python -m build --wheel --no-isolation
+        run: python -m build --wheel
 
   optional-hf:
     runs-on: ubuntu-latest

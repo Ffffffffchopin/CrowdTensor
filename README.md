@@ -116,7 +116,7 @@ New functionality belongs in one of four places:
 python scripts/check_repository.py --json
 python -m compileall -q crowdtensor tests
 python -m pytest -q
-python -m build --wheel --no-isolation
+python -m build --wheel
 ```
 
 Read the [architecture](docs/architecture.md),

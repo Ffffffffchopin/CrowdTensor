@@ -134,5 +134,5 @@ not prove that the model trained.
 python scripts/check_repository.py --json
 crowdtensor release verify ./campaign-release --json
 python -m pytest -q
-python -m build --wheel --no-isolation
+python -m build --wheel
 ```
