@@ -30,6 +30,8 @@ jobs:
           'torch>=2,<3'
       - name: Install release dependencies
         run: python -m pip install -e '.[dev,hf,storage]'
+      - name: Remove packaging metadata before source checks
+        run: rm -rf build crowdtensord.egg-info
       - name: Validate source tree
         run: |
           python scripts/check_repository.py --json

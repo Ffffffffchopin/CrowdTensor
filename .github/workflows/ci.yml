@@ -21,6 +21,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: python -m pip install -e '.[dev]'
+      - name: Remove packaging metadata before source checks
+        run: rm -rf build crowdtensord.egg-info
       - run: python scripts/check_repository.py --json
       - run: python -m compileall -q crowdtensor tests
       - name: Framework-neutral contracts
@@ -55,4 +57,6 @@ jobs:
           --index-url https://download.pytorch.org/whl/cpu
           'torch>=2,<3'
       - run: python -m pip install -e '.[dev,hf,storage]'
+      - name: Remove packaging metadata before source checks
+        run: rm -rf build crowdtensord.egg-info
       - run: python -m pytest -q
