@@ -1,9 +1,0 @@
-{$CROWDTENSOR_SITE_DOMAIN} {
-	encode zstd gzip
-
-	reverse_proxy 127.0.0.1:{$CROWDTENSOR_SITE_PORT:8789} {
-		header_up X-CrowdTensor-Proxy-Id {$CROWDTENSOR_PROXY_ID}
-	}
-
-	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-}

@@ -80,8 +80,8 @@ definitions, sample count, baseline result, candidate result, and checkpoint
 hashes. If the held-out benchmark was not run, the Dashboard and release kit
 must say so.
 
-The current public preview proves a real PEFT protocol and a same-host
-two-Cell workflow. It does not prove physical multi-host execution,
+The retained local gates prove a real PEFT protocol and same-host multi-Cell
+workflows. They do not prove physical multi-host execution,
 permissionless admission, Sybil resistance, Byzantine consensus, secure
 aggregation, poisoning resistance, privacy against the Operator, or a service
 level agreement.
@@ -102,13 +102,13 @@ credentials, private paths, raw data, and tensor values before release.
 
 ## Release Levels
 
-- **Founding preview:** checked proposal, public Dashboard, reproducible
-  same-host two-Cell demo, public-safe evidence, and the achieved Operator Beta.
+- **Founding preview:** checked proposal, optional public Dashboard,
+  reproducible same-host multi-Cell demo, and public-safe evidence.
 - **Formal launch:** all preview requirements plus independently administered
   physical multi-host evidence, a real network route, a completed evaluation
   report, and a reviewed incident/rollback procedure.
 - **Mature community Campaign:** repeated external evidence, maintainer
   rotation, documented dataset governance, and an explicit security review.
 
-The repository's launch checker reports these states separately. A founding
-preview can be shared without implying that the formal launch gate has passed.
+Campaign operators must report these states separately. A founding preview can
+be shared without implying that the formal launch gate has passed.

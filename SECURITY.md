@@ -1,45 +1,30 @@
 # Security Policy
 
-CrowdTensor is a controlled Community RC. It is not a hardened permissionless
-public-internet training network or a production SLA.
+CrowdTensor is an alpha collaborative-training system. It is not a hardened
+permissionless network or a production SLA.
 
-## Reporting Security Issues
+## Reporting
 
-Please report suspected vulnerabilities through GitHub Security Advisories for this repository. If advisories are unavailable, open a minimal public issue that avoids exploit details and asks for a private contact path.
-
-Do not publish working exploit steps, live tokens, private endpoints, or sensitive deployment details in public issues.
+Use GitHub Security Advisories for suspected vulnerabilities. If advisories are
+unavailable, open a minimal public issue asking for a private contact path.
+Do not publish exploit steps, credentials, private endpoints, model data, or
+sensitive deployment details.
 
 ## Supported Versions
 
-Only the current `main` branch and `0.2.0rc1` Community release candidate are
-supported. Long-term support begins only after a future GA policy.
+Security fixes target the current `main` branch and latest published release
+candidate. No LTS commitment exists before GA.
 
-## Current Security Boundaries
+## Scope
 
-The current implementation includes:
+Relevant reports include authentication/scope bypass, replay or stale-work
+acceptance, checkpoint/receipt tampering, unsafe archive extraction, public
+data leakage, quota bypass, and remote code execution in default paths.
 
-- Miner, observer, and admin token gates.
-- Community owner/miner/observer default-deny RBAC.
-- Short-lived rotatable credentials, signed task envelopes, and replay windows.
-- A trusted TLS/reverse-proxy header contract.
-- Optional hashed token configuration.
-- Per-Miner token registry support.
-- Redaction for lease tokens and result idempotency material in public state/event views.
-- Workload-scoped Miner quarantine and operator trust overrides.
-- Restricted worker command/module/file/network/resource policy.
-- Finite/shape/norm anomaly isolation and content-addressed checkpoint repair.
-- Public artifact scanning for credentials, private URLs, paths, text/token IDs,
-  activations, gradients, and tensors.
+Known non-capabilities include Sybil and semantic-poisoning resistance,
+Byzantine consensus, secure aggregation, privacy against the operator,
+permissionless P2P security, billing/reward security, and a hardened public
+deployment profile.
 
-The current implementation does not establish:
-
-- Byzantine fault-tolerant aggregation.
-- Sybil or semantic-poisoning resistance.
-- Secure aggregation, privacy-preserving computation, differential privacy, or
-  trusted execution environments.
-- End-to-end encrypted permissionless P2P transport.
-- Reward, staking, slashing, or payment security.
-- A hardened deployment profile for exposing Coordinator APIs directly to the public internet.
-
-See [docs/threat-model.md](docs/threat-model.md) and
-[docs/security.md](docs/security.md) for boundaries and operational guidance.
+See [the operational boundary](docs/security.md) and
+[threat model](docs/threat-model.md).

@@ -1,7 +1,7 @@
 # RFC 0001: Model Adapter v1
 
-- Status: Accepted for Community RC
-- Compatibility: additive to existing Qwen runtime
+- Status: Accepted and retained in Training Architecture v2
+- Compatibility: versioned plugin contract
 
 ## Decision
 
@@ -9,8 +9,8 @@ Introduce `model_adapter_v1.0` as the only model-family boundary for new
 Community training work. It owns config validation, stage partition/loading,
 LoRA targets, estimates, checkpoint/export, reload, and capability reporting.
 
-Qwen2 migrates behind the adapter without changing its achieved production
-manifest. SmolLM2 is the second family and remains a bounded two-stage path.
+Qwen2 migrated behind the adapter without changing its retained manifest.
+SmolLM2 is the second built-in family and remains the Volunteer PEFT path.
 The additive plugin extension uses the versioned
 `crowdtensor.model_adapters.v1` Python entry-point group. Plugins must expose a
 conformant `ModelAdapter`, cannot shadow built-ins, and carry public
@@ -25,9 +25,9 @@ adapter was rejected because it provides no compatibility or refusal surface.
 
 ## Migration And Rollback
 
-Existing Qwen functions remain callable. Production manifest construction now
-resolves `qwen2_lora_v1`; reverting that one delegation restores the previous
-call path without changing persisted manifests.
+Manifest construction resolves `qwen2_lora_v1`. The former model-specific Qwen
+runtime is archived at Git ref `e332a7b`; it is not an active fallback. Persisted
+v2 projects bind the adapter ID and fail closed if it is unavailable.
 
 External plugin discovery can be disabled without affecting built-ins by
 setting `CROWDTENSOR_DISABLE_MODEL_ADAPTER_PLUGINS=1`.

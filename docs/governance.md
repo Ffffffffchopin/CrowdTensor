@@ -7,8 +7,8 @@ CrowdTensor uses maintainer review and evidence-backed RFCs.
 - Model/Provider additions, protocol changes, security-boundary changes, and
   incompatible artifact schemas require an RFC under `docs/rfcs/`.
 - Small bug fixes and documentation corrections can use ordinary issues/PRs.
-- Release readiness is determined by the strict checker, not maintainer intent
-  or a passing subset of tests.
+- Repository readiness requires the generic boundary check, active test suite,
+  and clean wheel install, not maintainer intent or a passing subset of tests.
 
 Decisions should record alternatives, compatibility, migration, security,
 resource cost, evidence, rollback, and explicit non-goals. Maintainers may

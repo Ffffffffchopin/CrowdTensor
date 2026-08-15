@@ -1,16 +1,12 @@
-"""CrowdTensor collaborative inference and training primitives."""
+"""CrowdTensor collaborative training primitives."""
 
 from .version import __version__
 
 __all__ = [
     "__version__",
-    "audit",
-    "auth",
+    "core",
     "cli",
-    "diloco",
+    "backends",
+    "adapters",
     "model_adapter",
-    "protocol",
-    "state_store",
-    "toy_compute",
-    "validation",
 ]

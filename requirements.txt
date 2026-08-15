@@ -1,1 +1,1 @@
--e .[dev,browser]
+-e .[dev]

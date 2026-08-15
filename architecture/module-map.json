@@ -1,0 +1,64 @@
+{
+  "schema": "crowdtensor_architecture_module_map_v2",
+  "direction": "training_first",
+  "updated_at": "2026-08-15",
+  "rules": [
+    "core code is framework and provider neutral",
+    "model behavior enters through model adapters",
+    "provider lifecycle enters through provider adapters",
+    "numerical execution enters through training backends",
+    "performance techniques are optional plugins",
+    "historical evidence is never a runtime dependency"
+  ],
+  "areas": [
+    {
+      "name": "core",
+      "disposition": "active",
+      "patterns": ["crowdtensor/core/**"]
+    },
+    {
+      "name": "training_backends",
+      "disposition": "active",
+      "patterns": ["crowdtensor/backends/**"]
+    },
+    {
+      "name": "adapters",
+      "disposition": "active",
+      "patterns": ["crowdtensor/adapters/**", "crowdtensor/model_adapter.py"]
+    },
+    {
+      "name": "volunteer_session",
+      "disposition": "active_backend_support",
+      "patterns": [
+        "crowdtensor/volunteer_*.py",
+        "crowdtensor/hf_lora_training.py",
+        "crowdtensor/named_tensor_optimizer.py",
+        "crowdtensor/training_contract.py",
+        "crowdtensor/community_security.py"
+      ]
+    },
+    {
+      "name": "user_surface",
+      "disposition": "active",
+      "patterns": [
+        "crowdtensor/cli.py",
+        "crowdtensor/release.py",
+        "crowdtensor/project_site/**",
+        "crowdtensor/volunteer_dashboard/**"
+      ]
+    },
+    {
+      "name": "compatibility",
+      "disposition": "thin_forwarders_only",
+      "patterns": [
+        "crowdtensor/heterogeneous_training_manifest.py",
+        "crowdtensor/heterogeneous_training_scheduler.py"
+      ]
+    },
+    {
+      "name": "history",
+      "disposition": "git_archive_not_runtime",
+      "patterns": ["architecture/archive-manifest.json", "docs/archive.md", "dist/**"]
+    }
+  ]
+}

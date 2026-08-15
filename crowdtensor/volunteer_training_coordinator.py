@@ -6,6 +6,7 @@ import copy
 import fcntl
 import hmac
 import json
+import math
 import os
 import secrets
 import shutil
@@ -154,6 +155,17 @@ def _deterministic_zip(source: Path, output: Path) -> Path:
     return output
 
 
+def _safe_extract_zip(source: Path, destination: Path) -> None:
+    with zipfile.ZipFile(source) as archive:
+        for info in archive.infolist():
+            path = Path(info.filename)
+            if path.is_absolute() or ".." in path.parts:
+                raise VolunteerProtocolError(
+                    "volunteer_evaluation_model_bundle_unsafe", status_code=400
+                )
+        archive.extractall(destination)
+
+
 class VolunteerTrainingCoordinator:
     """Own the canonical adapter and fence every update to one leased round."""
 
@@ -226,6 +238,13 @@ class VolunteerTrainingCoordinator:
             if not required.exists():
                 raise FileNotFoundError("volunteer campaign fixture artifact is missing")
 
+        heldout_source_value = str(
+            fixture["dataset"].get("private_validation_dataset_path") or ""
+        )
+        heldout_source = Path(heldout_source_value) if heldout_source_value else None
+        if heldout_source is not None and not heldout_source.is_file():
+            raise FileNotFoundError("volunteer campaign held-out dataset is missing")
+
         model_bundle = _deterministic_zip(base_model_source, artifacts_root / "base_model.zip")
         version0 = versions_root / "v000000"
         version0.mkdir(parents=True, exist_ok=True)
@@ -276,6 +295,45 @@ class VolunteerTrainingCoordinator:
             ).split(":", 1)[1][:16]
         )
         local = dict(fixture["local_training"])
+        dtype_bytes = {
+            "float16": 2,
+            "bfloat16": 2,
+            "float32": 4,
+            "float64": 8,
+        }.get(str(fixture["model"].get("dtype") or "").lower(), 4)
+        estimated_weight_bytes = int(fixture["model"]["parameter_count"]) * dtype_bytes
+        recurring_download_bytes = (
+            int(adapter0.stat().st_size)
+            + int(config0.stat().st_size)
+            + max(int(path.stat().st_size) for path in dataset_artifacts.values())
+        )
+        first_download_bytes = int(model_bundle.stat().st_size) + recurring_download_bytes
+        evaluation_dataset_path = ""
+        evaluation_contract: dict[str, Any] | None = None
+        if heldout_source is not None:
+            evaluation_root = private / "evaluation"
+            evaluation_root.mkdir(parents=True, exist_ok=True)
+            heldout_path = evaluation_root / "heldout.jsonl"
+            shutil.copyfile(heldout_source, heldout_path)
+            heldout_path.chmod(0o600)
+            heldout_rows = [
+                line
+                for line in heldout_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if not heldout_rows:
+                raise ValueError("volunteer campaign held-out dataset is empty")
+            evaluation_dataset_path = str(heldout_path)
+            evaluation_contract = {
+                "schema": "crowdtensor_volunteer_evaluation_contract_v1",
+                "metric": "mean_token_cross_entropy",
+                "heldout_dataset_hash": sha256_file(heldout_path),
+                "heldout_sample_count": len(heldout_rows),
+                "baseline_adapter_version": 0,
+                "minimum_loss_reduction": 0.0,
+                "statistical_significance_claimed": False,
+                "raw_examples_public": False,
+            }
         manifest: dict[str, Any] = {
             "schema": CAMPAIGN_SCHEMA,
             "protocol_version": PROTOCOL_VERSION,
@@ -302,6 +360,22 @@ class VolunteerTrainingCoordinator:
                 "sequence_length": int(local["sequence_length"]),
                 "gradient_accumulation": int(local["gradient_accumulation"]),
                 "optimizer_contract": str(local["optimizer_contract"]),
+            },
+            "resource_requirements": {
+                "schema": "crowdtensor_volunteer_resource_requirements_v1",
+                "supported_devices": ["cpu", "cuda"],
+                "first_work_unit_download_bytes": first_download_bytes,
+                "recurring_work_unit_download_bytes": recurring_download_bytes,
+                "minimum_memory_bytes": max(
+                    512 * 1024**2,
+                    estimated_weight_bytes + estimated_weight_bytes // 4,
+                ),
+                "minimum_free_disk_bytes": max(
+                    256 * 1024**2, first_download_bytes * 2
+                ),
+                "local_steps": int(local["local_steps"]),
+                "estimate_only": True,
+                "memory_estimate_basis": "model_dtype_plus_25_percent_overhead",
             },
             "round_policy": {
                 "minimum_quorum": int(minimum_quorum),
@@ -348,6 +422,8 @@ class VolunteerTrainingCoordinator:
             "physical_internet_multi_machine_verified": False,
             "hosted_logical_multi_node_only": False,
         }
+        if evaluation_contract is not None:
+            manifest["evaluation_contract"] = evaluation_contract
         campaign_import = fixture.get("campaign_import")
         model_source = fixture["model"].get("source_provenance")
         dataset_source = fixture["dataset"].get("source_provenance")
@@ -408,6 +484,7 @@ class VolunteerTrainingCoordinator:
             "coordinator_recovery_count": 0,
             "uploaded_delta_bytes": 0,
             "created_at": float(clock()),
+            "evaluation_dataset_path": evaluation_dataset_path,
         }
         migrate_operator_state(state, now=float(clock()))
         cls._register_artifact_in_state(state, "base_model", model_bundle)
@@ -1650,6 +1727,29 @@ class VolunteerTrainingCoordinator:
                     and existing.get("cell_id_hash") == cell_hash
                     and existing.get("work_id") == str(work_id)
                 ):
+                    existing_round = next(
+                        (
+                            item
+                            for item in state.get("rounds") or []
+                            if item.get("round_id") == existing.get("round_id")
+                        ),
+                        {},
+                    )
+                    aggregation = existing_round.get("aggregation") or {}
+                    input_result_ids = list(
+                        aggregation.get("input_result_ids") or []
+                    )
+                    derived_aggregated = bool(
+                        input_result_ids and input_result_ids[-1] == result_id
+                    )
+                    round_aggregated = bool(
+                        existing.get("round_aggregated", derived_aggregated)
+                    )
+                    derived_version = (
+                        int(aggregation.get("adapter_version_after") or 0)
+                        if round_aggregated
+                        else int(existing_round.get("base_adapter_version") or 0)
+                    )
                     return with_public_safety(
                         {
                             "schema": "crowdtensor_volunteer_training_submission_response_v1",
@@ -1658,7 +1758,20 @@ class VolunteerTrainingCoordinator:
                             "idempotent_replay": True,
                             "result_id": result_id,
                             "round_id": existing["round_id"],
-                            "adapter_version_after": int(state["adapter_version"]),
+                            "round_aggregated": round_aggregated,
+                            "adapter_version_after": int(
+                                existing.get(
+                                    "adapter_version_after", derived_version
+                                )
+                            ),
+                            "accepted_at": float(existing["accepted_at"]),
+                            "delta_clipped": bool(existing["delta_clipped"]),
+                            "delta_norm_before_clip": float(
+                                existing["delta_norm_before_clip"]
+                            ),
+                            "delta_norm_after_clip": float(
+                                existing["delta_norm_after_clip"]
+                            ),
                             "campaign_complete": bool(state["campaign_complete"]),
                         }
                     )
@@ -1865,6 +1978,8 @@ class VolunteerTrainingCoordinator:
             ):
                 self._aggregate_round_in_state(state, round_state, now=now)
                 aggregated = True
+            record["round_aggregated"] = aggregated
+            record["adapter_version_after"] = int(state["adapter_version"])
             self._save_state(state)
             self._write_status(state)
             return with_public_safety(
@@ -1881,6 +1996,7 @@ class VolunteerTrainingCoordinator:
                     "delta_norm_after_clip": norm_after,
                     "round_aggregated": aggregated,
                     "adapter_version_after": int(state["adapter_version"]),
+                    "accepted_at": float(record["accepted_at"]),
                     "campaign_complete": bool(state["campaign_complete"]),
                 }
             )
@@ -2069,6 +2185,19 @@ class VolunteerTrainingCoordinator:
                     continue
                 if not path.is_file() or sha256_file(path) != blob_hash:
                     artifact_errors.append("volunteer_campaign_artifact_integrity_failed")
+            evaluation_contract = manifest.get("evaluation_contract")
+            heldout_path = Path(str(state.get("evaluation_dataset_path") or ""))
+            heldout_validated = evaluation_contract is None
+            if isinstance(evaluation_contract, dict):
+                heldout_validated = bool(
+                    heldout_path.is_file()
+                    and sha256_file(heldout_path)
+                    == evaluation_contract.get("heldout_dataset_hash")
+                )
+                if not heldout_validated:
+                    artifact_errors.append(
+                        "volunteer_campaign_heldout_dataset_integrity_failed"
+                    )
             errors = artifact_errors + ([] if ledger.get("ok") else list(ledger["errors"]))
             state["validated_at"] = float(self.clock())
             report = with_public_safety(
@@ -2083,6 +2212,7 @@ class VolunteerTrainingCoordinator:
                     "audit_ledger_validated": ledger.get("ok") is True,
                     "artifact_count": len(state.get("artifact_registry", {})),
                     "content_addressed_artifacts_validated": not artifact_errors,
+                    "heldout_dataset_validated": heldout_validated,
                     "errors": errors,
                 }
             )
@@ -2136,39 +2266,123 @@ class VolunteerTrainingCoordinator:
     def resume_campaign(self, *, invite_token: str) -> dict[str, Any]:
         return self._set_lifecycle(invite_token=invite_token, target="running")
 
-    def evaluate_campaign(self) -> dict[str, Any]:
+    def evaluate_campaign(self, *, heldout_quality: bool = False) -> dict[str, Any]:
         with self._locked_state() as state:
             accepted = list(state.get("submissions", {}).values())
             loss_starts = [float(item.get("loss_start") or 0.0) for item in accepted]
             loss_ends = [float(item.get("loss_end") or 0.0) for item in accepted]
             lineage = self._checkpoint_lineage_from_state(state)
-            report = with_public_safety(
-                {
-                    "schema": "crowdtensor_volunteer_campaign_evaluation_v1",
-                    "ok": lineage.get("ok") is True,
-                    "campaign_id": state["campaign"]["campaign_id"],
-                    "campaign_manifest_hash": state["campaign"]["manifest_hash"],
-                    "adapter_version": int(state["adapter_version"]),
-                    "canonical_adapter_hash": state["current_adapter_hash"],
-                    "accepted_update_count": len(accepted),
-                    "accepted_tokens_seen": sum(
-                        int(item.get("tokens_seen") or 0) for item in accepted
-                    ),
-                    "mean_reported_loss_start": (
-                        sum(loss_starts) / len(loss_starts) if loss_starts else None
-                    ),
-                    "mean_reported_loss_end": (
-                        sum(loss_ends) / len(loss_ends) if loss_ends else None
-                    ),
-                    "checkpoint_lineage_verified": lineage.get("ok") is True,
-                    "completed_round_count": int(lineage["completed_round_count"]),
-                    "evaluation_scope": "aggregated_training_metrics_and_checkpoint_integrity",
-                    "held_out_quality_benchmark_performed": False,
-                }
+            campaign = copy.deepcopy(state["campaign"])
+            adapter_version = int(state["adapter_version"])
+            current_adapter_hash = str(state["current_adapter_hash"])
+            current_adapter_path = Path(str(state["current_adapter_path"]))
+            baseline_adapter_path = self.private / "versions" / "v000000"
+            evaluation_dataset_path = Path(
+                str(state.get("evaluation_dataset_path") or "")
             )
-            report["content_hash"] = sha256_json(report)
-            _atomic_write_json(self.root / "evaluation.json", report, mode=0o644)
-            return report
+            base_model_record = self._artifact_by_kind(state, "base_model")
+        quality: dict[str, Any] | None = None
+        if heldout_quality:
+            contract = campaign.get("evaluation_contract")
+            if not isinstance(contract, dict) or not evaluation_dataset_path.is_file():
+                raise VolunteerProtocolError(
+                    "volunteer_campaign_heldout_evaluation_unavailable", status_code=409
+                )
+            if sha256_file(evaluation_dataset_path) != contract["heldout_dataset_hash"]:
+                raise VolunteerProtocolError(
+                    "volunteer_campaign_heldout_evaluation_changed", status_code=409
+                )
+            model_archive = Path(str(base_model_record["local_path"]))
+            model_root = self.private / "evaluation" / "base-model"
+            lock_path = self.private / "evaluation" / "base-model.lock"
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with lock_path.open("a+b") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    if not (model_root / "config.json").is_file():
+                        temporary = model_root.with_name(
+                            f".{model_root.name}.{secrets.token_hex(4)}.tmp"
+                        )
+                        shutil.rmtree(temporary, ignore_errors=True)
+                        temporary.mkdir(parents=True, exist_ok=True)
+                        _safe_extract_zip(model_archive, temporary)
+                        shutil.rmtree(model_root, ignore_errors=True)
+                        os.replace(temporary, model_root)
+                finally:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            from .hf_lora_training import evaluate_adapter
+
+            indexes = list(range(int(contract["heldout_sample_count"])))
+            baseline = evaluate_adapter(
+                base_model_path=model_root,
+                adapter_path=baseline_adapter_path,
+                dataset_path=evaluation_dataset_path,
+                sample_indexes=indexes,
+            )
+            candidate = evaluate_adapter(
+                base_model_path=model_root,
+                adapter_path=current_adapter_path.parent,
+                dataset_path=evaluation_dataset_path,
+                sample_indexes=indexes,
+            )
+            baseline_loss = float(baseline["mean_loss"])
+            candidate_loss = float(candidate["mean_loss"])
+            if not math.isfinite(baseline_loss) or not math.isfinite(candidate_loss):
+                raise VolunteerProtocolError(
+                    "volunteer_campaign_heldout_evaluation_non_finite", status_code=409
+                )
+            quality = {
+                "metric": contract["metric"],
+                "heldout_dataset_hash": contract["heldout_dataset_hash"],
+                "heldout_sample_count": int(contract["heldout_sample_count"]),
+                "baseline_adapter_version": int(contract["baseline_adapter_version"]),
+                "candidate_adapter_version": adapter_version,
+                "baseline_mean_loss": baseline_loss,
+                "candidate_mean_loss": candidate_loss,
+                "loss_reduction": baseline_loss - candidate_loss,
+                "baseline_perplexity": math.exp(min(80.0, baseline_loss)),
+                "candidate_perplexity": math.exp(min(80.0, candidate_loss)),
+                "baseline_logits_hash": baseline["logits_hash"],
+                "candidate_logits_hash": candidate["logits_hash"],
+                "quality_improvement_verified": candidate_loss < baseline_loss,
+                "statistical_significance_claimed": False,
+            }
+        report = with_public_safety(
+            {
+                "schema": "crowdtensor_volunteer_campaign_evaluation_v1",
+                "ok": lineage.get("ok") is True,
+                "campaign_id": campaign["campaign_id"],
+                "campaign_manifest_hash": campaign["manifest_hash"],
+                "adapter_version": adapter_version,
+                "canonical_adapter_hash": current_adapter_hash,
+                "accepted_update_count": len(accepted),
+                "accepted_tokens_seen": sum(
+                    int(item.get("tokens_seen") or 0) for item in accepted
+                ),
+                "mean_reported_loss_start": (
+                    sum(loss_starts) / len(loss_starts) if loss_starts else None
+                ),
+                "mean_reported_loss_end": (
+                    sum(loss_ends) / len(loss_ends) if loss_ends else None
+                ),
+                "checkpoint_lineage_verified": lineage.get("ok") is True,
+                "completed_round_count": int(lineage["completed_round_count"]),
+                "evaluation_scope": (
+                    "heldout_loss_perplexity_and_checkpoint_integrity"
+                    if quality is not None
+                    else "aggregated_training_metrics_and_checkpoint_integrity"
+                ),
+                "held_out_quality_benchmark_performed": quality is not None,
+                "quality": quality,
+                "quality_improvement_verified": bool(
+                    quality and quality["quality_improvement_verified"]
+                ),
+                "statistical_significance_claimed": False,
+            }
+        )
+        report["content_hash"] = sha256_json(report)
+        _atomic_write_json(self.root / "evaluation.json", report, mode=0o644)
+        return report
 
     def finalize_campaign(
         self, *, invite_token: str, allow_incomplete: bool = False

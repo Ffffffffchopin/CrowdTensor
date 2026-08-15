@@ -70,21 +70,40 @@ def _json_file(path: Path) -> dict[str, Any]:
 
 
 def detect_hardware() -> dict[str, Any]:
+    cuda_memory_total_bytes: list[int] = []
+    cuda_memory_available_bytes: list[int] = []
     try:
         import torch
 
         cuda_available = bool(torch.cuda.is_available())
         cuda_count = int(torch.cuda.device_count()) if cuda_available else 0
         device_names = [torch.cuda.get_device_name(index) for index in range(cuda_count)]
+        for index in range(cuda_count):
+            try:
+                available, total = torch.cuda.mem_get_info(index)
+            except (AttributeError, RuntimeError, TypeError):
+                try:
+                    total = int(torch.cuda.get_device_properties(index).total_memory)
+                except (AttributeError, RuntimeError, TypeError):
+                    total = 0
+                available = total
+            cuda_memory_total_bytes.append(int(total))
+            cuda_memory_available_bytes.append(int(available))
         torch_version = str(torch.__version__)
     except ImportError:
         cuda_available = False
         cuda_count = 0
         device_names = []
+        cuda_memory_total_bytes = []
+        cuda_memory_available_bytes = []
         torch_version = ""
     memory_bytes = 0
+    memory_available_bytes = 0
     try:
         memory_bytes = int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+        memory_available_bytes = int(
+            os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_AVPHYS_PAGES")
+        )
     except (OSError, ValueError):
         pass
     return with_public_safety(
@@ -92,11 +111,14 @@ def detect_hardware() -> dict[str, Any]:
             "schema": "crowdtensor_volunteer_training_hardware_v1",
             "cpu_count": int(os.cpu_count() or 1),
             "memory_bytes": memory_bytes,
+            "memory_available_bytes": memory_available_bytes,
             "cuda_available": cuda_available,
             "cuda_device_count": cuda_count,
             "cuda_device_name_hashes": [
                 sha256_json({"device_name": value}) for value in device_names
             ],
+            "cuda_memory_total_bytes": cuda_memory_total_bytes,
+            "cuda_memory_available_bytes": cuda_memory_available_bytes,
             "torch_version": torch_version,
             "supported_devices": ["cpu"] + (["cuda:0"] if cuda_count else []),
         }
@@ -105,6 +127,8 @@ def detect_hardware() -> dict[str, Any]:
 
 class VolunteerTransport(Protocol):
     def campaign(self) -> dict[str, Any]: ...
+
+    def checkpoint_lineage(self) -> dict[str, Any]: ...
 
     def status(self) -> dict[str, Any]: ...
 
@@ -345,6 +369,22 @@ class HTTPVolunteerTransport:
         )
         return self._response(response)
 
+    def health(self) -> dict[str, Any]:
+        response = httpx.get(
+            self.coordinator_url + "/v1/volunteer/health",
+            headers=self.extra_headers,
+            timeout=self.timeout_seconds,
+        )
+        return self._response(response)
+
+    def checkpoint_lineage(self) -> dict[str, Any]:
+        response = httpx.get(
+            self.coordinator_url + "/v1/volunteer/checkpoint-lineage",
+            headers=self.extra_headers,
+            timeout=self.timeout_seconds,
+        )
+        return self._response(response)
+
     def status(self) -> dict[str, Any]:
         response = httpx.get(
             self.coordinator_url + "/v1/volunteer/status",
@@ -562,6 +602,9 @@ class LocalVolunteerTransport:
 
     def campaign(self) -> dict[str, Any]:
         return self.coordinator.campaign_manifest()
+
+    def checkpoint_lineage(self) -> dict[str, Any]:
+        return self.coordinator.checkpoint_lineage()
 
     def status(self) -> dict[str, Any]:
         return self.coordinator.status(invite_token=self.invite_token)

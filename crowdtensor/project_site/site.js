@@ -23,7 +23,7 @@ function humanizeCampaignId(value) {
     .split(/[-_]+/)
     .filter(Boolean);
   if (!words.length) {
-    return "Founding systems campaign";
+    return "Campaign status";
   }
   return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
 }
@@ -33,7 +33,7 @@ function lifecycleLabel(value, complete) {
     return "Campaign complete";
   }
   const labels = {
-    running: "Coordinator live",
+    running: "Session live",
     paused: "Campaign paused",
     created: "Preparing enrollment",
     finalized: "Campaign finalized",

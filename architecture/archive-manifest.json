@@ -1,0 +1,112 @@
+{
+  "schema": "crowdtensor_repository_archive_manifest_v1",
+  "archive_ref": "e332a7b",
+  "direction": "training_first_v2",
+  "purpose": "Keep the active repository small while preserving historical implementations in Git history.",
+  "active_roots": [
+    "crowdtensor/core/**",
+    "crowdtensor/backends/**",
+    "crowdtensor/adapters/**",
+    "crowdtensor/model_adapter.py",
+    "crowdtensor/community_security.py",
+    "crowdtensor/hf_lora_training.py",
+    "crowdtensor/named_tensor_optimizer.py",
+    "crowdtensor/training_contract.py",
+    "crowdtensor/volunteer_*.py",
+    "crowdtensor/cli.py",
+    "crowdtensor/version.py",
+    "crowdtensor/project_site/**",
+    "crowdtensor/volunteer_dashboard/**",
+    "scripts/check_repository.py",
+    "scripts/install_contributor.sh"
+  ],
+  "compatibility_bridges": [
+    "crowdtensor/heterogeneous_training_manifest.py",
+    "crowdtensor/heterogeneous_training_scheduler.py"
+  ],
+  "archived_categories": [
+    {
+      "name": "legacy_inference_and_p2p",
+      "patterns": [
+        "crowdtensor/p2p_lite.py",
+        "crowdtensor/real_p2p.py",
+        "crowdtensor/real_llm.py",
+        "crowdtensor/external_llm.py",
+        "crowdtensor/large_model_*.py",
+        "web/**",
+        "site/**",
+        "deploy/**",
+        "examples/**"
+      ]
+    },
+    {
+      "name": "model_specific_and_provider_experiments",
+      "patterns": [
+        "crowdtensor/glm*.py",
+        "crowdtensor/qwen*.py",
+        "crowdtensor/heterogeneous_jax_qwen_training.py",
+        "crowdtensor/heterogeneous_qwen_*.py",
+        "crowdtensor/heterogeneous_training_beta.py",
+        "crowdtensor/heterogeneous_training_production.py",
+        "crowdtensor/heterogeneous_training_miner.py",
+        "crowdtensor/heterogeneous_tensor_transport.py",
+        "crowdtensor/heterogeneous_training_checkpoint.py",
+        "crowdtensor/elastic_training_*.py",
+        "crowdtensor/training_qwen*.py",
+        "crowdtensor/pipeline_lora_training.py",
+        "crowdtensor/adapter_stage_training.py"
+      ]
+    },
+    {
+      "name": "historical_community_runtime_locks",
+      "patterns": [
+        "requirements/**"
+      ]
+    },
+    {
+      "name": "hosted_community_coordinator",
+      "patterns": [
+        "crowdtensor/community_*.py"
+      ],
+      "exception": [
+        "crowdtensor/community_security.py"
+      ]
+    },
+    {
+      "name": "historical_milestone_automation",
+      "patterns": [
+        "scripts/**"
+      ],
+      "exception": [
+        "scripts/check_repository.py",
+        "scripts/install_contributor.sh"
+      ]
+    },
+    {
+      "name": "historical_release_and_runbook_docs",
+      "patterns": [
+        "docs/releases/**",
+        "docs/project-memory.md",
+        "docs/operations.md",
+        "docs/remote-miner.md",
+        "docs/glm52-kaggle-alpha.md",
+        "docs/kaggle-tpu-v5e8-runbook.md",
+        "docs/training-foundation.md",
+        "docs/api.md"
+      ]
+    }
+  ],
+  "historical_evidence": {
+    "source_of_truth": "Git history at archive_ref and later release tags",
+    "ignored_local_evidence": "dist/** is local evidence, never an import or runtime dependency",
+    "restore_policy": "Restore a historical implementation in a separate branch or worktree; do not reintroduce it into the active CLI implicitly."
+  },
+  "generated_artifact_policy": {
+    "must_be_absent_before_release": [
+      "build/**",
+      "*.egg-info/**"
+    ],
+    "reason": "Stale setuptools build trees can silently repackage archived modules."
+  },
+  "public_artifact_safe": true
+}

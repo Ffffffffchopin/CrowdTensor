@@ -163,6 +163,24 @@ def _fixture_rows(*, row_count: int, sequence_length: int, vocab_size: int) -> l
     return rows
 
 
+def _fixture_validation_rows(
+    *, row_count: int, sequence_length: int, vocab_size: int
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index in range(row_count):
+        phase = index % 4
+        tokens = [1]
+        for position in range(sequence_length - 2):
+            tokens.append(
+                3 + (((sequence_length - position - 1) + phase) % min(8, vocab_size - 3))
+            )
+        tokens.append(2)
+        rows.append(
+            {"sample_id": f"validation-{index:04d}", "input_ids": tokens}
+        )
+    return rows
+
+
 def create_local_training_fixture(
     output_dir: str | Path,
     *,
@@ -184,6 +202,7 @@ def create_local_training_fixture(
     model_dir = root / "base_model"
     initial_adapter_dir = root / "initial_adapter"
     dataset_path = root / "private_dataset.jsonl"
+    validation_path = root / "private_validation_dataset.jsonl"
 
     config = LlamaConfig(
         vocab_size=64,
@@ -226,6 +245,15 @@ def create_local_training_fixture(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
         encoding="utf-8",
     )
+    validation_rows = _fixture_validation_rows(
+        row_count=max(4, min(8, row_count // 2)),
+        sequence_length=sequence_length,
+        vocab_size=config.vocab_size,
+    )
+    validation_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in validation_rows),
+        encoding="utf-8",
+    )
     shard_indexes = [list(range(0, row_count, 2)), list(range(1, row_count, 2))]
     shard_manifests: list[dict[str, Any]] = []
     for shard_index, indexes in enumerate(shard_indexes):
@@ -253,8 +281,11 @@ def create_local_training_fixture(
         "shard_count": 2,
         "shards": shard_manifests,
         "dataset_file_hash": sha256_file(dataset_path),
+        "validation_file_hash": sha256_file(validation_path),
+        "validation_sample_count": len(validation_rows),
         "raw_text_public": False,
         "private_dataset_path": str(dataset_path),
+        "private_validation_dataset_path": str(validation_path),
     }
     dataset_manifest["manifest_hash"] = sha256_json(
         {key: value for key, value in dataset_manifest.items() if not key.endswith("_path")}

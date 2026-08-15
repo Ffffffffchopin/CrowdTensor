@@ -1,483 +1,138 @@
 # Quickstart
 
-This guide gets you from a fresh checkout to a local CrowdTensor swarm proof.
-It uses the current Public Real-LLM Swarm Inference Beta: a small real Hugging
-Face GPT model split across two stage Miners behind a Coordinator-backed route.
+## Install
 
-CrowdTensor is still an engineering beta. The commands below are for controlled
-local or trusted-network experiments, not production public serving.
-
-## 1. Install
-
-Use Python 3.11 or newer.
+Python 3.11 or 3.12 is supported.
 
 ```bash
-git clone https://github.com/Ffffffffchopin/CrowdTensor.git
-cd CrowdTensor
-
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -e '.[dev,hf]'
-```
-
-Check that the CLI is available:
-
-```bash
-crowdtensor --help
-crowdtensord --help
-crowdtensor-miner --help
-```
-
-If you do not want Hugging Face dependencies yet, install only the local CPU
-path:
-
-```bash
 python -m pip install -e '.[dev]'
+crowdtensor --help
 ```
 
-## 2. Run A Fast Local Proof
+Install `.[hf]` for real PEFT work and `.[storage]` for S3-compatible uploads.
+Do not install accelerator frameworks globally.
 
-The fastest confidence check is the one-command local proof:
+## Create A Workspace
+
+This does not download a model:
 
 ```bash
-crowdtensor local-proof --json
+crowdtensor train init ./project \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --model-revision a09a35458c702b33eeacc393d103063234e8bc28 \
+  --dataset openai/gsm8k \
+  --dataset-revision 740312add88f781978c0658806c59bc2815b9866 \
+  --model-adapter qwen2_lora_v1 \
+  --mode elastic-delta \
+  --target-steps 100
+
+crowdtensor train inspect ./project --json
+crowdtensor train backends --json
+crowdtensor adapters list --json
 ```
 
-It chains local diagnostics, runtime capability checks, CPU-only inference, and
-a demo manifest. This does not require public networking.
+`pause`, `resume`, `status`, and `export` operate only on the small control
+workspace. Export excludes weights, credentials, and private paths.
 
-For the CPU-only inference aggregate:
+## Local Volunteer PEFT
+
+Install the optional model stack first:
 
 ```bash
-crowdtensor cpu-infer --mode local --json
+python -m pip install -e '.[hf]'
 ```
 
-## 3. Run User-Friendly Swarm Inference
-
-With `[hf]` installed, the shortest user-facing inference path is:
+Create a tiny local evaluation Campaign:
 
 ```bash
-crowdtensor infer "CrowdTensor routes small models across home compute"
+crowdtensor volunteer campaign create-local ./campaign \
+  --target-rounds 1 --local-steps 1
 ```
 
-It starts the fast local product loopback route, runs tiny GPT split inference,
-prints the local display-only generated text, and writes a compact
-`infer_summary.json` plus a safe `infer_summary.md` under `dist/infer`. JSON
-mode, Markdown, and saved reports keep raw prompts and generated text redacted.
-Use `--full-evidence` when you want the broader Public Swarm v2 gate instead
-of the faster user path.
-Default local `infer` auto-selects an available loopback Coordinator port so
-nearby local smoke runs do not collide; pass `--coordinator-port` only when you
-need a fixed reproducible local port.
-
-For machine-readable output:
+Start the user-owned Session in one terminal:
 
 ```bash
-crowdtensor infer \
-  "CrowdTensor routes small models across home compute" \
-  --max-new-tokens 8 \
-  --json
+python -m build
+crowdtensor release prepare ./campaign-release
+
+crowdtensor train run ./operator \
+  --campaign-dir ./campaign \
+  --release-dir ./campaign-release
 ```
 
-`crowdtensor infer --mode existing` can target an already running Coordinator or
-P2P-discovered swarm with `--coordinator-url` or `--peer-bootstrap`.
-Add `--dry-run` to check the route and session metadata before submitting a
-real inference request; it also checks the Coordinator `/ready` endpoint. Pass
-`--observer-token "$CROWDTENSOR_OBSERVER_TOKEN"` when you want the dry run to
-read `/state` and verify visible stage0/stage1 Miner capabilities.
-Use `--prompt-texts "first prompt,second prompt"` for a bounded local batch;
-human output prints each result separately while JSON reports keep raw text
-redacted. In human mode, the terminal prints `answer_scope` so the answer
-display state is explicit: whether any answer text is visible in the terminal
-and whether saved JSON/Markdown stay hash-only. When generated text is
-available, the terminal prints it as `answer:` or `answer[n]:` before
-`answer_scope` and `local_output` safety metadata; when no local answer text is
-available, the terminal still prints `answer_scope=no-local-answer`.
-Start with the `verdict` line when you only need the user-facing conclusion:
-completed/preflight/blocked state, answer scope, terminal answer visibility,
-shareable artifact safety, evidence level, GPU state, `fresh_kaggle_gpu`, and
-next step. Saved JSON/Markdown recompute `inference_verdict` after local answer
-redaction, so a shareable artifact says `answer_visible=False` and
-`answer=saved-terminal-redacted` when terminal text was shown locally but
-removed from the saved report.
-`answer_scope.scope_state` uses stable values such as `terminal-visible`,
-`saved-terminal-redacted`, `shareable-terminal-redacted`, `json-suppressed`,
-and `no-local-answer`; the
-Markdown `What To Do Next` and `Details` sections repeat that saved JSON and
-Markdown contain no generated text. The adjacent `answer_scope_note` and
-`output_display_note` terminal lines spell out the same answer-display and
-artifact-redaction policy in plain text. Public inference evidence Markdown
-also includes `output request note`, `prompt scope note`, and
-`answer scope note` lines in `Output Scope`, so shared reports explain why
-artifacts contain evidence, hashes, counts, and diagnostics instead of raw
-prompts or answer transcripts. `local_output`
-adds safe output `count` and `source` fields such as
-`local-private-task-state` or `coordinator-validation`. JSON mode can still
-report completed generation through `json-suppressed` plus redacted
-`local_output` metadata such as `saved_redacted=True count=N`; that means
-output exists, but the raw answer is intentionally hidden from machine-readable
-stdout and saved artifacts. Use non-JSON human mode when you need a local
-terminal answer.
-Pick one prompt source per command: positional prompt,
-`--prompt-text`/`--prompt`, `--prompt-file prompt.txt` for a UTF-8 single
-prompt file, `--prompt-stdin` for an explicit stdin single prompt, or
-`--prompt-texts` for a bounded comma-separated batch. Use
-`--prompt-texts-file prompts.txt` for a UTF-8 batch file with one prompt per
-non-empty line. Single prompts are capped at 256 characters; batch files accept
-up to 4 non-empty prompt lines. The CLI rejects mixed prompt sources instead of
-guessing. Reports expose `output_request.include_output` while keeping
-`output_request.raw_generated_text_public` false in JSON and saved artifacts;
-read the Markdown `Output Scope` section first when deciding whether a report is
-shareable. Its `output request note`, `prompt scope note`, and
-`answer scope note` explain why the artifact contains evidence, hashes, counts,
-and diagnostics instead of raw prompts or answer transcripts.
-Reports also include `prompt_scope`: a machine-readable summary of the prompt
-source (`prompt-text`, `prompt-file`, `prompt-stdin`, `prompt-texts`, or
-`prompt-texts-file`), prompt count, whether terminal next commands are
-local-private, whether terminal next commands contain local prompt file paths,
-and whether saved artifacts use placeholders. `prompt_scope` does not contain
-raw prompt text.
-Read `evidence_scope` when you need the shortest answer to what actually ran.
-For `infer`, `local-cpu-loopback` means the fast local CPU product path ran,
-`local-full-evidence` means the broader local evidence gate ran, and
-`existing-runtime-preflight` / `existing-runtime-submit` means the command
-checked or used an already running Coordinator or P2P-discovered route. For
-`generate`, `existing-runtime-preflight` is a request-shape/readiness check
-without submitting work, `existing-runtime-submit` submitted to an existing
-Coordinator, and `p2p-runtime-*` came through discovery. `retained_gpu=True`
-means imported historical GPU evidence was referenced; only
-`fresh_kaggle_gpu=True` means this run verified a fresh Kaggle GPU proof;
-`fresh_kaggle_gpu_attempted=True` without `fresh_kaggle_gpu=True` means an
-attempted GPU path did not verify.
-The adjacent `evidence_scope_note` terminal line and Markdown note spell out the
-same scope in plain text, for example that a `generate --dry-run` was only a
-preflight and submitted no generation task.
-The `gpu_status` terminal/Markdown line is the fastest direct answer to the GPU
-question: `local-cpu-only` means local CPU inference, `local-gpu-smoke-only`
-means only local/CI GPU smoke evidence, `retained-gpu-evidence` means imported
-historical GPU evidence, and only `fresh-kaggle-gpu-verified` means a fresh
-Kaggle GPU proof was verified.
-The current default quick-start inference path is local CPU / local loopback,
-not a fresh Kaggle GPU run.
+Contribute one bounded Work Unit in another terminal:
 
 ```bash
-crowdtensor infer --prompt-file prompt.txt --max-new-tokens 8
-echo "your prompt" | crowdtensor infer --prompt-stdin --max-new-tokens 8
-crowdtensor infer --prompt-texts-file prompts.txt --max-new-tokens 8 --stream
-crowdtensor generate --prompt-file prompt.txt --coordinator-url http://127.0.0.1:8787 --dry-run
-echo "your prompt" | crowdtensor generate --prompt-stdin --coordinator-url http://127.0.0.1:8787 --dry-run
-crowdtensor generate --prompt-texts-file prompts.txt --coordinator-url http://127.0.0.1:8787 --dry-run
+crowdtensor train join ./contributor \
+  --invite ./campaign/.private/volunteer_invite.json \
+  --device cpu --max-local-steps 1 --max-work-units 1
 ```
 
-Existing-swarm reports include `wait_progress` with poll count, accepted rows,
-endpoint readiness, observed token progress, batch request progress, and safe
-last-error type for timeout debugging; `infer` and `generate` turn that progress
-into a concrete `operator_action`.
-Live and summary stream progress use safe request ids or hash prefixes, include
-per-request token/target progress for bounded batch streams, mark missing stream
-slots, print `stream_issue` when a request is missing or incomplete, and print
-`recommended_next` plus `next[...]` lines with safe, copyable follow-up commands.
-The adjacent `runtime_options` line records safe wait/retry controls:
-`timeout_seconds`, `poll_interval`, `http_timeout`, and
-`admin_results_limit`. Timeout retry commands preserve non-default
-poll/http/result-limit values while only extending `--timeout-seconds`, so slow
-remote swarms stay debuggable without exposing prompts, generated text,
-credentials, or tokens.
-The `trace` line and JSON/Markdown `trace` object summarize session id,
-requests, accepted ledger rows, stream event count, and safe
-per-request ids or prompt hashes. It never exposes raw prompts, generated text,
-generated token ids, credentials, or activations.
-The `result` line and JSON/Markdown `result` object summarize completion state,
-token count, output count, generated-text hash, and display safety:
-`local-private` for terminal-only generated text, `hash-only` for redacted
-summaries, `hash-only-json` for JSON stdout, `saved-terminal-redacted` when
-saved artifacts record that terminal text was removed, and
-`shareable-terminal-redacted` when `--shareable-terminal` also hid that answer
-from terminal output. These states do not expose generated text in shareable
-artifacts.
-The `issue` line and JSON/Markdown `issue_summary` object condense the current
-state, primary diagnosis code, next step, safe progress text, and whether a
-redacted detail is available, so blocked or timeout runs have one place to read
-first.
-The `artifacts` line and JSON/Markdown `artifact_summary` object point to the
-first Markdown summary to inspect, list the redacted JSON/Markdown paths, and
-keep prompts, generated text, token ids, credentials, and activations out of
-shareable files.
-Start by reading the `review` line, or JSON/Markdown `review_summary`: it
-combines the current state, next step, first artifact to inspect, recommended
-command label, primary diagnosis code, and an `attention` value for warnings
-such as incomplete stream evidence or skipped preflights; Markdown explains
-those warnings in `What To Do Next`. The adjacent `inspect_first` line points to
-the Markdown summary to open first. The adjacent `review_next` line repeats the
-safe recommended command near that summary; human terminal output renders it
-with local prompt sources for copying, using a `printf` pipe placeholder for
-`--prompt-stdin`. Saved Markdown command lines also use that stdin pipe
-placeholder, while JSON fields and saved Markdown prompt values keep prompt
-placeholders.
-With `--shareable-terminal` and `--prompt-stdin`, terminal output keeps a
-copyable `printf` pipe placeholder without expanding the real stdin prompt; use
-it for reruns. Saved JSON/Markdown record `shareable_terminal.enabled=True`
-and, when answer text was hidden,
-`answer_scope.scope_state=shareable-terminal-redacted`.
-`prompt_scope` records that distinction without storing raw text. `--prompt-file`
-and `--prompt-texts-file` keep raw prompt text out of terminal commands, but
-ordinary terminal output still shows local file paths for copying and marks
-`terminal_local_paths=True`; use `--prompt-stdin`, or add
-`--shareable-terminal`, when terminal logs need to be shareable. Prefer
-`--prompt-file`, `--prompt-stdin`, or `--prompt-texts-file` when rerunning saved
-commands. Then use the `status` line or
-`user_status` for detail: `completed` means the request finished,
-`preflight-ready` means submit next, `preflight-partial` means run the
-recommended check first, and `blocked` means follow `action` /
-`recommended_next`. Human `infer` and `generate` output use local prompt sources
-in next commands; JSON reports and saved artifacts keep raw prompts
-and token values represented as placeholders.
-If `ready_to_submit` is printed, use its `label` and `next_step` before submitting:
-`verified` means route, Coordinator, and distinct stage Miners were checked;
-`partial` means the request shape can submit but stage Miners still need
-observer-token verification; `blocked` means follow `operator_action`; and
-`skipped` means live checks were intentionally bypassed. JSON reports mirror
-that status with `crowdtensor_infer_preflight_partial` for partial existing
-swarm checks and `crowdtensor_infer_preflight_ready` only after full route,
-Coordinator, and stage Miner verification. `stage_preflight_not_checked` means
-the route or Coordinator check failed before stage Miners could be inspected;
-fix the printed blocker, then rerun with `CROWDTENSOR_OBSERVER_TOKEN`.
-Add `--stream` when you want safe token-progress evidence in the CLI summary.
+For remote contributors, terminate TLS in front of the Session and use
+`--coordinator-url https://... --code <one-time-code>`. External plain HTTP is
+rejected. Never publish the invite or pairing code.
 
-## 4. Run The Real-LLM Swarm Beta Gate
-
-For maintainer-grade release evidence, run the stricter real-model beta gate:
+Create a short-lived Agent code on the operator host:
 
 ```bash
-crowdtensor public-real-llm-swarm-beta release \
-  --max-new-tokens 16 \
-  --http-timeout 30 \
-  --json
-
-crowdtensor public-real-llm-swarm-beta check \
-  --beta-report dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.json \
-  --output-dir dist/public-real-llm-swarm-beta-check \
-  --max-new-tokens 16 \
-  --json
+crowdtensor volunteer pair-code ./campaign --mode agent --ttl-seconds 3600
 ```
 
-This command starts local stand-ins for the public swarm route, runs a tiny real
-GPT split across stage 0 and stage 1, validates decoded tokens, checks evidence,
-and writes artifacts under `dist/`.
-The `check` command is the official user-facing validation entry for the final
-Beta contract; it writes `public_real_llm_swarm_beta_check.json` with a review
-summary, safe artifact paths, and no raw prompt or generated text. Pass
-`--beta-report` to validate the release artifact you just generated; omitting
-it keeps the CI-safe fixture check path.
-Read `evidence_scope` in `public_real_llm_swarm_beta.json` and
-`checked_evidence_scope` in `public_real_llm_swarm_beta_check.json` for the
-shortest answer to what was verified: local CPU, retained evidence, or fresh
-Kaggle GPU. The check terminal output also prints `checked_runtime_provenance`;
-read that line when you need the detailed source/proof summary behind the
-checked scope, and read `checked_gpu_status` for the direct local CPU /
-retained GPU / fresh Kaggle GPU verdict. Beta reports also include
-`gpu_proof_next_step`, and check reports mirror it as
-`checked_gpu_proof_next_step`; those fields list the explicit optional CUDA
-smoke, Kaggle package, and side-effectful fresh Kaggle GPU proof commands plus
-cleanup and token-rotation requirements. `fresh_kaggle_gpu=True` is the only fresh Kaggle GPU claim;
-`fresh_kaggle_gpu_attempted=True` without that verified flag is not a completed
-GPU proof. Retained external/GPU evidence is not a new Kaggle run.
-When it completes, open `dist/public-real-llm-swarm-beta/public_real_llm_swarm_beta.md`
-first, then `dist/public-real-llm-swarm-beta/support_bundle.json` if you need
-diagnostics. The terminal also prints the final inference status: model and
-token target, external/P2P/Public Swarm v2 token counts, accepted stage rows,
-batch/stream readiness, KV-cache hit counts, and any `not_completed` blockers.
-Safe shareable files are `public_real_llm_swarm_beta.json`,
-`public_real_llm_swarm_beta.md`, and `support_bundle.json`; do not share
-private env files, registries, runtime state, raw task logs, prompts,
-generated text, generated token ids, credentials, activations, leases, or
-idempotency material. If `ok` is false, start with the Markdown
-`Not Completed` section and the printed `not_completed` lines; they map to the
-missing token target, KV-cache, route hardening, batch/stream, external runtime,
-or requeue evidence that must be rerun or imported.
+The `/join` page constructs the installer command from its own HTTPS origin.
+The installer verifies the exact wheel checksum and runs a resource preflight
+before redeeming the code. A failed preflight therefore does not consume it.
+Set `CROWDTENSOR_DEVICE=cpu` before the command to opt out of an otherwise
+auto-detected GPU, or set an explicit `cuda:N` device.
 
-Useful readiness fields in the JSON output include:
+On a slow or interrupted network, rerun the same installer command; its
+Campaign wheel download resumes and pip uses a 10-minute read timeout with
+bounded retries. When the official PyTorch wheel is already downloaded, set
+`CROWDTENSOR_TORCH_WHEEL_PATH=/path/to/torch-2.11.0+cpu-*.whl` to install it
+locally instead of downloading it again. The wheel must be from a trusted
+source; the Campaign package itself is still checked against `SHA256SUMS`.
 
-- `public_real_llm_swarm_beta_ready`
-- `public_swarm_v2_ready`
-- `real_llm_split_route_ready`
-- `decoded_tokens_match`
-- `distinct_stage_miners`
-- `stage_assignment_valid`
-
-## 5. Run The Manual Five-Process Demo
-
-The release gate is convenient, but the manual flow shows the moving pieces.
-Open five terminals from the repository root. Use the same local tokens in
-terminals 2-5:
+Run an explicit private held-out comparison after updates have committed:
 
 ```bash
-export CROWDTENSOR_ADMIN_TOKEN=local-admin
-export CROWDTENSOR_MINER_TOKEN=local-miner
-export CROWDTENSOR_OBSERVER_TOKEN=local-observer
+crowdtensor volunteer campaign evaluate ./campaign \
+  --heldout-quality --json
 ```
 
-The `serve`, `join`, and `generate` commands print an `action` line in human
-mode; follow it when a step is only printing a command, missing a route, or
-waiting for the other stage Miner. If a printed `next[...]` command ends with
-`# requires CROWDTENSOR_...`, export those environment variables before copying
-the command; token and peer-secret values are deliberately kept out of
-shareable reports. The default quickstart uses P2P-lite with
-`crowdtensor p2pd`. If you run the real provider-discovery preview with
-`--p2p-backend real`, follow the printed `crowdtensor p2p-daemon` fallback
-command instead.
-`generate` also writes safe `generate_summary.json` and
-`generate_summary.md` files under `dist/generate` by default; raw prompts,
-generated text, token ids, and tokens stay out of those shareable artifacts.
+This reports before/after loss and perplexity. It never turns a small bounded
+comparison into a statistical-significance claim.
+
+## Stable-Sharded Planning
+
+Create with `--mode stable-sharded`, provide a public-safe stable capability
+snapshot, and explicitly verify the upstream trainer contract:
 
 ```bash
-# Terminal 1
-crowdtensor p2pd --swarm-id public-swarm-v2 --run
+crowdtensor train plan ./stable-project \
+  --capability ./stable-capability.json \
+  --runtime-probe \
+  --trainer-entrypoint train.py \
+  --trainer-contract-verified \
+  --transformer-layer-class DecoderLayer \
+  --materialize
 ```
+
+Then run one bounded interval:
 
 ```bash
-# Terminal 2
-crowdtensor serve --p2p --swarm-id public-swarm-v2 --run
+crowdtensor train run ./stable-project \
+  --work-unit-steps 10 --max-work-units 1
 ```
+
+See [the stable trainer contract](stable-sharded-trainer.md). A plan alone does
+not prove that the model trained.
+
+## Validate The Repository
 
 ```bash
-# Terminal 3
-crowdtensor join --stage stage0 --p2p --swarm-id public-swarm-v2 --miner-id stage0 --run
+python scripts/check_repository.py --json
+crowdtensor release verify ./campaign-release --json
+python -m pytest -q
+python -m build --wheel --no-isolation
 ```
-
-```bash
-# Terminal 4
-crowdtensor join --stage stage1 --p2p --swarm-id public-swarm-v2 --miner-id stage1 --run
-```
-
-```bash
-# Optional preflight before submitting the real request.
-crowdtensor generate \
-  --p2p \
-  --swarm-id public-swarm-v2 \
-  --prompt "CrowdTensor routes small models across home compute" \
-  --max-new-tokens 16 \
-  --http-timeout 30 \
-  --dry-run \
-  --observer-token "$CROWDTENSOR_OBSERVER_TOKEN"
-```
-
-```bash
-# Terminal 5
-crowdtensor generate \
-  --p2p \
-  --swarm-id public-swarm-v2 \
-  --prompt "CrowdTensor routes small models across home compute" \
-  --max-new-tokens 16 \
-  --http-timeout 30
-```
-
-Expected behavior:
-
-- The Coordinator creates a read-only inference session.
-- Stage 0 and stage 1 claim their stage-specific work.
-- The client receives the generated tokens.
-- The route records evidence for assignment and validation.
-
-`generate --dry-run` prints `coordinator_ready`, `stage_preflight`, and
-`ready_to_submit` when it can check live endpoints or P2P-discovered stage
-capabilities. Treat `label=verified` as the normal submit-ready state;
-`label=partial` needs an observer-token preflight; `label=blocked` needs the
-printed action first. A false `coordinator_ready` line includes `error=...`
-for failed probes or `reason=...` for skipped checks. For
-`generate --dry-run`, JSON uses `generate_dry_run_partial` for any partial
-readiness state. For `infer --mode existing --dry-run`, JSON uses
-`crowdtensor_infer_preflight_partial` until the stage Miner check is fully
-verified. If `generate --dry-run` or `infer --mode existing --dry-run` is being
-used only for CI-safe packaging or offline request-shape checks, add
-`--skip-live-preflight` and expect `label=skipped`. Those skipped checks emit
-request-shape readiness, not submit readiness, because the route has not been
-proven submit-ready.
-Submit command labels also reflect this state: `after live preflight`,
-`after stage preflight`, or `after checks pass` means run the printed check
-command before submitting; `with caution` means the request can run but not
-every live check was proven. The same decision is available as
-`ready_to_submit.next_step` for scripts and support tools, with stable values
-such as `submit`, `run_stage_preflight`, `run_live_preflight`,
-`submit_with_caution`, and `fix_blockers`. `stage_preflight_unknown` means a
-required stage check did not return a true/false result. If
-`stage_preflight_not_checked` appears, fix the printed route or Coordinator
-blocker, then rerun the dry-run with `CROWDTENSOR_OBSERVER_TOKEN` before
-submitting. Session-create failure details are redacted before they are printed
-or written to JSON, including prompt text and token values echoed by a remote
-endpoint.
-
-## 6. Package A Controlled Remote Trial
-
-For a two-machine style rehearsal, generate the package first:
-
-```bash
-crowdtensor public-real-llm-swarm-beta package \
-  --output-dir dist/public-real-llm-package \
-  --json
-```
-
-Use the generated runbook and private env files only on trusted hosts. For real
-machines, put the Coordinator behind a trusted network boundary such as LAN,
-VPN, tunnel, or explicit firewall rules. Rotate temporary tokens after demos.
-
-## 7. Optional CUDA Tiny-Model Path
-
-CUDA is opt-in and only applies to the tiny real-model stage runtime. It should
-fail closed when CUDA is unavailable.
-
-```bash
-crowdtensor public-real-llm-swarm-beta release \
-  --public-swarm-v2-backend cuda \
-  --max-new-tokens 16 \
-  --http-timeout 30 \
-  --json
-```
-
-CPU remains the default path.
-
-## 8. Clean Generated Artifacts
-
-Dry-run cleanup:
-
-```bash
-crowdtensor clean-artifacts
-```
-
-Apply cleanup:
-
-```bash
-crowdtensor clean-artifacts --apply
-```
-
-Reports are kept by default. Add `--include-reports` only when you explicitly
-want generated report files removed.
-
-## Troubleshooting
-
-If a command fails before starting:
-
-- Confirm the virtualenv is active.
-- Run `python -m pip install -e '.[dev,hf]'` again.
-- Check `crowdtensor --help` to confirm the CLI points at this checkout.
-
-If Hugging Face or torch dependencies are unavailable:
-
-- Use `crowdtensor local-proof --json`.
-- Use `crowdtensor cpu-infer --mode local --json`.
-- Reinstall with `[hf]` before running real-model split demos.
-
-If a multi-process demo hangs:
-
-- Start `p2pd` first.
-- If you selected `--p2p-backend real`, start `p2p-daemon` first instead.
-- Start `serve` before Miners.
-- Use the same `--swarm-id` in every terminal.
-- Check that stage 0 and stage 1 use different `--miner-id` values.
-- Set any `CROWDTENSOR_...` variables named in printed `# requires` hints.
-
-## Boundaries
-
-The quickstart proves a controlled small-model swarm route. It does not prove
-production uptime, permissionless public mining, large-model sharding,
-Hivemind-level serving, or a tokenized compute marketplace.

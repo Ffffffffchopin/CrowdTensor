@@ -1,11 +1,14 @@
-name: CI
+name: Training core
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  core:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -16,203 +19,40 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install
-        run: python -m pip install -e .[dev]
-      - name: Compile
-        run: python -m py_compile coordinator.py miner_cli.py scripts/*.py crowdtensor/*.py
-      - name: Release gate
-        run: python scripts/release_gate.py --json
-      - name: Release readiness
-        run: python scripts/release_readiness_check.py --allow-dirty
-      - name: Fresh clone onboarding gate
-        run: python scripts/onboarding_gate.py --quick --json-out /tmp/crowdtensor_onboarding_gate.json
-      - name: User-friendly inference frontdoor report check
-        run: python scripts/user_friendly_inference_frontdoor_check.py --json
-      - name: First-run Doctor
-        run: python scripts/doctor.py --json
-      - name: Local proof CLI
-        run: crowdtensor local-proof --output-dir /tmp/crowdtensor-local-proof --base-port 8960 --request-count 4 --json
-      - name: CPU inference Beta
-        run: python scripts/cpu_inference_beta_check.py --mode local --base-port 8970
-      - name: CPU inference Beta remote loopback
-        run: python scripts/cpu_inference_beta_check.py --mode remote-loopback --workload model-bundle --base-port 8972
-      - name: CPU inference Beta remote external LLM loopback
-        run: python scripts/cpu_inference_beta_check.py --mode remote-loopback --workload external-llm --base-port 8974
-      - name: Runtime matrix
-        run: python scripts/runtime_matrix_check.py
-      - name: Home-compute demo
-        run: python scripts/home_compute_demo_check.py --port 8909
-      - name: Home-compute evidence
-        run: python scripts/home_compute_evidence_check.py --port 8911
-      - name: Remote-compute evidence
-        run: python scripts/remote_compute_evidence_check.py --port 8912
-      - name: Remote demo runbook
-        run: python scripts/remote_demo_runbook_check.py
-      - name: Remote demo acceptance
-        run: python scripts/remote_demo_acceptance_check.py --port 8913
-      - name: Remote home-compute demo
-        run: python scripts/remote_home_compute_demo_check.py --port 8920
-      - name: Remote external LLM demo
-        run: python scripts/remote_home_compute_demo_check.py --port 8921 --workload external-llm --request-count 3
-      - name: Remote sharded inference demo
-        run: python scripts/remote_home_compute_demo_check.py --port 8922 --workload sharded-model-bundle --request-count 3
-      - name: Remote micro-LLM sharded inference demo
-        run: python scripts/remote_home_compute_demo_check.py --port 8923 --workload micro-llm-sharded --request-count 2 --decode-steps 3
-      - name: Stage-aware remote micro-LLM sharded inference demo
-        run: python scripts/remote_home_compute_demo_check.py --port 8924 --workload micro-llm-sharded --request-count 2 --decode-steps 3 --stage-mode split --require-distinct-stage-miners
-      # The remote_home_compute_demo_check loopback exercises remote-demo prepare,
-      # remote-demo doctor, remote-demo verify, remote-demo collect, and remote-demo clean.
-      - name: Real two-machine CPU inference Beta loopback
-        run: python scripts/remote_two_machine_beta_check.py --workload all --base-port 9050
-      - name: Kaggle Remote Miner Beta loopback
-        run: python scripts/kaggle_remote_miner_beta_check.py --port 9060
-      - name: Kaggle Real Runtime Acceptance artifacts
-        run: python scripts/kaggle_real_runtime_acceptance_check.py --port 9180
-      - name: Kaggle Real Runtime Micro-LLM split artifacts
-        run: python scripts/kaggle_real_runtime_acceptance_check.py --port 9181 --workload micro-llm-sharded --stage-mode split --request-count 2 --decode-steps 3
-      - name: CPU Inference Beta RC
-        run: python scripts/cpu_inference_beta_rc_check.py --quick --base-port 9070
-      - name: Pipeline-sharded inference Alpha
-        run: python scripts/sharded_inference_check.py --base-port 9080
-      - name: CPU Pipeline-Sharded Inference Beta loopback
-        run: python scripts/remote_sharded_inference_beta_check.py --mode remote-loopback --base-port 9082
-      - name: Micro-LLM Pipeline-Sharded Inference Alpha
-        run: python scripts/micro_llm_sharded_inference_check.py --base-port 9084 --request-count 2 --decode-steps 3
-      - name: Stage-aware Micro-LLM Pipeline-Sharded Inference Alpha
-        run: python scripts/stage_aware_micro_llm_sharded_check.py --base-port 9085 --request-count 2 --decode-steps 3 --require-distinct-stage-miners
-      - name: Remote Micro-LLM Pipeline-Sharded Inference Beta loopback
-        run: python scripts/remote_micro_llm_sharded_beta_check.py --mode remote-loopback --base-port 9086 --request-count 2 --decode-steps 3
-      - name: Stage-aware Remote Micro-LLM Pipeline-Sharded Inference Beta loopback
-        run: python scripts/remote_micro_llm_sharded_beta_check.py --mode remote-loopback --base-port 9087 --request-count 2 --decode-steps 3 --stage-mode split --require-distinct-stage-miners
-      - name: Micro-LLM Live Two-Node RC local generated
-        run: python scripts/micro_llm_live_rc_check.py --base-port 9182 --request-count 2 --decode-steps 3
-      - name: Install optional HF runtime
-        run: python -m pip install -e '.[hf]'
-      - name: Real Small-LLM Sharded Inference Beta loopback
-        run: python scripts/remote_real_llm_sharded_beta_check.py --mode remote-loopback --base-port 9184 --stage-mode split --require-distinct-stage-miners --timeout-seconds 300
-      - name: Real Small-LLM remote-demo loopback
-        run: python scripts/remote_home_compute_demo_check.py --port 9185 --workload real-llm-sharded --request-count 1 --stage-mode split --require-distinct-stage-miners --verify-timeout 300 --command-timeout 360
-      - name: Real Small-LLM Sharded Inference Live RC local generated
-        run: python scripts/real_llm_live_rc_check.py --base-port 9186 --request-count 1 --timeout-seconds 300
-      - name: Real Internet Swarm Inference Alpha local generated
-        run: python scripts/real_llm_internet_alpha_check.py --port 9187 --base-port 9188 --request-count 1 --timeout-seconds 300
-      - name: Real Internet Swarm Inference Beta contract
-        run: python scripts/real_llm_internet_beta_check.py --port 9190 --base-port 9191 --request-count 2 --timeout-seconds 300
-      - name: Swarm Inference Beta contract
-        run: python scripts/swarm_inference_beta_check.py --coordinator-url http://127.0.0.1:9200 --request-count 2
-      - name: Public Swarm Inference Beta local loopback
-        run: python scripts/public_swarm_inference_beta_check.py --mode local-loopback --base-port 9290 --request-count 1 --timeout-seconds 300
-      - name: Public Swarm Inference Beta product aggregate
-        run: python scripts/public_swarm_inference_beta_check.py --mode product-beta --base-port 9292 --request-count 1 --timeout-seconds 300
-      - name: Public Swarm Inference Beta RC local loopback contract
-        run: python scripts/public_swarm_inference_beta_rc_check.py --mode local-loopback --base-port 9310 --max-new-tokens 2 --timeout-seconds 300
-      - name: Public Swarm Inference Beta RC package contract
-        run: python scripts/public_swarm_inference_beta_rc_check.py --mode package --target kaggle --base-port 9312 --timeout-seconds 300
-      - name: Public Swarm Inference Beta RC external-existing contract
-        run: python scripts/public_swarm_inference_beta_rc_check.py --mode external-existing --base-port 9314 --max-new-tokens 2 --timeout-seconds 300
-      - name: Public Swarm Product Beta local loopback contract
-        run: python scripts/public_swarm_product_beta_check.py --mode local-loopback --base-port 9320 --max-new-tokens 2 --timeout-seconds 300
-      - name: Public Swarm Product Beta package contract
-        run: python scripts/public_swarm_product_beta_check.py --mode package --target kaggle --base-port 9322 --timeout-seconds 300
-      - name: Public Swarm Product Beta external-existing contract
-        run: python scripts/public_swarm_product_beta_check.py --mode external-existing --base-port 9324 --max-new-tokens 2 --timeout-seconds 300
-      - name: Public Swarm Developer Preview local contract
-        run: python scripts/public_swarm_developer_preview_check.py --mode local --base-port 9330 --max-new-tokens 2 --timeout-seconds 300
-      - name: Public Swarm Developer Preview package contract
-        run: python scripts/public_swarm_developer_preview_check.py --mode package --target kaggle --base-port 9332 --timeout-seconds 300
-      - name: Public Swarm Developer Preview external-existing contract
-        run: python scripts/public_swarm_developer_preview_check.py --mode external-existing --base-port 9334 --max-new-tokens 2 --timeout-seconds 300
-      - name: Public Swarm Developer Preview evidence-import contract
-        run: python scripts/public_swarm_developer_preview_check.py --mode evidence-import --base-port 9336 --timeout-seconds 300
-      - name: Public Swarm Live Preview RC local smoke
-        run: python scripts/public_swarm_live_preview_rc_check.py --mode local-smoke --base-port 9340 --port 9341 --timeout-seconds 300
-      - name: Public Swarm Live Preview RC package
-        run: python scripts/public_swarm_live_preview_rc_check.py --mode package --base-port 9342 --port 9343 --timeout-seconds 300
-      - name: Public Swarm Live Preview RC live-kaggle contract
-        run: python scripts/public_swarm_live_preview_rc_check.py --mode live-kaggle --base-port 9344 --port 9345 --timeout-seconds 300
-      - name: Public Swarm Live Preview RC evidence-import
-        run: python scripts/public_swarm_live_preview_rc_check.py --mode evidence-import --base-port 9346 --port 9347 --timeout-seconds 300
-      - name: Public Swarm v0.1 Operator Preview local smoke
-        run: python scripts/public_swarm_operator_preview_check.py --mode local-smoke --base-port 9370 --port 9371 --timeout-seconds 300
-      - name: Public Swarm v0.1 Operator Preview package
-        run: python scripts/public_swarm_operator_preview_check.py --mode package --base-port 9372 --port 9373 --timeout-seconds 300
-      - name: Public Swarm v0.1 Operator Preview live-kaggle contract
-        run: python scripts/public_swarm_operator_preview_check.py --mode live-kaggle --base-port 9374 --port 9375 --timeout-seconds 300
-      - name: Public Swarm v0.1 Operator Preview evidence-import
-        run: python scripts/public_swarm_operator_preview_check.py --mode evidence-import --base-port 9376 --port 9377 --timeout-seconds 300
-      - name: Public Swarm v0.2 Usable Inference Trial local loopback
-        run: python scripts/public_swarm_trial_check.py --mode local-loopback --base-port 9380 --port 9381 --timeout-seconds 300
-      - name: Public Swarm v0.2 Usable Inference Trial package
-        run: python scripts/public_swarm_trial_check.py --mode package --base-port 9382 --port 9383 --timeout-seconds 300
-      - name: Public Swarm v0.2 Usable Inference Trial live-kaggle contract
-        run: python scripts/public_swarm_trial_check.py --mode live-kaggle --base-port 9384 --port 9385 --timeout-seconds 300
-      - name: Public Swarm v0.2 Usable Inference Trial evidence-import
-        run: python scripts/public_swarm_trial_check.py --mode evidence-import --base-port 9386 --port 9387 --timeout-seconds 300
-      - name: Public Swarm GPU Inference Beta local smoke
-        run: python scripts/public_swarm_gpu_inference_beta_check.py --mode local-smoke
-      - name: Public Swarm GPU Inference Beta Kaggle package
-        run: python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-package
-      - name: Public Swarm GPU Inference Beta Kaggle auto contract
-        run: python scripts/public_swarm_gpu_inference_beta_check.py --mode kaggle-auto
-      - name: Public Swarm Inference Alpha contract
-        run: python scripts/public_swarm_inference_alpha_check.py --json
-      - name: Public Swarm Inference Alpha RC local smoke
-        run: python scripts/public_swarm_inference_alpha_rc_check.py --mode local-smoke
-      - name: Demo manifest
-        run: python scripts/demo_manifest_check.py --base-port 8914
-      - name: Support Bundle
-        run: python scripts/support_bundle.py --json-out /tmp/crowdtensor_support_bundle.json
-      - name: Security preflight
-        run: python scripts/security_preflight.py --json
-      - name: Unit tests
-        run: python -m unittest discover -s tests -v
-      - name: Outer optimizer smoke
+          cache: pip
+      - run: python -m pip install -e '.[dev]'
+      - run: python scripts/check_repository.py --json
+      - run: python -m compileall -q crowdtensor tests
+      - name: Framework-neutral contracts
+        run: >-
+          python -m pytest -q
+          tests/test_repository_slimming.py
+          tests/test_training_core_contracts.py
+          tests/test_training_core_controller.py
+          tests/test_training_core_execution.py
+          tests/test_training_core_plugins.py
+          tests/test_training_core_workspace.py
+          tests/test_training_backend_registry.py
+          tests/test_training_accelerate_backend.py
+          tests/test_training_provider_adapters.py
+          tests/test_capability_adapter.py
+          tests/test_model_manifests.py
+      - name: Build wheel
         if: matrix.python-version == '3.12'
-        run: python scripts/outer_optimizer_check.py --port 8899
-      - name: Compressed error feedback smoke
-        if: matrix.python-version == '3.12'
-        run: python scripts/compressed_error_feedback_check.py --port 8900
-      - name: Delta transport negotiation smoke
-        if: matrix.python-version == '3.12'
-        run: python scripts/delta_transport_negotiation_check.py --port 8901
-      - name: Model bundle smoke
-        if: matrix.python-version == '3.12'
-        run: python scripts/model_bundle_smoke.py --port 8902
-      - name: Model bundle inference smoke
-        if: matrix.python-version == '3.12'
-        run: python scripts/model_bundle_inference_smoke.py --port 8903
-      - name: Inference session demo
-        if: matrix.python-version == '3.12'
-        run: python scripts/inference_session_demo.py --port 8904 --request-count 4 --json
-      - name: Inference session client
-        if: matrix.python-version == '3.12'
-        run: python scripts/inference_session_client_check.py --port 8916
-      - name: Admin inference session API
-        if: matrix.python-version == '3.12'
-        run: python scripts/admin_inference_session_check.py --port 8915
-      - name: External LLM inference smoke
-        if: matrix.python-version == '3.12'
-        run: python scripts/external_llm_inference_smoke.py --port 8906
-      - name: External LLM HTTP adapter smoke
-        if: matrix.python-version == '3.12'
-        run: python scripts/external_llm_http_adapter_smoke.py --port 8907 --runtime-port 8908
-      - name: External LLM evidence
-        if: matrix.python-version == '3.12'
-        run: python scripts/external_llm_evidence_check.py --port 8919
-      - name: Runtime acceptance
-        if: matrix.python-version == '3.12'
-        run: python scripts/runtime_acceptance_pack.py --base-port 8910 --check-timeout 180 --report /tmp/crowdtensor_acceptance.json
-      - name: Browser acceptance
-        if: matrix.python-version == '3.12'
-        run: python scripts/browser_acceptance_pack.py --allow-skip --base-port 9310 --check-timeout 180 --report /tmp/crowdtensor_browser_acceptance.json
-      - name: Release evidence
-        if: matrix.python-version == '3.12'
-        run: python scripts/release_evidence_pack.py --runtime-report /tmp/crowdtensor_acceptance.json --browser-report /tmp/crowdtensor_browser_acceptance.json --json-out dist/release-evidence.json --markdown-out dist/release-evidence.md
-      - name: Upload release evidence
-        if: matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v4
+        run: python -m build --wheel --no-isolation
+
+  optional-hf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          name: release-evidence
-          path: |
-            dist/release-evidence.json
-            dist/release-evidence.md
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU PyTorch
+        run: >-
+          python -m pip install
+          --index-url https://download.pytorch.org/whl/cpu
+          'torch>=2,<3'
+      - run: python -m pip install -e '.[dev,hf,storage]'
+      - run: python -m pytest -q

@@ -1,31 +1,27 @@
 # Compatibility Matrix
 
-## Runtime
+| Surface | Current support |
+| --- | --- |
+| Python | 3.11 and 3.12 |
+| Package | `0.3.0a1` Training Architecture v2 alpha |
+| Training workspace | v2 hashed JSON contracts |
+| Modes | `elastic_delta`, `stable_sharded` |
+| Backends | `volunteer_peft`, `accelerate_fsdp2` |
+| Model Adapter API | `model_adapter_v1.0` |
+| Backend plugins | `crowdtensor.training_backends.v2` |
+| Model plugins | `crowdtensor.model_adapters.v1` |
+| Local storage | content-addressed filesystem |
+| Optional storage | S3-compatible resumable upload |
+| CPU PEFT | real-tested |
+| CPU FSDP2 | local two-rank recovery tested |
+| CUDA stable group | planned/runtime contract implemented; live gate pending |
+| JAX TPU | retained capability/manifest adapter, not one-click training |
 
-| Surface | Supported | Rejection policy |
-| --- | --- | --- |
-| Python | 3.11, 3.12 | other versions unsupported |
-| Package | `0.2.0rc7` | semantic version recorded in every release manifest |
-| Community protocol | `community_training_v1.0` | family/major mismatch and newer minor rejected |
-| Model Adapter API | `model_adapter_v1.0` | unknown adapter fails closed |
-| Model Adapter plugins | `crowdtensor.model_adapters.v1`; official `mistral_lora_v1` Beta | invalid metadata, shadowing, name mismatch, or failed conformance rejects discovery |
-| Evidence API | `community_evidence_v1.0` | unknown schema cannot satisfy strict RC |
-| Linux CPU | CI and local gate | required |
-| CUDA | explicit Provider | optional locally, required in Kaggle live |
-| Kaggle HF runtime | exact direct pins in `requirements/community-kaggle-runtime.lock` | drifted direct versions rejected by evidence gate |
-| Optional TorchAO | `>=0.16`, or ignored for ordinary dense weights when an older provider copy is present | old TorchAO-backed quantized weights fail closed |
-| JAX TPU | pinned Qwen stage through managed heterogeneous Miner; not one-click Volunteer Agent | optional in Community short gate |
-| Checkpoint storage | local, S3/MinIO, mirrored | other backends rejected |
+Unknown schemas, plugin IDs, protocol majors, stale generations, and
+unsupported launch topologies fail closed. There is no silent protocol or
+training-mode downgrade.
 
-Same-major older protocol minors are accepted only when the local runtime
-explicitly advertises that newer minor. There is no silent downgrade. Newer
-peer minors are rejected until their semantics are known.
-
-## Release Levels
-
-- **experimental:** interface can change; smoke evidence only.
-- **alpha:** bounded real path works; compatibility and recovery are incomplete.
-- **beta:** ordinary workflow and fault gates work for named models/providers.
-- **production-rc:** fixed topology passes long soak and release checker; no SLA.
-- **GA:** stable support policy, external reproducibility, operations ownership,
-  and published release process. CrowdTensor is not GA.
+The root compatibility modules for the former heterogeneous manifest/scheduler
+names are import forwarders only. New code must use `crowdtensor.adapters`.
+Historical CLI commands are not compatibility-supported; use Git history when
+reproducing old evidence.

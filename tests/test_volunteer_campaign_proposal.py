@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from crowdtensor.volunteer_campaign_proposal import (
     PROPOSAL_SCHEMA,
     proposal_template,
@@ -10,20 +7,12 @@ from crowdtensor.volunteer_campaign_proposal import (
 )
 
 
-def test_template_and_checked_example_are_ready() -> None:
+def test_built_in_template_is_ready() -> None:
     template = proposal_template()
     result = validate_proposal(template)
     assert template["schema"] == PROPOSAL_SCHEMA
     assert result["ok"] is True
     assert result["campaign_proposal_ready"] is True
-
-    example = json.loads(
-        Path("examples/volunteer-campaign/campaign-proposal.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    checked = validate_proposal(example)
-    assert checked["ok"] is True, checked
 
 
 def test_proposal_rejects_ambiguous_safety_or_mutable_inputs() -> None:

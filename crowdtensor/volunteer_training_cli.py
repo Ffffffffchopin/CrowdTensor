@@ -17,7 +17,11 @@ import httpx
 
 from .community_security import TLSProxyPolicy
 from .hf_lora_training import create_local_training_fixture
-from .volunteer_training_api import create_volunteer_training_app, service_contract
+from .volunteer_training_api import (
+    create_volunteer_training_app,
+    resolve_public_release_dir,
+    service_contract,
+)
 from .volunteer_agent_status import (
     VolunteerAgentStatusServer,
     graceful_agent_signals,
@@ -131,6 +135,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     for name in ("validate", "start", "pause", "resume", "finalize", "evaluate"):
         operation = campaign_actions.add_parser(name)
         operation.add_argument("campaign_dir")
+        if name == "evaluate":
+            operation.add_argument("--heldout-quality", action="store_true")
         operation.add_argument("--json", action="store_true")
     export = campaign_actions.add_parser("export")
     export.add_argument("campaign_dir")
@@ -162,6 +168,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8789)
     serve.add_argument("--public-url", default="")
+    serve.add_argument("--release-dir", default="")
     serve.add_argument("--prepare-only", action="store_true")
     serve.add_argument(
         "--require-https", action=argparse.BooleanOptionalAction, default=None
@@ -195,6 +202,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     operator.add_argument("--host", default="127.0.0.1")
     operator.add_argument("--port", type=int, default=8789)
     operator.add_argument("--public-url", default="")
+    operator.add_argument("--release-dir", default="")
     operator.add_argument("--prepare-only", action="store_true")
     operator.add_argument(
         "--require-https", action=argparse.BooleanOptionalAction, default=None
@@ -456,7 +464,9 @@ def run(argv: list[str] | None = None) -> int:
             elif args.campaign_action == "finalize":
                 value = coordinator.finalize_campaign(invite_token=token)
             elif args.campaign_action == "evaluate":
-                value = coordinator.evaluate_campaign()
+                value = coordinator.evaluate_campaign(
+                    heldout_quality=bool(args.heldout_quality)
+                )
             elif args.campaign_action == "export":
                 value = coordinator.export_campaign(args.destination)
             else:
@@ -540,6 +550,7 @@ def run(argv: list[str] | None = None) -> int:
                     "upload_storage_backend": args.upload_storage,
                     "s3_compatible_upload_storage": args.upload_storage == "s3",
                     "one_command_operator_workflow": args.action == "operator",
+                    "public_release_download": release_dir is not None,
                     "coordinator_restart_recovery_verified": recovery.get("ok")
                     is True,
                 }
@@ -570,6 +581,7 @@ def run(argv: list[str] | None = None) -> int:
                     tls_policy=tls_policy,
                     upload_chunk_bytes=int(args.upload_chunk_bytes),
                     upload_blob_store=upload_store,
+                    public_release_dir=release_dir,
                 ),
                 host=args.host,
                 port=int(args.port),

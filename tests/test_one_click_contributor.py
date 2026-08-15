@@ -254,11 +254,26 @@ def test_installer_selects_bounded_cpu_runtime_without_storage_extra() -> None:
     script = (
         Path(__file__).resolve().parents[1] / "scripts" / "install_contributor.sh"
     ).read_text(encoding="utf-8")
-    assert 'VERSION="0.2.0rc7"' in script
+    assert 'VERSION="0.3.0a1"' in script
     assert "https://download.pytorch.org/whl/cpu" in script
     assert 'TORCH_VERSION="${CROWDTENSOR_TORCH_VERSION:-2.11.0}"' in script
+    assert 'TORCH_WHEEL_PATH="${CROWDTENSOR_TORCH_WHEEL_PATH:-}"' in script
+    assert 'PIP_TIMEOUT="${CROWDTENSOR_PIP_TIMEOUT_SECONDS:-600}"' in script
+    assert 'PIP_RETRIES="${CROWDTENSOR_PIP_RETRIES:-5}"' in script
     assert "command -v nvidia-smi" in script
     assert "CROWDTENSOR_TORCH_INDEX_URL" in script
-    assert '"crowdtensord[hf] @ ${WHEEL_URL}"' in script
+    assert 'DEVICE="${CROWDTENSOR_DEVICE:-auto}"' in script
+    assert '[ "${DEVICE}" != "cpu" ]' in script
+    assert "CHECKSUMS_URL" in script
+    assert "EXPECTED_SHA256" in script
+    assert "ACTUAL_SHA256" in script
+    assert "--continue-at -" in script
+    assert "--retry-all-errors" in script
+    assert "--timeout \"${PIP_TIMEOUT}\"" in script
+    assert "sha256sum" in script
+    assert "Path(sys.argv[1]).resolve().as_uri()" in script
+    assert 'crowdtensor" train join "${WORKSPACE}"' in script
+    assert "--dry-run --json" in script
+    assert "volunteer join" not in script
     assert "crowdtensord[hf,storage]" not in script
     assert "--no-cache-dir" in script

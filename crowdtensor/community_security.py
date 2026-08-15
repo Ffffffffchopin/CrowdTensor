@@ -333,7 +333,7 @@ class TLSProxyPolicy:
 @dataclass(frozen=True)
 class RestrictedExecutionPolicy:
     allowed_executables: tuple[str, ...] = ("python", "python3")
-    allowed_modules: tuple[str, ...] = ("crowdtensor.community_worker",)
+    allowed_modules: tuple[str, ...] = ("crowdtensor.volunteer_training_cell",)
     allowed_file_roots: tuple[str, ...] = ()
     allowed_network_hosts: tuple[str, ...] = ()
     maximum_memory_bytes: int = 16 * 1024**3

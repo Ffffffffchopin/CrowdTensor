@@ -5,8 +5,10 @@ import json
 import pytest
 
 from crowdtensor import cli
+from crowdtensor.hf_lora_training import create_local_training_fixture
 from crowdtensor.volunteer_training_cell import VolunteerTrainingCell
 from crowdtensor.volunteer_training_cli import run
+from crowdtensor.volunteer_training_coordinator import VolunteerTrainingCoordinator
 
 
 class OfflineTransport:
@@ -55,3 +57,16 @@ def test_join_rejects_world_readable_private_invite(tmp_path, capsys) -> None:
     serialized = json.dumps(value)
     assert "super-secret-token-value" not in serialized
     assert '"invite_token"' not in serialized
+
+
+def test_campaign_lifecycle_commands_do_not_require_release_dir(tmp_path, capsys) -> None:
+    fixture = create_local_training_fixture(tmp_path / "fixture", row_count=4, local_steps=1)
+    root = tmp_path / "campaign"
+    VolunteerTrainingCoordinator.create_from_fixture(
+        root, fixture, target_rounds=1, lease_seconds=60
+    )
+
+    assert run(["campaign", "validate", str(root), "--json"]) == 0
+    value = json.loads(capsys.readouterr().out)
+    assert value["ok"] is True
+    assert value["errors"] == []

@@ -1,107 +1,50 @@
-# Project Website Deployment
+# Optional Project And Contributor UI
 
-The CrowdTensor website is packaged with the Volunteer Coordinator. The same
-HTTPS origin serves:
+The packaged Volunteer Session can serve:
 
-- `/` for the project website;
-- `/join` for the browser and native-Agent contributor entry;
-- `/downloads/*` for hash-bound release artifacts;
-- `/v1/volunteer/public-snapshot` for public Campaign progress;
-- `/v1/volunteer/dashboard` for detailed public metrics;
-- authenticated `/v1/volunteer/*` routes for contributor work.
+- `/` for the project page;
+- `/join` for contributor enrollment;
+- `/v1/volunteer/public-snapshot` for aggregate Campaign status;
+- `/v1/volunteer/dashboard` for operational metrics;
+- authenticated `/v1/volunteer/*` work routes.
 
-This keeps promotional status and scheduling state consistent. The website
-does not contain a manually edited "live" counter.
+Assets live in `crowdtensor/project_site` and
+`crowdtensor/volunteer_dashboard`, so the wheel contains the UI. The UI is
+optional and does not imply a CrowdTensor-hosted global Coordinator.
 
-## Current Deployment
-
-The founding deployment is available at
-<https://crowdtensor.24.199.118.54.nip.io>. It runs a pinned
-`HuggingFaceTB/SmolLM2-135M` and WikiText-2 LoRA Campaign with 100 target
-rounds. Enrollment is controlled during beta; the 7B community Campaign shown
-on the website remains in proposal phase.
-
-The current workload proves and hardens the public contribution loop. It is not
-presented as the final large-model Campaign or as evidence of useful model
-quality improvement.
-
-The website's access request opens the public-safe Founding Beta enrollment
-Issue Form. Maintainers send approved one-time pairing codes through a separate
-private channel; no code or issued credential belongs in a GitHub issue. The 7B card
-links to the Draft [Qwen2.5-7B GSM8K Campaign RFC](campaigns/qwen25-7b-gsm8k-rfc.md).
-
-## Prepare A Campaign
-
-Create a private Campaign directory outside the repository:
+Create a user-owned Campaign and serve it on loopback:
 
 ```bash
-crowdtensor volunteer campaign import-smollm-wikitext \
-  /var/lib/crowdtensor/campaigns/founding-smollm2-wikitext \
-  --campaign-id crowdtensor-founding-smollm2-wikitext \
-  --target-rounds 100 \
-  --local-steps 1
-
-crowdtensor volunteer campaign validate \
-  /var/lib/crowdtensor/campaigns/founding-smollm2-wikitext --json
+crowdtensor volunteer campaign create-local ./campaign --target-rounds 2
+python -m build
+crowdtensor release prepare ./campaign-release
+crowdtensor volunteer serve ./campaign \
+  --host 127.0.0.1 --port 8789 \
+  --public-url http://127.0.0.1:8789 \
+  --release-dir ./campaign-release
 ```
 
-Keep `.private/` mode `0700` and invite files mode `0600`. Do not place the
-Campaign directory, invite, model cache, tokenized data, or checkpoints in Git.
+For remote access, put a maintained HTTPS reverse proxy in front of the
+loopback service. Enable trusted forwarded headers only with a configured
+private proxy identity. External direct HTTP is rejected.
 
-## Service Environment
+Public snapshots must not contain pairing codes, credentials, Cell identity,
+raw training rows, token IDs, tensor values, or private paths. Browser tasks
+are scheduler-calibration work unless a Campaign explicitly implements and
+validates real browser model training; they must not be counted as model
+updates.
 
-Copy `deploy/site/crowdtensor-site.service.example` into systemd and create a
-mode-0600 `/etc/crowdtensor/site.env`:
-
-```text
-CROWDTENSOR_REPO_DIR=/opt/crowdtensor
-CROWDTENSOR_CAMPAIGN_DIR=/var/lib/crowdtensor/campaigns/founding-smollm2-wikitext
-CROWDTENSOR_SITE_DOMAIN=train.example.org
-CROWDTENSOR_SITE_PORT=8789
-CROWDTENSOR_PROXY_ID=replace-with-a-private-random-value
-CROWDTENSOR_PYTHON=/opt/crowdtensor/.venv/bin/python
-CROWDTENSOR_PUBLIC_RELEASE_DIR=/var/lib/crowdtensor/releases/one-click-0.2.0rc7
-```
-
-The Coordinator binds only to `127.0.0.1`. Its TLS policy rejects direct HTTP
-and trusts `X-Forwarded-Proto` only when the request carries the configured
-loopback proxy identity.
-
-## HTTPS Proxy
-
-Run Caddy with `deploy/site/Caddyfile.example`, the same domain and proxy ID,
-and persistent `/data` storage for certificate renewal. Ports 80 and 443 must
-reach Caddy. Caddy obtains and renews the certificate and redirects HTTP to
-HTTPS.
-
-After startup, verify:
+Create pairing codes locally and transmit them through a private channel:
 
 ```bash
-curl -I "https://${CROWDTENSOR_SITE_DOMAIN}/"
-curl -I "https://${CROWDTENSOR_SITE_DOMAIN}/join"
-curl -fS -o /dev/null "https://${CROWDTENSOR_SITE_DOMAIN}/downloads/crowdtensord-0.2.0rc7-py3-none-any.whl"
-curl "https://${CROWDTENSOR_SITE_DOMAIN}/v1/volunteer/health"
-curl "https://${CROWDTENSOR_SITE_DOMAIN}/v1/volunteer/public-snapshot"
+crowdtensor volunteer pair-code ./campaign --mode agent
+crowdtensor volunteer pair-code ./campaign --mode browser
 ```
 
-Expected properties are HTTP 200, `tls_required=true`, the intended
-`campaign_id`, and a public snapshot with no credentials, Cell identities, raw
-data, token IDs, tensor values, or private paths.
+Codes are single-use. Campaign directories, invites, caches, and checkpoints
+belong outside the repository.
 
-## Opening Enrollment
-
-Do not publish pairing codes. Review a contributor, create a code locally, and
-transmit it through a private channel:
-
-```bash
-crowdtensor volunteer pair-code "$CROWDTENSOR_CAMPAIGN_DIR" --mode browser
-crowdtensor volunteer pair-code "$CROWDTENSOR_CAMPAIGN_DIR" --mode agent
-```
-
-Codes are single-use and their plaintext is never persisted by the
-Coordinator. The browser task is a verified scheduler calibration and does not
-update the model; native Agents perform LoRA work. Keep the public website
-limited to aggregate status. Before a
-large 7B or pretraining Campaign opens, approve its model and dataset licenses,
-evaluation suite, update bounds, moderation owner, rollback plan, and public
-decision log through the Campaign proposal process.
+The Native Agent is the primary contribution path. Its same-origin installer
+verifies `SHA256SUMS`, checks the Campaign's resource estimate without
+redeeming the code, and then runs bounded CPU/CUDA PEFT work. Browser work is
+calibration only and never increments model-update or Adapter lineage counters.

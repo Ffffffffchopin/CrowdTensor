@@ -1,5 +1,8 @@
 # Qwen2.5-7B Elastic GSM8K SFT Showcase
 
+This is retained historical evidence. Its model-specific runtime and checker
+are archived at Git ref `e332a7b`; they are not part of the active v2 CLI.
+
 CrowdTensor completed a real Qwen2.5-7B-Instruct LoRA/SFT run on Kaggle
 logical multi-node infrastructure on 2026-07-19. Two concurrent T4x2 Kernels
 trained steps 1-128, both were deleted, and two fresh T4x2 Kernels restored
@@ -84,21 +87,15 @@ baseline, training, post-benchmark, cleanup, Model Card, showcase, and
 reproduction artifacts. It contains no raw questions, answers, generations,
 token IDs, credentials, account names, Kernel references, or private paths.
 
-## Verify And Use
+## Reproduce Historical Verification
 
-```bash
-PYTHONPATH=. python scripts/training_qwen7b_gsm8k_showcase_check.py \
-  --report dist/training-qwen7b-gsm8k-showcase-rc-20260719-r1/training_qwen7b_gsm8k_showcase_rc.json \
-  --require-ready --json
+Create a separate worktree at `e332a7b` and run the checker recorded there
+against the retained `dist/` bundle. Do not copy the historical checker or
+Qwen stage runtime back into the active source tree.
 
-python examples/qwen7b_gsm8k_compare.py \
-  --adapter dist/training-qwen7b-gsm8k-showcase-rc-20260719-r1/artifacts/training_qwen7b_standard_peft_adapter.zip \
-  --question "A shop has 12 boxes with 8 pencils each. How many pencils?"
-```
-
-The strict checker returns zero errors and `showcase_ready=true`. The complete
-repository regression after implementation passed 2,574 tests, skipped two,
-and failed none.
+The archived strict checker returned zero errors and
+`showcase_ready=true`. The then-current repository regression passed 2,574
+tests with two conditional skips.
 
 ## Cleanup And Boundary
 

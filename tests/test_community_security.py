@@ -105,7 +105,7 @@ def test_restricted_worker_policy_covers_command_file_network_and_resources(tmp_
         maximum_output_bytes=100,
     )
     accepted = policy.validate(
-        ["python", "-m", "crowdtensor.community_worker"],
+        ["python", "-m", "crowdtensor.volunteer_training_cell"],
         file_paths=[str(root / "checkpoint.bin")],
         network_urls=["https://huggingface.co/model"],
         memory_bytes=512,
@@ -141,7 +141,7 @@ def test_public_safety_scan_is_negative_for_all_forbidden_material(tmp_path) -> 
         "schema": "public_v1",
         "token_values_public": False,
         "prompt_hash": "sha256:" + "a" * 64,
-        "next_command": "crowdtensor community status <workspace>",
+        "next_command": "crowdtensor train status <workspace>",
     }
     assert scan_public_value(clean)["ok"] is True
     forbidden = {

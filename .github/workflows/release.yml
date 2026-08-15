@@ -1,0 +1,65 @@
+name: Training alpha release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Verify tag and package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION=$(python -c 'from crowdtensor.version import __version__; print(__version__)')
+          test "${GITHUB_REF_NAME}" = "v${VERSION}"
+      - name: Install CPU test runtime
+        run: >-
+          python -m pip install
+          --index-url https://download.pytorch.org/whl/cpu
+          'torch>=2,<3'
+      - name: Install release dependencies
+        run: python -m pip install -e '.[dev,hf,storage]'
+      - name: Validate source tree
+        run: |
+          python scripts/check_repository.py --json
+          python -m compileall -q crowdtensor tests
+          python -m pytest -q
+      - name: Build immutable artifacts
+        run: |
+          rm -rf build dist/release
+          python -m build
+          crowdtensor release prepare dist/release --commit "${GITHUB_SHA}" --json
+          crowdtensor release verify dist/release --json
+      - name: Verify clean wheel install
+        run: |
+          python -m venv /tmp/crowdtensor-release-smoke
+          /tmp/crowdtensor-release-smoke/bin/pip install dist/release/crowdtensord-*.whl
+          test "$(/tmp/crowdtensor-release-smoke/bin/crowdtensor version)" = "$(python -c 'from crowdtensor.version import __version__; print(__version__)')"
+          /tmp/crowdtensor-release-smoke/bin/crowdtensor train --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crowdtensor-${{ github.ref_name }}
+          path: dist/release/*
+          if-no-files-found: error
+      - name: Publish GitHub prerelease
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          dist/release/*
+          --prerelease
+          --verify-tag
+          --title "CrowdTensor ${GITHUB_REF_NAME}"
+          --notes-file RELEASE_NOTES.md

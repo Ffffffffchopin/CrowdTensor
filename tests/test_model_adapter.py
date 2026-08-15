@@ -1,10 +1,5 @@
 import pytest
 import torch
-
-from crowdtensor.heterogeneous_training_production import (
-    default_production_config,
-    production_manifest,
-)
 from crowdtensor.model_adapter import (
     MODEL_ADAPTER_DESCRIPTOR_SCHEMA,
     ModelAdapterError,
@@ -70,7 +65,10 @@ def test_adapters_partition_contiguously_and_estimate_resources(adapter_id: str,
 
 
 def test_qwen_production_manifest_is_now_adapter_backed_without_contract_regression() -> None:
-    manifest = production_manifest(default_production_config())
+    manifest = get_model_adapter("qwen2_lora_v1").production_manifest(
+        target_steps=100,
+        accelerators=["cpu", "cuda", "jax_tpu"],
+    )
     assert manifest["model"]["model_type"] == "qwen2"
     assert manifest["scheduler"]["required_device_types"] == ["cpu", "cuda", "jax_tpu"]
     assert manifest["training"]["target_steps"] == 100

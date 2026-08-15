@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import json
+import math
 import threading
 
 import pytest
@@ -119,6 +121,7 @@ def test_churn_fencing_clipping_quorum_and_idempotency(tmp_path) -> None:
     second = _submit(coordinator, token, "replacement", replacement, replacement_delta)
     assert second["round_aggregated"] is True
     assert second["adapter_version_after"] == 1
+    assert second["accepted_at"] == clock.value
 
     replay = _submit(
         coordinator,
@@ -128,6 +131,22 @@ def test_churn_fencing_clipping_quorum_and_idempotency(tmp_path) -> None:
         replacement_delta,
     )
     assert replay["idempotent_replay"] is True
+    assert replay["round_aggregated"] is True
+    assert replay["adapter_version_after"] == second["adapter_version_after"]
+    assert replay["accepted_at"] == second["accepted_at"]
+    assert replay["delta_clipped"] == second["delta_clipped"]
+    assert replay["delta_norm_before_clip"] == second["delta_norm_before_clip"]
+    assert replay["delta_norm_after_clip"] == second["delta_norm_after_clip"]
+    first_replay = _submit(
+        coordinator,
+        token,
+        "survivor",
+        {"work_id": survivor["work_id"], "lease_generation": 0, "lease_token": ""},
+        survivor_delta,
+    )
+    assert first_replay["idempotent_replay"] is True
+    assert first_replay["round_aggregated"] is False
+    assert first_replay["adapter_version_after"] == 0
     stale = copy.deepcopy(invalid)
     stale["result_id"] = sha256_json({"case": "late"})
     with pytest.raises(VolunteerProtocolError, match="stale_adapter_version"):
@@ -143,6 +162,13 @@ def test_churn_fencing_clipping_quorum_and_idempotency(tmp_path) -> None:
     assert lineage["completed_round_count"] == 1
     assert lineage["entries"][0]["adapter_version_before"] == 0
     assert lineage["entries"][0]["adapter_version_after"] == 1
+    evaluation = coordinator.evaluate_campaign(heldout_quality=True)
+    assert evaluation["held_out_quality_benchmark_performed"] is True
+    assert evaluation["quality"]["candidate_adapter_version"] == 1
+    assert math.isfinite(evaluation["quality"]["baseline_mean_loss"])
+    assert math.isfinite(evaluation["quality"]["candidate_mean_loss"])
+    assert evaluation["statistical_significance_claimed"] is False
+    assert str(tmp_path) not in json.dumps(evaluation, sort_keys=True)
     serialized = (coordinator.status_path.read_text(encoding="utf-8") + coordinator.ledger_path.read_text(encoding="utf-8"))
     assert token not in serialized
     assert '"lease_token"' not in serialized

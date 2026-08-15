@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from crowdtensor.community_security import TLSProxyPolicy
-from crowdtensor.volunteer_training_api import create_volunteer_training_app
+from crowdtensor.version import __version__
+from crowdtensor.volunteer_training_api import (
+    PUBLIC_RELEASE_ARTIFACT_NAMES,
+    create_volunteer_training_app,
+    service_contract,
+)
 from crowdtensor.volunteer_training_protocol import (
     SUBMISSION_SCHEMA,
     VolunteerProtocolError,
@@ -30,6 +37,9 @@ class StubCoordinator:
 
     def status(self):
         return {"ok": True, "adapter_version": 0}
+
+    def checkpoint_lineage(self):
+        return {"ok": True, "schema": "fixture-lineage"}
 
     def authenticate_invite(self, invite_token):
         if invite_token != "invite":
@@ -56,11 +66,95 @@ class StubCoordinator:
         return {"ok": True, "accepted": True}
 
 
+def _write_release(root: Path) -> Path:
+    root.mkdir()
+    manifest_names = PUBLIC_RELEASE_ARTIFACT_NAMES - {"SHA256SUMS", "release.json"}
+    artifacts = []
+    for name in sorted(manifest_names):
+        path = root / name
+        path.write_bytes((name + "\n").encode("utf-8"))
+        artifacts.append(
+            {
+                "name": name,
+                "byte_count": path.stat().st_size,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+    (root / "release.json").write_text(
+        json.dumps(
+            {
+                "schema": "crowdtensor_release_v1",
+                "version": __version__,
+                "commit": "test",
+                "artifacts": artifacts,
+                "public_artifact_safe": True,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    checksum_names = PUBLIC_RELEASE_ARTIFACT_NAMES - {"SHA256SUMS"}
+    (root / "SHA256SUMS").write_text(
+        "".join(
+            hashlib.sha256((root / name).read_bytes()).hexdigest()
+            + "  "
+            + name
+            + "\n"
+            for name in sorted(checksum_names)
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_service_contract_lists_v2_public_projection_routes() -> None:
+    contract = service_contract()
+    assert "GET /v1/volunteer/checkpoint-lineage" in contract["routes"]
+    assert "GET /v1/volunteer/session" in contract["routes"]
+    assert contract["optional_v2_session_controller_bridge"] is True
+
+
+def test_invalid_v2_controller_bridge_is_rejected_at_startup(tmp_path) -> None:
+    with pytest.raises(ValueError, match="volunteer_v2_controller_bridge_invalid"):
+        create_volunteer_training_app(
+            StubCoordinator(tmp_path), controller_transport=object()
+        )
+
+
+def test_complete_versioned_release_directory_is_served(tmp_path) -> None:
+    release = _write_release(tmp_path / "release")
+    client = TestClient(
+        create_volunteer_training_app(
+            StubCoordinator(tmp_path / "coordinator"), public_release_dir=release
+        )
+    )
+    health = client.get("/v1/volunteer/health").json()
+    assert health["public_release_download"] is True
+    assert health["package_version"] == __version__
+    wheel_name = f"crowdtensord-{__version__}-py3-none-any.whl"
+    assert client.get("/downloads/" + wheel_name).content == (
+        wheel_name + "\n"
+    ).encode("utf-8")
+    assert client.get("/downloads/private-invite.json").status_code == 404
+
+
+def test_incomplete_release_directory_fails_closed(tmp_path) -> None:
+    release = tmp_path / "release"
+    release.mkdir()
+    (release / "install-contributor.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="volunteer_release_directory_incomplete"):
+        create_volunteer_training_app(
+            StubCoordinator(tmp_path / "coordinator"), public_release_dir=release
+        )
+
+
 def test_http_routes_authenticate_binary_submission_and_remove_upload(tmp_path) -> None:
     coordinator = StubCoordinator(tmp_path)
     client = TestClient(create_volunteer_training_app(coordinator))
     assert client.get("/v1/volunteer/health").status_code == 200
     assert client.get("/v1/volunteer/status").json()["adapter_version"] == 0
+    assert client.get("/v1/volunteer/checkpoint-lineage").json()["ok"] is True
     unauthorized = client.post(
         "/v1/volunteer/work/claim", json={"cell_id": "cell"}
     )
@@ -105,11 +199,14 @@ def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     assert "Train a model together" in home.text
     assert join.status_code == 200
     assert "Contribute from this device" in join.text
-    assert "Not large-model WebGPU sharding" in join.text
+    assert 'id="agent-tab" class="mode-tab active"' in join.text
+    assert 'id="agent-panel" role="tabpanel" aria-labelledby="agent-tab">' in join.text
+    assert 'id="browser-panel" role="tabpanel" aria-labelledby="browser-tab" hidden' in join.text
     assert client.head("/join").status_code == 200
     assert "/v1/volunteer/public-snapshot" not in home.text
-    assert "issues/new?template=beta_enrollment.yml" in home.text
-    assert "docs/campaigns/qwen25-7b-gsm8k-rfc.md" in home.text
+    assert "issues/new?template=beta_enrollment.yml" not in home.text
+    assert "docs/campaigns/qwen25-7b-gsm8k-rfc.md" not in home.text
+    assert "crowdtensor.24.199.118.54.nip.io" not in home.text + join.text
     assert "/CrowdTensor/discussions" not in home.text
     assert "default-src 'self'" in home.headers["content-security-policy"]
     site_css = client.get("/assets/site.css")
@@ -126,6 +223,8 @@ def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     assert join_script.status_code == 200
     assert "/v1/volunteer/pairing/redeem" in join_script.text
     assert "/v1/volunteer/browser/submit" in join_script.text
+    assert "window.location.origin" in join_script.text
+    assert "/downloads/install-contributor.sh" in join_script.text
     assert join_worker.status_code == 200
     assert "requestAdapter" in join_worker.text
     assert "WebAssembly.instantiate" in join_worker.text

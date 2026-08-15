@@ -11,17 +11,17 @@ assignees: ""
 
 ## Target user
 
-- Home open-model player:
-- Remote Miner operator:
-- Browser experimenter:
+- Training session operator:
+- Intermittent compute contributor:
+- Backend or Model Adapter author:
 - Protocol contributor:
 
 ## Proposed direction
 
 
-## Protocol or roadmap impact
+## Contract or roadmap impact
 
-- Affects `runtime_contract_v1`:
+- Affects Work Unit, checkpoint, receipt, or backend contracts:
 - Needs ROADMAP.md update:
 
 ## Alternatives considered

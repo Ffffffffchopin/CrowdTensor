@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-__version__ = "0.2.0rc7"
+__version__ = "0.3.0a1"
 COMMUNITY_PROTOCOL_VERSION = "community_training_v1.0"
 MODEL_ADAPTER_API_VERSION = "model_adapter_v1.0"
 EVIDENCE_API_VERSION = "community_evidence_v1.0"

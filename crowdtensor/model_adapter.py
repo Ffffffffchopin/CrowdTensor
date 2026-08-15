@@ -341,7 +341,7 @@ class QwenModelAdapter(ModelAdapter):
     production_scheduler_supported = True
 
     def production_manifest(self, *, target_steps: int, accelerators: Iterable[str]) -> dict[str, Any]:
-        from .heterogeneous_training_manifest import (
+        from .adapters.manifests import (
             qwen25_7b_lora_manifest,
             qwen25_7b_lora_tpu_manifest,
         )

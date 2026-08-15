@@ -2,10 +2,8 @@ import sys
 from pathlib import Path
 
 import pytest
-import torch
 
 from crowdtensor.model_adapter import ModelAdapterError, check_model_adapter_conformance
-import crowdtensor.adapter_stage_training as stage_training
 
 
 PLUGIN_SOURCE = Path("plugins/mistral_adapter/src").resolve()
@@ -50,70 +48,3 @@ def test_mistral_rejects_invalid_gqa_window_and_production_overclaim() -> None:
         adapter.validate_config(config)
     with pytest.raises(ModelAdapterError, match="production_scheduler_not_supported"):
         adapter.production_manifest(target_steps=8, accelerators=["cpu", "cuda"])
-
-
-def test_mistral_real_architecture_supports_both_lora_pipeline_stages(
-    monkeypatch, tmp_path
-) -> None:
-    from transformers import MistralConfig, MistralForCausalLM
-
-    def new_config() -> MistralConfig:
-        return MistralConfig(
-            vocab_size=128,
-            hidden_size=32,
-            intermediate_size=64,
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            sliding_window=8,
-            max_position_embeddings=32,
-        )
-
-    adapter = MistralModelAdapter()
-    monkeypatch.setattr(stage_training, "get_model_adapter", lambda _adapter_id: adapter)
-    monkeypatch.setattr(
-        adapter,
-        "load_model",
-        lambda **kwargs: MistralForCausalLM(new_config()).to(kwargs["device"]),
-    )
-    for stage_id in (0, 1):
-        model, causal, optimizer, start, end, details = (
-            stage_training.configure_adapter_stage_model(
-                adapter_id=adapter.adapter_id,
-                model_id=adapter.default_model_id,
-                model_revision=adapter.default_revision,
-                model_config=new_config().to_dict(),
-                stage_id=stage_id,
-                split_index=1,
-                device="cpu",
-                cache_dir=str(tmp_path / f"cache-{stage_id}"),
-                rank=2,
-                alpha=4,
-            )
-        )
-        before = stage_training.tensor_state_hash(
-            stage_training.owned_lora_state(model, start=start, end=end)
-        )
-        if stage_id == 0:
-            input_ids = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
-            hidden = causal.model(
-                input_ids=input_ids, use_cache=False
-            ).last_hidden_state
-            loss = hidden.square().mean()
-        else:
-            hidden = torch.randn(1, 4, 32, requires_grad=True)
-            final = causal.model(
-                inputs_embeds=hidden, use_cache=False
-            ).last_hidden_state
-            loss = causal.lm_head(final).float().square().mean()
-        loss.backward()
-        optimizer.step()
-        after = stage_training.tensor_state_hash(
-            stage_training.owned_lora_state(model, start=start, end=end)
-        )
-        assert torch.isfinite(loss).item() is True
-        assert before != after
-        assert details["family"] == "mistral"
-        assert details["architecture"] == "MistralForCausalLM"
-        assert details["layer_start"] == stage_id
-        assert details["layer_end"] == stage_id + 1

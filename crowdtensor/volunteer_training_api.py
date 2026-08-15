@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import time
 from importlib import resources
@@ -14,6 +13,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from .community_security import SecurityContractError, TLSProxyPolicy
+from .core.contracts import ContractError
+from .core.controller import SessionControllerError
+from .release import PUBLIC_RELEASE_ARTIFACT_NAMES, resolve_public_release_dir
 from .version import __version__
 from .volunteer_training_coordinator import VolunteerTrainingCoordinator
 from .volunteer_training_protocol import (
@@ -128,12 +130,26 @@ async def _json_object(
 def create_volunteer_training_app(
     coordinator: VolunteerTrainingCoordinator,
     *,
+    controller_transport: Any | None = None,
     tls_policy: TLSProxyPolicy | None = None,
     upload_chunk_bytes: int = DEFAULT_CHUNK_BYTES,
     upload_blob_store: VolunteerBlobStore | None = None,
     public_release_dir: str | Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="CrowdTensor Volunteer Training Alpha", version="1.0")
+    bridge_ready = controller_transport is not None
+    if bridge_ready:
+        controller = getattr(controller_transport, "controller", None)
+        required_bridge_methods = (
+            "record_claim_operation",
+            "record_heartbeat_operation",
+            "record_submission_operation",
+        )
+        if not callable(getattr(controller, "status", None)) or any(
+            not callable(getattr(controller_transport, name, None))
+            for name in required_bridge_methods
+        ):
+            raise ValueError("volunteer_v2_controller_bridge_invalid")
     policy = tls_policy or TLSProxyPolicy(require_https=False)
     campaign_manifest = coordinator.campaign_manifest()
     upload_store = upload_blob_store or LocalVolunteerBlobStore(
@@ -146,22 +162,26 @@ def create_volunteer_training_app(
         chunk_bytes=int(upload_chunk_bytes),
         clock=getattr(coordinator, "clock", time.time),
     )
-    configured_release_dir = str(
-        public_release_dir or os.environ.get("CROWDTENSOR_PUBLIC_RELEASE_DIR") or ""
-    ).strip()
-    release_root = (
-        Path(configured_release_dir).expanduser().resolve()
-        if configured_release_dir
-        else None
-    )
-    release_artifact_names = {
-        f"crowdtensord-{__version__}-py3-none-any.whl",
-        f"crowdtensord-{__version__}.tar.gz",
-        "SHA256SUMS",
-        "RELEASE_NOTES.md",
-        "install-contributor.sh",
-        "release.json",
-    }
+    release_root = resolve_public_release_dir(public_release_dir)
+    app.state.public_release_download = release_root is not None
+
+    def _mirror(method_name: str, **kwargs: Any) -> dict[str, Any]:
+        if controller_transport is None:
+            return dict(kwargs.pop("response"))
+        method = getattr(controller_transport, method_name, None)
+        if not callable(method):
+            raise VolunteerProtocolError(
+                "volunteer_v2_controller_bridge_invalid", status_code=500
+            )
+        try:
+            return dict(method(**kwargs))
+        except (ContractError, SessionControllerError) as exc:
+            raise VolunteerProtocolError(str(exc), status_code=409) from exc
+
+    def _operate(operation: str, fallback: Any, **kwargs: Any) -> dict[str, Any]:
+        if controller_transport is None:
+            return dict(fallback())
+        return _mirror(operation, operation=fallback, **kwargs)
 
     def _authenticated_bearer(
         request: Request,
@@ -245,7 +265,7 @@ def create_volunteer_training_app(
 
     @app.get("/downloads/{artifact_name}", include_in_schema=False)
     async def release_download(artifact_name: str) -> FileResponse:
-        if release_root is None or artifact_name not in release_artifact_names:
+        if release_root is None or artifact_name not in PUBLIC_RELEASE_ARTIFACT_NAMES:
             raise VolunteerProtocolError(
                 "volunteer_release_artifact_not_found", status_code=404
             )
@@ -282,6 +302,7 @@ def create_volunteer_training_app(
                 "schema": SERVICE_SCHEMA,
                 "ok": True,
                 "service": "volunteer_training_coordinator",
+                "package_version": __version__,
                 "campaign_id": coordinator.campaign_manifest()["campaign_id"],
                 "binary_safetensors_submission": True,
                 "authenticated_artifact_download": True,
@@ -289,6 +310,8 @@ def create_volunteer_training_app(
                 "one_time_pairing_codes": hasattr(coordinator, "redeem_pairing_code"),
                 "browser_calibration_task": hasattr(coordinator, "claim_browser_probe"),
                 "browser_training": False,
+                "v2_session_controller": bridge_ready,
+                "concurrent_elastic_work": bridge_ready,
                 "public_release_download": bool(release_root),
                 "tls_required": bool(policy.require_https),
                 "trusted_forwarded_headers": bool(policy.trust_forwarded_headers),
@@ -302,6 +325,23 @@ def create_volunteer_training_app(
     @app.get("/v1/volunteer/status")
     async def status() -> dict[str, Any]:
         return coordinator.status()
+
+    @app.get("/v1/volunteer/checkpoint-lineage")
+    async def checkpoint_lineage() -> dict[str, Any]:
+        if not hasattr(coordinator, "checkpoint_lineage"):
+            raise VolunteerProtocolError(
+                "volunteer_checkpoint_lineage_unavailable", status_code=404
+            )
+        return coordinator.checkpoint_lineage()
+
+    @app.get("/v1/volunteer/session")
+    async def session_controller_status() -> dict[str, Any]:
+        controller = getattr(controller_transport, "controller", None)
+        if controller is None or not callable(getattr(controller, "status", None)):
+            raise VolunteerProtocolError(
+                "volunteer_v2_controller_unavailable", status_code=404
+            )
+        return controller.status()
 
     @app.get("/v1/volunteer/public-snapshot")
     async def public_snapshot() -> dict[str, Any]:
@@ -406,7 +446,11 @@ def create_volunteer_training_app(
         }
         if hasattr(coordinator, "authorize_cell_request"):
             kwargs["request_nonce"] = _request_nonce(request)
-        return coordinator.claim(**kwargs)
+        return _operate(
+            "record_claim_operation",
+            lambda: coordinator.claim(**kwargs),
+            cell_id=kwargs["cell_id"],
+        )
 
     @app.post("/v1/volunteer/work/heartbeat")
     async def heartbeat(request: Request) -> dict[str, Any]:
@@ -421,7 +465,13 @@ def create_volunteer_training_app(
         )
         if hasattr(coordinator, "authorize_cell_request"):
             kwargs["request_nonce"] = _request_nonce(request)
-        return coordinator.heartbeat(**kwargs)
+        return _operate(
+            "record_heartbeat_operation",
+            lambda: coordinator.heartbeat(**kwargs),
+            cell_id=kwargs["cell_id"],
+            work_id=kwargs["work_id"],
+            generation=kwargs["lease_generation"],
+        )
 
     @app.post("/v1/volunteer/browser/claim")
     async def browser_claim(request: Request) -> dict[str, Any]:
@@ -541,7 +591,14 @@ def create_volunteer_training_app(
             )
             if hasattr(coordinator, "authorize_cell_request"):
                 kwargs["request_nonce"] = _request_nonce(request)
-            return coordinator.submit(**kwargs)
+            return _operate(
+                "record_submission_operation",
+                lambda: coordinator.submit(**kwargs),
+                cell_id=kwargs["cell_id"],
+                work_id=kwargs["work_id"],
+                generation=kwargs["lease_generation"],
+                delta_manifest=private_manifest,
+            )
         finally:
             upload.unlink(missing_ok=True)
 
@@ -651,7 +708,14 @@ def create_volunteer_training_app(
         )
         if hasattr(coordinator, "authorize_cell_request"):
             kwargs["request_nonce"] = _request_nonce(request) + ":submit"
-        response = coordinator.submit(**kwargs)
+        response = _operate(
+            "record_submission_operation",
+            lambda: coordinator.submit(**kwargs),
+            cell_id=kwargs["cell_id"],
+            work_id=kwargs["work_id"],
+            generation=kwargs["lease_generation"],
+            delta_manifest=private_manifest,
+        )
         response["resumable_upload"] = {
             key: value
             for key, value in completed.items()
@@ -670,6 +734,8 @@ def service_contract() -> dict[str, Any]:
                 "GET /v1/volunteer/health",
                 "GET /v1/volunteer/campaign",
                 "GET /v1/volunteer/status",
+                "GET /v1/volunteer/checkpoint-lineage",
+                "GET /v1/volunteer/session",
                 "GET /v1/volunteer/public-snapshot",
                 "GET /v1/volunteer/dashboard",
                 "GET /v1/volunteer/metrics",
@@ -695,6 +761,7 @@ def service_contract() -> dict[str, Any]:
             "browser_calibration_task": True,
             "browser_calibration_updates_model": False,
             "credential_scope_and_revocation_enforced": True,
+            "optional_v2_session_controller_bridge": True,
             "request_nonce_replay_protection": True,
             "request_upload_quota_and_rate_limits": True,
             "invite_bearer_validated_before_upload_allocation": True,

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "crowdtensord"
 dynamic = ["version"]
-description = "Fault-tolerant collaborative inference and heterogeneous LoRA training."
+description = "Elastic volunteer training orchestration with resumable checkpoints and pluggable runtimes."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
   { name = "CrowdTensorD contributors" }
 ]
-keywords = ["distributed-ai", "depin", "diloco", "swarm-training", "swarm-trial", "fastapi"]
+keywords = ["distributed-training", "volunteer-compute", "elastic-training", "checkpoint-resume", "model-adapters", "fastapi"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -57,15 +57,9 @@ tpu = [
 
 [project.scripts]
 crowdtensor = "crowdtensor.cli:main"
-crowdtensord = "coordinator:main"
-crowdtensor-miner = "miner_cli:main"
-crowdtensor-community = "crowdtensor.community_cli:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "crowdtensor.version.__version__"}
-
-[tool.setuptools]
-py-modules = ["coordinator", "miner_cli"]
 
 [tool.setuptools.packages.find]
 include = ["crowdtensor*"]

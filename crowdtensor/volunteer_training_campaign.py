@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from .hf_lora_training import configure_cpu_determinism
+from .adapters.text_data import tokenize_fixed_sequences
 from .model_adapter import SmolLMModelAdapter, get_model_adapter
 from .named_tensor_optimizer import load_tensors
-from .qwen15b_training import _tokenize_split
 from .training_contract import (
     DATASET_SCHEMA,
     JOB_SCHEMA,
@@ -287,13 +287,13 @@ def build_smollm_wikitext_fixture(
     validation_texts = parquet.read_table(
         assets.validation_parquet, columns=["text"]
     )["text"].to_pylist()
-    train_rows, train_indexes = _tokenize_split(
+    train_rows, train_indexes = tokenize_fixed_sequences(
         train_texts,
         tokenizer,
         sequence_length=int(sequence_length),
         sequence_count=int(train_sequence_count),
     )
-    validation_rows, validation_indexes = _tokenize_split(
+    validation_rows, validation_indexes = tokenize_fixed_sequences(
         validation_texts,
         tokenizer,
         sequence_length=int(sequence_length),

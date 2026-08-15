@@ -3,19 +3,24 @@ changelog:
     labels:
       - ignore-for-release
   categories:
-    - title: Runtime
+    - title: Training Core
       labels:
-        - runtime
-        - coordinator
-        - miner
+        - training-core
+        - work-units
+        - checkpointing
+    - title: Backends And Adapters
+      labels:
+        - backend
+        - adapter
+        - providers
+    - title: Volunteer Training
+      labels:
+        - volunteer-training
+        - campaign
     - title: Security
       labels:
         - security
         - auth
-    - title: Browser
-      labels:
-        - browser
-        - webrtc
     - title: Documentation
       labels:
         - documentation

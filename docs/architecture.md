@@ -1,174 +1,97 @@
 # Architecture
 
-CrowdTensor is a Coordinator-backed swarm inference beta. It currently favors
-clear correctness, recovery, and evidence over permissionless networking or
-large-model scale.
-
-The current public path runs a small real Hugging Face GPT model through a
-two-stage inference route:
+CrowdTensor is a small collaboration layer around established training
+runtimes. Its organizing unit is a user-owned training Session, not a hosted
+global service.
 
 ```text
-generate client
-    |
-    v
-Coordinator/API  <->  discovery daemon
-    |
-    +--> stage 0 Miner
-    |
-    +--> stage 1 Miner
+CLI / optional UI
+        |
+user-owned Session Controller
+        |-- Work Units and capability placement
+        |-- checkpoint lineage and restart
+        |-- validation and contribution receipts
+        |
+TrainingBackend --- ModelAdapter --- ProviderAdapter
+        |
+Transformers / PEFT / Accelerate / FSDP2 / DeepSpeed
 ```
 
-The same control-plane mechanics also support deterministic CPU demos, remote
-Miner rehearsals, browser probes, and release evidence packs.
+## Core Contracts
 
-## Main Components
+`crowdtensor/core` contains no Torch, JAX, Transformers, Accelerate, DeepSpeed,
+or provider SDK imports.
 
-### Coordinator
+- `contracts.py`: projects, Work Units, checkpoints, lineage, and receipts;
+- `controller.py`: lease ownership, expiry/generation fencing, replay, commit,
+  and public projections;
+- `execution.py`: provider snapshots, execution plans, and stable launch specs;
+- `workspace.py`: idempotent local lifecycle and public export;
+- `plugins.py`: structural protocols for backends/providers/adapters;
+- `cli.py`: the `crowdtensor train` lifecycle.
 
-The Coordinator is the authority for the current beta. It owns:
+Every persisted contract is schema- and content-hash-bound. Public projections
+exclude credentials, local paths, tensor values, and contributor identities.
 
-- Session creation and read-only inference requests.
-- Task leasing and heartbeat tracking.
-- Timeout requeue and stale-result rejection.
-- Stage-aware scheduling.
-- Result validation and replay audit.
-- Trust quarantine and operator diagnostics.
-- Redacted evidence and support bundle output.
+## Execution Modes
 
-The Coordinator is intentionally centralized for now. That makes correctness
-and recovery easier to inspect before the project moves more responsibility into
-P2P networking.
+### `elastic_delta`
 
-### Discovery
+Independent contributors claim bounded PEFT/delta Work Units from one base
+checkpoint. Multiple leases may coexist. Expired leases can be reassigned at a
+new generation; old-base or late submissions are fenced. Accepted deltas can
+record receipts before quorum, while only a validated aggregate advances
+lineage.
 
-`crowdtensor p2pd` provides the current swarm discovery surface used by
-`serve`, `join`, and `generate` flows. It helps clients find the Coordinator and
-route through a named `--swarm-id`.
+The built-in `volunteer_peft` backend bridges to the retained Volunteer
+Campaign protocol and real Transformers/PEFT Cell runtime.
 
-Discovery is not yet a full permissionless libp2p/DHT/NAT traversal system. It
-is a controlled beta mechanism for local, LAN, and temporary public proofs.
+### `stable_sharded`
 
-### Miners
+Exactly one stable rank-group Work Unit is active. An upstream trainer owns
+model, optimizer, collectives, and distributed checkpointing. CrowdTensor owns
+the bounded launch, result validation, checkpoint promotion, retry generation,
+and receipt. A rank loss restarts the whole group from the latest commit and
+never converts the run to elastic delta work.
 
-Miners opt in to capabilities. For the real split inference route, the key
-roles are:
+The built-in `accelerate_fsdp2` backend produces an explicit launch contract.
+See [the trainer contract](stable-sharded-trainer.md).
 
-- `stage0`
-- `stage1`
-- `both`
+## Adapter Boundaries
 
-The Coordinator only schedules work to Miners that advertise matching
-capabilities. Stage-aware demos require distinct stage Miners so the route
-actually exercises split execution.
+- `crowdtensor/model_adapter.py`: model-family validation, partition/resource
+  estimates, PEFT targets, export/reload, and entry-point discovery;
+- `crowdtensor/adapters/capabilities.py`: legacy/public capability discovery;
+- `crowdtensor/adapters/providers.py`: generic provider snapshot mapping;
+- `crowdtensor/adapters/manifests.py`: the retained Qwen model manifest;
+- `crowdtensor/adapters/text_data.py`: bounded model-neutral text shaping.
 
-Optional Hugging Face and CUDA paths are also explicit opt-ins. CPU remains the
-default.
+Provider adapters discover resources. They do not acquire accounts or weaken
+training acceptance. Model adapters execute trusted Python and must be pinned
+and reviewed.
 
-### Workloads
+## User Surface
 
-CrowdTensor supports several workload families:
-
-- Deterministic CPU proofs for protocol and release checks.
-- Read-only model bundle inference.
-- Optional external LLM adapter smoke tests.
-- Micro-LLM and tiny real-LLM sharded inference.
-- Browser compute and transport experiments.
-
-The most important public-facing workload today is the real tiny GPT split path
-behind `public-real-llm-swarm-beta`.
-
-### Client Commands
-
-User-facing commands wrap the runtime into safer flows:
-
-- `crowdtensor local-proof`
-- `crowdtensor infer`
-- `crowdtensor cpu-infer`
-- `crowdtensor serve`
-- `crowdtensor join`
-- `crowdtensor generate`
-- `crowdtensor public-swarm-beta`
-- `crowdtensor public-real-llm-swarm-beta`
-
-Maintainer and release commands produce stricter evidence, validate contracts,
-and keep shareable artifacts redacted.
-
-## Request Lifecycle
-
-1. A client calls `infer`, `generate`, or a higher-level beta command.
-2. The Coordinator creates a read-only inference session.
-3. Stage-specific work is leased to capable Miners.
-4. Miners heartbeat while working.
-5. If a Miner disappears, the lease times out and the work is requeued.
-6. Results are accepted only if they match the current lease/session state.
-7. Validation checks compare the split route against a local baseline when the
-   workload supports it.
-8. Redacted evidence records readiness, diagnostics, stage assignment, and
-   recovery details.
-
-## Failure Handling
-
-The runtime is built around observable failure modes:
-
-- Claimed work can be requeued after lease timeout.
-- Late results from stale leases can be rejected.
-- Stage assignment can require distinct Miners.
-- Trust quarantine can block unhealthy workers.
-- Release gates can require specific readiness booleans before passing.
-
-This is why many scripts emit structured fields such as
-`decoded_tokens_match`, `stage_assignment_valid`, `distinct_stage_miners`, and
-`stage_requeue_ready`.
-
-## Data And Artifact Safety
-
-Public artifacts are designed to be safe to share:
-
-- Raw API keys and private tokens are redacted.
-- Raw prompts and output text are avoided in public evidence where required.
-- Private runtime env files stay local.
-- Cleanup commands remove generated private live artifacts by default in live
-  proof wrappers.
-
-The project still assumes controlled operators and trusted network boundaries.
-It is not safe to expose as an untrusted public mining network.
-
-## What Is Deliberately Not Decentralized Yet
-
-Several pieces remain intentionally simple:
-
-- The Coordinator is still authoritative.
-- Discovery is controlled.
-- Miner admission is token-backed.
-- Validation is workload-specific.
-- Model sizes remain small.
-- Public prompt serving is not enabled.
-
-Those constraints keep the beta testable. Future work can decentralize pieces
-only after correctness and safety remain clear.
-
-## Current Mental Model
-
-CrowdTensor is best understood as:
+The public command tree is intentionally narrow:
 
 ```text
-controlled swarm inference beta
-+ real tiny-model split execution
-+ observable recovery and validation
-+ redacted release evidence
-- production P2P
-- large-model serving
-- permissionless public mining
+crowdtensor train ...
+crowdtensor volunteer ...
+crowdtensor adapters ...
 ```
-## Open-Source Entry Points
 
-CrowdTensor now presents democratic training on the project website and keeps
-the older inference material as an engineering reference. The original
-5-minute local swarm demo remains documented in the detailed quickstart.
+`train run --campaign-dir` and `train join` compose the ordinary elastic
+workflow. The optional packaged site/dashboard is served by a user-owned
+Volunteer Session; it is not a required central CrowdTensor service.
 
-- **What Works Today:** start with `README.md`, then use `docs/protocol.md` for
-  the protocol contract and `docs/use-cases.md` for bounded deployment cases.
-- **What Is Not Ready:** permissionless admission, production-grade public
-  Swarm Inference, and large-model community training remain explicit gates.
-- The deployable website source is `site/index.html`; the packaged copy is
-  served by the Volunteer Coordinator at `/`.
+## Evidence Boundary
+
+Current real gates cover CPU PEFT and local two-rank CPU FSDP2 recovery. A
+generated plan is not execution evidence. Hosted-notebook workers are logical
+nodes, not proof of independently administered physical machines. CUDA,
+provider-owned multi-machine launch, semantic-poisoning defenses, and public
+permissionless operation remain external milestones.
+
+The old inference/P2P architecture and milestone automation are archived at
+Git baseline `e332a7b`; see [the archive guide](archive.md). They are not
+available through the current CLI and must not return as top-level imports.

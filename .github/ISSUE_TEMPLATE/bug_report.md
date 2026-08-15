@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible CrowdTensorD defect
+about: Report a reproducible CrowdTensor defect
 title: "[Bug]: "
 labels: bug
 assignees: ""
@@ -25,13 +25,11 @@ assignees: ""
 - CrowdTensorD version or commit:
 - Command used:
 
-## Support Bundle
+## Workspace status
 
-If possible, attach output from:
-
-```bash
-python3 scripts/support_bundle.py --json-out dist/crowdtensor_support_bundle.json
-```
+If the issue concerns a training workspace, attach the public-safe output of
+`crowdtensor train inspect WORKSPACE --json`. Remove any private URLs or
+credentials before posting.
 
 ## Logs or output
 

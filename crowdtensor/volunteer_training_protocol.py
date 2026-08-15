@@ -261,6 +261,65 @@ def validate_campaign_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if hard_norm < clip_norm:
         raise VolunteerProtocolError("volunteer_hard_norm_below_clip_norm", status_code=400)
 
+    requirements = manifest.get("resource_requirements")
+    if requirements is not None:
+        if (
+            not isinstance(requirements, dict)
+            or requirements.get("schema")
+            != "crowdtensor_volunteer_resource_requirements_v1"
+        ):
+            raise VolunteerProtocolError(
+                "volunteer_resource_requirements_invalid", status_code=400
+            )
+        devices = requirements.get("supported_devices")
+        if (
+            not isinstance(devices, list)
+            or not devices
+            or any(value not in {"cpu", "cuda"} for value in devices)
+            or len(devices) != len(set(devices))
+        ):
+            raise VolunteerProtocolError(
+                "volunteer_resource_devices_invalid", status_code=400
+            )
+        numeric_fields = (
+            "first_work_unit_download_bytes",
+            "recurring_work_unit_download_bytes",
+            "minimum_memory_bytes",
+            "minimum_free_disk_bytes",
+        )
+        if any(int(requirements.get(name) or 0) < 1 for name in numeric_fields):
+            raise VolunteerProtocolError(
+                "volunteer_resource_limit_invalid", status_code=400
+            )
+        if int(requirements["first_work_unit_download_bytes"]) < int(
+            requirements["recurring_work_unit_download_bytes"]
+        ):
+            raise VolunteerProtocolError(
+                "volunteer_resource_download_contract_invalid", status_code=400
+            )
+        if int(requirements.get("local_steps") or 0) != local_steps:
+            raise VolunteerProtocolError(
+                "volunteer_resource_step_contract_invalid", status_code=400
+            )
+
+    evaluation = manifest.get("evaluation_contract")
+    if evaluation is not None:
+        if (
+            not isinstance(evaluation, dict)
+            or evaluation.get("schema")
+            != "crowdtensor_volunteer_evaluation_contract_v1"
+            or evaluation.get("metric") != "mean_token_cross_entropy"
+            or int(evaluation.get("heldout_sample_count") or 0) < 1
+            or evaluation.get("statistical_significance_claimed") is not False
+        ):
+            raise VolunteerProtocolError(
+                "volunteer_evaluation_contract_invalid", status_code=400
+            )
+        _require_hash(
+            evaluation.get("heldout_dataset_hash"),
+            "volunteer_evaluation_dataset_hash_invalid",
+        )
+
     _validate_campaign_import(manifest)
 
     expected_hash = campaign_content_hash(manifest)

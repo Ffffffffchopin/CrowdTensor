@@ -8,7 +8,6 @@
     <meta property="og:title" content="CrowdTensor - Train a model together">
     <meta property="og:description" content="Open campaigns for volunteer model training. Contribute one update; the shared checkpoint keeps moving.">
     <meta property="og:type" content="website">
-    <meta property="og:image" content="https://crowdtensor.24.199.118.54.nip.io/assets/hero-dashboard.png">
     <title>CrowdTensor - Train a model together</title>
     <link rel="icon" href="/assets/favicon.png" type="image/png">
     <link rel="stylesheet" href="/assets/site.css">
@@ -57,12 +56,11 @@
       <section class="campaign-band" id="campaigns">
         <div class="shell campaign-layout">
           <div class="section-intro">
-            <p class="eyebrow dark">Founding campaign</p>
-            <h2 id="campaign-title">Founding systems campaign</h2>
+            <p class="eyebrow dark">This Campaign</p>
+            <h2 id="campaign-title">Campaign status</h2>
             <p>
-              The first public Coordinator hardens the contribution loop on a
-              pinned, supported workload before the community-selected 7B
-              Campaign opens.
+              This user-owned Session publishes its model, dataset, progress,
+              and checkpoint lineage without exposing contributor credentials.
             </p>
             <div class="campaign-status-line">
               <span class="status-badge" id="campaign-status" data-state="preparing">
@@ -128,7 +126,7 @@
               complete a short local update, and disappear.
             </p>
             <p>
-              The Coordinator admits bounded work, validates LoRA deltas, and
+              The Session Controller admits bounded work, validates LoRA deltas, and
               commits an auditable checkpoint. No eligible compute means pause,
               not failure.
             </p>
@@ -156,7 +154,7 @@
             <li>
               <span class="step-number">03</span>
               <h3>Verify and leave</h3>
-              <p>The Coordinator verifies the result. Training checkpoints persist when contributors leave.</p>
+              <p>The Session verifies the result. Training checkpoints persist when contributors leave.</p>
             </li>
           </ol>
         </div>
@@ -203,7 +201,7 @@
           <div class="section-heading split-heading">
             <div>
               <p class="eyebrow dark">Campaign pipeline</p>
-              <h2 id="pipeline-title">Start proven. Scale by public decision.</h2>
+              <h2 id="pipeline-title">Operate locally. Govern campaigns openly.</h2>
             </div>
             <p>The website will remain the public record for proposals, progress, evaluation, and checkpoints.</p>
           </div>
@@ -211,20 +209,20 @@
             <article class="campaign-item">
               <div class="campaign-index">01</div>
               <div>
-                <span class="item-state live">Coordinator live</span>
-                <h3>Founding systems campaign</h3>
-                <p>Pinned SmolLM2-135M and WikiText-2. Controlled enrollment while the Internet contribution path is hardened.</p>
+                <span class="item-state live">Session status</span>
+                <h3>Current Campaign</h3>
+                <p>The live snapshot above is authoritative for the Campaign served from this origin.</p>
               </div>
-              <a href="/v1/volunteer/dashboard" aria-label="Open founding campaign dashboard">View <span aria-hidden="true">&#8594;</span></a>
+              <a href="/v1/volunteer/dashboard" aria-label="Open current campaign dashboard">View <span aria-hidden="true">&#8594;</span></a>
             </article>
             <article class="campaign-item">
               <div class="campaign-index">02</div>
               <div>
                 <span class="item-state proposal">Proposal phase</span>
-                <h3>Community 7B campaign</h3>
-                <p>A public 7B instruction or domain LoRA campaign. Model, dataset, benchmark, moderation, and rollback must pass an RFC first.</p>
+                <h3>Propose another Campaign</h3>
+                <p>Model, dataset, benchmark, moderation, licensing, and rollback should be reviewed before recruiting contributors.</p>
               </div>
-              <a href="https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/campaigns/qwen25-7b-gsm8k-rfc.md" aria-label="Read the Community 7B Campaign RFC">Read RFC <span aria-hidden="true">&#8599;</span></a>
+              <a href="https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=rfc.md" aria-label="Open a Campaign RFC">Open RFC <span aria-hidden="true">&#8599;</span></a>
             </article>
           </div>
         </div>
@@ -236,7 +234,7 @@
             <p class="eyebrow light">Contribute compute</p>
             <h2 id="join-title">Give one update, not a permanent machine.</h2>
             <p>
-              Enrollment is controlled during beta. Approved contributors
+              Enrollment is controlled by this Campaign operator. Approved contributors
               receive a one-time pairing code; identities and credentials
               never appear in the public dashboard.
             </p>
@@ -246,7 +244,7 @@
             <code>Pair once. Contribute in three steps.</code>
             <div class="join-actions">
               <a class="button light" href="/join">Open contributor</a>
-              <a class="button outline-light" href="https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=beta_enrollment.yml">Request access</a>
+              <a class="button outline-light" href="https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/governance.md">Campaign policy</a>
             </div>
           </div>
         </div>
@@ -257,7 +255,7 @@
           <h2 id="boundary-title">Open progress. Honest boundaries.</h2>
           <p>
             CrowdTensor is an engineering beta. It has real checkpointed LoRA
-            training, heterogeneous scheduling, recovery, and retained Kaggle
+            training, scheduling, recovery, and retained Kaggle
             evidence. It does not yet have permissionless admission, poisoning
             resistance, independent physical multi-host proof, or a production SLA.
           </p>

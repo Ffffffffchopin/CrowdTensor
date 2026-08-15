@@ -287,6 +287,22 @@ async function copyAgentCommand() {
   window.setTimeout(() => setText("copy-command", "Copy"), 1200);
 }
 
+async function loadAgentRelease() {
+  const origin = window.location.origin.replace(/\/$/, "");
+  const command = `curl -fsSL ${origin}/downloads/install-contributor.sh | sh -s -- ${origin} CT-XXXX-XXXX-XXXX`;
+  try {
+    const health = await jsonRequest("/v1/volunteer/health", { headers: { Accept: "application/json" } });
+    if (health.public_release_download !== true) throw new Error("release_unavailable");
+    setText("agent-command", command);
+    setText("agent-release-state", health.package_version || "Ready");
+    byId("copy-command").disabled = false;
+  } catch (_error) {
+    setText("agent-command", "Contributor release not attached by this Campaign operator");
+    setText("agent-release-state", "Unavailable");
+    byId("copy-command").disabled = true;
+  }
+}
+
 function restorePairing() {
   try {
     const value = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
@@ -310,6 +326,8 @@ byId("copy-command").addEventListener("click", () => copyAgentCommand().catch(()
 window.addEventListener("beforeunload", stopHeartbeat);
 
 restorePairing();
+selectMode("agent");
 renderHardware();
 renderPaired();
 loadSnapshot();
+loadAgentRelease();

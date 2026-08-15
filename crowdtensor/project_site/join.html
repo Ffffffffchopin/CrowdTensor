@@ -24,7 +24,7 @@
 
     <main>
       <section class="join-heading">
-        <p class="eyebrow">Controlled beta enrollment</p>
+        <p class="eyebrow">Campaign enrollment</p>
         <h1>Contribute from this device</h1>
         <p class="lede">One pairing code. One bounded task. No repository setup.</p>
       </section>
@@ -32,11 +32,11 @@
       <section class="join-workspace" aria-label="Contributor workspace">
         <div class="contribution-tool">
           <div class="mode-tabs" role="tablist" aria-label="Contribution method">
-            <button id="browser-tab" class="mode-tab active" type="button" role="tab" aria-selected="true" aria-controls="browser-panel">Browser</button>
-            <button id="agent-tab" class="mode-tab" type="button" role="tab" aria-selected="false" aria-controls="agent-panel">Native Agent</button>
+            <button id="agent-tab" class="mode-tab active" type="button" role="tab" aria-selected="true" aria-controls="agent-panel">Native Agent</button>
+            <button id="browser-tab" class="mode-tab" type="button" role="tab" aria-selected="false" aria-controls="browser-panel">Browser calibration</button>
           </div>
 
-          <div id="browser-panel" role="tabpanel" aria-labelledby="browser-tab">
+          <div id="browser-panel" role="tabpanel" aria-labelledby="browser-tab" hidden>
             <ol class="steps" aria-label="Browser contribution steps">
               <li class="step active" id="step-pair">
                 <span>1</span>
@@ -110,7 +110,7 @@
             </div>
           </div>
 
-          <div id="agent-panel" role="tabpanel" aria-labelledby="agent-tab" hidden>
+          <div id="agent-panel" role="tabpanel" aria-labelledby="agent-tab">
             <div class="agent-intro">
               <p class="eyebrow">CPU / CUDA</p>
               <h2>Run a real LoRA Cell</h2>
@@ -120,15 +120,15 @@
                 <span>Python 3.11+</span>
                 <button id="copy-command" class="copy-command" type="button">Copy</button>
               </div>
-              <code id="agent-command">curl -fsSL https://crowdtensor.24.199.118.54.nip.io/downloads/install-contributor.sh | sh -s -- https://crowdtensor.24.199.118.54.nip.io CT-XXXX-XXXX-XXXX</code>
+              <code id="agent-command">Checking Campaign release</code>
             </div>
             <dl class="agent-facts">
-              <div><dt>Hardware</dt><dd>Automatic detection</dd></div>
+              <div><dt>Release</dt><dd id="agent-release-state">Checking</dd></div>
               <div><dt>Default limit</dt><dd>1 work unit</dd></div>
               <div><dt>Control</dt><dd>Loopback status page</dd></div>
               <div><dt>Stop</dt><dd>Checkpoint-safe SIGINT</dd></div>
             </dl>
-            <p class="agent-note">Agent pairing codes are issued separately from browser codes. JAX/TPU uses the managed heterogeneous Miner workflow.</p>
+            <p class="agent-note">Use an Agent pairing code from this Campaign operator. Preflight runs before the code is exchanged.</p>
           </div>
         </div>
 
@@ -145,24 +145,24 @@
           </dl>
 
           <div class="boundary-list">
-            <h2>Browser task boundary</h2>
-            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>Worker-isolated compute</span></div>
-            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>Server-recomputed result</span></div>
-            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>Short-lived scoped credential</span></div>
-            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>No model weights or private data</span></div>
-            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>Not browser LoRA training</span></div>
-            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>Not large-model WebGPU sharding</span></div>
+            <h2>Native Agent boundary</h2>
+            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>Exact Campaign release</span></div>
+            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>Memory and download preflight</span></div>
+            <div><span class="boundary-icon yes" aria-hidden="true">&#10003;</span><span>One bounded PEFT Work Unit</span></div>
+            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>Model and data enter a private local cache</span></div>
+            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>The Agent is not a security sandbox</span></div>
+            <div><span class="boundary-icon no" aria-hidden="true">&#215;</span><span>Only join Campaign operators you trust</span></div>
           </div>
 
-          <p class="privacy-line">The code and Cell credential stay in this tab. Public status contains aggregate counters only.</p>
+          <p class="privacy-line">Credentials and Cell identity stay private. Public status contains aggregate counters only.</p>
         </aside>
       </section>
     </main>
 
     <footer>
-      <span>CrowdTensor One-Click Contributor Beta</span>
+      <span>CrowdTensor Training Architecture v2 Alpha</span>
       <a href="https://github.com/Ffffffffchopin/CrowdTensor">Source</a>
-      <a href="https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=beta_enrollment.yml">Request access</a>
+      <a href="https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/governance.md">Campaign policy</a>
     </footer>
   </body>
 </html>
