@@ -29,6 +29,7 @@ from .workspace import (
 TRAINING_V2_ACTIONS = frozenset(
     {
         "backends",
+        "data-pack",
         "init",
         "inspect",
         "plan",
@@ -112,6 +113,55 @@ def add_training_v2_join_arguments(parser: Any) -> None:
 
 
 def add_training_v2_parsers(subparsers: Any, *, include_lifecycle: bool = True) -> None:
+    data_pack = subparsers.add_parser(
+        "data-pack",
+        help="Create or validate a reviewable community training Data Pack.",
+    )
+    data_pack_actions = data_pack.add_subparsers(
+        dest="data_pack_action", required=True
+    )
+    data_pack_create = data_pack_actions.add_parser(
+        "create", help="Canonicalize instruction JSONL and write a Data Pack."
+    )
+    data_pack_create.add_argument("source")
+    data_pack_create.add_argument("output_dir")
+    data_pack_create.add_argument("--pack-id", required=True)
+    data_pack_create.add_argument("--license", dest="license_spdx", required=True)
+    data_pack_create.add_argument(
+        "--source-kind",
+        choices=(
+            "contributor_authored",
+            "permissive_source",
+            "generated_with_provenance",
+        ),
+        required=True,
+    )
+    data_pack_create.add_argument("--source-revision", default="")
+    data_pack_create.add_argument("--source-uri", action="append", default=[])
+    data_pack_create.add_argument("--language", action="append", required=True)
+    data_pack_create.add_argument("--domain", action="append", required=True)
+    data_pack_create.add_argument("--contributor-id", required=True)
+    data_pack_create.add_argument("--redistribution-allowed", action="store_true")
+    data_pack_create.add_argument("--training-allowed", action="store_true")
+    data_pack_create.add_argument("--personal-data-reviewed", action="store_true")
+    data_pack_create.add_argument("--copyright-reviewed", action="store_true")
+    data_pack_create.add_argument(
+        "--benchmark-contamination-reviewed", action="store_true"
+    )
+    data_pack_create.add_argument(
+        "--moderation-status",
+        choices=("pending", "approved", "rejected"),
+        default="pending",
+    )
+    data_pack_create.add_argument("--public-records", action="store_true")
+    data_pack_create.add_argument("--json", action="store_true")
+
+    data_pack_validate = data_pack_actions.add_parser(
+        "validate", help="Verify a Data Pack manifest and canonical records."
+    )
+    data_pack_validate.add_argument("data_pack")
+    data_pack_validate.add_argument("--json", action="store_true")
+
     initialize = subparsers.add_parser(
         "init",
         help="Initialize a small, framework-neutral Training Architecture v2 workspace.",
@@ -392,6 +442,35 @@ def _build_training_v2_plan(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def execute_training_v2_action(args: argparse.Namespace) -> dict[str, Any]:
+    if args.train_action == "data-pack":
+        from crowdtensor.adapters.text_data import (
+            create_instruction_data_pack,
+            validate_instruction_data_pack,
+        )
+
+        if args.data_pack_action == "validate":
+            return validate_instruction_data_pack(args.data_pack)
+        return create_instruction_data_pack(
+            args.source,
+            args.output_dir,
+            pack_id=args.pack_id,
+            license_spdx=args.license_spdx,
+            source_kind=args.source_kind,
+            source_revision=args.source_revision,
+            source_uris=tuple(args.source_uri),
+            languages=tuple(args.language),
+            domains=tuple(args.domain),
+            contributor_id=args.contributor_id,
+            redistribution_allowed=bool(args.redistribution_allowed),
+            training_allowed=bool(args.training_allowed),
+            personal_data_reviewed=bool(args.personal_data_reviewed),
+            copyright_reviewed=bool(args.copyright_reviewed),
+            benchmark_contamination_reviewed=bool(
+                args.benchmark_contamination_reviewed
+            ),
+            moderation_status=args.moderation_status,
+            public_records=bool(args.public_records),
+        )
     if args.train_action == "backends":
         from crowdtensor.backends.registry import backend_registry_report
 
@@ -507,6 +586,7 @@ def run_training_v2_action(args: argparse.Namespace) -> int:
         public_error_types = {
             "SessionControllerError",
             "StableShardedSessionError",
+            "DataPackError",
             "VolunteerProtocolError",
             "VolunteerSessionError",
         }
@@ -543,6 +623,9 @@ def run_training_v2_action(args: argparse.Namespace) -> int:
                 "  backends="
                 + ",".join(item["backend_id"] for item in report["backends"])
             )
+        elif args.train_action == "data-pack":
+            print(f"  pack={report.get('pack_id', '')}")
+            print(f"  admission_ready={report.get('admission_ready', False)}")
         elif args.train_action == "plan":
             print(f"  workspace={args.job}")
             print(f"  mode={report.get('mode', '')}")

@@ -8,6 +8,7 @@ import threading
 import pytest
 import torch
 
+from crowdtensor import volunteer_training_coordinator as coordinator_module
 from crowdtensor.hf_lora_training import create_local_training_fixture
 from crowdtensor.named_tensor_optimizer import load_tensors, save_tensors
 from crowdtensor.training_contract import delta_manifest, sha256_json
@@ -27,6 +28,28 @@ class Clock:
     def advance(self, seconds: float) -> None:
         with self.lock:
             self.value += seconds
+
+
+def test_deterministic_zip_forces_zip64_for_streamed_model_files(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "model"
+    source.mkdir()
+    (source / "weights.safetensors").write_bytes(b"weights")
+    calls: list[bool] = []
+    original_open = coordinator_module.zipfile.ZipFile.open
+
+    def tracking_open(self, name, mode="r", pwd=None, *, force_zip64=False):
+        calls.append(force_zip64)
+        return original_open(
+            self, name, mode=mode, pwd=pwd, force_zip64=force_zip64
+        )
+
+    monkeypatch.setattr(coordinator_module.zipfile.ZipFile, "open", tracking_open)
+    output = coordinator_module._deterministic_zip(source, tmp_path / "model.zip")
+
+    assert output.is_file()
+    assert calls == [True]
 
 
 def _manifest(tmp_path, coordinator, campaign, work, cell_id, case, *, non_finite=False):

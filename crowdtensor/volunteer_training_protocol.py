@@ -9,6 +9,7 @@ import math
 import struct
 from typing import Any
 
+from .core.data_packs import DataPack, DataPackError
 from .training_contract import sha256_bytes, sha256_json
 
 
@@ -169,6 +170,26 @@ def _validate_campaign_import(manifest: dict[str, Any]) -> None:
             raise VolunteerProtocolError("volunteer_campaign_model_file_size_invalid", status_code=400)
     if model_source.get("imported_snapshot_hash") != sha256_json(model_files):
         raise VolunteerProtocolError("volunteer_campaign_model_snapshot_hash_invalid", status_code=400)
+    runtime_fetch = model_source.get("runtime_fetch")
+    if runtime_fetch is not None:
+        expected_names = sorted(str(record["relative_name"]) for record in model_files)
+        if not (
+            isinstance(runtime_fetch, dict)
+            and runtime_fetch.get("schema")
+            == "crowdtensor_huggingface_snapshot_fetch_v1"
+            and runtime_fetch.get("provider") == "huggingface_hub"
+            and runtime_fetch.get("repo_id") == model_source.get("model_id")
+            and runtime_fetch.get("revision") == model_source.get("revision")
+            and runtime_fetch.get("file_manifest_hash")
+            == model_source.get("imported_snapshot_hash")
+            and runtime_fetch.get("allow_patterns") == expected_names
+            and runtime_fetch.get("trust_remote_code") is False
+            and model_source.get("gated") is False
+            and model_source.get("private") is False
+        ):
+            raise VolunteerProtocolError(
+                "volunteer_campaign_model_runtime_fetch_invalid", status_code=400
+            )
 
     dataset_files = dataset_source.get("source_files")
     if not isinstance(dataset_files, list) or len(dataset_files) < 2:
@@ -181,6 +202,100 @@ def _validate_campaign_import(manifest: dict[str, Any]) -> None:
             raise VolunteerProtocolError("volunteer_campaign_dataset_file_size_invalid", status_code=400)
     if dataset_source.get("source_snapshot_hash") != sha256_json(dataset_files):
         raise VolunteerProtocolError("volunteer_campaign_dataset_snapshot_hash_invalid", status_code=400)
+
+    if imported.get("profile") != "commons_instruction_sft_lora_v1":
+        return
+    if not (
+        imported.get("deterministic_tokenization") is True
+        and imported.get("response_only_supervision") is True
+        and imported.get("raw_text_public") is False
+        and imported.get("token_ids_public") is False
+    ):
+        raise VolunteerProtocolError(
+            "volunteer_commons_training_contract_invalid", status_code=400
+        )
+    entries = dataset_source.get("data_packs")
+    if not isinstance(entries, list) or len(entries) < 2:
+        raise VolunteerProtocolError(
+            "volunteer_commons_data_packs_missing", status_code=400
+        )
+    packs: list[tuple[str, DataPack]] = []
+    seen_pack_ids: set[str] = set()
+    try:
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {"role", "manifest"}:
+                raise DataPackError("data_pack_campaign_entry_invalid")
+            role = str(entry.get("role") or "")
+            if role not in {"train", "evaluation"}:
+                raise DataPackError("data_pack_campaign_role_invalid")
+            pack = DataPack.from_dict(entry.get("manifest"))
+            if (
+                pack.pack_id in seen_pack_ids
+                or not pack.admission_ready
+                or not pack.public_records
+            ):
+                raise DataPackError("data_pack_campaign_admission_invalid")
+            seen_pack_ids.add(pack.pack_id)
+            packs.append((role, pack))
+    except (DataPackError, TypeError, ValueError) as exc:
+        raise VolunteerProtocolError(
+            "volunteer_commons_data_pack_invalid", status_code=400
+        ) from exc
+    training = [pack for role, pack in packs if role == "train"]
+    evaluation = [pack for role, pack in packs if role == "evaluation"]
+    if not training or len(evaluation) != 1:
+        raise VolunteerProtocolError(
+            "volunteer_commons_data_pack_roles_invalid", status_code=400
+        )
+
+    indexed_files = {
+        (
+            str(record.get("split") or ""),
+            str(record.get("pack_id") or ""),
+            str(record.get("relative_name") or ""),
+        ): record
+        for record in dataset_files
+    }
+    if len(indexed_files) != len(dataset_files) or len(dataset_files) != 2 * len(packs):
+        raise VolunteerProtocolError(
+            "volunteer_commons_data_pack_files_invalid", status_code=400
+        )
+    for role, pack in packs:
+        manifest_name = f"data-packs/{pack.pack_id}/data-pack.json"
+        records_name = f"data-packs/{pack.pack_id}/records.jsonl"
+        manifest_record = indexed_files.get((role, pack.pack_id, manifest_name)) or {}
+        records_record = indexed_files.get((role, pack.pack_id, records_name)) or {}
+        encoded_manifest = (
+            json.dumps(
+                pack.to_dict(), indent=2, sort_keys=True, ensure_ascii=True
+            )
+            + "\n"
+        ).encode("utf-8")
+        if not (
+            manifest_record.get("sha256") == sha256_bytes(encoded_manifest)
+            and int(manifest_record.get("byte_count") or 0) == len(encoded_manifest)
+            and records_record.get("sha256") == pack.records_hash
+            and int(records_record.get("byte_count") or 0) == pack.byte_count
+        ):
+            raise VolunteerProtocolError(
+                "volunteer_commons_data_pack_file_binding_invalid", status_code=400
+            )
+    if not (
+        int(dataset_source.get("training_data_pack_count") or 0) == len(training)
+        and dataset_source.get("evaluation_data_pack_id") == evaluation[0].pack_id
+        and int(dataset_source.get("public_training_record_count") or 0)
+        == sum(pack.record_count for pack in training)
+        and int(dataset_source.get("public_evaluation_record_count") or 0)
+        == evaluation[0].record_count
+        and dataset_source.get("licenses")
+        == sorted({pack.license_spdx for _role, pack in packs})
+        and dataset_source.get("all_data_packs_admission_ready") is True
+        and dataset_source.get("all_records_redistributable") is True
+        and dataset_source.get("benchmark_overlap_detected") is False
+    ):
+        raise VolunteerProtocolError(
+            "volunteer_commons_data_pack_summary_invalid", status_code=400
+        )
 
 
 def campaign_content_hash(manifest: dict[str, Any]) -> str:

@@ -1,7 +1,7 @@
 {
   "schema": "crowdtensor_architecture_module_map_v2",
   "direction": "training_first",
-  "updated_at": "2026-08-15",
+  "updated_at": "2026-08-16",
   "rules": [
     "core code is framework and provider neutral",
     "model behavior enters through model adapters",

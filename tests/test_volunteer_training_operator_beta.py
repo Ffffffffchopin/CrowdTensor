@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tarfile
+import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -198,7 +199,10 @@ def test_lifecycle_backup_restore_export_and_v1_migration(tmp_path) -> None:
     export_path = tmp_path / "campaign-export.zip"
     exported = restored.export_campaign(export_path)
     assert exported["credential_values_included"] is False
+    assert exported["checkpoint_lineage_content_hash"].startswith("sha256:")
     assert export_path.is_file()
+    with zipfile.ZipFile(export_path) as archive:
+        assert "checkpoint-lineage.json" in archive.namelist()
 
 
 def test_restore_rejects_archive_links(tmp_path) -> None:

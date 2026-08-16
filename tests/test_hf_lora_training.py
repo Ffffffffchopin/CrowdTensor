@@ -45,12 +45,14 @@ def test_real_cpu_transformers_peft_lora_runtime_and_export_load() -> None:
             adapter_path=None,
             dataset_path=fixture["dataset"]["private_dataset_path"],
             sample_indexes=spec["sample_indexes"],
+            device="cpu",
         )
         after = evaluate_adapter(
             base_model_path=fixture["model"]["base_model_path"],
             adapter_path=result["adapter_path"],
             dataset_path=fixture["dataset"]["private_dataset_path"],
             sample_indexes=spec["sample_indexes"],
+            device="cpu",
         )
         public = public_training_spec(result)
 

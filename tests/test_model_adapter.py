@@ -32,25 +32,46 @@ SMOL_CONFIG = {
     "vocab_size": 49152,
 }
 
+SMOL3_CONFIG = {
+    "model_type": "smollm3",
+    "architectures": ["SmolLM3ForCausalLM"],
+    "num_hidden_layers": 36,
+    "hidden_size": 2048,
+    "intermediate_size": 11008,
+    "num_attention_heads": 16,
+    "num_key_value_heads": 4,
+    "vocab_size": 128256,
+}
 
-def test_registry_is_versioned_and_preserves_two_builtin_families() -> None:
+
+def test_registry_is_versioned_and_preserves_builtin_families() -> None:
     report = adapter_registry_report()
     assert report["api_version"] == "model_adapter_v1.0"
-    assert report["builtin_adapter_count"] == 2
-    assert {"qwen2", "smollm2"}.issubset(report["supported_model_families"])
+    assert report["builtin_adapter_count"] == 3
+    assert {"qwen2", "smollm2", "smollm3"}.issubset(
+        report["supported_model_families"]
+    )
     builtin_ids = {
         item["adapter_id"]
         for item in report["adapters"]
         if item["registration"]["kind"] == "builtin"
     }
-    assert builtin_ids == {"qwen2_lora_v1", "smollm2_lora_v1"}
+    assert builtin_ids == {
+        "qwen2_lora_v1",
+        "smollm2_lora_v1",
+        "smollm3_lora_v1",
+    }
     assert all(item["schema"] == MODEL_ADAPTER_DESCRIPTOR_SCHEMA for item in report["adapters"])
     assert "full_parameter_training" in report["unsupported_capabilities"]
 
 
 @pytest.mark.parametrize(
     ("adapter_id", "config"),
-    [("qwen2_lora_v1", QWEN_CONFIG), ("smollm2_lora_v1", SMOL_CONFIG)],
+    [
+        ("qwen2_lora_v1", QWEN_CONFIG),
+        ("smollm2_lora_v1", SMOL_CONFIG),
+        ("smollm3_lora_v1", SMOL3_CONFIG),
+    ],
 )
 def test_adapters_partition_contiguously_and_estimate_resources(adapter_id: str, config: dict) -> None:
     adapter = get_model_adapter(adapter_id)
@@ -81,6 +102,10 @@ def test_adapters_fail_closed_for_unknown_models_and_unsupported_scheduler() -> 
         resolve_model_adapter(model_id="unknown/model", config={"model_type": "unknown"})
     with pytest.raises(ModelAdapterError, match="full_production_scheduler_not_supported"):
         get_model_adapter("smollm2_lora_v1").production_manifest(
+            target_steps=2, accelerators=["cuda"]
+        )
+    with pytest.raises(ModelAdapterError, match="full_production_scheduler_not_supported"):
+        get_model_adapter("smollm3_lora_v1").production_manifest(
             target_steps=2, accelerators=["cuda"]
         )
 

@@ -150,7 +150,10 @@ def _deterministic_zip(source: Path, output: Path) -> Path:
             info = zipfile.ZipInfo(relative, date_time=(2026, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o600 << 16
-            archive.writestr(info, path.read_bytes())
+            with path.open("rb") as source_handle, archive.open(
+                info, "w", force_zip64=True
+            ) as archive_handle:
+                shutil.copyfileobj(source_handle, archive_handle, length=1024 * 1024)
     output.chmod(0o600)
     return output
 
@@ -2266,7 +2269,9 @@ class VolunteerTrainingCoordinator:
     def resume_campaign(self, *, invite_token: str) -> dict[str, Any]:
         return self._set_lifecycle(invite_token=invite_token, target="running")
 
-    def evaluate_campaign(self, *, heldout_quality: bool = False) -> dict[str, Any]:
+    def evaluate_campaign(
+        self, *, heldout_quality: bool = False, device: str = "cpu"
+    ) -> dict[str, Any]:
         with self._locked_state() as state:
             accepted = list(state.get("submissions", {}).values())
             loss_starts = [float(item.get("loss_start") or 0.0) for item in accepted]
@@ -2318,12 +2323,14 @@ class VolunteerTrainingCoordinator:
                 adapter_path=baseline_adapter_path,
                 dataset_path=evaluation_dataset_path,
                 sample_indexes=indexes,
+                device=device,
             )
             candidate = evaluate_adapter(
                 base_model_path=model_root,
                 adapter_path=current_adapter_path.parent,
                 dataset_path=evaluation_dataset_path,
                 sample_indexes=indexes,
+                device=device,
             )
             baseline_loss = float(baseline["mean_loss"])
             candidate_loss = float(candidate["mean_loss"])
@@ -2345,6 +2352,7 @@ class VolunteerTrainingCoordinator:
                 "baseline_logits_hash": baseline["logits_hash"],
                 "candidate_logits_hash": candidate["logits_hash"],
                 "quality_improvement_verified": candidate_loss < baseline_loss,
+                "evaluation_device": str(candidate["device"]),
                 "statistical_significance_claimed": False,
             }
         report = with_public_safety(
@@ -2387,91 +2395,115 @@ class VolunteerTrainingCoordinator:
     def finalize_campaign(
         self, *, invite_token: str, allow_incomplete: bool = False
     ) -> dict[str, Any]:
-        evaluation = self.evaluate_campaign()
-        with self._locked_state() as state:
-            self._authenticate(state, invite_token)
-            if not state.get("campaign_complete") and not allow_incomplete:
-                raise VolunteerProtocolError(
-                    "volunteer_campaign_target_rounds_incomplete", status_code=409
-                )
-            previous = str(state.get("campaign_lifecycle") or "running")
-            state["campaign_lifecycle"] = "finalized"
-            state["finalized_at"] = float(self.clock())
-            self._append_event(
-                state,
-                "campaign_finalized",
-                {
-                    "previous_lifecycle": previous,
-                    "adapter_version": int(state["adapter_version"]),
-                    "campaign_complete": bool(state["campaign_complete"]),
-                    "evaluation_content_hash": evaluation["content_hash"],
-                },
-            )
-            self._save_state(state)
-            status = self._write_status(state)
-            return with_public_safety(
-                {
-                    "schema": "crowdtensor_volunteer_campaign_finalize_v1",
-                    "ok": True,
-                    "campaign_id": state["campaign"]["campaign_id"],
-                    "lifecycle": "finalized",
-                    "campaign_complete": bool(state["campaign_complete"]),
-                    "adapter_version": int(state["adapter_version"]),
-                    "canonical_adapter_hash": state["current_adapter_hash"],
-                    "evaluation_content_hash": evaluation["content_hash"],
-                    "status": status,
-                }
-            )
+        for _attempt in range(3):
+            with self._locked_state() as state:
+                self._authenticate(state, invite_token)
+                if not state.get("campaign_complete") and not allow_incomplete:
+                    raise VolunteerProtocolError(
+                        "volunteer_campaign_target_rounds_incomplete", status_code=409
+                    )
+                evaluation = self._current_evaluation_from_state(state)
+                if evaluation is not None:
+                    previous = str(state.get("campaign_lifecycle") or "running")
+                    state["campaign_lifecycle"] = "finalized"
+                    state["finalized_at"] = float(self.clock())
+                    self._append_event(
+                        state,
+                        "campaign_finalized",
+                        {
+                            "previous_lifecycle": previous,
+                            "adapter_version": int(state["adapter_version"]),
+                            "campaign_complete": bool(state["campaign_complete"]),
+                            "evaluation_content_hash": evaluation["content_hash"],
+                        },
+                    )
+                    self._save_state(state)
+                    status = self._write_status(state)
+                    return with_public_safety(
+                        {
+                            "schema": "crowdtensor_volunteer_campaign_finalize_v1",
+                            "ok": True,
+                            "campaign_id": state["campaign"]["campaign_id"],
+                            "lifecycle": "finalized",
+                            "campaign_complete": bool(state["campaign_complete"]),
+                            "adapter_version": int(state["adapter_version"]),
+                            "canonical_adapter_hash": state["current_adapter_hash"],
+                            "evaluation_content_hash": evaluation["content_hash"],
+                            "status": status,
+                        }
+                    )
+            self.evaluate_campaign()
+        raise VolunteerProtocolError(
+            "volunteer_campaign_evaluation_changed_during_finalize", status_code=409
+        )
 
     def export_campaign(self, destination: str | Path) -> dict[str, Any]:
         output = Path(destination).expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
-        evaluation = self.evaluate_campaign()
-        with self._locked_state() as state:
-            sources = {
-                "campaign.json": self.campaign_path,
-                "status.json": self.status_path,
-                "evaluation.json": self.root / "evaluation.json",
-                "audit_ledger.jsonl": self.ledger_path,
-                "adapter_model.safetensors": Path(state["current_adapter_path"]),
-                "adapter_config.json": Path(state["current_config_path"]),
-            }
-            temporary = output.with_name(
-                f".{output.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
-            )
-            try:
-                with zipfile.ZipFile(
-                    temporary, "w", compression=zipfile.ZIP_DEFLATED
-                ) as archive:
-                    for name, source in sorted(sources.items()):
-                        info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
-                        info.compress_type = zipfile.ZIP_DEFLATED
-                        info.external_attr = 0o644 << 16
-                        archive.writestr(info, source.read_bytes())
-                temporary.chmod(0o644)
-                os.replace(temporary, output)
-            finally:
-                temporary.unlink(missing_ok=True)
-            report = with_public_safety(
-                {
-                    "schema": "crowdtensor_volunteer_campaign_export_v1",
-                    "ok": True,
-                    "campaign_id": state["campaign"]["campaign_id"],
-                    "campaign_manifest_hash": state["campaign"]["manifest_hash"],
-                    "adapter_version": int(state["adapter_version"]),
-                    "canonical_adapter_hash": state["current_adapter_hash"],
-                    "export_hash": sha256_file(output),
-                    "export_byte_count": output.stat().st_size,
-                    "file_count": len(sources),
-                    "evaluation_content_hash": evaluation["content_hash"],
-                    "credential_values_included": False,
-                    "private_runtime_state_included": False,
-                }
-            )
-            _atomic_write_json(
-                output.with_suffix(output.suffix + ".json"), report, mode=0o644
-            )
-            return report
+        for _attempt in range(3):
+            with self._locked_state() as state:
+                evaluation = self._current_evaluation_from_state(state)
+                if evaluation is not None:
+                    lineage = self._checkpoint_lineage_from_state(state)
+                    lineage_path = _atomic_write_json(
+                        self.root / "checkpoint-lineage.json", lineage, mode=0o644
+                    )
+                    sources = {
+                        "campaign.json": self.campaign_path,
+                        "status.json": self.status_path,
+                        "evaluation.json": self.root / "evaluation.json",
+                        "checkpoint-lineage.json": lineage_path,
+                        "audit_ledger.jsonl": self.ledger_path,
+                        "adapter_model.safetensors": Path(
+                            state["current_adapter_path"]
+                        ),
+                        "adapter_config.json": Path(state["current_config_path"]),
+                    }
+                    temporary = output.with_name(
+                        f".{output.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+                    )
+                    try:
+                        with zipfile.ZipFile(
+                            temporary, "w", compression=zipfile.ZIP_DEFLATED
+                        ) as archive:
+                            for name, source in sorted(sources.items()):
+                                info = zipfile.ZipInfo(
+                                    name, date_time=(2026, 1, 1, 0, 0, 0)
+                                )
+                                info.compress_type = zipfile.ZIP_DEFLATED
+                                info.external_attr = 0o644 << 16
+                                archive.writestr(info, source.read_bytes())
+                        temporary.chmod(0o644)
+                        os.replace(temporary, output)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+                    report = with_public_safety(
+                        {
+                            "schema": "crowdtensor_volunteer_campaign_export_v1",
+                            "ok": True,
+                            "campaign_id": state["campaign"]["campaign_id"],
+                            "campaign_manifest_hash": state["campaign"]["manifest_hash"],
+                            "adapter_version": int(state["adapter_version"]),
+                            "canonical_adapter_hash": state["current_adapter_hash"],
+                            "export_hash": sha256_file(output),
+                            "export_byte_count": output.stat().st_size,
+                            "file_count": len(sources),
+                            "evaluation_content_hash": evaluation["content_hash"],
+                            "checkpoint_lineage_content_hash": lineage["content_hash"],
+                            "credential_values_included": False,
+                            "private_runtime_state_included": False,
+                        }
+                    )
+                    _atomic_write_json(
+                        output.with_suffix(output.suffix + ".json"),
+                        report,
+                        mode=0o644,
+                    )
+                    return report
+            self.evaluate_campaign()
+        raise VolunteerProtocolError(
+            "volunteer_campaign_evaluation_changed_during_export", status_code=409
+        )
 
     def backup_campaign(self, destination: str | Path) -> dict[str, Any]:
         output = Path(destination).expanduser().resolve()
@@ -2740,6 +2772,40 @@ class VolunteerTrainingCoordinator:
             self._save_state(state)
             return self._write_status(state)
 
+    def _current_evaluation_from_state(
+        self, state: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        path = self.root / "evaluation.json"
+        if not path.is_file():
+            return None
+        try:
+            report = _read_json(path)
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+            return None
+        supplied_hash = str(report.get("content_hash") or "")
+        expected_hash = sha256_json(
+            {key: value for key, value in report.items() if key != "content_hash"}
+        )
+        campaign = state["campaign"]
+        try:
+            valid = bool(
+                report.get("schema")
+                == "crowdtensor_volunteer_campaign_evaluation_v1"
+                and report.get("campaign_id") == campaign["campaign_id"]
+                and report.get("campaign_manifest_hash") == campaign["manifest_hash"]
+                and int(report.get("adapter_version", -1))
+                == int(state["adapter_version"])
+                and report.get("canonical_adapter_hash")
+                == state["current_adapter_hash"]
+                and supplied_hash == expected_hash
+                and report.get("public_artifact_safe") is True
+            )
+        except (TypeError, ValueError):
+            return None
+        if not valid:
+            return None
+        return report
+
     def public_campaign_snapshot(self) -> dict[str, Any]:
         """Return dashboard data without Cell, work, lease, or credential IDs."""
 
@@ -2760,6 +2826,67 @@ class VolunteerTrainingCoordinator:
             loss_ends = [float(item.get("loss_end") or 0.0) for item in submissions]
             model_source = campaign.get("model_source")
             dataset_source = campaign.get("dataset_source")
+            lineage = self._checkpoint_lineage_from_state(state)
+            current_evaluation = self._current_evaluation_from_state(state)
+            data_packs: list[dict[str, Any]] = []
+            if isinstance(dataset_source, dict):
+                for entry in dataset_source.get("data_packs") or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    manifest = entry.get("manifest")
+                    if not isinstance(manifest, dict):
+                        continue
+                    data_packs.append(
+                        {
+                            "role": str(entry.get("role") or "unknown"),
+                            "pack_id": str(manifest.get("pack_id") or ""),
+                            "data_pack_hash": str(manifest.get("content_hash") or ""),
+                            "record_count": int(manifest.get("record_count") or 0),
+                            "license_spdx": str(manifest.get("license_spdx") or ""),
+                            "languages": sorted(
+                                str(item) for item in manifest.get("languages") or []
+                            ),
+                            "domains": sorted(
+                                str(item) for item in manifest.get("domains") or []
+                            ),
+                            "admission_ready": manifest.get("admission_ready") is True,
+                            "public_records": manifest.get("public_records") is True,
+                        }
+                    )
+            evaluation_summary: dict[str, Any] = {
+                "accepted_update_count": len(submissions),
+                "mean_reported_loss_start": (
+                    sum(loss_starts) / len(loss_starts) if loss_starts else None
+                ),
+                "mean_reported_loss_end": (
+                    sum(loss_ends) / len(loss_ends) if loss_ends else None
+                ),
+                "checkpoint_lineage_verified": lineage.get("ok") is True,
+                "held_out_quality_benchmark_performed": False,
+                "quality_improvement_verified": False,
+                "statistical_significance_claimed": False,
+                "current_evaluation_available": current_evaluation is not None,
+            }
+            if current_evaluation is not None:
+                evaluation_summary.update(
+                    {
+                        "evaluation_content_hash": current_evaluation["content_hash"],
+                        "evaluation_scope": current_evaluation.get("evaluation_scope"),
+                        "held_out_quality_benchmark_performed": current_evaluation.get(
+                            "held_out_quality_benchmark_performed"
+                        )
+                        is True,
+                        "quality": public_safe(current_evaluation.get("quality")),
+                        "quality_improvement_verified": current_evaluation.get(
+                            "quality_improvement_verified"
+                        )
+                        is True,
+                        "statistical_significance_claimed": current_evaluation.get(
+                            "statistical_significance_claimed"
+                        )
+                        is True,
+                    }
+                )
             round_summaries = [
                 {
                     "round_index": int(item["round_index"]),
@@ -2863,22 +2990,31 @@ class VolunteerTrainingCoordinator:
                         "browser_training": False,
                     },
                     "rounds": round_summaries,
-                    "evaluation": {
-                        "accepted_update_count": len(submissions),
-                        "mean_reported_loss_start": (
-                            sum(loss_starts) / len(loss_starts)
-                            if loss_starts
-                            else None
+                    "data": {
+                        "data_pack_count": len(data_packs),
+                        "training_data_pack_count": sum(
+                            item["role"] == "train" for item in data_packs
                         ),
-                        "mean_reported_loss_end": (
-                            sum(loss_ends) / len(loss_ends) if loss_ends else None
+                        "evaluation_data_pack_count": sum(
+                            item["role"] == "evaluation" for item in data_packs
                         ),
-                        "checkpoint_lineage_verified": self._checkpoint_lineage_from_state(
-                            state
-                        ).get("ok")
-                        is True,
-                        "held_out_quality_benchmark_performed": False,
+                        "public_record_count": sum(
+                            item["record_count"] for item in data_packs
+                        ),
+                        "licenses": sorted(
+                            {item["license_spdx"] for item in data_packs if item["license_spdx"]}
+                        ),
+                        "all_data_packs_admission_ready": bool(data_packs)
+                        and all(item["admission_ready"] for item in data_packs),
+                        "benchmark_overlap_detected": bool(
+                            isinstance(dataset_source, dict)
+                            and dataset_source.get("benchmark_overlap_detected") is True
+                        ),
+                        "raw_records_embedded": False,
+                        "data_packs": data_packs,
                     },
+                    "checkpoint_lineage": lineage,
+                    "evaluation": evaluation_summary,
                     "reliability": {
                         "expired_lease_count": int(
                             state.get("expired_lease_count") or 0
@@ -2908,7 +3044,9 @@ class VolunteerTrainingCoordinator:
                         "semantic_poisoning_safety": False,
                         "secure_aggregation": False,
                         "physical_multi_host_verified": False,
-                        "quality_improvement_verified": False,
+                        "quality_improvement_verified": evaluation_summary[
+                            "quality_improvement_verified"
+                        ],
                         "browser_model_training": False,
                         "browser_large_model_sharding": False,
                     },

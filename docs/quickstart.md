@@ -103,6 +103,10 @@ crowdtensor volunteer campaign evaluate ./campaign \
 This reports before/after loss and perplexity. It never turns a small bounded
 comparison into a statistical-significance claim.
 
+For a reviewed community-data Campaign using the SmolLM3-3B adapter, follow the
+[Commons 3B specification](commons-campaign.md). Do not mark the Campaign live
+until its real accelerator and held-out launch gates pass.
+
 ## Stable-Sharded Planning
 
 Create with `--mode stable-sharded`, provide a public-safe stable capability

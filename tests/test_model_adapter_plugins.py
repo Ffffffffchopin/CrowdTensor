@@ -65,7 +65,12 @@ def test_entry_point_plugin_is_discovered_with_public_provenance(monkeypatch) ->
     report = registry.adapter_registry_report()
     assert report["schema"] == "crowdtensor_model_adapter_registry_v2"
     assert report["plugin_adapter_count"] == 1
-    assert report["supported_model_families"] == ["example", "qwen2", "smollm2"]
+    assert report["supported_model_families"] == [
+        "example",
+        "qwen2",
+        "smollm2",
+        "smollm3",
+    ]
     descriptor = next(item for item in report["adapters"] if item["adapter_id"] == adapter.adapter_id)
     assert descriptor["registration"]["kind"] == "entry_point_plugin"
     assert descriptor["registration"]["distribution_name"] == "example-adapter"

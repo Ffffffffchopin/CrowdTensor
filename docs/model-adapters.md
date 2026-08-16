@@ -25,6 +25,7 @@ Disable external plugins with
 | --- | --- |
 | `qwen2_lora_v1` | pinned Qwen2.5 config, PEFT, retained CPU/CUDA/JAX-TPU manifest |
 | `smollm2_lora_v1` | pinned SmolLM2-135M Volunteer PEFT path |
+| `smollm3_lora_v1` | pinned SmolLM3-3B Commons instruction PEFT path; live 3B gate pending |
 | `mistral_lora_v1` | separately packaged TinyMistral plugin contract |
 
 ```bash

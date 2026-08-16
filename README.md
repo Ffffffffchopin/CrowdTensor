@@ -74,6 +74,11 @@ successive Kaggle logical worker groups and improved a bounded 128-item holdout
 from 71.875% to 74.219%. This is showcase evidence, not broad model-quality or
 statistical-significance evidence. See the [7B report](docs/qwen7b-gsm8k-elastic-showcase.md).
 
+The next public flagship is [Commons 3B](docs/commons-campaign.md): reviewed
+community instruction Data Packs, bounded SmolLM3-3B LoRA Work Units, a held-out
+Data Pack, and public checkpoint lineage. Its importer and CPU reference path
+are implemented; a real 3B accelerator run remains the launch gate.
+
 CrowdTensor does not claim permissionless admission, Sybil or semantic-
 poisoning resistance, privacy against an operator, GA, or an SLA.
 
@@ -94,6 +99,17 @@ The Campaign website then exposes a same-origin Native Agent command. The
 installer verifies `SHA256SUMS`, performs a non-consuming hardware/download
 preflight, and executes at most one Work Unit by default. Campaign operators
 remain responsible for HTTPS, admission, model/data licensing, and backups.
+
+Community data is admitted separately through `crowdtensor train data-pack`.
+The Commons importer rejects unreviewed packs and train/evaluation overlap:
+
+```bash
+crowdtensor train campaign import-commons ./commons-3b \
+  --model-dir ./models/smollm3-3b-base \
+  --train-data-pack ./packs/train \
+  --evaluation-data-pack ./packs/heldout \
+  --attest-model-source
+```
 
 ## Repository Boundary
 

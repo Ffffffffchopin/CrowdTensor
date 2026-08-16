@@ -67,6 +67,17 @@ def _deps() -> tuple[Any, Any, Any, Any, Any, Any]:
     return torch, LoraConfig, PeftModel, get_peft_model, LlamaConfig, LlamaForCausalLM
 
 
+def _load_causal_lm(base_model_path: str | Path) -> Any:
+    from transformers import AutoModelForCausalLM
+
+    return AutoModelForCausalLM.from_pretrained(
+        base_model_path,
+        local_files_only=True,
+        trust_remote_code=False,
+        dtype="auto",
+    )
+
+
 def _load_peft_adapter(
     base: Any,
     PeftModel: Any,
@@ -377,6 +388,30 @@ def load_token_rows(dataset_path: str | Path) -> list[dict[str, Any]]:
             value = json.loads(line)
             if not isinstance(value, dict) or not isinstance(value.get("input_ids"), list):
                 raise ValueError("dataset row must contain an input_ids list")
+            input_ids = value["input_ids"]
+            if not input_ids or any(
+                isinstance(item, bool) or not isinstance(item, int)
+                for item in input_ids
+            ):
+                raise ValueError("dataset input_ids must be a non-empty integer list")
+            labels = value.get("labels", input_ids)
+            attention_mask = value.get("attention_mask", [1] * len(input_ids))
+            if (
+                not isinstance(labels, list)
+                or not isinstance(attention_mask, list)
+                or len(labels) != len(input_ids)
+                or len(attention_mask) != len(input_ids)
+                or any(
+                    isinstance(item, bool) or not isinstance(item, int)
+                    for item in labels
+                )
+                or any(item not in {0, 1} for item in attention_mask)
+            ):
+                raise ValueError(
+                    "dataset labels and attention_mask must match input_ids"
+                )
+            value["labels"] = labels
+            value["attention_mask"] = attention_mask
             rows.append(value)
     if not rows:
         raise ValueError("training dataset is empty")
@@ -446,9 +481,29 @@ def _batch(
     torch: Any,
     *,
     device: str = "cpu",
-) -> Any:
-    selected = [rows[indexes[(cursor + offset) % len(indexes)]]["input_ids"] for offset in range(batch_size)]
-    return torch.tensor(selected, dtype=torch.long, device=device)
+) -> dict[str, Any]:
+    selected = [
+        rows[indexes[(cursor + offset) % len(indexes)]]
+        for offset in range(batch_size)
+    ]
+    return {
+        "input_ids": torch.tensor(
+            [row["input_ids"] for row in selected], dtype=torch.long, device=device
+        ),
+        "labels": torch.tensor(
+            [row.get("labels", row["input_ids"]) for row in selected],
+            dtype=torch.long,
+            device=device,
+        ),
+        "attention_mask": torch.tensor(
+            [
+                row.get("attention_mask", [1] * len(row["input_ids"]))
+                for row in selected
+            ],
+            dtype=torch.long,
+            device=device,
+        ),
+    }
 
 
 def evaluate_adapter(
@@ -458,15 +513,23 @@ def evaluate_adapter(
     dataset_path: str | Path,
     sample_indexes: list[int],
     batch_size: int = 2,
+    device: str = "cpu",
 ) -> dict[str, Any]:
-    torch, _LoraConfig, PeftModel, _get_peft_model, _LlamaConfig, LlamaForCausalLM = _deps()
-    model = LlamaForCausalLM.from_pretrained(base_model_path, local_files_only=True)
+    torch, _LoraConfig, PeftModel, _get_peft_model, _LlamaConfig, _LlamaForCausalLM = _deps()
+    selected_device = str(device or "cpu").strip().lower()
+    if selected_device != "cpu":
+        device_index = _cuda_device_index(selected_device)
+        if not torch.cuda.is_available() or device_index >= int(torch.cuda.device_count()):
+            raise CUDAUnavailableError("cuda_evaluation_device_unavailable")
+        torch.cuda.set_device(device_index)
+        torch.cuda.empty_cache()
+    model = _load_causal_lm(base_model_path)
     adapter_loaded = bool(adapter_path)
     if adapter_path:
         model, _torchao_dispatch_disabled = _load_peft_adapter(
             model, PeftModel, adapter_path, is_trainable=False
         )
-    model.to("cpu")
+    model.to(selected_device)
     model.eval()
     rows = load_token_rows(dataset_path)
     losses: list[float] = []
@@ -474,21 +537,34 @@ def evaluate_adapter(
     with torch.no_grad():
         for start in range(0, len(sample_indexes), max(1, batch_size)):
             indexes = sample_indexes[start : start + max(1, batch_size)]
-            input_ids = torch.tensor([rows[index]["input_ids"] for index in indexes], dtype=torch.long)
-            output = model(input_ids=input_ids, labels=input_ids, use_cache=False)
+            batch = _batch(
+                rows, indexes, 0, len(indexes), torch, device=selected_device
+            )
+            if selected_device == "cpu":
+                output = model(**batch, use_cache=False)
+            else:
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    output = model(**batch, use_cache=False)
             losses.append(float(output.loss.item()))
             if first_logits is None:
-                first_logits = output.logits[0, -1].detach().cpu().contiguous()
+                final_index = max(
+                    0, int(batch["attention_mask"][0].sum().item()) - 1
+                )
+                first_logits = output.logits[0, final_index].detach().cpu().contiguous()
     logits = first_logits if first_logits is not None else torch.empty(0)
-    return {
+    result = {
         "schema": EVALUATION_SCHEMA,
         "adapter_loaded": adapter_loaded,
         "sample_count": len(sample_indexes),
         "mean_loss": sum(losses) / max(1, len(losses)),
         "logits_hash": "sha256:" + __import__("hashlib").sha256(tensor_bytes(logits)).hexdigest(),
         "logits_norm": float(logits.float().norm().item()),
-        "device": "cpu",
+        "device": selected_device,
     }
+    del model
+    if selected_device != "cpu":
+        torch.cuda.empty_cache()
+    return result
 
 
 class CPULoRATrainingRuntime:
@@ -513,14 +589,14 @@ class CPULoRATrainingRuntime:
             raise ValueError("unsupported HF LoRA training spec")
         if training_spec.get("device") != "cpu":
             raise ValueError("Training Foundation RC only validates the CPU backend")
-        torch, _LoraConfig, PeftModel, _get_peft_model, _LlamaConfig, LlamaForCausalLM = _deps()
+        torch, _LoraConfig, PeftModel, _get_peft_model, _LlamaConfig, _LlamaForCausalLM = _deps()
         seed = int(training_spec["seed"])
         configure_cpu_determinism(seed)
         output = Path(output_dir).resolve()
         output.mkdir(parents=True, exist_ok=True)
         started = time.monotonic()
 
-        base = LlamaForCausalLM.from_pretrained(training_spec["base_model_path"], local_files_only=True)
+        base = _load_causal_lm(training_spec["base_model_path"])
         model, torchao_dispatch_disabled = _load_peft_adapter(
             base,
             PeftModel,
@@ -553,14 +629,14 @@ class CPULoRATrainingRuntime:
             optimizer.zero_grad(set_to_none=True)
             step_loss = 0.0
             for _micro in range(grad_acc):
-                input_ids = _batch(rows, indexes, cursor, batch_size, torch)
+                batch = _batch(rows, indexes, cursor, batch_size, torch)
                 cursor = (cursor + batch_size) % len(indexes)
-                result = model(input_ids=input_ids, labels=input_ids, use_cache=False)
+                result = model(**batch, use_cache=False)
                 loss = result.loss
                 (loss / float(grad_acc)).backward()
                 step_loss += float(loss.detach().item())
                 samples_seen += batch_size
-                tokens_seen += int(input_ids.numel())
+                tokens_seen += int(batch["attention_mask"].sum().item())
             optimizer.step()
             losses.append(step_loss / float(grad_acc))
 
@@ -568,7 +644,11 @@ class CPULoRATrainingRuntime:
         if base_hash_before != base_hash_after:
             raise RuntimeError("base model weights changed during LoRA-only training")
         final_adapter_dir = output / "adapter"
-        model.save_pretrained(final_adapter_dir, safe_serialization=True)
+        model.save_pretrained(
+            final_adapter_dir,
+            safe_serialization=True,
+            save_embedding_layers=False,
+        )
         initial_path = Path(training_spec["adapter_tensor_path"])
         final_path = _adapter_tensor_path(final_adapter_dir)
         initial_tensors = load_tensors(initial_path)
@@ -861,7 +941,7 @@ class CUDALoRATrainingRuntime:
             raise ValueError("training spec CUDA placement does not match runtime placement")
         output = Path(output_dir).resolve()
         output.mkdir(parents=True, exist_ok=True)
-        torch, _LoraConfig, PeftModel, _get_peft_model, _LlamaConfig, LlamaForCausalLM = _deps()
+        torch, _LoraConfig, PeftModel, _get_peft_model, _LlamaConfig, _LlamaForCausalLM = _deps()
         try:
             device = self._require_device(torch)
         except CUDAUnavailableError as exc:
@@ -875,7 +955,7 @@ class CUDALoRATrainingRuntime:
         torch.cuda.reset_peak_memory_stats(device)
         started = time.monotonic()
         try:
-            base = LlamaForCausalLM.from_pretrained(training_spec["base_model_path"], local_files_only=True)
+            base = _load_causal_lm(training_spec["base_model_path"])
             model, torchao_dispatch_disabled = _load_peft_adapter(
                 base,
                 PeftModel,
@@ -931,15 +1011,22 @@ class CUDALoRATrainingRuntime:
                 optimizer.zero_grad(set_to_none=True)
                 step_loss = 0.0
                 for _micro in range(grad_acc):
-                    input_ids = _batch(rows, indexes, cursor, batch_size, torch, device=self.device)
+                    batch = _batch(
+                        rows,
+                        indexes,
+                        cursor,
+                        batch_size,
+                        torch,
+                        device=self.device,
+                    )
                     cursor = (cursor + batch_size) % len(indexes)
                     with torch.autocast(device_type="cuda", dtype=torch.float16):
-                        result = model(input_ids=input_ids, labels=input_ids, use_cache=False)
+                        result = model(**batch, use_cache=False)
                         loss = result.loss / float(grad_acc)
                     scaler.scale(loss).backward()
                     step_loss += float(loss.detach().float().item())
                     samples_seen += batch_size
-                    tokens_seen += int(input_ids.numel())
+                    tokens_seen += int(batch["attention_mask"].sum().item())
                 scaler.unscale_(optimizer)
                 gradient_norms.append(_gradient_l2_norm(trainable_parameters))
                 clipped = torch.nn.utils.clip_grad_norm_(trainable_parameters, self.gradient_clip_norm)
@@ -967,7 +1054,11 @@ class CUDALoRATrainingRuntime:
             if base_hash_before != base_hash_after:
                 raise RuntimeError("base model weights changed during CUDA LoRA-only training")
             final_adapter_dir = output / "adapter"
-            model.save_pretrained(final_adapter_dir, safe_serialization=True)
+            model.save_pretrained(
+                final_adapter_dir,
+                safe_serialization=True,
+                save_embedding_layers=False,
+            )
             initial_path = Path(training_spec["adapter_tensor_path"])
             final_path = _adapter_tensor_path(final_adapter_dir)
             initial_tensors = load_tensors(initial_path)

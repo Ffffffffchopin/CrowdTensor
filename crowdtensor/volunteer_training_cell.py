@@ -814,37 +814,195 @@ class VolunteerTrainingCell:
         )
         return destination, downloaded
 
-    def _materialize(self, work: dict[str, Any]) -> tuple[dict[str, Path], int]:
+    @staticmethod
+    def _safe_snapshot_name(value: Any) -> str:
+        name = str(value or "")
+        path = PurePosixPath(name)
+        if not name or path.is_absolute() or ".." in path.parts:
+            raise VolunteerProtocolError(
+                "volunteer_external_model_file_name_invalid", status_code=400
+            )
+        return name
+
+    @staticmethod
+    def _download_huggingface_snapshot(
+        *, repo_id: str, revision: str, cache_dir: Path, allow_patterns: list[str]
+    ) -> Path:
+        from huggingface_hub import snapshot_download
+
+        return Path(
+            snapshot_download(
+                repo_id=repo_id,
+                revision=revision,
+                cache_dir=str(cache_dir),
+                allow_patterns=allow_patterns,
+                local_files_only=False,
+                max_workers=2,
+            )
+        ).resolve()
+
+    def _verified_external_model_snapshot(
+        self, campaign: dict[str, Any]
+    ) -> tuple[Path, int, dict[str, Any]] | None:
+        source = campaign.get("model_source")
+        if not isinstance(source, dict):
+            return None
+        fetch = source.get("runtime_fetch")
+        if not isinstance(fetch, dict):
+            return None
+        if fetch.get("provider") != "huggingface_hub":
+            raise VolunteerProtocolError(
+                "volunteer_external_model_provider_unsupported", status_code=400
+            )
+        records = source.get("imported_files")
+        if not isinstance(records, list) or not records:
+            raise VolunteerProtocolError(
+                "volunteer_external_model_manifest_missing", status_code=400
+            )
+        names = [self._safe_snapshot_name(record.get("relative_name")) for record in records]
+        total_bytes = sum(int(record.get("byte_count") or 0) for record in records)
+        if total_bytes < 1 or total_bytes > self.max_download_bytes:
+            raise VolunteerProtocolError(
+                "volunteer_artifact_size_limit_exceeded", status_code=413
+            )
+        revision = str(fetch.get("revision") or "").lower()
+        if len(revision) != 40 or any(value not in "0123456789abcdef" for value in revision):
+            raise VolunteerProtocolError(
+                "volunteer_external_model_revision_invalid", status_code=400
+            )
+        source_hash = str(source.get("imported_snapshot_hash") or "")
+        if not source_hash.startswith("sha256:") or fetch.get(
+            "file_manifest_hash"
+        ) != source_hash:
+            raise VolunteerProtocolError(
+                "volunteer_external_model_manifest_hash_invalid", status_code=400
+            )
+        if sorted(names) != fetch.get("allow_patterns"):
+            raise VolunteerProtocolError(
+                "volunteer_external_model_allowlist_invalid", status_code=400
+            )
+
+        external_root = self.cache / "external-models"
+        external_root.mkdir(parents=True, exist_ok=True)
+        digest = source_hash.split(":", 1)[1]
+        marker_path = external_root / f"{digest}.json"
+        lock_path = external_root / f".{digest}.lock"
+        downloaded_bytes = 0
+        with lock_path.open("a+b") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                snapshot: Path | None = None
+                if marker_path.is_file():
+                    try:
+                        marker = _json_file(marker_path)
+                        candidate = Path(str(marker.get("snapshot_path") or ""))
+                        if (
+                            marker.get("schema")
+                            == "crowdtensor_external_model_cache_v1"
+                            and marker.get("source_hash") == source_hash
+                            and candidate.is_dir()
+                            and all(
+                                (candidate / name).is_file()
+                                and (candidate / name).stat().st_size
+                                == int(record.get("byte_count") or 0)
+                                for name, record in zip(names, records)
+                            )
+                        ):
+                            snapshot = candidate
+                    except (OSError, ValueError, json.JSONDecodeError):
+                        snapshot = None
+                if snapshot is None:
+                    try:
+                        snapshot = self._download_huggingface_snapshot(
+                            repo_id=str(fetch.get("repo_id") or ""),
+                            revision=revision,
+                            cache_dir=self.cache / "huggingface",
+                            allow_patterns=names,
+                        )
+                    except Exception as exc:
+                        raise VolunteerProtocolError(
+                            "volunteer_external_model_download_failed", status_code=502
+                        ) from exc
+                    for name, record in zip(names, records):
+                        path = snapshot / name
+                        if (
+                            not path.is_file()
+                            or path.stat().st_size != int(record.get("byte_count") or 0)
+                            or sha256_file(path) != record.get("sha256")
+                        ):
+                            raise VolunteerProtocolError(
+                                "volunteer_external_model_snapshot_hash_mismatch",
+                                status_code=400,
+                            )
+                    _atomic_json(
+                        marker_path,
+                        {
+                            "schema": "crowdtensor_external_model_cache_v1",
+                            "source_hash": source_hash,
+                            "snapshot_path": str(snapshot),
+                        },
+                        mode=0o600,
+                    )
+                    downloaded_bytes = total_bytes
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        return (
+            snapshot,
+            downloaded_bytes,
+            {
+                "model_source_transport": "huggingface_hub_verified_snapshot",
+                "model_source_verified": True,
+                "model_source_cache_hit": downloaded_bytes == 0,
+            },
+        )
+
+    def _materialize(
+        self, campaign: dict[str, Any], work: dict[str, Any]
+    ) -> tuple[dict[str, Path], int, dict[str, Any]]:
         refs = work.get("artifact_refs")
         if not isinstance(refs, dict):
             raise VolunteerProtocolError("volunteer_work_artifact_refs_missing", status_code=400)
+        external_model = self._verified_external_model_snapshot(campaign)
         cached: dict[str, Path] = {}
         downloaded = 0
-        for name in ("base_model", "base_adapter", "adapter_config", "dataset_shard"):
+        names = ["base_adapter", "adapter_config", "dataset_shard"]
+        if external_model is None:
+            names.insert(0, "base_model")
+        for name in names:
             if not isinstance(refs.get(name), dict):
                 raise VolunteerProtocolError("volunteer_work_artifact_ref_missing", status_code=400)
             path, byte_count = self._cached_artifact(refs[name])
             cached[name] = path
             downloaded += byte_count
         work_root = self.private / "work" / str(work["work_unit_hash"]).split(":", 1)[-1]
-        model_hash = str(refs["base_model"]["sha256"]).split(":", 1)[1]
-        model_dir = self.cache / "extracted-models" / model_hash
-        model_lock = self.cache / "extracted-models" / f".{model_hash}.lock"
-        model_lock.parent.mkdir(parents=True, exist_ok=True)
-        with model_lock.open("a+b") as lock_handle:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
-            try:
-                if not (model_dir / "config.json").is_file():
-                    temporary = model_dir.with_name(
-                        f".{model_dir.name}.{secrets.token_hex(4)}.tmp"
-                    )
-                    shutil.rmtree(temporary, ignore_errors=True)
-                    self._safe_extract(cached["base_model"], temporary)
-                    if model_dir.exists():
-                        shutil.rmtree(model_dir)
-                    os.replace(temporary, model_dir)
-            finally:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        if external_model is not None:
+            model_dir, external_bytes, materialization = external_model
+            downloaded += external_bytes
+        else:
+            model_hash = str(refs["base_model"]["sha256"]).split(":", 1)[1]
+            model_dir = self.cache / "extracted-models" / model_hash
+            model_lock = self.cache / "extracted-models" / f".{model_hash}.lock"
+            model_lock.parent.mkdir(parents=True, exist_ok=True)
+            with model_lock.open("a+b") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    if not (model_dir / "config.json").is_file():
+                        temporary = model_dir.with_name(
+                            f".{model_dir.name}.{secrets.token_hex(4)}.tmp"
+                        )
+                        shutil.rmtree(temporary, ignore_errors=True)
+                        self._safe_extract(cached["base_model"], temporary)
+                        if model_dir.exists():
+                            shutil.rmtree(model_dir)
+                        os.replace(temporary, model_dir)
+                finally:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            materialization = {
+                "model_source_transport": "coordinator_content_addressed_zip",
+                "model_source_verified": True,
+                "model_source_cache_hit": cached["base_model"].is_file()
+                and downloaded == 0,
+            }
         adapter_dir = work_root / "adapter"
         adapter_dir.mkdir(parents=True, exist_ok=True)
         adapter_path = adapter_dir / "adapter_model.safetensors"
@@ -853,14 +1011,18 @@ class VolunteerTrainingCell:
         shutil.copyfile(cached["adapter_config"], config_path)
         dataset_path = work_root / "dataset_shard.jsonl"
         shutil.copyfile(cached["dataset_shard"], dataset_path)
-        return {
-            "work_root": work_root,
-            "base_model": model_dir,
-            "adapter_dir": adapter_dir,
-            "adapter_tensor": adapter_path,
-            "adapter_config": config_path,
-            "dataset": dataset_path,
-        }, downloaded
+        return (
+            {
+                "work_root": work_root,
+                "base_model": model_dir,
+                "adapter_dir": adapter_dir,
+                "adapter_tensor": adapter_path,
+                "adapter_config": config_path,
+                "dataset": dataset_path,
+            },
+            downloaded,
+            materialization,
+        )
 
     def _training_spec(
         self, campaign: dict[str, Any], work: dict[str, Any], paths: dict[str, Path]
@@ -948,7 +1110,7 @@ class VolunteerTrainingCell:
             work=work,
             interval_seconds=heartbeat_interval,
         ) as heartbeat:
-            paths, downloaded_bytes = self._materialize(work)
+            paths, downloaded_bytes, materialization = self._materialize(campaign, work)
             spec = self._training_spec(campaign, work, paths)
             runtime = (
                 CPULoRATrainingRuntime()
@@ -980,6 +1142,7 @@ class VolunteerTrainingCell:
                 "delta_file_hash": result["adapter_delta"]["delta_file_hash"],
                 "delta_byte_count": Path(result["adapter_delta"]["delta_path"]).stat().st_size,
                 "artifact_download_bytes": downloaded_bytes,
+                **materialization,
             },
         }
         self._save_private_state(private_state)

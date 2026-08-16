@@ -23,6 +23,7 @@ Transformers / PEFT / Accelerate / FSDP2 / DeepSpeed
 or provider SDK imports.
 
 - `contracts.py`: projects, Work Units, checkpoints, lineage, and receipts;
+- `data_packs.py`: content-addressed community data and admission decisions;
 - `controller.py`: lease ownership, expiry/generation fencing, replay, commit,
   and public projections;
 - `execution.py`: provider snapshots, execution plans, and stable launch specs;
@@ -64,7 +65,8 @@ See [the trainer contract](stable-sharded-trainer.md).
 - `crowdtensor/adapters/capabilities.py`: legacy/public capability discovery;
 - `crowdtensor/adapters/providers.py`: generic provider snapshot mapping;
 - `crowdtensor/adapters/manifests.py`: the retained Qwen model manifest;
-- `crowdtensor/adapters/text_data.py`: bounded model-neutral text shaping.
+- `crowdtensor/adapters/text_data.py`: canonical Data Pack records,
+  response-supervised tokenization, and bounded model-neutral text shaping.
 
 Provider adapters discover resources. They do not acquire accounts or weaken
 training acceptance. Model adapters execute trusted Python and must be pinned
@@ -83,6 +85,10 @@ crowdtensor adapters ...
 `train run --campaign-dir` and `train join` compose the ordinary elastic
 workflow. The optional packaged site/dashboard is served by a user-owned
 Volunteer Session; it is not a required central CrowdTensor service.
+
+The Commons Campaign path binds reviewed Data Packs and a pinned model snapshot
+to the existing Volunteer protocol. It does not add another scheduler or model
+trainer. See [Commons 3B](commons-campaign.md).
 
 ## Evidence Boundary
 

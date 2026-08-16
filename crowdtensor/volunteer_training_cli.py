@@ -30,7 +30,14 @@ from .volunteer_campaign_proposal import (
     load_and_validate_proposal,
     write_proposal_template,
 )
-from .volunteer_training_campaign import create_pinned_smollm_wikitext_fixture
+from .volunteer_training_campaign import (
+    COMMONS_MODEL_ADAPTER_ID,
+    COMMONS_MODEL_ID,
+    COMMONS_MODEL_LICENSE,
+    COMMONS_MODEL_REVISION,
+    build_commons_instruction_fixture,
+    create_pinned_smollm_wikitext_fixture,
+)
 from .volunteer_training_cell import (
     HTTPVolunteerTransport,
     VolunteerTrainingCell,
@@ -132,11 +139,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     imported.add_argument("--lease-seconds", type=float, default=900.0)
     imported.add_argument("--json", action="store_true")
 
+    commons = campaign_actions.add_parser(
+        "import-commons",
+        help="Create a reviewed instruction Campaign from public Data Packs.",
+    )
+    commons.add_argument("campaign_dir")
+    commons.add_argument("--model-dir", required=True)
+    commons.add_argument("--model-id", default=COMMONS_MODEL_ID)
+    commons.add_argument("--model-revision", default=COMMONS_MODEL_REVISION)
+    commons.add_argument("--model-license", default=COMMONS_MODEL_LICENSE)
+    commons.add_argument("--model-adapter", default=COMMONS_MODEL_ADAPTER_ID)
+    commons.add_argument("--train-data-pack", action="append", required=True)
+    commons.add_argument("--evaluation-data-pack", required=True)
+    commons.add_argument("--attest-model-source", action="store_true")
+    commons.add_argument("--campaign-id", default="")
+    commons.add_argument("--target-rounds", type=int, default=100)
+    commons.add_argument("--local-steps", type=int, default=1)
+    commons.add_argument("--learning-rate", type=float, default=2e-4)
+    commons.add_argument("--sequence-length", type=int, default=512)
+    commons.add_argument("--train-sequences", type=int, default=0)
+    commons.add_argument("--validation-sequences", type=int, default=0)
+    commons.add_argument("--lora-rank", type=int, default=8)
+    commons.add_argument("--lora-alpha", type=int, default=16)
+    commons.add_argument("--work-shards", type=int, default=4)
+    commons.add_argument("--minimum-quorum", type=int, default=4)
+    commons.add_argument("--lease-seconds", type=float, default=1800.0)
+    commons.add_argument("--json", action="store_true")
+
     for name in ("validate", "start", "pause", "resume", "finalize", "evaluate"):
         operation = campaign_actions.add_parser(name)
         operation.add_argument("campaign_dir")
         if name == "evaluate":
             operation.add_argument("--heldout-quality", action="store_true")
+            operation.add_argument("--device", default="cpu")
         operation.add_argument("--json", action="store_true")
     export = campaign_actions.add_parser("export")
     export.add_argument("campaign_dir")
@@ -427,6 +462,84 @@ def run(argv: list[str] | None = None) -> int:
             if not args.json:
                 print(f"private_invite={coordinator.invite_path}")
             return 0
+        elif args.action == "campaign" and args.campaign_action == "import-commons":
+            root = Path(args.campaign_dir).expanduser().resolve()
+            state_path = root / ".private" / "coordinator_state.json"
+            if state_path.is_file():
+                coordinator = VolunteerTrainingCoordinator(root)
+            else:
+                if int(args.minimum_quorum) < 2 or int(args.minimum_quorum) > int(
+                    args.work_shards
+                ):
+                    raise ValueError("commons_campaign_minimum_quorum_out_of_bounds")
+                fixture = build_commons_instruction_fixture(
+                    root / ".private" / "fixture",
+                    model_dir=args.model_dir,
+                    model_id=args.model_id,
+                    model_revision=args.model_revision,
+                    model_license=args.model_license,
+                    model_adapter_id=args.model_adapter,
+                    train_data_packs=tuple(args.train_data_pack),
+                    evaluation_data_pack=args.evaluation_data_pack,
+                    job_id=args.campaign_id or "crowdtensor-commons-3b",
+                    model_source_attested=bool(args.attest_model_source),
+                    sequence_length=int(args.sequence_length),
+                    train_sequence_count=int(args.train_sequences),
+                    validation_sequence_count=int(args.validation_sequences),
+                    local_steps=int(args.local_steps),
+                    learning_rate=float(args.learning_rate),
+                    lora_rank=int(args.lora_rank),
+                    lora_alpha=int(args.lora_alpha),
+                    work_shard_count=int(args.work_shards),
+                )
+                coordinator = VolunteerTrainingCoordinator.create_from_fixture(
+                    root,
+                    fixture,
+                    campaign_id=args.campaign_id,
+                    target_rounds=int(args.target_rounds),
+                    minimum_quorum=int(args.minimum_quorum),
+                    lease_seconds=float(args.lease_seconds),
+                    outer_lr=0.5,
+                    momentum=0.0,
+                )
+            manifest = coordinator.campaign_manifest()
+            dataset_source = manifest.get("dataset_source") or {}
+            value = with_public_safety(
+                {
+                    "schema": "crowdtensor_commons_campaign_import_result_v1",
+                    "ok": True,
+                    "state": "imported",
+                    "campaign_id": manifest["campaign_id"],
+                    "campaign_manifest_hash": manifest["manifest_hash"],
+                    "import_profile": (manifest.get("campaign_import") or {}).get(
+                        "profile"
+                    ),
+                    "model_adapter_id": manifest.get("model_adapter_id"),
+                    "model_source_verified": (manifest.get("model_source") or {}).get(
+                        "source_verified"
+                    )
+                    is True,
+                    "data_pack_count": len(dataset_source.get("data_packs") or []),
+                    "all_data_packs_admission_ready": dataset_source.get(
+                        "all_data_packs_admission_ready"
+                    )
+                    is True,
+                    "benchmark_overlap_detected": dataset_source.get(
+                        "benchmark_overlap_detected"
+                    )
+                    is True,
+                    "target_rounds": manifest["round_policy"]["target_rounds"],
+                    "heldout_benchmark_configured": isinstance(
+                        manifest.get("evaluation_contract"), dict
+                    ),
+                    "private_invite_created": coordinator.invite_path.is_file(),
+                    "next_action": "validate_then_serve_campaign",
+                }
+            )
+            _emit(value, json_output=bool(args.json))
+            if not args.json:
+                print(f"private_invite={coordinator.invite_path}")
+            return 0
         elif args.action == "campaign" and args.campaign_action == "restore":
             _coordinator, value = VolunteerTrainingCoordinator.restore_campaign(
                 args.backup, args.destination
@@ -465,7 +578,8 @@ def run(argv: list[str] | None = None) -> int:
                 value = coordinator.finalize_campaign(invite_token=token)
             elif args.campaign_action == "evaluate":
                 value = coordinator.evaluate_campaign(
-                    heldout_quality=bool(args.heldout_quality)
+                    heldout_quality=bool(args.heldout_quality),
+                    device=str(args.device),
                 )
             elif args.campaign_action == "export":
                 value = coordinator.export_campaign(args.destination)
@@ -494,8 +608,9 @@ def run(argv: list[str] | None = None) -> int:
                         fixture,
                         campaign_id=args.campaign_id,
                         target_rounds=int(args.target_rounds),
-                    )
+            )
             coordinator = VolunteerTrainingCoordinator(args.campaign_dir)
+            release_dir = resolve_public_release_dir(args.release_dir or None)
             public_url = str(args.public_url or f"http://{args.host}:{args.port}").rstrip("/")
             coordinator.write_invite(public_url)
             require_https = (

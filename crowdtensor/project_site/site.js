@@ -44,6 +44,9 @@ function lifecycleLabel(value, complete) {
 function renderSnapshot(snapshot) {
   const campaign = snapshot && snapshot.campaign ? snapshot.campaign : {};
   const progress = snapshot && snapshot.progress ? snapshot.progress : {};
+  const data = snapshot && snapshot.data ? snapshot.data : {};
+  const evaluation = snapshot && snapshot.evaluation ? snapshot.evaluation : {};
+  const lineage = snapshot && snapshot.checkpoint_lineage ? snapshot.checkpoint_lineage : {};
   const completed = Number(progress.completed_rounds || 0);
   const target = Math.max(1, Number(progress.target_rounds || 1));
   const fraction = boundedPercent(
@@ -62,6 +65,26 @@ function renderSnapshot(snapshot) {
   text("accepted-tokens", number.format(Number(progress.accepted_token_count || 0)));
   text("active-contributors", number.format(Number(progress.active_contributor_count || 0)));
   text("adapter-version", `v${number.format(Number(progress.adapter_version || 0))}`);
+  const dataPackCount = Number(data.data_pack_count || 0);
+  const publicRecordCount = Number(data.public_record_count || 0);
+  text(
+    "campaign-data-packs",
+    dataPackCount > 0
+      ? `${number.format(dataPackCount)} reviewed packs / ${number.format(publicRecordCount)} public records`
+      : "Legacy pinned dataset",
+  );
+  text(
+    "campaign-benchmark",
+    evaluation.held_out_quality_benchmark_performed
+      ? "Published for current checkpoint"
+      : "Not published for this checkpoint",
+  );
+  text(
+    "campaign-lineage",
+    lineage.ok
+      ? `${number.format(Number(lineage.completed_round_count || 0))} committed rounds verified`
+      : "Lineage verification unavailable",
+  );
   text("snapshot-state", "Live public snapshot");
 
   if (status) {

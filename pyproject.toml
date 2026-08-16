@@ -43,7 +43,7 @@ storage = [
 ]
 hf = [
   "torch>=2,<3",
-  "transformers>=4.40,<6",
+  "transformers>=4.53,<6",
   "peft>=0.19,<1",
   "safetensors>=0.4,<1",
   "accelerate>=0.30,<2",

@@ -7,13 +7,35 @@ import pytest
 from crowdtensor import cli
 from crowdtensor.hf_lora_training import create_local_training_fixture
 from crowdtensor.volunteer_training_cell import VolunteerTrainingCell
-from crowdtensor.volunteer_training_cli import run
+from crowdtensor.volunteer_training_cli import parse_args, run
 from crowdtensor.volunteer_training_coordinator import VolunteerTrainingCoordinator
 
 
 class OfflineTransport:
     def __getattr__(self, _name):
         raise RuntimeError("offline")
+
+
+def test_commons_campaign_cli_has_bounded_reviewed_defaults() -> None:
+    args = parse_args(
+        [
+            "campaign",
+            "import-commons",
+            "./campaign",
+            "--model-dir",
+            "./model",
+            "--train-data-pack",
+            "./train-pack",
+            "--evaluation-data-pack",
+            "./heldout-pack",
+            "--attest-model-source",
+        ]
+    )
+    assert args.target_rounds == 100
+    assert args.work_shards == 4
+    assert args.minimum_quorum == 4
+    assert args.local_steps == 1
+    assert args.attest_model_source is True
 
 
 def test_top_level_cli_dispatches_volunteer_contract(capsys) -> None:
@@ -70,3 +92,22 @@ def test_campaign_lifecycle_commands_do_not_require_release_dir(tmp_path, capsys
     value = json.loads(capsys.readouterr().out)
     assert value["ok"] is True
     assert value["errors"] == []
+
+    assert (
+        run(
+            [
+                "serve",
+                str(root),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8791",
+                "--prepare-only",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    prepared = json.loads(capsys.readouterr().out)
+    assert prepared["state"] == "prepared"
+    assert prepared["public_release_download"] is False

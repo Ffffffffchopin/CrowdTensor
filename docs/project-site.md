@@ -48,3 +48,9 @@ The Native Agent is the primary contribution path. Its same-origin installer
 verifies `SHA256SUMS`, checks the Campaign's resource estimate without
 redeeming the code, and then runs bounded CPU/CUDA PEFT work. Browser work is
 calibration only and never increments model-update or Adapter lineage counters.
+
+For Commons Campaigns, the public snapshot also reports reviewed Data Pack
+counts and licenses, the current checkpoint lineage, and a held-out evaluation
+only when its Adapter version and hashes match the current canonical Adapter.
+Stale or tampered `evaluation.json` files are ignored. Raw Data Pack records are
+never embedded in the snapshot.

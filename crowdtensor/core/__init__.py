@@ -18,6 +18,7 @@ from .controller import (
     SessionControllerError,
     inspect_session_controller,
 )
+from .data_packs import DataPack, DataPackError
 from .execution import (
     ProviderSnapshot,
     ResourceAvailability,
@@ -45,6 +46,8 @@ __all__ = [
     "CheckpointRef",
     "ContractError",
     "ContributionReceipt",
+    "DataPack",
+    "DataPackError",
     "ReceiptOutcome",
     "ProviderSnapshot",
     "ResourceAvailability",

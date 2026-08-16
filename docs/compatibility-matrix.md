@@ -10,9 +10,12 @@
 | Model Adapter API | `model_adapter_v1.0` |
 | Backend plugins | `crowdtensor.training_backends.v2` |
 | Model plugins | `crowdtensor.model_adapters.v1` |
+| Community data | Data Pack v1, canonical instruction JSONL |
+| Transformers | `>=4.53,<6` for native SmolLM3 support |
 | Local storage | content-addressed filesystem |
 | Optional storage | S3-compatible resumable upload |
 | CPU PEFT | real-tested |
+| Commons 3B | importer and CPU reference tested; real 3B accelerator gate pending |
 | CPU FSDP2 | local two-rank recovery tested |
 | CUDA stable group | planned/runtime contract implemented; live gate pending |
 | JAX TPU | retained capability/manifest adapter, not one-click training |

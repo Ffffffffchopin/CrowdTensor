@@ -54,6 +54,19 @@ canonical checkpoint.
 the append-only ledger. They do not receive lease material, credentials, raw
 training rows, activations, or tensor values.
 
+## Community Data Packs
+
+Community instruction data is admitted through the Data Pack v1 contract. A
+pack records an immutable records hash, SPDX license, source revision, hashed
+contributor identity, and explicit redistribution, training, personal-data,
+copyright, benchmark-contamination, and moderation decisions. It does not put
+raw records or a plaintext contributor identity in the public manifest.
+
+An `admission_ready` value is a review result, not an automated legal or safety
+guarantee. Public Campaign importers must still reject train/evaluation overlap
+and preserve the immutable held-out role. See the
+[Commons Campaign](commons-campaign.md) for the reference workflow.
+
 ## Lifecycle
 
 1. A maintainer opens a proposal and pins its inputs.

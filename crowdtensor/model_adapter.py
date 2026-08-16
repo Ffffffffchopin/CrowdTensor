@@ -377,8 +377,45 @@ class SmolLMModelAdapter(ModelAdapter):
         raise ModelAdapterError("smollm2_full_production_scheduler_not_supported")
 
 
+class SmolLM3ModelAdapter(ModelAdapter):
+    adapter_id = "smollm3_lora_v1"
+    family = "smollm3"
+    model_types = ("smollm3",)
+    architectures = ("SmolLM3ForCausalLM",)
+    default_model_id = "HuggingFaceTB/SmolLM3-3B-Base"
+    default_revision = "d78a42f79198603e614095753484a04c10c2b940"
+    default_model_license = "apache-2.0"
+    target_modules = (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    )
+    default_config = {
+        "model_type": "smollm3",
+        "architectures": ["SmolLM3ForCausalLM"],
+        "num_hidden_layers": 36,
+        "hidden_size": 2048,
+        "intermediate_size": 11008,
+        "num_attention_heads": 16,
+        "num_key_value_heads": 4,
+        "vocab_size": 128256,
+    }
+    recommended_stage_count = 4
+    extra_capabilities = ("commons_campaign", "instruction_sft")
+
+    def production_manifest(
+        self, *, target_steps: int, accelerators: Iterable[str]
+    ) -> dict[str, Any]:
+        raise ModelAdapterError("smollm3_full_production_scheduler_not_supported")
+
+
 _BUILTIN_ADAPTERS: dict[str, ModelAdapter] = {
-    adapter.adapter_id: adapter for adapter in (QwenModelAdapter(), SmolLMModelAdapter())
+    adapter.adapter_id: adapter
+    for adapter in (QwenModelAdapter(), SmolLMModelAdapter(), SmolLM3ModelAdapter())
 }
 
 
