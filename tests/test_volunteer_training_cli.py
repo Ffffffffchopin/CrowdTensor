@@ -38,6 +38,15 @@ def test_commons_campaign_cli_has_bounded_reviewed_defaults() -> None:
     assert args.attest_model_source is True
 
 
+def test_campaign_cli_exposes_operator_trusted_evaluation_import() -> None:
+    args = parse_args(
+        ["campaign", "import-evaluation", "./campaign", "./evaluation.json"]
+    )
+    assert args.campaign_action == "import-evaluation"
+    assert args.campaign_dir == "./campaign"
+    assert args.report == "./evaluation.json"
+
+
 def test_top_level_cli_dispatches_volunteer_contract(capsys) -> None:
     with pytest.raises(SystemExit) as raised:
         cli.main(["volunteer", "contract", "--json"])

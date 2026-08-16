@@ -36,7 +36,10 @@ from crowdtensor.volunteer_training_campaign import (
     build_smollm_wikitext_fixture,
 )
 from crowdtensor.volunteer_training_coordinator import VolunteerTrainingCoordinator
-from crowdtensor.volunteer_training_protocol import validate_campaign_manifest
+from crowdtensor.volunteer_training_protocol import (
+    VolunteerProtocolError,
+    validate_campaign_manifest,
+)
 
 
 def _records(root):
@@ -291,6 +294,75 @@ def test_commons_campaign_binds_reviewed_data_packs_and_response_labels(
     assert snapshot["checkpoint_lineage"]["ok"] is True
     assert snapshot["evaluation"]["current_evaluation_available"] is True
     assert snapshot["evaluation"]["held_out_quality_benchmark_performed"] is True
+    quality = evaluation["quality"]
+    external = {
+        "schema": "crowdtensor_trusted_external_evaluation_result_v1",
+        "campaign_id": manifest["campaign_id"],
+        "campaign_manifest_hash": manifest["manifest_hash"],
+        "adapter_version": evaluation["adapter_version"],
+        "baseline_adapter_hash": manifest["initial_adapter_hash"],
+        "candidate_adapter_hash": evaluation["canonical_adapter_hash"],
+        "model_source_snapshot_hash": manifest["model_source"][
+            "imported_snapshot_hash"
+        ],
+        "heldout_dataset_hash": manifest["evaluation_contract"][
+            "heldout_dataset_hash"
+        ],
+        "heldout_sample_count": manifest["evaluation_contract"][
+            "heldout_sample_count"
+        ],
+        "baseline": {
+            "schema": "crowdtensor_lora_evaluation_v1",
+            "adapter_loaded": True,
+            "sample_count": quality["heldout_sample_count"],
+            "mean_loss": quality["baseline_mean_loss"],
+            "logits_hash": quality["baseline_logits_hash"],
+            "logits_norm": 1.0,
+            "device": "cpu",
+        },
+        "candidate": {
+            "schema": "crowdtensor_lora_evaluation_v1",
+            "adapter_loaded": True,
+            "sample_count": quality["heldout_sample_count"],
+            "mean_loss": quality["candidate_mean_loss"],
+            "logits_hash": quality["candidate_logits_hash"],
+            "logits_norm": 1.0,
+            "device": "cpu",
+        },
+        "runtime": {
+            "backend": "pytorch_transformers_peft_cpu_test",
+            "device": "cpu",
+            "source_revision": "a" * 40,
+            "model_source_verified": True,
+            "baseline_artifact_verified": True,
+            "candidate_artifact_verified": True,
+            "heldout_artifact_verified": True,
+            "credential_values_public": False,
+            "public_artifact_safe": True,
+        },
+        "credential_values_public": False,
+        "private_paths_public": False,
+        "raw_data_public": False,
+        "tensor_values_public": False,
+        "public_artifact_safe": True,
+    }
+    external["content_hash"] = sha256_json(external)
+    imported = coordinator.import_trusted_external_evaluation(
+        external, invite_token=coordinator.private_invite()["invite_token"]
+    )
+    assert imported["evaluation_scope"].startswith("trusted_external_")
+    assert imported["trusted_external_evaluation"]["operator_authenticated"] is True
+    tampered = json.loads(json.dumps(external))
+    tampered["candidate_adapter_hash"] = "sha256:" + "f" * 64
+    tampered["content_hash"] = sha256_json(
+        {key: value for key, value in tampered.items() if key != "content_hash"}
+    )
+    with pytest.raises(
+        VolunteerProtocolError, match="trusted_external_evaluation_invalid"
+    ):
+        coordinator.import_trusted_external_evaluation(
+            tampered, invite_token=coordinator.private_invite()["invite_token"]
+        )
     stale = json.loads(
         (coordinator.root / "evaluation.json").read_text(encoding="utf-8")
     )

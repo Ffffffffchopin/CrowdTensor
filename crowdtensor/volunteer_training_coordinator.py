@@ -83,6 +83,9 @@ PAIRING_CODE_MIN_TTL_SECONDS = 60
 PAIRING_CODE_MAX_TTL_SECONDS = 3600
 PAIRING_CODE_RETENTION_SECONDS = 24 * 60 * 60
 PAIRING_CODE_MAX_ACTIVE = 10_000
+TRUSTED_EXTERNAL_EVALUATION_SCHEMA = (
+    "crowdtensor_trusted_external_evaluation_result_v1"
+)
 
 
 def _normalize_pairing_code(value: str) -> str:
@@ -2269,13 +2272,59 @@ class VolunteerTrainingCoordinator:
     def resume_campaign(self, *, invite_token: str) -> dict[str, Any]:
         return self._set_lifecycle(invite_token=invite_token, target="running")
 
+    def _write_evaluation_report(
+        self,
+        *,
+        campaign: dict[str, Any],
+        adapter_version: int,
+        current_adapter_hash: str,
+        accepted: list[dict[str, Any]],
+        lineage: dict[str, Any],
+        quality: dict[str, Any] | None,
+        evaluation_scope: str,
+        trusted_external_evaluation: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        loss_starts = [float(item.get("loss_start") or 0.0) for item in accepted]
+        loss_ends = [float(item.get("loss_end") or 0.0) for item in accepted]
+        payload: dict[str, Any] = {
+            "schema": "crowdtensor_volunteer_campaign_evaluation_v1",
+            "ok": lineage.get("ok") is True,
+            "campaign_id": campaign["campaign_id"],
+            "campaign_manifest_hash": campaign["manifest_hash"],
+            "adapter_version": int(adapter_version),
+            "canonical_adapter_hash": current_adapter_hash,
+            "accepted_update_count": len(accepted),
+            "accepted_tokens_seen": sum(
+                int(item.get("tokens_seen") or 0) for item in accepted
+            ),
+            "mean_reported_loss_start": (
+                sum(loss_starts) / len(loss_starts) if loss_starts else None
+            ),
+            "mean_reported_loss_end": (
+                sum(loss_ends) / len(loss_ends) if loss_ends else None
+            ),
+            "checkpoint_lineage_verified": lineage.get("ok") is True,
+            "completed_round_count": int(lineage["completed_round_count"]),
+            "evaluation_scope": str(evaluation_scope),
+            "held_out_quality_benchmark_performed": quality is not None,
+            "quality": quality,
+            "quality_improvement_verified": bool(
+                quality and quality["quality_improvement_verified"]
+            ),
+            "statistical_significance_claimed": False,
+        }
+        if trusted_external_evaluation is not None:
+            payload["trusted_external_evaluation"] = trusted_external_evaluation
+        report = with_public_safety(payload)
+        report["content_hash"] = sha256_json(report)
+        _atomic_write_json(self.root / "evaluation.json", report, mode=0o644)
+        return report
+
     def evaluate_campaign(
         self, *, heldout_quality: bool = False, device: str = "cpu"
     ) -> dict[str, Any]:
         with self._locked_state() as state:
             accepted = list(state.get("submissions", {}).values())
-            loss_starts = [float(item.get("loss_start") or 0.0) for item in accepted]
-            loss_ends = [float(item.get("loss_end") or 0.0) for item in accepted]
             lineage = self._checkpoint_lineage_from_state(state)
             campaign = copy.deepcopy(state["campaign"])
             adapter_version = int(state["adapter_version"])
@@ -2355,42 +2404,267 @@ class VolunteerTrainingCoordinator:
                 "evaluation_device": str(candidate["device"]),
                 "statistical_significance_claimed": False,
             }
-        report = with_public_safety(
-            {
-                "schema": "crowdtensor_volunteer_campaign_evaluation_v1",
-                "ok": lineage.get("ok") is True,
-                "campaign_id": campaign["campaign_id"],
-                "campaign_manifest_hash": campaign["manifest_hash"],
-                "adapter_version": adapter_version,
-                "canonical_adapter_hash": current_adapter_hash,
-                "accepted_update_count": len(accepted),
-                "accepted_tokens_seen": sum(
-                    int(item.get("tokens_seen") or 0) for item in accepted
-                ),
-                "mean_reported_loss_start": (
-                    sum(loss_starts) / len(loss_starts) if loss_starts else None
-                ),
-                "mean_reported_loss_end": (
-                    sum(loss_ends) / len(loss_ends) if loss_ends else None
-                ),
-                "checkpoint_lineage_verified": lineage.get("ok") is True,
-                "completed_round_count": int(lineage["completed_round_count"]),
-                "evaluation_scope": (
-                    "heldout_loss_perplexity_and_checkpoint_integrity"
-                    if quality is not None
-                    else "aggregated_training_metrics_and_checkpoint_integrity"
-                ),
-                "held_out_quality_benchmark_performed": quality is not None,
-                "quality": quality,
-                "quality_improvement_verified": bool(
-                    quality and quality["quality_improvement_verified"]
-                ),
+        return self._write_evaluation_report(
+            campaign=campaign,
+            adapter_version=adapter_version,
+            current_adapter_hash=current_adapter_hash,
+            accepted=accepted,
+            lineage=lineage,
+            quality=quality,
+            evaluation_scope=(
+                "heldout_loss_perplexity_and_checkpoint_integrity"
+                if quality is not None
+                else "aggregated_training_metrics_and_checkpoint_integrity"
+            ),
+        )
+
+    def import_trusted_external_evaluation(
+        self, report: dict[str, Any], *, invite_token: str
+    ) -> dict[str, Any]:
+        """Record an operator-authenticated evaluation performed outside the Session."""
+
+        def reject(cause: BaseException | None = None) -> None:
+            error = VolunteerProtocolError(
+                "volunteer_trusted_external_evaluation_invalid", status_code=400
+            )
+            if cause is None:
+                raise error
+            raise error from cause
+
+        if not isinstance(report, dict):
+            reject()
+        expected_fields = {
+            "schema",
+            "campaign_id",
+            "campaign_manifest_hash",
+            "adapter_version",
+            "baseline_adapter_hash",
+            "candidate_adapter_hash",
+            "model_source_snapshot_hash",
+            "heldout_dataset_hash",
+            "heldout_sample_count",
+            "baseline",
+            "candidate",
+            "runtime",
+            "credential_values_public",
+            "private_paths_public",
+            "raw_data_public",
+            "tensor_values_public",
+            "public_artifact_safe",
+            "content_hash",
+        }
+        if set(report) != expected_fields or report.get(
+            "schema"
+        ) != TRUSTED_EXTERNAL_EVALUATION_SCHEMA:
+            reject()
+        supplied_hash = str(report.get("content_hash") or "")
+        if supplied_hash != sha256_json(
+            {key: value for key, value in report.items() if key != "content_hash"}
+        ):
+            reject()
+        if any(
+            report.get(field) is not expected
+            for field, expected in (
+                ("credential_values_public", False),
+                ("private_paths_public", False),
+                ("raw_data_public", False),
+                ("tensor_values_public", False),
+                ("public_artifact_safe", True),
+            )
+        ):
+            reject()
+        for field in ("adapter_version", "heldout_sample_count"):
+            if isinstance(report.get(field), bool) or not isinstance(
+                report.get(field), int
+            ):
+                reject()
+
+        runtime = report.get("runtime")
+        runtime_fields = {
+            "backend",
+            "device",
+            "source_revision",
+            "model_source_verified",
+            "baseline_artifact_verified",
+            "candidate_artifact_verified",
+            "heldout_artifact_verified",
+            "credential_values_public",
+            "public_artifact_safe",
+        }
+        if not isinstance(runtime, dict) or set(runtime) != runtime_fields:
+            reject()
+        source_revision = str(runtime.get("source_revision") or "").lower()
+        backend = str(runtime.get("backend") or "")
+        device = str(runtime.get("device") or "")
+        backend_characters = (
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+        )
+        device_characters = backend_characters + ":"
+        if (
+            len(source_revision) != 40
+            or any(value not in "0123456789abcdef" for value in source_revision)
+            or not backend
+            or len(backend) > 128
+            or any(value not in backend_characters for value in backend)
+            or not device
+            or len(device) > 64
+            or any(value not in device_characters for value in device)
+            or any(
+                runtime.get(field) is not True
+                for field in (
+                    "model_source_verified",
+                    "baseline_artifact_verified",
+                    "candidate_artifact_verified",
+                    "heldout_artifact_verified",
+                    "public_artifact_safe",
+                )
+            )
+            or runtime.get("credential_values_public") is not False
+        ):
+            reject()
+
+        evaluations: list[dict[str, Any]] = []
+        evaluation_fields = {
+            "schema",
+            "adapter_loaded",
+            "sample_count",
+            "mean_loss",
+            "logits_hash",
+            "logits_norm",
+            "device",
+        }
+        for name in ("baseline", "candidate"):
+            value = report.get(name)
+            if (
+                not isinstance(value, dict)
+                or set(value) != evaluation_fields
+                or value.get("schema") != "crowdtensor_lora_evaluation_v1"
+                or value.get("adapter_loaded") is not True
+                or value.get("device") != device
+            ):
+                reject()
+            try:
+                sample_count = value.get("sample_count")
+                mean_loss = float(value.get("mean_loss"))
+                logits_norm = float(value.get("logits_norm"))
+            except (TypeError, ValueError) as exc:
+                reject(exc)
+            logits_hash = str(value.get("logits_hash") or "")
+            if (
+                isinstance(sample_count, bool)
+                or not isinstance(sample_count, int)
+                or sample_count < 1
+                or isinstance(value.get("mean_loss"), bool)
+                or not math.isfinite(mean_loss)
+                or mean_loss < 0.0
+                or isinstance(value.get("logits_norm"), bool)
+                or not math.isfinite(logits_norm)
+                or logits_norm < 0.0
+                or len(logits_hash) != 71
+                or not logits_hash.startswith("sha256:")
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in logits_hash[7:]
+                )
+            ):
+                reject()
+            evaluations.append(value)
+
+        with self._locked_state() as state:
+            self._authenticate(state, invite_token)
+            campaign = copy.deepcopy(state["campaign"])
+            contract = campaign.get("evaluation_contract")
+            model_source = campaign.get("model_source")
+            if not isinstance(contract, dict) or not isinstance(model_source, dict):
+                raise VolunteerProtocolError(
+                    "volunteer_campaign_heldout_evaluation_unavailable", status_code=409
+                )
+            try:
+                bindings_valid = bool(
+                    report["campaign_id"] == campaign["campaign_id"]
+                    and report["campaign_manifest_hash"] == campaign["manifest_hash"]
+                    and int(report["adapter_version"]) == int(state["adapter_version"])
+                    and report["baseline_adapter_hash"]
+                    == campaign["initial_adapter_hash"]
+                    and report["candidate_adapter_hash"]
+                    == state["current_adapter_hash"]
+                    and report["model_source_snapshot_hash"]
+                    == model_source["imported_snapshot_hash"]
+                    and report["heldout_dataset_hash"]
+                    == contract["heldout_dataset_hash"]
+                    and int(report["heldout_sample_count"])
+                    == int(contract["heldout_sample_count"])
+                    and all(
+                        int(value["sample_count"])
+                        == int(contract["heldout_sample_count"])
+                        for value in evaluations
+                    )
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                reject(exc)
+            if not bindings_valid:
+                reject()
+
+            baseline, candidate = evaluations
+            baseline_loss = float(baseline["mean_loss"])
+            candidate_loss = float(candidate["mean_loss"])
+            quality = {
+                "metric": contract["metric"],
+                "heldout_dataset_hash": contract["heldout_dataset_hash"],
+                "heldout_sample_count": int(contract["heldout_sample_count"]),
+                "baseline_adapter_version": int(contract["baseline_adapter_version"]),
+                "candidate_adapter_version": int(state["adapter_version"]),
+                "baseline_mean_loss": baseline_loss,
+                "candidate_mean_loss": candidate_loss,
+                "loss_reduction": baseline_loss - candidate_loss,
+                "baseline_perplexity": math.exp(min(80.0, baseline_loss)),
+                "candidate_perplexity": math.exp(min(80.0, candidate_loss)),
+                "baseline_logits_hash": baseline["logits_hash"],
+                "candidate_logits_hash": candidate["logits_hash"],
+                "quality_improvement_verified": candidate_loss < baseline_loss,
+                "evaluation_device": device,
                 "statistical_significance_claimed": False,
             }
-        )
-        report["content_hash"] = sha256_json(report)
-        _atomic_write_json(self.root / "evaluation.json", report, mode=0o644)
-        return report
+            accepted = list(state.get("submissions", {}).values())
+            lineage = self._checkpoint_lineage_from_state(state)
+            external_summary = with_public_safety(
+                {
+                    "schema": TRUSTED_EXTERNAL_EVALUATION_SCHEMA,
+                    "result_content_hash": supplied_hash,
+                    "runtime_backend": backend,
+                    "evaluation_device": device,
+                    "source_revision": source_revision,
+                    "operator_authenticated": True,
+                    "model_source_verified": True,
+                    "baseline_artifact_verified": True,
+                    "candidate_artifact_verified": True,
+                    "heldout_artifact_verified": True,
+                }
+            )
+            canonical = self._write_evaluation_report(
+                campaign=campaign,
+                adapter_version=int(state["adapter_version"]),
+                current_adapter_hash=str(state["current_adapter_hash"]),
+                accepted=accepted,
+                lineage=lineage,
+                quality=quality,
+                evaluation_scope=(
+                    "trusted_external_heldout_loss_perplexity_and_checkpoint_integrity"
+                ),
+                trusted_external_evaluation=external_summary,
+            )
+            self._append_event(
+                state,
+                "trusted_external_evaluation_imported",
+                {
+                    "adapter_version": int(state["adapter_version"]),
+                    "evaluation_content_hash": canonical["content_hash"],
+                    "external_result_content_hash": supplied_hash,
+                },
+            )
+            self._save_state(state)
+            self._write_status(state)
+            return canonical
 
     def finalize_campaign(
         self, *, invite_token: str, allow_incomplete: bool = False

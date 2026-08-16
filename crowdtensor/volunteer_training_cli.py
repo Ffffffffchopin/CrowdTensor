@@ -173,6 +173,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             operation.add_argument("--heldout-quality", action="store_true")
             operation.add_argument("--device", default="cpu")
         operation.add_argument("--json", action="store_true")
+    import_evaluation = campaign_actions.add_parser(
+        "import-evaluation",
+        help="Import an operator-trusted, campaign-bound external evaluation.",
+    )
+    import_evaluation.add_argument("campaign_dir")
+    import_evaluation.add_argument("report")
+    import_evaluation.add_argument("--json", action="store_true")
     export = campaign_actions.add_parser("export")
     export.add_argument("campaign_dir")
     export.add_argument("destination")
@@ -561,6 +568,7 @@ def run(argv: list[str] | None = None) -> int:
             "resume",
             "finalize",
             "evaluate",
+            "import-evaluation",
             "export",
             "backup",
         }:
@@ -580,6 +588,13 @@ def run(argv: list[str] | None = None) -> int:
                 value = coordinator.evaluate_campaign(
                     heldout_quality=bool(args.heldout_quality),
                     device=str(args.device),
+                )
+            elif args.campaign_action == "import-evaluation":
+                external = json.loads(
+                    Path(args.report).expanduser().read_text(encoding="utf-8")
+                )
+                value = coordinator.import_trusted_external_evaluation(
+                    external, invite_token=token
                 )
             elif args.campaign_action == "export":
                 value = coordinator.export_campaign(args.destination)
