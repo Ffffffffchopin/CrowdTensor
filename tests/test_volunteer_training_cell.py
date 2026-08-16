@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from crowdtensor import volunteer_training_cell as cell_module
 from crowdtensor.hf_lora_training import (
     CPULoRATrainingRuntime,
     create_local_training_fixture,
@@ -18,6 +19,36 @@ from crowdtensor.training_contract import sha256_file, sha256_json
 class InterruptingLocalTransport(LocalVolunteerTransport):
     def submit(self, **_kwargs):
         raise VolunteerUploadInterrupted("a" * 64)
+
+
+class ObservingLocalTransport(LocalVolunteerTransport):
+    def __init__(self, *args, heartbeat_scope, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.heartbeat_scope = heartbeat_scope
+        self.submit_observations: list[bool] = []
+
+    def submit(self, **kwargs):
+        self.submit_observations.append(bool(self.heartbeat_scope["active"]))
+        return super().submit(**kwargs)
+
+
+def _track_heartbeat_scope(monkeypatch):
+    scope = {"active": False}
+    original = cell_module._Heartbeat
+
+    class TrackingHeartbeat(original):
+        def __enter__(self):
+            scope["active"] = True
+            return super().__enter__()
+
+        def __exit__(self, kind, value, traceback):
+            try:
+                return super().__exit__(kind, value, traceback)
+            finally:
+                scope["active"] = False
+
+    monkeypatch.setattr(cell_module, "_Heartbeat", TrackingHeartbeat)
+    return scope
 
 
 def test_new_cell_process_resumes_pending_submission_without_retraining(
@@ -50,8 +81,12 @@ def test_new_cell_process_resumes_pending_submission_without_retraining(
     assert len(calls) == 1
     assert "pending_submission" in first._private_state()
 
+    heartbeat_scope = _track_heartbeat_scope(monkeypatch)
+    resumed_transport = ObservingLocalTransport(
+        coordinator, token, heartbeat_scope=heartbeat_scope
+    )
     resumed = VolunteerTrainingCell(
-        LocalVolunteerTransport(coordinator, token),
+        resumed_transport,
         workspace,
         cell_id="ignored-new-process-id",
         device="cpu",
@@ -60,6 +95,33 @@ def test_new_cell_process_resumes_pending_submission_without_retraining(
     assert resumed["training_reexecuted_for_submission_resume"] is False
     assert len(calls) == 1
     assert "pending_submission" not in first._private_state()
+    assert resumed_transport.submit_observations == [True]
+
+
+def test_cell_keeps_heartbeat_active_through_initial_submission(
+    tmp_path, monkeypatch
+) -> None:
+    fixture = create_local_training_fixture(
+        tmp_path / "fixture", row_count=8, local_steps=1
+    )
+    coordinator = VolunteerTrainingCoordinator.create_from_fixture(
+        tmp_path / "campaign", fixture, target_rounds=1, lease_seconds=120
+    )
+    token = coordinator.private_invite()["invite_token"]
+    heartbeat_scope = _track_heartbeat_scope(monkeypatch)
+    transport = ObservingLocalTransport(
+        coordinator, token, heartbeat_scope=heartbeat_scope
+    )
+
+    result = VolunteerTrainingCell(
+        transport,
+        tmp_path / "cell",
+        cell_id="submission-scope-cell",
+        device="cpu",
+    ).join_once()
+
+    assert result["work_completed"] is True
+    assert transport.submit_observations == [True]
 
 
 def test_cell_verifies_and_reuses_explicit_huggingface_model_snapshot(

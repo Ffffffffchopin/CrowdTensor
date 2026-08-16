@@ -1076,7 +1076,26 @@ class VolunteerTrainingCell:
             return self._write_public_status({"ok": True, "state": "paused", "work_completed": False})
         pending = self._private_state().get("pending_submission")
         if isinstance(pending, dict):
-            return self._resume_pending_submission(pending, training_reexecuted=False)
+            work = pending.get("work")
+            if not isinstance(work, dict):
+                raise VolunteerProtocolError(
+                    "volunteer_pending_submission_invalid", status_code=409
+                )
+            lease_window = max(
+                0.6, float(work.get("lease_expires_at") or 0.0) - time.time()
+            )
+            with _Heartbeat(
+                self.transport,
+                cell_id=self.cell_id,
+                work=work,
+                interval_seconds=max(0.2, lease_window / 3.0),
+            ) as heartbeat:
+                submission = self._resume_pending_submission(
+                    pending, training_reexecuted=False
+                )
+            if heartbeat.errors and not submission.get("work_completed"):
+                raise VolunteerProtocolError("volunteer_lease_heartbeat_failed")
+            return submission
         campaign = self.transport.campaign()
         validate_campaign_manifest(campaign)
         capability = {
@@ -1118,37 +1137,42 @@ class VolunteerTrainingCell:
                 else CUDALoRATrainingRuntime(spec["device"])
             )
             result = runtime.run(spec, output_dir=paths["work_root"] / "training")
-        if heartbeat.errors:
+            private_state = self._private_state()
+            private_state["pending_submission"] = {
+                "work": work,
+                "delta_manifest": result["adapter_delta"],
+                "training_summary": {
+                    "campaign_id": campaign["campaign_id"],
+                    "campaign_manifest_hash": campaign["manifest_hash"],
+                    "round_id": work["round_id"],
+                    "round_index": int(work["round_index"]),
+                    "adapter_version": int(work["adapter_version"]),
+                    "work_unit_hash": work["work_unit_hash"],
+                    "real_pytorch_autograd": bool(result["real_backward"]),
+                    "real_transformers_peft_lora": bool(
+                        result["runtime"]["real_peft_lora"]
+                    ),
+                    "base_weights_frozen": bool(result["base_weights_frozen"]),
+                    "optimizer_steps": int(result["optimizer_steps"]),
+                    "samples_seen": int(result["samples_seen"]),
+                    "tokens_seen": int(result["tokens_seen"]),
+                    "loss_start": float(result["loss_start"]),
+                    "loss_end": float(result["loss_end"]),
+                    "delta_file_hash": result["adapter_delta"]["delta_file_hash"],
+                    "delta_byte_count": Path(
+                        result["adapter_delta"]["delta_path"]
+                    ).stat().st_size,
+                    "artifact_download_bytes": downloaded_bytes,
+                    **materialization,
+                },
+            }
+            self._save_private_state(private_state)
+            submission = self._resume_pending_submission(
+                private_state["pending_submission"], training_reexecuted=True
+            )
+        if heartbeat.errors and not submission.get("work_completed"):
             raise VolunteerProtocolError("volunteer_lease_heartbeat_failed")
-        private_state = self._private_state()
-        private_state["pending_submission"] = {
-            "work": work,
-            "delta_manifest": result["adapter_delta"],
-            "training_summary": {
-                "campaign_id": campaign["campaign_id"],
-                "campaign_manifest_hash": campaign["manifest_hash"],
-                "round_id": work["round_id"],
-                "round_index": int(work["round_index"]),
-                "adapter_version": int(work["adapter_version"]),
-                "work_unit_hash": work["work_unit_hash"],
-                "real_pytorch_autograd": bool(result["real_backward"]),
-                "real_transformers_peft_lora": bool(result["runtime"]["real_peft_lora"]),
-                "base_weights_frozen": bool(result["base_weights_frozen"]),
-                "optimizer_steps": int(result["optimizer_steps"]),
-                "samples_seen": int(result["samples_seen"]),
-                "tokens_seen": int(result["tokens_seen"]),
-                "loss_start": float(result["loss_start"]),
-                "loss_end": float(result["loss_end"]),
-                "delta_file_hash": result["adapter_delta"]["delta_file_hash"],
-                "delta_byte_count": Path(result["adapter_delta"]["delta_path"]).stat().st_size,
-                "artifact_download_bytes": downloaded_bytes,
-                **materialization,
-            },
-        }
-        self._save_private_state(private_state)
-        return self._resume_pending_submission(
-            private_state["pending_submission"], training_reexecuted=True
-        )
+        return submission
 
     def _resume_pending_submission(
         self, pending: dict[str, Any], *, training_reexecuted: bool
