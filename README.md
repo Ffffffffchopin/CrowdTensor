@@ -66,18 +66,22 @@ and Work-Unit limits remain explicit. See the [quickstart](docs/quickstart.md).
 backend modes are implemented. Tests cover
 concurrent elastic leases, heartbeat renewal, expiry and generation fencing,
 restart-safe lineage, exactly-once receipts, real CPU PEFT work, and a real
-two-rank CPU FSDP2 checkpoint/restart gate. CUDA execution and independently
-administered physical multi-host validation remain separate milestones.
+two-rank CPU FSDP2 checkpoint/restart gate. A controlled 3B `elastic_delta`
+CUDA gate is also complete; CUDA stable-sharded and independently administered
+physical multi-host validation remain separate milestones.
 
 Retained Qwen2.5-7B GSM8K evidence completed 256 exactly-once LoRA steps across
 successive Kaggle logical worker groups and improved a bounded 128-item holdout
 from 71.875% to 74.219%. This is showcase evidence, not broad model-quality or
 statistical-significance evidence. See the [7B report](docs/qwen7b-gsm8k-elastic-showcase.md).
 
-The next public flagship is [Commons 3B](docs/commons-campaign.md): reviewed
-community instruction Data Packs, bounded SmolLM3-3B LoRA Work Units, a held-out
-Data Pack, and public checkpoint lineage. Its importer and CPU reference path
-are implemented; a real 3B accelerator run remains the launch gate.
+The [Commons 3B](docs/commons-campaign.md) reference Campaign completed two
+controlled rounds across successive Kaggle logical CUDA workers: eight unique
+updates, 11,052 accepted tokens, worker expiry/reassignment, restart-safe
+lineage, and a final public export. On its 16-item held-out Data Pack, mean token
+loss fell from 0.9121 to 0.5856 (35.8%). See the
+[machine-readable evidence](docs/evidence/commons-3b-kaggle-live.json). This is
+a bounded LoRA demonstration, not physical multi-host or broad-quality proof.
 
 CrowdTensor does not claim permissionless admission, Sybil or semantic-
 poisoning resistance, privacy against an operator, GA, or an SLA.

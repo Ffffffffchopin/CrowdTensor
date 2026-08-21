@@ -1,0 +1,112 @@
+{
+  "schema": "crowdtensor_commons_3b_kaggle_live_evidence_v1",
+  "completed_at": "2026-08-21T16:44:34Z",
+  "source_revision": "3a3eeb416df18c1b1d0c8655c2e95b62df8dae2c",
+  "campaign": {
+    "campaign_id": "commons-3b-gsm8k-live-20260817",
+    "mode": "elastic_delta",
+    "lifecycle": "finalized",
+    "campaign_manifest_hash": "sha256:0252d92a5868e8c04e9beaeb9044ba6fb514f35969c52dcddec162a84faad4a6",
+    "controlled_enrollment": true
+  },
+  "model": {
+    "model_id": "HuggingFaceTB/SmolLM3-3B-Base",
+    "revision": "d78a42f79198603e614095753484a04c10c2b940",
+    "parameter_count": 3352881152,
+    "license": "Apache-2.0",
+    "adapter_id": "smollm3_lora_v1",
+    "model_snapshot_hash": "sha256:2b7a86ef020398b319f9d61f0731c92f33e449308b2f428106242f1a207d2550",
+    "trust_remote_code": false
+  },
+  "data": {
+    "source_dataset": "openai/gsm8k",
+    "source_revision": "740312add88f781978c0658806c59bc2815b9866",
+    "license": "MIT",
+    "training_records": 128,
+    "heldout_records": 16,
+    "reviewed_data_pack_count": 2,
+    "train_heldout_overlap_detected": false,
+    "heldout_dataset_hash": "sha256:346c081da80081401f93aa1ba66cb120fde34f2e67e85ae0d9d90cb3559d5dc9"
+  },
+  "training": {
+    "runtime_backend": "pytorch_transformers_peft_cuda",
+    "execution_environment": "private Kaggle T4x2 hosted runtimes running bounded CUDA Cells",
+    "topology": "successive_hosted_logical_worker_groups",
+    "rounds_completed": 2,
+    "work_units_per_round": 4,
+    "minimum_quorum": 4,
+    "accepted_updates": 8,
+    "distinct_accepted_logical_cells": 8,
+    "accepted_tokens": 11052,
+    "local_optimizer_steps_per_update": 8,
+    "total_local_optimizer_steps": 64,
+    "uploaded_delta_bytes": 484187456,
+    "rejected_updates": 0,
+    "all_accepted_updates_exactly_once": true,
+    "all_accepted_delta_hashes_unique": true,
+    "round_one_used_only_new_logical_cell_identities": true,
+    "reported_work_unit_losses": {
+      "mean_start": 0.7801227793097496,
+      "mean_end": 0.47128282487392426,
+      "work_units_with_lower_end_loss": 6,
+      "work_units_with_higher_end_loss": 2
+    },
+    "recovery": {
+      "coordinator_recoveries": 3,
+      "expired_leases": 3,
+      "reassigned_work_units": 3,
+      "resumed_from_committed_lineage": true
+    }
+  },
+  "checkpoint_lineage": {
+    "initial_adapter_hash": "sha256:96c30ee5d770595ed2f28d940e9a6813c046359f181b3672c6daf91ed9dc3401",
+    "round_one_adapter_hash": "sha256:2f2e67968da62c2333b2db0b208259833c99bdce1ebeb9edb849a4dc2a20c08f",
+    "final_adapter_hash": "sha256:06ff0db17f7ae1f229237ca22241994d1c960c0835728789b5495273b105117f",
+    "lineage_content_hash": "sha256:8901eadbdabb237983bdd7c696fa89ed16ec32d7d3105f815500029ab9dc36c8",
+    "verified": true
+  },
+  "heldout_evaluation": {
+    "runtime_backend": "pytorch_transformers_peft_cuda",
+    "metric": "mean_token_cross_entropy",
+    "sample_count": 16,
+    "baseline_adapter_version": 0,
+    "baseline_mean_loss": 0.9121122919023037,
+    "baseline_perplexity": 2.4895756939058087,
+    "candidate_adapter_version": 2,
+    "candidate_mean_loss": 0.5855968836694956,
+    "candidate_perplexity": 1.79606270626057,
+    "absolute_loss_reduction": 0.3265154082328081,
+    "relative_loss_reduction_percent": 35.7977204267061,
+    "quality_improvement_verified": true,
+    "statistical_significance_claimed": false,
+    "task_exact_match_evaluated": false,
+    "external_result_hash": "sha256:93f62347aa38f329d5cc5c6f6527b6dd2bd91f7e889d7a7af49879cff7379a8d",
+    "canonical_evaluation_hash": "sha256:beb827eef897c1dbb59db973574bf89a902ffaa1d3996c24b2dfe19ac20b2532"
+  },
+  "public_export": {
+    "sha256": "sha256:18371a98d876cd08179322c81c208ca88d4bcd0def1e318ee9fce7abb86ace7c",
+    "byte_count": 56007006,
+    "file_count": 7,
+    "credential_values_included": false,
+    "private_runtime_state_included": false,
+    "raw_data_included": false,
+    "tensor_values_included": false
+  },
+  "claims": {
+    "real_cuda_autograd_and_peft_work": true,
+    "durable_interruption_and_reassignment": true,
+    "canonical_adapter_advanced": true,
+    "heldout_token_loss_improved": true,
+    "independently_administered_physical_multi_host_verified": false,
+    "permissionless_byzantine_safety_verified": false,
+    "sybil_resistance_verified": false,
+    "production_sla_verified": false
+  },
+  "limitations": [
+    "This is a bounded two-round LoRA demonstration, not pretraining from scratch.",
+    "Hosted notebook workers are logical nodes, not independently administered physical hosts.",
+    "The heldout result measures token loss and perplexity, not generated-answer exact match.",
+    "The 16-sample comparison is not a statistical-significance claim.",
+    "Enrollment was controlled; poisoning and Sybil resistance were not tested."
+  ]
+}

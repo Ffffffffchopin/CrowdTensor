@@ -92,11 +92,15 @@ trainer. See [Commons 3B](commons-campaign.md).
 
 ## Evidence Boundary
 
-Current real gates cover CPU PEFT and local two-rank CPU FSDP2 recovery. A
-generated plan is not execution evidence. Hosted-notebook workers are logical
-nodes, not proof of independently administered physical machines. CUDA,
-provider-owned multi-machine launch, semantic-poisoning defenses, and public
-permissionless operation remain external milestones.
+Current real gates cover CPU PEFT, local two-rank CPU FSDP2 recovery, and a
+bounded SmolLM3-3B `elastic_delta` CUDA Campaign across successive hosted
+logical workers. The 3B gate exercised real autograd, aggregation, expiry,
+reassignment, restart-safe lineage, trusted held-out evaluation, and public
+export. See its [machine-readable evidence](evidence/commons-3b-kaggle-live.json).
+A generated plan is still not execution evidence. Hosted-notebook workers are
+logical nodes, not proof of independently administered physical machines. CUDA
+stable-sharded training, provider-owned multi-machine launch, semantic-poisoning
+defenses, and public permissionless operation remain external milestones.
 
 The old inference/P2P architecture and milestone automation are archived at
 Git baseline `e332a7b`; see [the archive guide](archive.md). They are not

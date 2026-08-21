@@ -104,8 +104,11 @@ This reports before/after loss and perplexity. It never turns a small bounded
 comparison into a statistical-significance claim.
 
 For a reviewed community-data Campaign using the SmolLM3-3B adapter, follow the
-[Commons 3B specification](commons-campaign.md). Do not mark the Campaign live
-until its real accelerator and held-out launch gates pass.
+[Commons 3B specification](commons-campaign.md). Its completed controlled CUDA
+reference gate is recorded in the
+[machine-readable report](evidence/commons-3b-kaggle-live.json). A new Campaign
+must still pass its own accelerator, held-out, lineage, and export gates before
+being presented as live evidence.
 
 ## Stable-Sharded Planning
 

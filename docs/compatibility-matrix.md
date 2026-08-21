@@ -15,7 +15,7 @@
 | Local storage | content-addressed filesystem |
 | Optional storage | S3-compatible resumable upload |
 | CPU PEFT | real-tested |
-| Commons 3B | importer and CPU reference tested; real 3B accelerator gate pending |
+| Commons 3B | importer/CPU path tested; controlled Kaggle logical-node CUDA elastic gate completed ([evidence](evidence/commons-3b-kaggle-live.json)) |
 | CPU FSDP2 | local two-rank recovery tested |
 | CUDA stable group | planned/runtime contract implemented; live gate pending |
 | JAX TPU | retained capability/manifest adapter, not one-click training |

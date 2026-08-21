@@ -1,8 +1,8 @@
 # Commons 3B Campaign
 
-Status: **implementation ready; real 3B accelerator run not yet completed**.
+Status: **reference accelerator launch gate completed on 2026-08-21**.
 
-Commons 3B is the proposed public flagship for CrowdTensor's intermittent
+Commons 3B is the public reference Campaign for CrowdTensor's intermittent
 training mode. It is deliberately a PEFT instruction-training Campaign, not a
 claim that volunteers have pretrained a 3B model from scratch.
 
@@ -20,9 +20,44 @@ claim that volunteers have pretrained a 3B model from scratch.
 - Trust: controlled enrollment. Permissionless poisoning and Sybil resistance
   are not claimed.
 
-The launch gate is a completed accelerator run that advances the canonical
-Adapter through at least two rounds, survives replacement of every original
-Cell, and publishes a current held-out evaluation and checkpoint lineage.
+The launch gate requires a completed accelerator run that advances the
+canonical Adapter through at least two rounds, survives replacement of every
+original Cell, and publishes a current held-out evaluation and checkpoint
+lineage. The reference run below passed that gate.
+
+## Completed Reference Gate
+
+The finalized `commons-3b-gsm8k-live-20260817` Campaign used the pinned
+3,352,881,152-parameter model and two reviewed MIT-licensed GSM8K Data Packs:
+128 training records and 16 held-out records. Real Transformers/PEFT autograd
+ran in private Kaggle T4x2 hosted runtimes as bounded CUDA Cells.
+
+| Result | Value |
+| --- | --- |
+| Elastic rounds | 2 of 2 |
+| Accepted updates | 8 exactly once, from 8 distinct logical Cells |
+| Accepted tokens | 11,052 |
+| Local optimizer steps | 64 total |
+| Uploaded deltas | 484,187,456 bytes |
+| Recovery exercised | 3 coordinator recoveries, 3 expired leases, 3 reassignments |
+| Final Adapter | v2, `sha256:06ff0db17f7ae1f229237ca22241994d1c960c0835728789b5495273b105117f` |
+| Held-out token loss | 0.9121 at v0 to 0.5856 at v2, a 35.8% reduction |
+| Held-out perplexity | 2.4896 at v0 to 1.7961 at v2 |
+| Public export | 56,007,006 bytes, seven public-safe files |
+
+All four accepted round-one updates used logical Cell identities distinct from
+round zero. A separately launched trusted CUDA evaluator verified the pinned
+model, held-out artifact, Adapter hashes, logits, loss, and lineage before the
+Campaign was finalized. Two of the eight short Work Units reported a higher
+ending shard loss, so the evidence preserves both per-unit variance and the
+aggregate held-out result.
+
+The [machine-readable report](evidence/commons-3b-kaggle-live.json) binds the
+model, data, Adapter lineage, evaluation, and export hashes. This run used
+controlled enrollment and hosted logical workers. It does not establish
+independently administered physical multi-host operation, permissionless
+Byzantine safety, poisoning or Sybil resistance, statistical significance, GA,
+or an SLA.
 
 ## Data Pack v1
 
