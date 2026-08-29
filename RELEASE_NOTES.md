@@ -22,6 +22,11 @@ Campaign downloads can be resumed; slow PyTorch installs use bounded retries
 and a longer read timeout, and operators may provide a predownloaded trusted
 PyTorch wheel with `CROWDTENSOR_TORCH_WHEEL_PATH`.
 
+The repository also includes a launch-candidate [Commons 3B public pilot
+brief](docs/commons-public-pilot.md) with separate compute, data, and review
+intake paths. Its targets are prospective; current hosted logical-worker
+evidence is labeled separately.
+
 ## Evidence Boundary
 
 The retained 7B showcase proves resumable Kaggle logical-worker LoRA training,

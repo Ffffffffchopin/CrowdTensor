@@ -12,7 +12,7 @@ body:
     attributes:
       label: Proposal artifact
       description: Link to a committed JSON artifact that passes `crowdtensor volunteer campaign validate-proposal`.
-      placeholder: proposals/my-campaign.json
+      placeholder: campaigns/my-campaign.json
     validations:
       required: true
   - type: input

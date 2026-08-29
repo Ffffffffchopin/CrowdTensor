@@ -6,6 +6,11 @@ CrowdTensor is a training-first coordination layer for intermittent CPU and GPU
 contributors. A participant can complete a small Work Unit, disconnect, and let
 the next participant continue from the last committed checkpoint.
 
+The [Commons 3B public pilot brief](docs/commons-public-pilot.md) turns that
+mechanism into one community objective. People can contribute compute, submit
+reviewable data, or audit the public evidence; the pilot is a launch candidate,
+not yet an open-enrollment claim.
+
 CrowdTensor owns the parts that upstream trainers do not:
 
 - Work Units and capability-aware placement;
@@ -59,6 +64,12 @@ crowdtensor train join ./contributor \
 
 Remote contributors use HTTPS plus a one-time code. Step, download, timeout,
 and Work-Unit limits remain explicit. See the [quickstart](docs/quickstart.md).
+
+Choose a community lane:
+
+- [Run compute](docs/commons-public-pilot.md#compute) for one bounded native Work Unit;
+- [Propose a Data Pack](https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=data_pack.yml) for reviewed, licensed training data;
+- [Review a Campaign artifact](https://github.com/Ffffffffchopin/CrowdTensor/issues/new?template=campaign_review.yml) for reproducibility, evaluation, or safety checks.
 
 ## Status
 

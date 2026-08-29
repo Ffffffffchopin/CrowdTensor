@@ -59,6 +59,11 @@
       "name": "history",
       "disposition": "git_archive_not_runtime",
       "patterns": ["architecture/archive-manifest.json", "docs/archive.md", "dist/**"]
+    },
+    {
+      "name": "public_campaign_artifacts",
+      "disposition": "active_reviewed_metadata",
+      "patterns": ["campaigns/**", "schemas/public_campaign_brief_v1.schema.json"]
     }
   ]
 }

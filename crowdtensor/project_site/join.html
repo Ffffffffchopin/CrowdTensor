@@ -26,18 +26,18 @@
       <section class="join-heading">
         <p class="eyebrow">Campaign enrollment</p>
         <h1>Contribute from this device</h1>
-        <p class="lede">One pairing code. One bounded task. No repository setup.</p>
+        <p class="lede">One pairing code. One bounded task. Usually 5-15 minutes. No repository setup.</p>
       </section>
 
       <section class="join-workspace" aria-label="Contributor workspace">
         <div class="contribution-tool">
           <div class="mode-tabs" role="tablist" aria-label="Contribution method">
             <button id="agent-tab" class="mode-tab active" type="button" role="tab" aria-selected="true" aria-controls="agent-panel">Native Agent</button>
-            <button id="browser-tab" class="mode-tab" type="button" role="tab" aria-selected="false" aria-controls="browser-panel">Browser calibration</button>
+            <button id="browser-tab" class="mode-tab" type="button" role="tab" aria-selected="false" aria-controls="browser-panel">Browser diagnostics</button>
           </div>
 
           <div id="browser-panel" role="tabpanel" aria-labelledby="browser-tab" hidden>
-            <ol class="steps" aria-label="Browser contribution steps">
+            <ol class="steps" aria-label="Browser diagnostics steps">
               <li class="step active" id="step-pair">
                 <span>1</span>
                 <div>
@@ -55,8 +55,8 @@
               <li class="step" id="step-run">
                 <span>3</span>
                 <div>
-                  <strong>Contribute</strong>
-                  <small>Verified task</small>
+                  <strong>Verify</strong>
+                  <small>No model update</small>
                 </div>
               </li>
             </ol>
@@ -104,8 +104,8 @@
             <div class="result-line" id="result-line" hidden>
               <span class="result-mark" aria-hidden="true">&#10003;</span>
               <div>
-                <strong>Task accepted</strong>
-                <span id="result-detail">Server-recomputed calibration result</span>
+                <strong>Diagnostic accepted</strong>
+                <span id="result-detail">Server-recomputed capability result; model updates: 0</span>
               </div>
             </div>
           </div>
@@ -125,7 +125,7 @@
             <dl class="agent-facts">
               <div><dt>Release</dt><dd id="agent-release-state">Checking</dd></div>
               <div><dt>Default limit</dt><dd>1 work unit</dd></div>
-              <div><dt>Control</dt><dd>Loopback status page</dd></div>
+              <div><dt>Window</dt><dd>5-15 minutes</dd></div>
               <div><dt>Stop</dt><dd>Checkpoint-safe SIGINT</dd></div>
             </dl>
             <p class="agent-note">Use an Agent pairing code from this Campaign operator. Preflight runs before the code is exchanged.</p>

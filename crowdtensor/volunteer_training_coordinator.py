@@ -41,6 +41,7 @@ from .volunteer_training_protocol import (
     VolunteerProtocolError,
     campaign_content_hash,
     hash_cell_id,
+    public_community_projection,
     public_error,
     public_safe,
     token_hash,
@@ -3332,6 +3333,10 @@ class VolunteerTrainingCoordinator:
                         "pairing_code_values_public": False,
                         "raw_training_data_public": False,
                     },
+                    "community": public_community_projection(
+                        campaign,
+                        lifecycle=lifecycle,
+                    ),
                 }
             )
             snapshot["content_hash"] = sha256_json(snapshot)

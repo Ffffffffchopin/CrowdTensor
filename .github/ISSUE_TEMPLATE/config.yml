@@ -6,3 +6,6 @@ contact_links:
   - name: Campaign governance
     url: https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/volunteer-campaign-governance.md
     about: Review the requirements for proposing a collaborative training campaign.
+  - name: Commons 3B public pilot brief
+    url: https://github.com/Ffffffffchopin/CrowdTensor/blob/main/docs/commons-public-pilot.md
+    about: Read the current campaign objective, contribution lanes, and launch gates.

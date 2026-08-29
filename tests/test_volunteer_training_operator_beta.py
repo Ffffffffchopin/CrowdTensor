@@ -59,6 +59,9 @@ def test_per_cell_scope_replay_revocation_and_rate_policy(tmp_path) -> None:
     ):
         assert private_key not in serialized_snapshot
     assert snapshot["privacy"]["cell_identifiers_public"] is False
+    assert snapshot["community"]["enrollment"] == "controlled"
+    assert snapshot["community"]["lanes"]["data"]["automatic_admission"] is False
+    assert snapshot["community"]["external_contributor_count_verified"] is False
     with pytest.raises(VolunteerProtocolError, match="replay_detected"):
         coordinator.claim(
             cell_id="cell-a",

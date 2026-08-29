@@ -38,6 +38,14 @@ for permissionless or production use.
 - Added explicit local status, graceful stop, and held-out quality-evaluation
   contracts to the v2 workflow.
 
+### Commons Public Pilot
+
+- Added a hash-bound Commons 3B public pilot brief with explicit launch targets
+  and separate compute, Data Pack, and artifact-review lanes.
+- Added low-friction GitHub intake forms for reviewed data and public evidence
+  review without exposing raw records or credentials.
+- Added the three-lane contribution section to the packaged project site.
+
 ## 0.2.0rc7
 
 - Published the controlled One-Click Volunteer Contributor Beta and its native

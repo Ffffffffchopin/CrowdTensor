@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crowdtensor.dev/schemas/public_campaign_brief_v1.schema.json",
+  "title": "CrowdTensor Public Campaign Brief v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "brief_id",
+    "status",
+    "title",
+    "objective",
+    "model",
+    "data",
+    "training",
+    "contribution_lanes",
+    "success_targets",
+    "publication",
+    "trust_boundary",
+    "reference_evidence",
+    "launch_requirements",
+    "content_hash"
+  ],
+  "properties": {
+    "schema": {"const": "crowdtensor_public_campaign_brief_v1"},
+    "brief_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,63}$"},
+    "status": {
+      "type": "string",
+      "enum": ["draft", "launch_candidate", "active", "paused", "complete"]
+    },
+    "title": {"type": "string", "minLength": 8, "maxLength": 160},
+    "objective": {"type": "string", "minLength": 24, "maxLength": 600},
+    "model": {
+      "type": "object",
+      "required": ["id", "revision", "parameter_count", "license_spdx", "adapter_id"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "parameter_count": {"type": "integer", "minimum": 1},
+        "license_spdx": {"type": "string", "minLength": 2},
+        "adapter_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "seed_dataset_id",
+        "seed_revision",
+        "seed_license_spdx",
+        "community_pack_contract",
+        "train_evaluation_separation_required",
+        "raw_records_published"
+      ],
+      "properties": {
+        "seed_dataset_id": {"type": "string", "minLength": 1},
+        "seed_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "seed_license_spdx": {"type": "string", "minLength": 2},
+        "community_pack_contract": {"type": "string", "const": "crowdtensor_data_pack_v1"},
+        "train_evaluation_separation_required": {"type": "boolean", "const": true},
+        "raw_records_published": {"type": "boolean", "const": false}
+      },
+      "additionalProperties": false
+    },
+    "training": {
+      "type": "object",
+      "required": [
+        "mode",
+        "method",
+        "minimum_work_unit_minutes",
+        "maximum_work_unit_minutes",
+        "local_optimizer_steps",
+        "target_rounds",
+        "minimum_quorum",
+        "supported_devices",
+        "base_weights_frozen"
+      ],
+      "properties": {
+        "mode": {"type": "string", "const": "elastic_delta"},
+        "method": {"type": "string", "const": "peft_lora"},
+        "minimum_work_unit_minutes": {"type": "integer", "minimum": 1},
+        "maximum_work_unit_minutes": {"type": "integer", "minimum": 1},
+        "local_optimizer_steps": {"type": "integer", "minimum": 1},
+        "target_rounds": {"type": "integer", "minimum": 1},
+        "minimum_quorum": {"type": "integer", "minimum": 2},
+        "supported_devices": {
+          "type": "array",
+          "items": {"enum": ["cpu", "cuda"]},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "base_weights_frozen": {"type": "boolean", "const": true}
+      },
+      "additionalProperties": false
+    },
+    "contribution_lanes": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "entrypoint", "description"],
+        "properties": {
+          "id": {"enum": ["compute", "data", "review"]},
+          "status": {"type": "string", "minLength": 1},
+          "entrypoint": {"type": "string", "minLength": 1},
+          "description": {"type": "string", "minLength": 12}
+        },
+        "additionalProperties": false
+      }
+    },
+    "success_targets": {
+      "type": "object",
+      "required": [
+        "external_contributors",
+        "accepted_work_units",
+        "completed_rounds",
+        "reviewed_community_data_packs",
+        "independent_evaluations"
+      ],
+      "properties": {
+        "external_contributors": {"type": "integer", "minimum": 1},
+        "accepted_work_units": {"type": "integer", "minimum": 1},
+        "completed_rounds": {"type": "integer", "minimum": 1},
+        "reviewed_community_data_packs": {"type": "integer", "minimum": 1},
+        "independent_evaluations": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "publication": {
+      "type": "object",
+      "required": [
+        "campaign_manifest",
+        "checkpoint_lineage",
+        "evaluation_report",
+        "audit_ledger",
+        "adapter_export",
+        "attribution"
+      ],
+      "properties": {
+        "campaign_manifest": {"const": true},
+        "checkpoint_lineage": {"const": true},
+        "evaluation_report": {"const": true},
+        "audit_ledger": {"const": true},
+        "adapter_export": {"const": true},
+        "attribution": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "trust_boundary": {
+      "type": "object",
+      "required": [
+        "enrollment",
+        "external_contributors_verified",
+        "permissionless_admission",
+        "physical_multi_host_verified",
+        "statistical_significance_claimed"
+      ],
+      "properties": {
+        "enrollment": {"enum": ["controlled", "permissionless"]},
+        "external_contributors_verified": {"type": "boolean"},
+        "permissionless_admission": {"type": "boolean", "const": false},
+        "physical_multi_host_verified": {"type": "boolean"},
+        "statistical_significance_claimed": {"type": "boolean", "const": false}
+      },
+      "additionalProperties": false
+    },
+    "reference_evidence": {
+      "type": "object",
+      "required": ["path", "status", "accepted_updates", "logical_cells"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "const": "completed_controlled_reference"},
+        "accepted_updates": {"type": "integer", "minimum": 0},
+        "logical_cells": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "launch_requirements": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 12},
+      "minItems": 4,
+      "uniqueItems": true
+    },
+    "content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

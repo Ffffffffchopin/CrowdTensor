@@ -30,6 +30,8 @@ engine adapter, not as a second project architecture.
 
 - define one public Campaign with immutable model/data revisions, licenses,
   benchmark, rollback owner, and moderation policy;
+- publish one launch-candidate community brief with separate compute, data, and
+  artifact-review intake paths; external participation still requires evidence;
 - add update-quality defenses beyond shape/finiteness/norm checks;
 - publish checkpoint lineage and contribution receipts without private data;
 - prove statistically meaningful task improvement before making quality claims.

@@ -113,6 +113,7 @@ def test_service_contract_lists_v2_public_projection_routes() -> None:
     assert "GET /v1/volunteer/checkpoint-lineage" in contract["routes"]
     assert "GET /v1/volunteer/session" in contract["routes"]
     assert contract["optional_v2_session_controller_bridge"] is True
+    assert contract["public_community_projection"] is True
 
 
 def test_invalid_v2_controller_bridge_is_rejected_at_startup(tmp_path) -> None:
@@ -199,6 +200,10 @@ def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     assert "Train a model together" in home.text
     assert join.status_code == 200
     assert "Contribute from this device" in join.text
+    assert "Three ways to help" in home.text
+    assert "template=data_pack.yml" in home.text
+    assert "template=campaign_review.yml" in home.text
+    assert "commons-public-pilot.md" in home.text
     assert 'id="agent-tab" class="mode-tab active"' in join.text
     assert 'id="agent-panel" role="tabpanel" aria-labelledby="agent-tab">' in join.text
     assert 'id="browser-panel" role="tabpanel" aria-labelledby="browser-tab" hidden' in join.text
@@ -252,6 +257,8 @@ def test_public_dashboard_assets_and_snapshot_route(tmp_path) -> None:
     snapshot = client.get("/v1/volunteer/public-snapshot").json()
     assert snapshot["ok"] is True
     assert snapshot["schema"] == "crowdtensor_volunteer_public_campaign_snapshot_v1"
+    assert snapshot["community"]["lanes"]["compute"]["bounded_work_units"] is True
+    assert snapshot["community"]["external_contributor_count"] is None
 
 
 def test_resumable_routes_survive_app_recreation(tmp_path) -> None:

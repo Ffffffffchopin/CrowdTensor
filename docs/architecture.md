@@ -90,6 +90,19 @@ The Commons Campaign path binds reviewed Data Packs and a pinned model snapshot
 to the existing Volunteer protocol. It does not add another scheduler or model
 trainer. See [Commons 3B](commons-campaign.md).
 
+## Community Publication Surface
+
+`campaigns/` contains public, non-runtime Campaign briefs. A brief records the
+objective, pinned starting point, contribution lanes, success targets, and
+claim boundary before an operator opens enrollment. The
+`public_community_projection` in the Volunteer snapshot exposes the same
+compute, Data Pack, and artifact-review lanes without exposing credentials,
+private paths, raw records, or unverified external-contributor counts.
+
+The brief is a launch artifact, not a hosted global queue. Admission, data
+review, checkpoint promotion, and pause/rollback remain responsibilities of the
+user-owned Session operator.
+
 ## Evidence Boundary
 
 Current real gates cover CPU PEFT, local two-rank CPU FSDP2 recovery, and a

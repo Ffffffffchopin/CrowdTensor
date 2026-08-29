@@ -1,0 +1,66 @@
+name: Community Data Pack
+description: Submit a reviewed, openly licensed data contribution for a future Campaign.
+title: "[Data Pack]: "
+labels: ["data-pack", "campaign-review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Data is admitted by a named Campaign operator, not automatically by this form.
+        Do not paste raw records, private data, credentials, or unpublished samples here.
+  - type: input
+    id: artifact
+    attributes:
+      label: Data Pack artifact
+      description: Link to a public pull request or release containing the manifest and records, or state that the artifact will be attached in a follow-up pull request.
+      placeholder: https://github.com/owner/repo/pull/123
+    validations:
+      required: true
+  - type: input
+    id: pack_id
+    attributes:
+      label: Pack ID
+      description: Stable Data Pack identifier used by the v1 manifest.
+      placeholder: community-reasoning-001
+    validations:
+      required: true
+  - type: input
+    id: records_hash
+    attributes:
+      label: Records hash
+      description: SHA-256 hash from the Data Pack manifest. Do not provide raw records in this issue.
+      placeholder: sha256:...
+    validations:
+      required: true
+  - type: input
+    id: license
+    attributes:
+      label: SPDX license
+      placeholder: CC-BY-4.0
+    validations:
+      required: true
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Provenance and intended use
+      description: Explain where the data came from, how it was authored, and which Campaign objective it supports.
+    validations:
+      required: true
+  - type: textarea
+    id: review
+    attributes:
+      label: Review record
+      description: Identify the reviewers and the decisions for redistribution, training use, personal data, copyright, benchmark contamination, moderation, and public records.
+    validations:
+      required: true
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Contributor attestations
+      options:
+        - label: I have permission to redistribute this data under the stated license.
+          required: true
+        - label: I have not included credentials, non-consensual personal data, or private records.
+          required: true
+        - label: I understand that submission is a review request, not an admission decision.
+          required: true

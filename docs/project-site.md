@@ -12,6 +12,16 @@ Assets live in `crowdtensor/project_site` and
 `crowdtensor/volunteer_dashboard`, so the wheel contains the UI. The UI is
 optional and does not imply a CrowdTensor-hosted global Coordinator.
 
+The [Commons 3B public pilot brief](commons-public-pilot.md) defines the single
+community objective and the separate compute, data, and review lanes. The site
+may link to those lanes, but only the user-owned Session decides enrollment and
+data admission.
+
+The public snapshot's `community` projection reports the same lanes for clients:
+compute is bounded and controlled, Data Pack admission is operator-reviewed, and
+artifact review is public-only. `external_contributor_count` stays `null` until
+the operator has a separate verified admission record.
+
 Create a user-owned Campaign and serve it on loopback:
 
 ```bash

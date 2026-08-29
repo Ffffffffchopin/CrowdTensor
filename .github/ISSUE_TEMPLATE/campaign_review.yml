@@ -1,0 +1,62 @@
+name: Campaign artifact review
+description: Review a public Campaign proposal, checkpoint, evaluation, or release.
+title: "[Review]: "
+labels: ["campaign-review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Review only public artifacts. Do not request or paste pairing codes, credentials, raw training rows, token IDs, activations, or tensor values.
+  - type: input
+    id: artifact
+    attributes:
+      label: Artifact or commit
+      description: Link to the public Campaign artifact, commit, evaluation report, or export under review.
+      placeholder: https://github.com/owner/repo/blob/main/...
+    validations:
+      required: true
+  - type: input
+    id: manifest_hash
+    attributes:
+      label: Campaign manifest hash
+      placeholder: sha256:...
+    validations:
+      required: true
+  - type: dropdown
+    id: reviewer_role
+    attributes:
+      label: Reviewer perspective
+      options:
+        - Data and licensing
+        - Evaluation and benchmark hygiene
+        - Checkpoint lineage and reproducibility
+        - Security and privacy
+        - General observer
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Checks performed
+      description: Record the exact files, commands, or hashes checked and any discrepancy found.
+    validations:
+      required: true
+  - type: dropdown
+    id: recommendation
+    attributes:
+      label: Recommendation
+      options:
+        - No blocking issue found
+        - Needs maintainer clarification
+        - Block admission or publication pending correction
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Review boundaries
+      options:
+        - label: I am not treating hosted logical workers as independent physical contributors.
+          required: true
+        - label: I am not making a permissionless, poisoning-resistance, or statistical-significance claim from this review alone.
+          required: true

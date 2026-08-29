@@ -84,6 +84,12 @@ The Dashboard is an operational view, not a trust oracle:
 `GET /v1/volunteer/dashboard` and
 `GET /v1/volunteer/public-snapshot` expose only aggregate and hashed metadata.
 
+For the current community-facing plan, use the
+[Commons 3B public pilot brief](commons-public-pilot.md). It separates compute,
+Data Pack, and artifact-review contributions. The GitHub forms are intake
+queues for maintainers; they do not bypass Campaign admission or turn a
+submission into training data automatically.
+
 ## Evaluation And Claims
 
 The proposal's baseline and held-out split are immutable inputs to evaluation.

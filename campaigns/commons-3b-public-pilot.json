@@ -1,0 +1,90 @@
+{
+  "brief_id": "commons-3b-public-pilot",
+  "content_hash": "sha256:33438c769f75463a36ff1780d47bf15b5de25a053ab82fa7f264b5af211bb428",
+  "contribution_lanes": [
+    {
+      "description": "Run one verified native CPU or CUDA Work Unit from the user-owned Session.",
+      "entrypoint": "/join",
+      "id": "compute",
+      "status": "controlled_enrollment"
+    },
+    {
+      "description": "Propose a reviewed, licensed Data Pack without pasting raw records into an issue.",
+      "entrypoint": ".github/ISSUE_TEMPLATE/data_pack.yml",
+      "id": "data",
+      "status": "operator_review_required"
+    },
+    {
+      "description": "Check public manifests, evaluation results, lineage, and claim boundaries.",
+      "entrypoint": ".github/ISSUE_TEMPLATE/campaign_review.yml",
+      "id": "review",
+      "status": "public_artifact_review"
+    }
+  ],
+  "data": {
+    "community_pack_contract": "crowdtensor_data_pack_v1",
+    "raw_records_published": false,
+    "seed_dataset_id": "openai/gsm8k",
+    "seed_license_spdx": "MIT",
+    "seed_revision": "740312add88f781978c0658806c59bc2815b9866",
+    "train_evaluation_separation_required": true
+  },
+  "launch_requirements": [
+    "Replace placeholder maintainer roles with two accountable maintainers.",
+    "Validate a concrete Campaign proposal and pin its model and Data Packs.",
+    "Publish a stable HTTPS Session and a one-time contributor admission path.",
+    "Publish a held-out baseline before accepting public training updates.",
+    "Record external contributors separately from hosted logical test Cells.",
+    "Export the final adapter, lineage, ledger, evaluation, and attribution file."
+  ],
+  "model": {
+    "adapter_id": "smollm3_lora_v1",
+    "id": "HuggingFaceTB/SmolLM3-3B-Base",
+    "license_spdx": "Apache-2.0",
+    "parameter_count": 3352881152,
+    "revision": "d78a42f79198603e614095753484a04c10c2b940"
+  },
+  "objective": "Build a small, openly documented instruction adapter through intermittent community Work Units.",
+  "publication": {
+    "adapter_export": true,
+    "attribution": true,
+    "audit_ledger": true,
+    "campaign_manifest": true,
+    "checkpoint_lineage": true,
+    "evaluation_report": true
+  },
+  "reference_evidence": {
+    "accepted_updates": 8,
+    "logical_cells": 8,
+    "path": "docs/evidence/commons-3b-kaggle-live.json",
+    "status": "completed_controlled_reference"
+  },
+  "schema": "crowdtensor_public_campaign_brief_v1",
+  "status": "launch_candidate",
+  "success_targets": {
+    "accepted_work_units": 100,
+    "completed_rounds": 3,
+    "external_contributors": 10,
+    "independent_evaluations": 1,
+    "reviewed_community_data_packs": 2
+  },
+  "title": "Commons 3B public training pilot",
+  "training": {
+    "base_weights_frozen": true,
+    "local_optimizer_steps": 8,
+    "maximum_work_unit_minutes": 15,
+    "method": "peft_lora",
+    "minimum_quorum": 4,
+    "minimum_work_unit_minutes": 5,
+    "mode": "elastic_delta",
+    "supported_devices": ["cpu", "cuda"],
+    "target_rounds": 3
+  },
+  "trust_boundary": {
+    "enrollment": "controlled",
+    "external_contributors_verified": false,
+    "permissionless_admission": false,
+    "physical_multi_host_verified": false,
+    "statistical_significance_claimed": false
+  }
+}

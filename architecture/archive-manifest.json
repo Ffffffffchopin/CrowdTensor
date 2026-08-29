@@ -17,6 +17,8 @@
     "crowdtensor/version.py",
     "crowdtensor/project_site/**",
     "crowdtensor/volunteer_dashboard/**",
+    "campaigns/**",
+    "schemas/public_campaign_brief_v1.schema.json",
     "scripts/check_repository.py",
     "scripts/install_contributor.sh"
   ],

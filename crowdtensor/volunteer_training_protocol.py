@@ -105,6 +105,73 @@ def with_public_safety(value: dict[str, Any]) -> dict[str, Any]:
     return public
 
 
+def public_community_projection(
+    campaign: dict[str, Any],
+    *,
+    lifecycle: str,
+    external_contributor_count: int | None = None,
+) -> dict[str, Any]:
+    """Describe public contribution lanes without exposing enrollment state."""
+
+    normalized_lifecycle = str(lifecycle or "created").lower()
+    if normalized_lifecycle == "running":
+        compute_status = "open_to_admitted_cells"
+    elif normalized_lifecycle in {"paused", "created"}:
+        compute_status = normalized_lifecycle
+    else:
+        compute_status = "closed"
+    local_training = campaign.get("local_training")
+    local_training = local_training if isinstance(local_training, dict) else {}
+    resource_requirements = campaign.get("resource_requirements")
+    resource_requirements = (
+        resource_requirements if isinstance(resource_requirements, dict) else {}
+    )
+    supported_devices = resource_requirements.get("supported_devices")
+    if not isinstance(supported_devices, list):
+        supported_devices = ["cpu", "cuda"]
+    projection = {
+        "schema": "crowdtensor_volunteer_public_community_projection_v1",
+        "enrollment": "controlled",
+        "external_contributor_count": (
+            int(external_contributor_count)
+            if external_contributor_count is not None
+            else None
+        ),
+        "external_contributor_count_verified": external_contributor_count is not None,
+        "lanes": {
+            "compute": {
+                "status": compute_status,
+                "entrypoint": "/join",
+                "native_agent": True,
+                "bounded_work_units": True,
+                "supported_devices": sorted({str(item) for item in supported_devices}),
+                "local_steps": int(local_training.get("local_steps") or 0),
+                "browser_model_training": False,
+            },
+            "data": {
+                "status": "operator_review_required",
+                "entrypoint": ".github/ISSUE_TEMPLATE/data_pack.yml",
+                "contract": "crowdtensor_data_pack_v1",
+                "automatic_admission": False,
+                "raw_records_public": False,
+            },
+            "review": {
+                "status": "public_artifact_review",
+                "entrypoint": ".github/ISSUE_TEMPLATE/campaign_review.yml",
+                "public_artifacts_only": True,
+                "admission_authority": "campaign_operator",
+            },
+        },
+        "claim_boundary": {
+            "logical_cells_count_as_external_contributors": False,
+            "permissionless_admission": False,
+            "poisoning_resistance": False,
+            "statistical_significance": False,
+        },
+    }
+    return with_public_safety(projection)
+
+
 def _require_hash(value: Any, code: str) -> str:
     text = str(value or "")
     if not text.startswith("sha256:") or len(text) != 71:

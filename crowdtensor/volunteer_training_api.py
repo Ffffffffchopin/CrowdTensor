@@ -24,6 +24,7 @@ from .volunteer_training_protocol import (
     VolunteerProtocolError,
     decode_submission_envelope,
     hash_cell_id,
+    public_community_projection,
     public_error,
     with_public_safety,
 )
@@ -355,6 +356,9 @@ def create_volunteer_training_app(
                 "progress": coordinator.status(),
                 "rounds": [],
                 "activity": [],
+                "community": public_community_projection(
+                    coordinator.campaign_manifest(), lifecycle="running"
+                ),
             }
         )
 
@@ -772,5 +776,6 @@ def service_contract() -> dict[str, Any]:
             "resumable_chunk_upload": True,
             "upload_state_survives_coordinator_restart": True,
             "content_addressed_upload_completion": True,
+            "public_community_projection": True,
         }
     )
