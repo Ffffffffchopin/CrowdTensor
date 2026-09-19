@@ -64,6 +64,11 @@
       "name": "public_campaign_artifacts",
       "disposition": "active_reviewed_metadata",
       "patterns": ["campaigns/**", "schemas/public_campaign_brief_v1.schema.json"]
+    },
+    {
+      "name": "research_protocols",
+      "disposition": "versioned_inputs_not_runtime_state",
+      "patterns": ["research/**"]
     }
   ]
 }

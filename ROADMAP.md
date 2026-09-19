@@ -18,7 +18,20 @@ engine adapter, not as a second project architecture.
 - real CPU PEFT and two-rank CPU FSDP2 checkpoint-recovery gates;
 - repository slimming and explicit historical archive manifest.
 
-## P0: External Reproducibility
+## Immediate: Intermittent Training Study
+
+The active research priority is the [Work-Unit study](docs/intermittent-training-study.md).
+It does not require user recruitment or a hosted global Campaign.
+
+- complete deterministic trace replay and upstream/elastic CPU calibration;
+- freeze small-model inputs, evaluation, resource budgets, and failure traces;
+- compare fixed task sizes before introducing a bounded adaptive policy;
+- check FedCompass, FedBalancer, and availability-aware optimization before
+  making novelty claims;
+- publish matched-resource and matched-token results, including failures, then
+  confirm selected comparisons using the existing 3B backend.
+
+## P0: External Reproducibility (Later)
 
 - run the ordinary operator/contributor flow on two independently administered
   Internet hosts;

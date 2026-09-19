@@ -2,6 +2,16 @@
 
 ## 0.3.0a1
 
+### Research Baselines
+
+- Added `train benchmark` with hash-bound protocols, reproducible synthetic
+  availability traces, interrupted-work accounting, and separate real CPU
+  Transformers/PEFT calibration.
+- Added an upstream Trainer checkpoint reference and real Volunteer/v2
+  expiry, reassignment, duplicate-receipt, and final-Adapter checks.
+- Recorded the study protocol, related-work overlap, and the distinction
+  between delivery simulation, fixture calibration, and model-quality evidence.
+
 This alpha establishes the compact Training Architecture v2 release line. It
 is intended for bounded, operator-owned Campaigns and contributor testing, not
 for permissionless or production use.

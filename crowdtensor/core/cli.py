@@ -29,6 +29,7 @@ from .workspace import (
 TRAINING_V2_ACTIONS = frozenset(
     {
         "backends",
+        "benchmark",
         "data-pack",
         "init",
         "inspect",
@@ -113,6 +114,14 @@ def add_training_v2_join_arguments(parser: Any) -> None:
 
 
 def add_training_v2_parsers(subparsers: Any, *, include_lifecycle: bool = True) -> None:
+    benchmark = subparsers.add_parser(
+        "benchmark", help="Run a bounded research trace or offline CPU calibration."
+    )
+    benchmark.add_argument("--protocol", required=True)
+    benchmark.add_argument("--output-dir", required=True)
+    benchmark.add_argument("--backend", choices=("trace", "cpu-fixture"), default="trace")
+    benchmark.add_argument("--json", action="store_true")
+
     data_pack = subparsers.add_parser(
         "data-pack",
         help="Create or validate a reviewable community training Data Pack.",
@@ -471,6 +480,10 @@ def execute_training_v2_action(args: argparse.Namespace) -> dict[str, Any]:
             moderation_status=args.moderation_status,
             public_records=bool(args.public_records),
         )
+    if args.train_action == "benchmark":
+        from .benchmark import run_benchmark
+
+        return run_benchmark(args.protocol, args.output_dir, backend=args.backend)
     if args.train_action == "backends":
         from crowdtensor.backends.registry import backend_registry_report
 
@@ -584,6 +597,7 @@ def run_training_v2_action(args: argparse.Namespace) -> int:
     except Exception as exc:
         safe_detail = str(exc)
         public_error_types = {
+            "BenchmarkError",
             "SessionControllerError",
             "StableShardedSessionError",
             "DataPackError",
@@ -618,7 +632,11 @@ def run_training_v2_action(args: argparse.Namespace) -> int:
     else:
         command_ok = report.get("command_ok", True) is True
         print(f"training v2 action={args.train_action} ok={command_ok}")
-        if args.train_action == "backends":
+        if args.train_action == "benchmark":
+            print(f"  evidence_kind={report['evidence_kind']}")
+            print(f"  trials={report['trial_count']}")
+            print(f"  output={args.output_dir}")
+        elif args.train_action == "backends":
             print(
                 "  backends="
                 + ",".join(item["backend_id"] for item in report["backends"])

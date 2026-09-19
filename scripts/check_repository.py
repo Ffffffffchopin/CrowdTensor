@@ -26,6 +26,8 @@ REQUIRED = (
     "docs/architecture.md",
     "docs/archive.md",
     "docs/commons-public-pilot.md",
+    "docs/intermittent-training-study.md",
+    "research/intermittent-training/protocol.json",
     "docs/rfcs/0002-training-first-architecture-v2.md",
     "campaigns/commons-3b-public-pilot.json",
     "schemas/public_campaign_brief_v1.schema.json",

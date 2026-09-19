@@ -31,6 +31,13 @@ or provider SDK imports.
 - `plugins.py`: structural protocols for backends/providers/adapters;
 - `cli.py`: the `crowdtensor train` lifecycle.
 
+`core/benchmark.py` validates bounded research inputs and replays synthetic
+resource traces without numerical frameworks. `backends/benchmark.py` runs
+offline calibration using upstream Transformers Trainer and the existing
+Volunteer/v2 path. It does not introduce another production controller or
+change Campaign task sizes. Versioned protocols live in `research/`; generated
+traces, private fixtures, and reports belong in ignored `dist/`.
+
 Every persisted contract is schema- and content-hash-bound. Public projections
 exclude credentials, local paths, tensor values, and contributor identities.
 

@@ -143,6 +143,12 @@ New functionality belongs in one of four places:
 
 ## Development
 
+The current [research study](docs/intermittent-training-study.md) examines
+task length, interrupted compute, and checkpoint recovery. Run bounded trace
+replay or real offline CPU calibration with `crowdtensor train benchmark`.
+These are research baselines, not evidence of community adoption or a new
+optimization algorithm.
+
 ```bash
 python scripts/check_repository.py --json
 python -m compileall -q crowdtensor tests

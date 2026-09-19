@@ -31,6 +31,14 @@ in Git history; do not restore archived command families into the active CLI.
 
 ## Current Boundary
 
+The immediate research priority is the intermittent Work-Unit study in
+`docs/intermittent-training-study.md`. User recruitment is not a prerequisite.
+Keep synthetic trace delivery, real CPU fixture calibration, and later model
+quality/concurrent accelerator experiments explicitly separate. Do not call
+adaptive task sizing novel without comparison to FedCompass and related work.
+Use `train benchmark` for bounded experiments; keep generated runs under
+ignored `dist/` and record negative results as well as positive results.
+
 The v2 controller supports concurrent elastic Work Units, durable ownership,
 heartbeat renewal, generation/expiry/old-base fencing, exactly-once receipts,
 and restart-safe lineage. `crowdtensor train run --campaign-dir` creates a

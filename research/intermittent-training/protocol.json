@@ -1,0 +1,15 @@
+{
+  "schema": "crowdtensor_training_benchmark_protocol_v1",
+  "study_id": "intermittent-work-unit-baselines-v1",
+  "seeds": [17, 29, 43],
+  "conditions": ["stable", "intermittent"],
+  "fixed_steps": {"fixed_short": 1, "fixed_long": 4},
+  "horizon_seconds": 120,
+  "cold_start_seconds": 3,
+  "setup_seconds": 2,
+  "upload_seconds": 1,
+  "model_bytes": 1048576,
+  "delta_bytes": 65536,
+  "cpu_total_steps": 8,
+  "content_hash": "sha256:23fe51dcfdd0c6d5351fa22f7b88b37dd4f17d7b655eac2479776daf8bb04511"
+}
